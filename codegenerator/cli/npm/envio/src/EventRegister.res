@@ -4,7 +4,7 @@ type registrations = {
 }
 
 type activeRegistration = {
-  ecosystem: Config.ecosystem,
+  platform: Platform.t,
   multichain: Config.multichain,
   preloadHandlers: bool,
   registrations: registrations,
@@ -36,9 +36,9 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-let startRegistration = (~ecosystem, ~multichain, ~preloadHandlers) => {
+let startRegistration = (~platform, ~multichain, ~preloadHandlers) => {
   let r = {
-    ecosystem,
+    platform,
     multichain,
     preloadHandlers,
     registrations: {
@@ -81,9 +81,7 @@ let onBlockOptionsSchema = S.schema(s =>
 let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<unit>) => {
   withRegistration(registration => {
     // There's no big reason for this. It's just more work
-    switch registration.ecosystem {
-    | Evm => ()
-    | Fuel =>
+    if registration.platform !== Platform.evm {
       Js.Exn.raiseError(
         "Block Handlers are not supported for non-EVM ecosystems. Please reach out to the Envio team if you need this feature.",
       )

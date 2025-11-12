@@ -47,7 +47,11 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   }
 }
 
-let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemoryStore.t) => {
+let addItemToRawEvents = (
+  eventItem: Internal.eventItem,
+  ~inMemoryStore: InMemoryStore.t,
+  ~config: Config.t,
+) => {
   let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
   let {block, transaction, params, logIndex, srcAddress} = event
   let chainId = chain->ChainMap.Chain.toChainId
@@ -61,7 +65,7 @@ let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemor
     ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
     ->convertFieldsToJson
 
-  blockFields->Types.Block.cleanUpRawEventFieldsInPlace
+  blockFields->config.platform.cleanUpRawEventFieldsInPlace
 
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
@@ -85,7 +89,7 @@ let addItemToRawEvents = (eventItem: Internal.eventItem, ~inMemoryStore: InMemor
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->Types.Block.getId,
+    blockHash: block->config.platform.getId,
     blockTimestamp,
     blockFields,
     transactionFields,
@@ -220,7 +224,9 @@ let runHandlerOrThrow = async (
       }
 
       if indexer.config.enableRawEvents {
-        item->Internal.castUnsafeEventItem->addItemToRawEvents(~inMemoryStore)
+        item
+        ->Internal.castUnsafeEventItem
+        ->addItemToRawEvents(~inMemoryStore, ~config=indexer.config)
       }
     }
   }
@@ -421,54 +427,72 @@ let processEventBatch = async (
     let elapsedTimeAfterProcessing =
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    let rec executeBatch = async (~escapeTables=?) => {
-      switch await indexer.persistence.sql->IO.executeBatch(
+    try {
+      await indexer.persistence.storage.writeBatch(
         ~batch,
         ~inMemoryStore,
         ~isInReorgThreshold,
-        ~indexer,
-        ~escapeTables?,
-      ) {
-      | exception Persistence.StorageError({message, reason}) =>
-        reason->ErrorHandling.make(~msg=message, ~logger)->Error
+        ~config=indexer.config,
+        ~allEntities=indexer.persistence.allEntities,
+        ~batchCache={
+          inMemoryStore.effects
+          ->Js.Dict.keys
+          ->Belt.Array.keepMapU(effectName => {
+            let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
+            let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+            switch idsToStore {
+            | [] => None
+            | ids => {
+                let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+                ids->Belt.Array.forEachWithIndex((index, id) => {
+                  items->Js.Array2.unsafe_set(
+                    index,
+                    (
+                      {
+                        id,
+                        output: dict->Js.Dict.unsafeGet(id),
+                      }: Internal.effectCacheItem
+                    ),
+                  )
+                })
+                Some(
+                  indexer.persistence->Persistence.getEffectBatchCache(
+                    ~effect,
+                    ~items,
+                    ~invalidationsCount,
+                  ),
+                )
+              }
+            }
+          })
+        },
+      )
 
-      | exception PgStorage.PgEncodingError({table}) =>
-        let escapeTables = switch escapeTables {
-        | Some(set) => set
-        | None => Utils.Set.make()
-        }
-        let _ = escapeTables->Utils.Set.add(table)
-        // Retry with specifying which tables to escape.
-        await executeBatch(~escapeTables)
-      | exception exn =>
-        exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-      | () => {
-          let elapsedTimeAfterDbWrite =
-            timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-          let loaderDuration = elapsedTimeAfterLoaders
-          let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
-          let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
-          registerProcessEventBatchMetrics(
-            ~logger,
-            ~loadDuration=loaderDuration,
-            ~handlerDuration,
-            ~dbWriteDuration,
-          )
-          if Env.Benchmark.shouldSaveData {
-            Benchmark.addEventProcessing(
-              ~batchSize=totalBatchSize,
-              ~loadDuration=loaderDuration,
-              ~handlerDuration,
-              ~dbWriteDuration,
-              ~totalTimeElapsed=elapsedTimeAfterDbWrite,
-            )
-          }
-          Ok()
-        }
+      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      let loaderDuration = elapsedTimeAfterLoaders
+      let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
+      let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
+      registerProcessEventBatchMetrics(
+        ~logger,
+        ~loadDuration=loaderDuration,
+        ~handlerDuration,
+        ~dbWriteDuration,
+      )
+      if Env.Benchmark.shouldSaveData {
+        Benchmark.addEventProcessing(
+          ~batchSize=totalBatchSize,
+          ~loadDuration=loaderDuration,
+          ~handlerDuration,
+          ~dbWriteDuration,
+          ~totalTimeElapsed=elapsedTimeAfterDbWrite,
+        )
       }
+      Ok()
+    } catch {
+    | Persistence.StorageError({message, reason}) =>
+      reason->ErrorHandling.make(~msg=message, ~logger)->Error
+    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
     }
-
-    await executeBatch()
   } catch {
   | ProcessingError({message, exn, item}) =>
     exn

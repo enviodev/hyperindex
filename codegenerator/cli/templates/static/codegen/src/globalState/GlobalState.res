@@ -187,9 +187,7 @@ let updateChainMetadataTable = (
 
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    persistence.sql
-    ->InternalTable.Chains.setMeta(~pgSchema=Db.publicSchema, ~chainsData)
-    ->Promise.ignoreValue
+    persistence.storage.setChainMeta(chainsData)->Promise.ignoreValue
   )
 }
 
@@ -197,7 +195,7 @@ let updateChainMetadataTable = (
 Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
-let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => {
+let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~indexer: Indexer.t) => {
   Prometheus.ProgressBatchCount.increment()
 
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
@@ -230,7 +228,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t) => 
         // Calculate and set latency metrics
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
-            let blockTimestamp = eventItem.event.block->Types.Block.getTimestamp
+            let blockTimestamp = eventItem.event.block->indexer.config.platform.getTimestamp
             let currentTimeMs = Js.Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs
@@ -655,7 +653,7 @@ let actionReducer = (state: t, action: action) => {
       // Can safely reset rollback state, since overwrite is not possible.
       // If rollback is pending, the EventBatchProcessed will be handled by the invalid action reducer instead.
       rollbackState: NoRollback,
-      chainManager: state.chainManager->updateProgressedChains(~batch),
+      chainManager: state.chainManager->updateProgressedChains(~batch, ~indexer=state.indexer),
       currentlyProcessingBatch: false,
       processedBatches: state.processedBatches + 1,
     }
@@ -754,7 +752,7 @@ let invalidatedActionReducer = (state: t, action: action) =>
     (
       {
         ...state,
-        chainManager: state.chainManager->updateProgressedChains(~batch),
+        chainManager: state.chainManager->updateProgressedChains(~batch, ~indexer=state.indexer),
         currentlyProcessingBatch: false,
         processedBatches: state.processedBatches + 1,
       },
@@ -820,10 +818,7 @@ let injectedTaskReducer = (
       switch state.chainManager->ChainManager.getSafeCheckpointId {
       | None => ()
       | Some(safeCheckpointId) =>
-        await state.indexer.persistence.sql->InternalTable.Checkpoints.pruneStaleCheckpoints(
-          ~pgSchema=Env.Db.publicSchema,
-          ~safeCheckpointId,
-        )
+        await state.indexer.persistence.storage.pruneStaleCheckpoints(safeCheckpointId)
 
         for idx in 0 to Entities.allEntities->Array.length - 1 {
           if idx !== 0 {
@@ -835,10 +830,9 @@ let injectedTaskReducer = (
           let timeRef = Hrtime.makeTimer()
           try {
             let () =
-              await state.indexer.persistence.sql->EntityHistory.pruneStaleEntityHistory(
+              await state.indexer.persistence.storage.pruneStaleEntityHistory(
                 ~entityName=entityConfig.name,
                 ~entityIndex=entityConfig.index,
-                ~pgSchema=Env.Db.publicSchema,
                 ~safeCheckpointId,
               )
           } catch {
@@ -1023,8 +1017,7 @@ let injectedTaskReducer = (
       let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
       let rollbackTargetCheckpointId = {
-        switch await state.indexer.persistence.sql->InternalTable.Checkpoints.getRollbackTargetCheckpoint(
-          ~pgSchema=Env.Db.publicSchema,
+        switch await state.indexer.persistence.storage.getRollbackTargetCheckpoint(
           ~reorgChainId,
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
         ) {
@@ -1039,9 +1032,8 @@ let injectedTaskReducer = (
 
       {
         let rollbackProgressDiff =
-          await state.indexer.persistence.sql->InternalTable.Checkpoints.getRollbackProgressDiff(
-            ~pgSchema=Env.Db.publicSchema,
-            ~rollbackTargetCheckpointId,
+          await state.indexer.persistence.storage.getRollbackProgressDiff(
+            rollbackTargetCheckpointId,
           )
         for idx in 0 to rollbackProgressDiff->Js.Array2.length - 1 {
           let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
