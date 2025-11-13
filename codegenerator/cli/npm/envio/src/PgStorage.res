@@ -35,7 +35,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
         `"${fieldName}" ${switch fieldType {
           | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${pgSchema}".${name}`
           // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
-          | Numeric if isArray && isNumericArrayAsText => (Table.Text :> string)
+          | BigInt if isArray && isNumericArrayAsText => (Table.Text :> string)
           | _ => (fieldType :> string)
           }}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`

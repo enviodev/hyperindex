@@ -46,16 +46,16 @@ module DynamicContractRegistry = {
   let table = mkTable(
     name,
     ~fields=[
-      mkField("id", Text, ~isPrimaryKey, ~fieldSchema=S.string),
-      mkField("chain_id", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_block_number", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_log_index", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_block_timestamp", Integer, ~fieldSchema=S.int),
-      mkField("registering_event_contract_name", Text, ~fieldSchema=S.string),
-      mkField("registering_event_name", Text, ~fieldSchema=S.string),
-      mkField("registering_event_src_address", Text, ~fieldSchema=Address.schema),
-      mkField("contract_address", Text, ~fieldSchema=Address.schema),
-      mkField("contract_name", Text, ~fieldSchema=S.string),
+      mkField("id", String, ~isPrimaryKey, ~fieldSchema=S.string),
+      mkField("chain_id", Int32, ~fieldSchema=S.int),
+      mkField("registering_event_block_number", Int32, ~fieldSchema=S.int),
+      mkField("registering_event_log_index", Int32, ~fieldSchema=S.int),
+      mkField("registering_event_block_timestamp", Int32, ~fieldSchema=S.int),
+      mkField("registering_event_contract_name", String, ~fieldSchema=S.string),
+      mkField("registering_event_name", String, ~fieldSchema=S.string),
+      mkField("registering_event_src_address", String, ~fieldSchema=Address.schema),
+      mkField("contract_address", String, ~fieldSchema=Address.schema),
+      mkField("contract_name", String, ~fieldSchema=S.string),
     ],
   )
 
@@ -131,19 +131,19 @@ module Chains = {
   let table = mkTable(
     "envio_chains",
     ~fields=[
-      mkField((#id: field :> string), Integer, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#id: field :> string), Int32, ~fieldSchema=S.int, ~isPrimaryKey),
       // Values populated from config
-      mkField((#start_block: field :> string), Integer, ~fieldSchema=S.int),
-      mkField((#end_block: field :> string), Integer, ~fieldSchema=S.null(S.int), ~isNullable),
-      mkField((#max_reorg_depth: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
+      mkField((#max_reorg_depth: field :> string), Int32, ~fieldSchema=S.int),
       // Block number of the latest block that was fetched from the source
-      mkField((#buffer_block: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#buffer_block: field :> string), Int32, ~fieldSchema=S.int),
       // Block number of the currently active source
-      mkField((#source_block: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#source_block: field :> string), Int32, ~fieldSchema=S.int),
       // Block number of the first event that was processed for this chain
       mkField(
         (#first_event_block: field :> string),
-        Integer,
+        Int32,
         ~fieldSchema=S.null(S.int),
         ~isNullable,
       ),
@@ -151,17 +151,17 @@ module Chains = {
       // null during historical sync, set to current time when sync is complete
       mkField(
         (#ready_at: field :> string),
-        TimestampWithNullTimezone,
+        DateNull,
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
-      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
       // TODO: In the future it should reference a table with sources
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
-      mkField((#progress_block: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
       // TODO: Should deprecate after changing the ETA calculation logic
-      mkField((#_num_batches_fetched: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#_num_batches_fetched: field :> string), Int32, ~fieldSchema=S.int),
     ],
   )
 
@@ -368,11 +368,11 @@ module PersistedState = {
     "persisted_state",
     ~fields=[
       mkField("id", Serial, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField("envio_version", Text, ~fieldSchema=S.string),
-      mkField("config_hash", Text, ~fieldSchema=S.string),
-      mkField("schema_hash", Text, ~fieldSchema=S.string),
-      mkField("handler_files_hash", Text, ~fieldSchema=S.string),
-      mkField("abi_files_hash", Text, ~fieldSchema=S.string),
+      mkField("envio_version", String, ~fieldSchema=S.string),
+      mkField("config_hash", String, ~fieldSchema=S.string),
+      mkField("schema_hash", String, ~fieldSchema=S.string),
+      mkField("handler_files_hash", String, ~fieldSchema=S.string),
+      mkField("abi_files_hash", String, ~fieldSchema=S.string),
     ],
   )
 }
@@ -403,11 +403,11 @@ module Checkpoints = {
   let table = mkTable(
     "envio_checkpoints",
     ~fields=[
-      mkField((#id: field :> string), Integer, ~fieldSchema=S.int, ~isPrimaryKey),
-      mkField((#chain_id: field :> string), Integer, ~fieldSchema=S.int),
-      mkField((#block_number: field :> string), Integer, ~fieldSchema=S.int),
-      mkField((#block_hash: field :> string), Text, ~fieldSchema=S.null(S.string), ~isNullable),
-      mkField((#events_processed: field :> string), Integer, ~fieldSchema=S.int),
+      mkField((#id: field :> string), Int32, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
+      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
     ],
   )
 
@@ -584,18 +584,18 @@ module RawEvents = {
   let table = mkTable(
     "raw_events",
     ~fields=[
-      mkField("chain_id", Integer, ~fieldSchema=S.int),
-      mkField("event_id", Numeric, ~fieldSchema=S.bigint),
-      mkField("event_name", Text, ~fieldSchema=S.string),
-      mkField("contract_name", Text, ~fieldSchema=S.string),
-      mkField("block_number", Integer, ~fieldSchema=S.int),
-      mkField("log_index", Integer, ~fieldSchema=S.int),
-      mkField("src_address", Text, ~fieldSchema=Address.schema),
-      mkField("block_hash", Text, ~fieldSchema=S.string),
-      mkField("block_timestamp", Integer, ~fieldSchema=S.int),
-      mkField("block_fields", JsonB, ~fieldSchema=S.json(~validate=false)),
-      mkField("transaction_fields", JsonB, ~fieldSchema=S.json(~validate=false)),
-      mkField("params", JsonB, ~fieldSchema=S.json(~validate=false)),
+      mkField("chain_id", Int32, ~fieldSchema=S.int),
+      mkField("event_id", BigInt, ~fieldSchema=S.bigint),
+      mkField("event_name", String, ~fieldSchema=S.string),
+      mkField("contract_name", String, ~fieldSchema=S.string),
+      mkField("block_number", Int32, ~fieldSchema=S.int),
+      mkField("log_index", Int32, ~fieldSchema=S.int),
+      mkField("src_address", String, ~fieldSchema=Address.schema),
+      mkField("block_hash", String, ~fieldSchema=S.string),
+      mkField("block_timestamp", Int32, ~fieldSchema=S.int),
+      mkField("block_fields", Json, ~fieldSchema=S.json(~validate=false)),
+      mkField("transaction_fields", Json, ~fieldSchema=S.json(~validate=false)),
+      mkField("params", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("serial", Serial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
     ],
   )

@@ -82,7 +82,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
 
   let checkpointIdField = mkField(
     checkpointIdFieldName,
-    Integer,
+    Int32,
     ~fieldSchema=S.int,
     ~isPrimaryKey=true,
   )
@@ -229,7 +229,7 @@ let pruneStaleEntityHistory = (
 let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (
-  SELECT UNNEST($1::${(Text: Table.fieldType :> string)}[]) AS id
+  SELECT UNNEST($1::${(Text: Table.pgFieldType :> string)}[]) AS id
 ),
 missing_history AS (
   SELECT e.*

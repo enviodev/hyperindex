@@ -5,31 +5,41 @@ use std::fmt::Display;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Primitive {
     Boolean,
-    Text,
-    Integer,
-    Numeric(Option<(u32, u32)>), // (precision, scale)
-    DoublePrecision,
+    String,
+    Int32,
+    BigInt { precision: Option<u32> },
+    BigDecimal(Option<(u32, u32)>), // (precision, scale)
+    Float8,
     Serial,
-    JsonB,
-    Timestamp,
+    Json,
+    Date,
     Enum(String),
+    Entity(String),
 }
 
 impl Primitive {
     pub fn get_res_field_type_variant(&self) -> String {
         match &self {
             Self::Boolean => "Boolean".to_string(),
-            Self::Text => "Text".to_string(),
-            Self::Integer => "Integer".to_string(),
-            Self::Numeric(None) => "Numeric".to_string(),
-            Self::Numeric(Some((precision, scale))) => {
+            Self::String => "String".to_string(),
+            Self::Int32 => "Int32".to_string(),
+            Self::BigInt { precision: None } => "BigInt".to_string(),
+            Self::BigInt {
+                precision: Some(precision),
+            } => {
+                //  We leave the scale as zero since it is not relevant for integers.
+                format!("Custom(\"NUMERIC({}, {})\")", precision, 0)
+            }
+            Self::BigDecimal(None) => "BigInt".to_string(),
+            Self::BigDecimal(Some((precision, scale))) => {
                 format!("Custom(\"NUMERIC({}, {})\")", precision, scale)
             }
             Self::Serial => "Serial".to_string(),
-            Self::JsonB => "JsonB".to_string(),
-            Self::Timestamp => "Timestamp".to_string(),
-            Self::DoublePrecision => "DoublePrecision".to_string(),
+            Self::Json => "Json".to_string(),
+            Self::Date => "Date".to_string(),
+            Self::Float8 => "Float8".to_string(),
             Self::Enum(enum_name) => format!("Custom(Enums.{enum_name}.config.name)"),
+            Self::Entity(_) => format!("String"),
         }
     }
 }

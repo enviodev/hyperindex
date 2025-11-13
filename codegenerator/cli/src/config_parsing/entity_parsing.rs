@@ -1,5 +1,5 @@
 use super::{
-    postgres_types::{Field as PGField, Primitive as PGPrimitive},
+    field_types::{Field as PGField, Primitive as PGPrimitive},
     validation::{
         check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
         is_valid_postgres_db_name,
@@ -1006,10 +1006,7 @@ impl UserDefinedFieldType {
                         if matches!(schema.try_get_type_def(name)?, TypeDef::Entity(_)) =>
                     {
                         Err(anyhow!(
-                            "EE211: Arrays of entities is unsupported. Please use one of the \
-                             methods for referencing entities outlined in the docs. The entity \
-                             being referenced in the array is '{}'.",
-                            name
+                            "EE211: The [{name}!]! field type requires an explicit @derivedFrom. Alternatively, check methods for referencing entities outlined in the docs. https://docs.envio.dev/docs/HyperIndex/schema#relationships-one-to-many-derivedfrom"
                         ))
                     }
                     //TODO: add support for these types
@@ -1243,7 +1240,7 @@ impl FieldType {
             Some(derived_from_field) => match field_type.get_name_of_derived_from_entity() {
                 None => {
                     let example_str = Self::DerivedFromField {
-                        entity_name: "<MY_ENTITY>".to_string(),
+                        entity_name: "<ENTITY_FIELD_NAME>".to_string(),
                         derived_from_field,
                     }
                     .to_string();
@@ -1413,22 +1410,22 @@ impl GqlScalar {
 
     pub fn to_underlying_postgres_primitive(&self, schema: &Schema) -> anyhow::Result<PGPrimitive> {
         let converted = match self {
-            GqlScalar::ID => PGPrimitive::Text,
-            GqlScalar::String => PGPrimitive::Text,
-            GqlScalar::Int => PGPrimitive::Integer,
-            GqlScalar::Float => PGPrimitive::DoublePrecision, // Should we allow this type? Rounding issues will abound.
+            GqlScalar::ID => PGPrimitive::String,
+            GqlScalar::String => PGPrimitive::String,
+            GqlScalar::Int => PGPrimitive::Int32,
+            GqlScalar::Float => PGPrimitive::Float8, // Should we allow this type? Rounding issues will abound.
             GqlScalar::Boolean => PGPrimitive::Boolean,
-            GqlScalar::Bytes => PGPrimitive::Text,
-            GqlScalar::Json => PGPrimitive::JsonB,
-            GqlScalar::BigInt(None) => PGPrimitive::Numeric(None),
-            GqlScalar::BigInt(Some(precision)) => PGPrimitive::Numeric(Some((*precision, 0))), //  We leave the scale as zero since it is not relevant for integers.
-            GqlScalar::BigDecimal(None) => PGPrimitive::Numeric(None),
-            GqlScalar::BigDecimal(Some((precision, scale))) => {
-                PGPrimitive::Numeric(Some((*precision, *scale)))
+            GqlScalar::Bytes => PGPrimitive::String,
+            GqlScalar::Json => PGPrimitive::Json,
+            GqlScalar::BigInt(precision) => PGPrimitive::BigInt {
+                precision: precision.clone(),
+            },
+            GqlScalar::BigDecimal(precision_and_scale) => {
+                PGPrimitive::BigDecimal(precision_and_scale.clone())
             }
-            GqlScalar::Timestamp => PGPrimitive::Timestamp,
+            GqlScalar::Timestamp => PGPrimitive::Date,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
-                TypeDef::Entity(_) => PGPrimitive::Text,
+                TypeDef::Entity(_) => PGPrimitive::Entity(name.clone()),
                 TypeDef::Enum => PGPrimitive::Enum(name.clone()),
             },
         };
@@ -1473,7 +1470,7 @@ mod tests {
     use super::{
         anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
     };
-    use crate::config_parsing::postgres_types::Primitive as PGPrimitive;
+    use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<'_, String>> {
@@ -1845,7 +1842,7 @@ type TestEntity {
             .to_user_defined_field_type()
             .to_underlying_postgres_primitive(&empty_schema)
             .expect("unable to get postgres primitive");
-        assert_eq!(pg_primitive, PGPrimitive::Text);
+        assert_eq!(pg_primitive, PGPrimitive::String);
         assert!(field_type.to_user_defined_field_type().is_array());
     }
 
@@ -1858,7 +1855,7 @@ type TestEntity {
             .to_user_defined_field_type()
             .to_underlying_postgres_primitive(&empty_schema)
             .expect("unable to get postgres primitive");
-        assert_eq!(pg_primitive, PGPrimitive::Integer);
+        assert_eq!(pg_primitive, PGPrimitive::Int32);
         assert!(field_type.to_user_defined_field_type().is_array());
     }
 
@@ -1936,7 +1933,7 @@ type TestEntity {
             .unwrap();
 
         assert_eq!(pg_field.field_name, "name");
-        assert_eq!(pg_field.field_type, PGPrimitive::Text);
+        assert_eq!(pg_field.field_type, PGPrimitive::String);
         assert!(pg_field.is_index);
         assert!(!pg_field.is_array);
         assert!(!pg_field.is_nullable);
@@ -1965,7 +1962,7 @@ type RelatedEntity {
             .unwrap();
 
         assert_eq!(pg_field.field_name, "relatedEntity");
-        assert_eq!(pg_field.field_type, PGPrimitive::Text);
+        assert_eq!(pg_field.field_type, PGPrimitive::String);
         assert!(!pg_field.is_index);
         assert!(!pg_field.is_array);
         assert!(!pg_field.is_nullable);
@@ -1990,7 +1987,7 @@ type TestEntity {
             .unwrap();
 
         assert_eq!(pg_field.field_name, "tags");
-        assert_eq!(pg_field.field_type, PGPrimitive::Text);
+        assert_eq!(pg_field.field_type, PGPrimitive::String);
         assert!(!pg_field.is_index);
         assert!(pg_field.is_array);
         assert!(!pg_field.is_nullable);

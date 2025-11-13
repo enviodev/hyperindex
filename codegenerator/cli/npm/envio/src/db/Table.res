@@ -2,8 +2,37 @@ open Belt
 
 type primitive
 type derived
+
+// @tag("type")
+// type rec fieldType =
+//   | @as("string") String
+//   | @as("bigint") BigInt({precision?: int})
+//   | @as("bigDecimal") BigDecimal({precision?: int, scale?: int})
+//   | @as("int32") Int32
+//   | @as("float8") Float8
+//   | @as("boolean") Boolean
+//   // | @as("array") Array({items: fieldType})
+//   | @as("enum") Enum({ref: string})
+//   | @as("entity") Entity({ref: string})
+//   | @as("serial") Serial
+//   | @as("date") Date
+//   | @as("json") Json
+
 @unboxed
 type fieldType =
+  | @as("TEXT") String
+  | @as("BOOLEAN") Boolean
+  | @as("INTEGER") Int32
+  | @as("DOUBLE PRECISION") Float8
+  | @as("NUMERIC") BigInt
+  | @as("SERIAL") Serial
+  | @as("JSONB") Json
+  | @as("TIMESTAMP WITH TIME ZONE") Date
+  | @as("TIMESTAMP WITH TIME ZONE NULL") DateNull
+  | Custom(string)
+
+@unboxed
+type pgFieldType =
   | @as("INTEGER") Integer
   | @as("BIGINT") BigInt
   | @as("BOOLEAN") Boolean

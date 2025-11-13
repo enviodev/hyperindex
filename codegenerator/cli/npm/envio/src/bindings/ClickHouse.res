@@ -23,17 +23,15 @@ external close: client => promise<unit> = "close"
 // Type mapping from PostgreSQL/Table.fieldType to ClickHouse types
 let mapFieldTypeToClickHouse = (fieldType: Table.fieldType, ~isNullable: bool): string => {
   let baseType = switch fieldType {
-  | Integer => "Int32"
-  | BigInt => "Int64"
+  | Int32 => "Int32"
+  | BigInt => "Int64" // FIXME: This is not correct, we need to use higher precision
   | Boolean => "UInt8"
-  | Numeric => "Decimal128(18)"
-  | DoublePrecision => "Float64"
-  | Text => "String"
+  | Float8 => "Float64" // FIXME: This is not correct, we need to use higher precision
+  | String => "String"
   | Serial => "Int32"
-  | JsonB => "String"
-  | Timestamp
-  | TimestampWithoutTimezone
-  | TimestampWithNullTimezone => "DateTime64(3, 'UTC')"
+  | Json => "String"
+  | Date
+  | DateNull => "DateTime64(3, 'UTC')"
   | Custom(name) =>
     // Check if it's a NUMERIC with precision
     if name->Js.String2.startsWith("NUMERIC(") {
