@@ -19,7 +19,7 @@ type entityUpdate<'entityType> = {
 
 // Prefix with envio_ to avoid colleasions
 let changeFieldName = "envio_change"
-let checkpointIdFieldName = "checkpoint_id"
+let checkpointIdFieldName = "envio_checkpoint_id"
 
 let makeSetUpdateSchema: S.t<'entity> => S.t<entityUpdate<'entity>> = entitySchema => {
   S.object(s => {
@@ -82,7 +82,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
 
   let checkpointIdField = mkField(
     checkpointIdFieldName,
-    Int32,
+    Uint32,
     ~fieldSchema=S.int,
     ~isPrimaryKey=true,
   )
@@ -103,11 +103,11 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
     let allFieldNamesStr =
       allFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
 
-    // Build the SELECT part: id from unnest, checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
+    // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
     let selectParts = allFieldNames->Belt.Array.map(fieldName => {
       switch fieldName {
       | "id" => "u.id"
-      | field if field == checkpointIdFieldName => "u.checkpoint_id"
+      | field if field == checkpointIdFieldName => `u.${checkpointIdFieldName}`
       | field if field == changeFieldName => "'DELETE'"
       | _ => "NULL"
       }
@@ -116,7 +116,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
     (~pgSchema) => {
       `INSERT INTO "${pgSchema}"."${historyTableName}" (${allFieldNamesStr})
 SELECT ${selectPartsStr}
-FROM UNNEST($1::text[], $2::int[]) AS u(id, checkpoint_id)`
+FROM UNNEST($1::text[], $2::int[]) AS u(id, ${checkpointIdFieldName})`
     }
   }
 
@@ -225,7 +225,7 @@ let pruneStaleEntityHistory = (
 }
 
 // If an entity doesn't have a history before the update
-// we create it automatically with checkpoint_id 0
+// we create it automatically with envio_checkpoint_id 0
 let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (

@@ -1413,7 +1413,7 @@ impl GqlScalar {
             GqlScalar::ID => PGPrimitive::String,
             GqlScalar::String => PGPrimitive::String,
             GqlScalar::Int => PGPrimitive::Int32,
-            GqlScalar::Float => PGPrimitive::Float8, // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Float => PGPrimitive::Number, // Should we allow this type? Rounding issues will abound.
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::String,
             GqlScalar::Json => PGPrimitive::Json,

@@ -9,7 +9,7 @@ pub enum Primitive {
     Int32,
     BigInt { precision: Option<u32> },
     BigDecimal(Option<(u32, u32)>), // (precision, scale)
-    Float8,
+    Number,
     Serial,
     Json,
     Date,
@@ -36,7 +36,7 @@ impl Primitive {
             Self::Serial => "Serial".to_string(),
             Self::Json => "Json".to_string(),
             Self::Date => "Date".to_string(),
-            Self::Float8 => "Float8".to_string(),
+            Self::Number => "Number".to_string(),
             Self::Enum(enum_name) => format!("Enum({{name: \"{enum_name}\"}})"),
             Self::Entity(entity_name) => format!("Entity({{name: \"{entity_name}\"}})"),
         }

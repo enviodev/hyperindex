@@ -7,8 +7,9 @@ type derived
 type fieldType =
   | String
   | Boolean
+  | Uint32
   | Int32
-  | Float8
+  | Number
   | BigInt({precision?: int})
   | BigDecimal({config?: (int, int)}) // (precision, scale)
   | Serial
@@ -94,8 +95,8 @@ let getPgFieldType = (
   let columnType = switch fieldType {
   | String => (Postgres.Text :> string)
   | Boolean => (Postgres.Boolean :> string)
-  | Int32 => (Postgres.Integer :> string)
-  | Float8 => (Postgres.DoublePrecision :> string)
+  | Int32 | Uint32 => (Postgres.Integer :> string)
+  | Number => (Postgres.DoublePrecision :> string)
   | BigInt({?precision}) =>
     (Postgres.Numeric :> string) ++
     switch precision {

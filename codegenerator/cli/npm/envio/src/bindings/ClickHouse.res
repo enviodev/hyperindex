@@ -20,59 +20,76 @@ external exec: (client, execParams) => promise<unit> = "exec"
 @send
 external close: client => promise<unit> = "close"
 
-// Type mapping from PostgreSQL/Table.fieldType to ClickHouse types
-let mapFieldTypeToClickHouse = (fieldType: Table.fieldType, ~isNullable: bool): string => {
+let getClickHouseFieldType = (
+  ~fieldType: Table.fieldType,
+  ~isNullable: bool,
+  ~isArray: bool,
+): string => {
   let baseType = switch fieldType {
   | Int32 => "Int32"
-  | BigInt({}) => "Int64" // FIXME: This is not correct, we need to use higher precision
-  | Boolean => "UInt8"
-  | Float8 => "Float64" // FIXME: This is not correct, we need to use higher precision
-  | String => "String"
+  | Uint32 => "UInt32"
   | Serial => "Int32"
+  | BigInt({?precision}) =>
+    switch precision {
+    | None => `UInt256` // FIXME: Should use String here?
+    | Some(precision) => `Decimal(${precision->Js.Int.toString},0)`
+    }
+  | BigDecimal({?config}) =>
+    switch config {
+    | None =>
+      Js.Exn.raiseError(
+        "Please provide a @config(precision: <precision>, scale: <scale>) directive on the BigDecimal field for ClickHouse to work correctly",
+      )
+    | Some((precision, scale)) => `Decimal(${precision->Js.Int.toString},${scale->Js.Int.toString})`
+    }
+  | Boolean => "Bool"
+  | Number => "Float64"
+  | String => "String"
   | Json => "String"
   | Date => "DateTime64(3, 'UTC')"
   | Enum(_) => "String"
   | Entity(_) => "String"
-  | BigDecimal({}) => "Decimal128"
+  }
+
+  let baseType = if isArray {
+    `Array(${baseType})`
+  } else {
+    baseType
   }
 
   isNullable ? `Nullable(${baseType})` : baseType
 }
 
 // Generate CREATE TABLE query for entity history table
-let makeClickHouseHistoryTableQuery = (entity: Internal.entityConfig, ~database: string): option<
-  string,
-> => {
+let makeCreateHistoryTableQuery = (entity: Internal.entityConfig, ~database: string) => {
   let historyTable = entity.entityHistory.table
 
-  // Filter out array fields
-  let validFields =
-    historyTable
-    ->Table.getFields
-    ->Belt.Array.keep(field => !field.isArray)
+  let fieldDefinitions =
+    historyTable.fields
+    ->Belt.Array.keepMap(field => {
+      switch field {
+      | Field(field) =>
+        Some({
+          let fieldName = field->Table.getDbFieldName
+          let clickHouseType = getClickHouseFieldType(
+            ~fieldType=field.fieldType,
+            ~isNullable=field.isNullable,
+            ~isArray=field.isArray,
+          )
+          `\`${fieldName}\` ${clickHouseType}`
+        })
+      | DerivedFrom(_) => None
+      }
+    })
+    ->Js.Array2.joinWith(",\n  ")
 
-  if validFields->Belt.Array.length === 0 {
-    None
-  } else {
-    let fieldDefinitions =
-      validFields
-      ->Belt.Array.map(field => {
-        let fieldName = field->Table.getDbFieldName
-        let clickHouseType = mapFieldTypeToClickHouse(field.fieldType, ~isNullable=field.isNullable)
-        `\`${fieldName}\` ${clickHouseType}`
-      })
-      ->Js.Array2.joinWith(",\n  ")
+  let tableName = historyTable.tableName
 
-    let tableName = historyTable.tableName
-
-    Some(
-      `CREATE TABLE IF NOT EXISTS ${database}.\`${tableName}\` (
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${tableName}\` (
   ${fieldDefinitions}
 )
 ENGINE = MergeTree()
-ORDER BY (id, checkpoint_id)`,
-    )
-  }
+ORDER BY (id, ${EntityHistory.checkpointIdFieldName})`
 }
 
 // Initialize ClickHouse tables for entities
@@ -95,19 +112,11 @@ let initialize = async (
     await client->exec({query: `CREATE DATABASE ${database}`})
     await client->exec({query: `USE ${database}`})
 
-    // Create tables for valid entities
-    for i in 0 to entities->Belt.Array.length - 1 {
-      let entity = entities->Belt.Array.getUnsafe(i)
-      switch makeClickHouseHistoryTableQuery(entity, ~database) {
-      | Some(query) => {
-          Logging.trace(`Creating ClickHouse table: ${entity.name}`)
-          await client->exec({query: query})
-        }
-      | None =>
-        Logging.warn(`Skipped ClickHouse table for ${entity.name}: no valid fields after filtering`)
-      }
-    }
-
+    await Promise.all(
+      entities->Belt.Array.map(entity =>
+        client->exec({query: makeCreateHistoryTableQuery(entity, ~database)})
+      ),
+    )->Promise.ignoreValue
     await client->close
 
     Logging.trace("ClickHouse mirror initialization completed successfully")
