@@ -416,6 +416,7 @@ pub struct SystemConfig {
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub should_use_hypersync_client_decoder: bool,
+    pub handlers: Option<String>,
 }
 
 //Getter methods for system config
@@ -719,7 +720,8 @@ impl SystemConfig {
                             true
                         }
                     },
-                    human_config,
+                    handlers: evm_config.handlers.clone(),
+                    human_config: human_config,
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -858,7 +860,8 @@ impl SystemConfig {
                     preload_handlers: fuel_config.preload_handlers.unwrap_or(false),
                     lowercase_addresses: false,
                     should_use_hypersync_client_decoder: true,
-                    human_config,
+                    handlers: fuel_config.handlers.clone(),
+                    human_config: human_config,
                 })
             }
         }
@@ -2086,6 +2089,7 @@ mod test {
             raw_events: None,
             preload_handlers: None,
             address_format: None,
+            handlers: None,
         };
 
         let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
@@ -2133,6 +2137,7 @@ mod test {
             raw_events: None,
             preload_handlers: None,
             address_format: None,
+            handlers: None,
         };
 
         let system_config_with_output = SystemConfig::from_human_config(

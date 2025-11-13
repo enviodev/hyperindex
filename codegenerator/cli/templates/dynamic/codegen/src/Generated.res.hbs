@@ -21,7 +21,7 @@ let registerContractHandlers = (~contractName, ~handler: option<string>) => {
 
 let autoLoadFromSrcHandlers = async () => {
   // Relatvie to cwd (project root)
-  let srcPattern = `./src/handlers/**/*.{js,ts}`
+  let srcPattern = `./{{#if handlers_path}}{{handlers_path}}{{else}}src/handlers{{/if}}/**/*.{js,ts}`
   let handlerFiles = try {
     let iterator = await globIterator(srcPattern)
     await iterator->Utils.Array.fromAsyncIterator

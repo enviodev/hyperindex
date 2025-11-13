@@ -275,6 +275,7 @@ pub async fn generate_config_from_subgraph_id(
         raw_events: None,
         preload_handlers: Some(true),
         address_format: None,
+        handlers: None,
     };
     let mut networks: Vec<Network> = vec![];
 

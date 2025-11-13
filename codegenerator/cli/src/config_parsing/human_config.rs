@@ -216,6 +216,12 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional relative path to handlers directory for auto-loading. Defaults \
+                       to 'src/handlers' if not specified."
+        )]
+        pub handlers: Option<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -598,6 +604,12 @@ pub mod fuel {
                            false)"
         )]
         pub preload_handlers: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional relative path to handlers directory for auto-loading. Defaults \
+                           to 'src/handlers' if not specified."
+        )]
+        pub handlers: Option<String>,
     }
 
     impl Display for HumanConfig {
@@ -924,6 +936,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                     }),
                 }],
             }],
+            handlers: None,
         };
 
         // deserializes fuel config
@@ -942,6 +955,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             raw_events: None,
             preload_handlers: None,
             networks: vec![],
+            handlers: None,
         };
 
         assert_eq!(

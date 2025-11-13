@@ -170,6 +170,7 @@ pub mod evm {
                 raw_events: None,
                 preload_handlers: Some(true),
                 address_format: None,
+                handlers: None,
             })
         }
 
@@ -302,6 +303,7 @@ pub mod fuel {
                 raw_events: None,
                 preload_handlers: Some(true),
                 networks: network_configs,
+                handlers: None,
             }
         }
     }

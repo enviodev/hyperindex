@@ -1283,6 +1283,7 @@ pub struct ProjectTemplate {
     relative_path_to_generated_from_root: String,
     lowercase_addresses: bool,
     should_use_hypersync_client_decoder: bool,
+    handlers_path: Option<String>,
 }
 
 impl ProjectTemplate {
@@ -1406,6 +1407,7 @@ type chain = [{chain_id_type}]"#,
             relative_path_to_generated_from_root,
             lowercase_addresses: cfg.lowercase_addresses,
             should_use_hypersync_client_decoder: cfg.should_use_hypersync_client_decoder,
+            handlers_path: cfg.handlers.clone(),
         })
     }
 }

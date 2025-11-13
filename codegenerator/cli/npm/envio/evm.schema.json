@@ -124,6 +124,13 @@
           "type": "null"
         }
       ]
+    },
+    "handlers": {
+      "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "additionalProperties": false,
