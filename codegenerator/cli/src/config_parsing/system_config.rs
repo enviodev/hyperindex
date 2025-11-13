@@ -416,6 +416,7 @@ pub struct SystemConfig {
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub should_use_hypersync_client_decoder: bool,
+    pub handlers: Option<String>,
 }
 
 //Getter methods for system config
@@ -497,20 +498,6 @@ impl SystemConfig {
         .context("Failed creating a relative path to schema")?;
 
         Ok(schema_path)
-    }
-
-    pub fn get_all_paths_to_handlers(&self) -> Result<Vec<PathBuf>> {
-        let mut all_paths_to_handlers = self
-            .get_contracts()
-            .into_iter()
-            .map(|c| c.get_path_to_handler(&self.parsed_project_paths))
-            .collect::<Result<HashSet<_>>>()?
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        all_paths_to_handlers.sort();
-
-        Ok(all_paths_to_handlers)
     }
 
     pub fn get_all_paths_to_abi_files(&self) -> Result<Vec<PathBuf>> {
@@ -733,7 +720,8 @@ impl SystemConfig {
                             true
                         }
                     },
-                    human_config,
+                    handlers: evm_config.handlers.clone(),
+                    human_config: human_config,
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -872,7 +860,8 @@ impl SystemConfig {
                     preload_handlers: fuel_config.preload_handlers.unwrap_or(false),
                     lowercase_addresses: false,
                     should_use_hypersync_client_decoder: true,
-                    human_config,
+                    handlers: fuel_config.handlers.clone(),
+                    human_config: human_config,
                 })
             }
         }
@@ -1193,13 +1182,18 @@ impl Abi {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Contract {
     pub name: ContractNameKey,
-    pub handler_path: String,
+    pub handler_path: Option<String>,
     pub abi: Abi,
     pub events: Vec<Event>,
 }
 
 impl Contract {
-    pub fn new(name: String, handler_path: String, events: Vec<Event>, abi: Abi) -> Result<Self> {
+    pub fn new(
+        name: String,
+        handler_path: Option<String>,
+        events: Vec<Event>,
+        abi: Abi,
+    ) -> Result<Self> {
         // TODO: Validatate that all event names are unique
         validate_names_valid_rescript(
             &events.iter().map(|e| e.name.clone()).collect(),
@@ -1212,19 +1206,6 @@ impl Contract {
             handler_path,
             abi,
         })
-    }
-
-    pub fn get_path_to_handler(&self, project_paths: &ParsedProjectPaths) -> Result<PathBuf> {
-        let handler_path = path_utils::get_config_path_relative_to_root(
-            project_paths,
-            PathBuf::from(&self.handler_path),
-        )
-        .context(format!(
-            "Failed creating a relative path to handler in contract {}",
-            self.name
-        ))?;
-
-        Ok(handler_path)
     }
 
     pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
@@ -2108,6 +2089,7 @@ mod test {
             raw_events: None,
             preload_handlers: None,
             address_format: None,
+            handlers: None,
         };
 
         let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
@@ -2155,6 +2137,7 @@ mod test {
             raw_events: None,
             preload_handlers: None,
             address_format: None,
+            handlers: None,
         };
 
         let system_config_with_output = SystemConfig::from_human_config(

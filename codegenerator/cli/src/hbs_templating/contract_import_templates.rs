@@ -239,6 +239,128 @@ impl Contract {
             imported_events,
         })
     }
+
+    /// Generates TypeScript handler file content for this contract
+    pub fn generate_typescript_handler_content(&self, _is_fuel: bool) -> String {
+        let mut content = String::new();
+
+        // Header comment
+        content.push_str("/*\n");
+        content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
+        content.push_str(" */\n");
+
+        // Import statement for contract module
+        content.push_str(&format!(
+            "import {{ {} }} from \"generated\";\n",
+            self.name.capitalized
+        ));
+
+        // Import type statement for entity types
+        if !self.imported_events.is_empty() {
+            content.push_str("import type {\n");
+            for event in &self.imported_events {
+                content.push_str(&format!("  {}_{},\n", self.name.capitalized, event.name));
+            }
+            content.push_str("} from \"generated\";\n");
+        }
+
+        // Handler registrations
+        for event in &self.imported_events {
+            content.push_str("\n");
+            content.push_str(&format!(
+                "{}.{}.handler(async ({{ event, context }}) => {{\n",
+                self.name.capitalized, event.name
+            ));
+            content.push_str(&format!(
+                "  const entity: {}_{} = {{\n",
+                self.name.capitalized, event.name
+            ));
+            content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
+
+            // Add params
+            for param in &event.params {
+                content.push_str(&format!(
+                    "    {}: event.params.{}",
+                    param.entity_key.uncapitalized, param.event_key.original
+                ));
+
+                // Add tuple accessor indexes if present
+                if let Some(indexes) = &param.tuple_param_accessor_indexes {
+                    for index in indexes {
+                        content.push_str(&format!("[{}]", index));
+                    }
+                }
+                content.push_str(",\n");
+            }
+
+            content.push_str("  };\n\n");
+            content.push_str(&format!(
+                "  context.{}_{}.set(entity);\n",
+                self.name.capitalized, event.name
+            ));
+            content.push_str("});\n");
+        }
+
+        content
+    }
+
+    /// Generates ReScript handler file content for this contract
+    pub fn generate_rescript_handler_content(&self, _is_fuel: bool) -> String {
+        let mut content = String::new();
+
+        // Header comment
+        content.push_str("/*\n");
+        content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
+        content.push_str(" */\n");
+
+        // Handler registrations
+        for event in &self.imported_events {
+            content.push_str("\n");
+            content.push_str(&format!(
+                "Handlers.{}.{}.handler(async ({{event, context}}) => {{\n",
+                self.name.capitalized, event.name
+            ));
+            content.push_str(&format!(
+                "  let entity: Types.{}_{} = {{\n",
+                self.name.uncapitalized, event.name
+            ));
+            content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
+
+            // Add params
+            for param in &event.params {
+                content.push_str(&format!(
+                    "    {}: event.params.{}",
+                    param.entity_key.uncapitalized, param.event_key.uncapitalized
+                ));
+
+                // Add tuple accessor indexes if present
+                if let Some(indexes) = &param.tuple_param_accessor_indexes {
+                    for index in indexes {
+                        content.push_str(&format!(
+                            "\n      ->Utils.Tuple.get({})->Belt.Option.getUnsafe",
+                            index
+                        ));
+                    }
+                }
+
+                // Add address conversion if needed
+                if param.is_eth_address {
+                    content.push_str("\n      ->Address.toString");
+                }
+
+                content.push_str(",\n");
+            }
+
+            content.push_str("  }\n\n");
+            content.push_str(&format!(
+                "  context.{}_{}.set(entity)\n",
+                self.name.uncapitalized, event.name
+            ));
+            content.push_str("})\n");
+        }
+
+        content
+    }
 }
 
 #[derive(Serialize)]
@@ -286,12 +408,12 @@ impl Event {
                 };
                 format!(
                     "{event_module}.mock({{data: {data_code} /* It mocks event fields with \
-                     default values, so you only need to provide data */}})"
+                   default values, so you only need to provide data */}})"
                 )
             } // FIXME: Generate default data
             false => format!(
                 "{event_module}.createMockEvent({{/* It mocks event fields with default values. \
-                 You can overwrite them if you need */}})"
+               You can overwrite them if you need */}})"
             ),
         }
     }
@@ -391,10 +513,46 @@ impl AutoSchemaHandlerTemplate {
         })
     }
 
+    /// Generates individual handler files for each contract in src/handlers/
+    pub fn generate_handler_files(
+        &self,
+        lang: &Language,
+        project_root: &Path,
+        is_fuel: bool,
+    ) -> Result<()> {
+        use std::fs;
+
+        // Create src/handlers directory
+        let handlers_dir = project_root.join("src").join("handlers");
+        fs::create_dir_all(&handlers_dir).context(format!(
+            "Failed to create handlers directory at {:?}",
+            handlers_dir
+        ))?;
+
+        // Generate a handler file for each contract
+        for contract in &self.imported_contracts {
+            let (file_extension, content) = match lang {
+                Language::TypeScript => {
+                    ("ts", contract.generate_typescript_handler_content(is_fuel))
+                }
+                Language::ReScript => ("res", contract.generate_rescript_handler_content(is_fuel)),
+            };
+
+            let file_name = format!("{}.{}", contract.name.capitalized, file_extension);
+            let file_path = handlers_dir.join(&file_name);
+
+            fs::write(&file_path, content)
+                .context(format!("Failed to write handler file at {:?}", file_path))?;
+        }
+
+        Ok(())
+    }
+
     pub fn generate_contract_import_templates(
         &self,
         lang: &Language,
         project_root: &Path,
+        is_fuel: bool,
     ) -> Result<()> {
         let template_dirs = TemplateDirs::new();
 
@@ -412,6 +570,11 @@ impl AutoSchemaHandlerTemplate {
             .extract(&project_root)
             .context("Failed extracting shared static files")?;
 
+        // Generate per-contract handler files in src/handlers/
+        self.generate_handler_files(lang, project_root, is_fuel)
+            .context("Failed generating handler files")?;
+
+        // Generate test files using Handlebars (still needed)
         let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
         let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, project_root);
         hbs.generate_hbs_templates().context(format!(
@@ -568,7 +731,7 @@ mod test {
         assert_eq!(
             Event::get_entity_id_code(!IS_FUEL, &Language::ReScript),
             "`${event.chainId->Belt.Int.toString}_${event.block.number->Belt.Int.\
-             toString}_${event.logIndex->Belt.Int.toString}`"
+           toString}_${event.logIndex->Belt.Int.toString}`"
                 .to_string()
         );
 

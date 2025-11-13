@@ -18,7 +18,6 @@ pub struct PersistedState {
     pub envio_version: String,
     pub config_hash: HashString,
     pub schema_hash: HashString,
-    pub handler_files_hash: HashString,
     pub abi_files_hash: HashString,
 }
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
@@ -31,7 +30,6 @@ pub enum StateField {
     Config,
     Schema,
     AbiFiles,
-    HandlerFiles,
 }
 
 ///Gets the path to the persisted file in generated folder
@@ -48,7 +46,6 @@ impl PersistedState {
             StateField::EnvioVersion => self.envio_version == other_state.envio_version,
             StateField::Schema => self.schema_hash == other_state.schema_hash,
             StateField::AbiFiles => self.abi_files_hash == other_state.abi_files_hash,
-            StateField::HandlerFiles => self.handler_files_hash == other_state.handler_files_hash,
         }
     }
 
@@ -73,15 +70,10 @@ impl PersistedState {
             .get_path_to_schema()
             .context("Failed getting path to schema")?;
 
-        let all_handler_paths = config
-            .get_all_paths_to_handlers()
-            .context("Failed getting handler paths")?;
-
         let all_abi_file_paths = config
             .get_all_paths_to_abi_files()
             .context("Failed getting abi file paths")?;
 
-        const HANDLER_FILES_MUST_EXIST: bool = false;
         const ABI_FILES_MUST_EXIST: bool = true;
 
         Ok(PersistedState {
@@ -89,11 +81,6 @@ impl PersistedState {
             config_hash: HashString::from_string(config.human_config.to_string()),
             schema_hash: HashString::from_file_path(schema_path.clone())
                 .context("Failed hashing schema file")?,
-            handler_files_hash: HashString::from_file_paths(
-                all_handler_paths,
-                HANDLER_FILES_MUST_EXIST,
-            )
-            .context("Failed hashing handler files")?,
             abi_files_hash: HashString::from_file_paths(all_abi_file_paths, ABI_FILES_MUST_EXIST)
                 .context("Failed hashing abi files")?,
         })
@@ -188,7 +175,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
@@ -197,7 +183,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<CHANGED_HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
@@ -217,7 +202,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
@@ -226,7 +210,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<CHANGED_HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
@@ -236,7 +219,7 @@ mod test {
 
         assert!(
             !should_run_codegen,
-            "should run codegen should be false since only handler file changed"
+            "should run codegen should be false since nothing changed"
         );
     }
 
@@ -246,7 +229,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
@@ -255,7 +237,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<CHANGED_HASH_STRING>",
-            "handler_files_hash": "<CHANGED_HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
@@ -275,7 +256,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();
@@ -284,7 +264,6 @@ mod test {
             "envio_version": "0.0.1",
             "config_hash": "<HASH_STRING>",
             "schema_hash": "<HASH_STRING>",
-            "handler_files_hash": "<HASH_STRING>",
             "abi_files_hash": "<HASH_STRING>",
         }))
         .unwrap();

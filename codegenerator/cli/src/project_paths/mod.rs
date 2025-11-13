@@ -8,7 +8,6 @@ use crate::{
     },
 };
 
-pub mod handler_paths;
 pub mod path_utils;
 
 #[derive(Debug, PartialEq, Clone)]

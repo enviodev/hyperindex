@@ -1,5 +1,4 @@
 use crate::{
-    cli_args::init_config::Language,
     config_parsing::{
         chain_helpers::{self, GraphNetwork},
         human_config::{
@@ -109,14 +108,6 @@ pub struct CallHandler {
 #[derive(Debug, Deserialize, Clone)]
 pub struct BlockHandler {
     pub handler: String,
-}
-
-// Logic to get the event handler directory based on the language
-fn get_event_handler_directory(language: &Language) -> String {
-    match language {
-        Language::ReScript => "./src/EventHandlers.res.js".to_string(),
-        Language::TypeScript => "./src/EventHandlers.ts".to_string(),
-    }
 }
 
 // Function to replace unsupported field types from schema
@@ -243,7 +234,6 @@ fn valid_ipfs_cid(cid: &str) -> bool {
 pub async fn generate_config_from_subgraph_id(
     project_root_path: &PathBuf,
     subgraph_id: &str,
-    language: &Language,
 ) -> anyhow::Result<HumanConfig> {
     if !valid_ipfs_cid(subgraph_id) {
         return Err(anyhow!(
@@ -285,6 +275,7 @@ pub async fn generate_config_from_subgraph_id(
         raw_events: None,
         preload_handlers: Some(true),
         address_format: None,
+        handlers: None,
     };
     let mut networks: Vec<Network> = vec![];
 
@@ -362,7 +353,7 @@ pub async fn generate_config_from_subgraph_id(
                         address: vec![data_source.source.address.to_string()].into(),
                         config: Some(ContractConfig {
                             abi_file_path: Some(format!("abis/{}.json", data_source.name)),
-                            handler: get_event_handler_directory(language),
+                            handler: None,
                             events,
                         }),
                         start_block: None,
@@ -444,12 +435,9 @@ async fn fetch_ipfs_file_and_write_to_system(
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
     use super::GraphManifest;
-    use crate::{
-        cli_args::init_config::Language,
-        config_parsing::{
-            chain_helpers::{GraphNetwork, Network},
-            graph_migration::get_ipfs_id_from_file_path,
-        },
+    use crate::config_parsing::{
+        chain_helpers::{GraphNetwork, Network},
+        graph_migration::get_ipfs_id_from_file_path,
     };
     use std::{collections::HashMap, path::PathBuf};
     use tempdir::TempDir;
@@ -461,9 +449,8 @@ mod test {
         let temp_dir = TempDir::new("temp_graph_migration_folder").unwrap();
         // subgraph ID of USDC on Ethereum mainnet
         let cid: &str = "QmU5V3jy56KnFbxX2uZagvMwocYZASzy1inX828W2XWtTd";
-        let language: Language = Language::ReScript;
         let project_root = PathBuf::from(temp_dir.path());
-        super::generate_config_from_subgraph_id(&project_root, cid, &language)
+        super::generate_config_from_subgraph_id(&project_root, cid)
             .await
             .unwrap();
     }
@@ -548,16 +535,6 @@ mod test {
         get_ipfs_id_from_file_path(non_unicode_string);
     }
 
-    // Unit test to check that the correct event handler directory is returned based on the language
-    #[test]
-    fn test_get_event_handler_directory() {
-        let language_1: Language = Language::ReScript;
-        let language_2: Language = Language::TypeScript;
-        let event_handler_directory_1 = super::get_event_handler_directory(&language_1);
-        let event_handler_directory_2 = super::get_event_handler_directory(&language_2);
-        assert_eq!(event_handler_directory_1, "./src/EventHandlers.res.js");
-        assert_eq!(event_handler_directory_2, "./src/EventHandlers.ts");
-    }
     // Unit test to check that the correct network contract hashmap is generated
     #[tokio::test]
     async fn test_generate_network_contract_hashmap() {

@@ -1,5 +1,7 @@
 import assert from "assert";
-import { TestHelpers, User } from "generated";
+import { TestHelpers } from "generated";
+import type { User } from "generated";
+
 const { MockDb, Greeter, Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {

@@ -229,7 +229,7 @@ let main = async () => {
     // and prevent exposing the console to public, when creating a real deployment.
     let isDevelopmentMode = Env.Db.password === "testing"
 
-    let indexer = Generated.getIndexer()
+    let indexer = await Generated.getIndexer()
 
     let gsManagerRef = ref(None)
 

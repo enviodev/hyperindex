@@ -69,7 +69,7 @@ describe("E2E Integration Test", () => {
       }
     }
 
-    let indexer = Generated.getIndexer()
+    let indexer = await Generated.getIndexer()
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
