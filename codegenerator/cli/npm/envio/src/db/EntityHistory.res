@@ -78,7 +78,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
     }
   )
 
-  let actionField = mkField(changeFieldName, Custom(RowAction.name), ~fieldSchema=S.never)
+  let actionField = mkField(changeFieldName, Enum({name: RowAction.name}), ~fieldSchema=S.never)
 
   let checkpointIdField = mkField(
     checkpointIdFieldName,
@@ -229,7 +229,7 @@ let pruneStaleEntityHistory = (
 let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (
-  SELECT UNNEST($1::${(Text: Table.pgFieldType :> string)}[]) AS id
+  SELECT UNNEST($1::${(Text: Postgres.columnType :> string)}[]) AS id
 ),
 missing_history AS (
   SELECT e.*

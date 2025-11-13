@@ -3,48 +3,19 @@ open Belt
 type primitive
 type derived
 
-// @tag("type")
-// type rec fieldType =
-//   | @as("string") String
-//   | @as("bigint") BigInt({precision?: int})
-//   | @as("bigDecimal") BigDecimal({precision?: int, scale?: int})
-//   | @as("int32") Int32
-//   | @as("float8") Float8
-//   | @as("boolean") Boolean
-//   // | @as("array") Array({items: fieldType})
-//   | @as("enum") Enum({ref: string})
-//   | @as("entity") Entity({ref: string})
-//   | @as("serial") Serial
-//   | @as("date") Date
-//   | @as("json") Json
-
-@unboxed
+@tag("type")
 type fieldType =
-  | @as("TEXT") String
-  | @as("BOOLEAN") Boolean
-  | @as("INTEGER") Int32
-  | @as("DOUBLE PRECISION") Float8
-  | @as("NUMERIC") BigInt
-  | @as("SERIAL") Serial
-  | @as("JSONB") Json
-  | @as("TIMESTAMP WITH TIME ZONE") Date
-  | @as("TIMESTAMP WITH TIME ZONE NULL") DateNull
-  | Custom(string)
-
-@unboxed
-type pgFieldType =
-  | @as("INTEGER") Integer
-  | @as("BIGINT") BigInt
-  | @as("BOOLEAN") Boolean
-  | @as("NUMERIC") Numeric
-  | @as("DOUBLE PRECISION") DoublePrecision
-  | @as("TEXT") Text
-  | @as("SERIAL") Serial
-  | @as("JSONB") JsonB
-  | @as("TIMESTAMP WITH TIME ZONE") Timestamp
-  | @as("TIMESTAMP") TimestampWithoutTimezone
-  | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithNullTimezone
-  | Custom(string)
+  | String
+  | Boolean
+  | Int32
+  | Float8
+  | BigInt({precision?: int})
+  | BigDecimal({config?: (int, int)}) // (precision, scale)
+  | Serial
+  | Json
+  | Date
+  | Enum({name: string})
+  | Entity({name: string})
 
 type field = {
   fieldName: string,
@@ -113,8 +84,49 @@ let getFieldName = fieldOrDerived =>
   | DerivedFrom({fieldName}) => fieldName
   }
 
-let getFieldType = (field: field) => {
-  (field.fieldType :> string) ++ (field.isArray ? "[]" : "")
+let getPgFieldType = (
+  ~fieldType: fieldType,
+  ~pgSchema,
+  ~isArray,
+  ~isNumericArrayAsText,
+  ~isNullable,
+) => {
+  let columnType = switch fieldType {
+  | String => (Postgres.Text :> string)
+  | Boolean => (Postgres.Boolean :> string)
+  | Int32 => (Postgres.Integer :> string)
+  | Float8 => (Postgres.DoublePrecision :> string)
+  | BigInt({?precision}) =>
+    (Postgres.Numeric :> string) ++
+    switch precision {
+    | Some(precision) => `(${precision->Int.toString}, 0)` // scale is always 0 for BigInt
+    | None => ""
+    }
+
+  | BigDecimal({?config}) =>
+    (Postgres.Numeric :> string) ++
+    switch config {
+    | Some((precision, scale)) => `(${precision->Int.toString}, ${scale->Int.toString})`
+    | None => ""
+    }
+
+  | Serial => (Postgres.Serial :> string)
+  | Json => (Postgres.JsonB :> string)
+  | Date =>
+    (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)
+  | Enum({name}) => `"${pgSchema}".${name}`
+  | Entity(_) => (Postgres.Text :> string) // FIXME: Will it work correctly if id is not a text column?
+  }
+
+  // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
+  let isNumericAsText = isArray && isNumericArrayAsText
+  let columnType = if columnType == (Postgres.Numeric :> string) && isNumericAsText {
+    (Postgres.Text :> string)
+  } else {
+    columnType
+  }
+
+  columnType ++ (isArray ? "[]" : "")
 }
 
 type table = {
@@ -269,15 +281,20 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
         ->Js.Array2.push(
           switch field {
           | Field(f) =>
+            let pgFieldType = getPgFieldType(
+              ~fieldType=f.fieldType,
+              ~pgSchema,
+              ~isArray=true,
+              ~isNullable=f.isNullable,
+              ~isNumericArrayAsText=false, // TODO: Test whether it should be passed via args and match the column type
+            )
             switch f.fieldType {
-            // The case for `BigDecimal! @config(precision: 10, scale: 8)`
-            | Custom(fieldType) if fieldType->Js.String2.startsWith("NUMERIC(") => fieldType
-            | Custom(fieldType) => `${(Text :> string)}[]::"${pgSchema}".${(fieldType :> string)}`
-            | Boolean => `${(Integer :> string)}[]::${(f.fieldType :> string)}`
-            | fieldType => (fieldType :> string)
+            | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
+            | Boolean => `${(Integer: Postgres.columnType :> string)}[]::${pgFieldType}`
+            | _ => pgFieldType
             }
-          | DerivedFrom(_) => (Text :> string)
-          } ++ "[]",
+          | DerivedFrom(_) => (Text: Postgres.columnType :> string) ++ "[]"
+          },
         )
         ->ignore
         dict->Js.Dict.set(location, s.matches(schema->coerceSchema))

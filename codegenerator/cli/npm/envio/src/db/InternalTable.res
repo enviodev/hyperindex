@@ -151,7 +151,7 @@ module Chains = {
       // null during historical sync, set to current time when sync is complete
       mkField(
         (#ready_at: field :> string),
-        DateNull,
+        Date,
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
@@ -443,7 +443,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
 
   let makeInsertCheckpointQuery = (~pgSchema) => {
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(Integer :> string)}[],$2::${(Integer :> string)}[],$3::${(Integer :> string)}[],$4::${(Text :> string)}[],$5::${(Integer :> string)}[]);`
+SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -585,7 +585,7 @@ module RawEvents = {
     "raw_events",
     ~fields=[
       mkField("chain_id", Int32, ~fieldSchema=S.int),
-      mkField("event_id", BigInt, ~fieldSchema=S.bigint),
+      mkField("event_id", BigInt({}), ~fieldSchema=S.bigint),
       mkField("event_name", String, ~fieldSchema=S.string),
       mkField("contract_name", String, ~fieldSchema=S.string),
       mkField("block_number", Int32, ~fieldSchema=S.int),

@@ -23,23 +23,22 @@ impl Primitive {
             Self::Boolean => "Boolean".to_string(),
             Self::String => "String".to_string(),
             Self::Int32 => "Int32".to_string(),
-            Self::BigInt { precision: None } => "BigInt".to_string(),
+            Self::BigInt { precision: None } => "BigInt({})".to_string(),
             Self::BigInt {
                 precision: Some(precision),
             } => {
-                //  We leave the scale as zero since it is not relevant for integers.
-                format!("Custom(\"NUMERIC({}, {})\")", precision, 0)
+                format!("BigInt({{precision: {precision}}})")
             }
-            Self::BigDecimal(None) => "BigInt".to_string(),
+            Self::BigDecimal(None) => "BigDecimal({})".to_string(),
             Self::BigDecimal(Some((precision, scale))) => {
-                format!("Custom(\"NUMERIC({}, {})\")", precision, scale)
+                format!("BigDecimal({{config: ({precision}, {scale})}})")
             }
             Self::Serial => "Serial".to_string(),
             Self::Json => "Json".to_string(),
             Self::Date => "Date".to_string(),
             Self::Float8 => "Float8".to_string(),
-            Self::Enum(enum_name) => format!("Custom(Enums.{enum_name}.config.name)"),
-            Self::Entity(_) => format!("String"),
+            Self::Enum(enum_name) => format!("Enum({{name: \"{enum_name}\"}})"),
+            Self::Entity(entity_name) => format!("Entity({{name: \"{entity_name}\"}})"),
         }
     }
 }

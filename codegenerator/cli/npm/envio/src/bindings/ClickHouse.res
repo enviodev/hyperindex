@@ -24,40 +24,19 @@ external close: client => promise<unit> = "close"
 let mapFieldTypeToClickHouse = (fieldType: Table.fieldType, ~isNullable: bool): string => {
   let baseType = switch fieldType {
   | Int32 => "Int32"
-  | BigInt => "Int64" // FIXME: This is not correct, we need to use higher precision
+  | BigInt({}) => "Int64" // FIXME: This is not correct, we need to use higher precision
   | Boolean => "UInt8"
   | Float8 => "Float64" // FIXME: This is not correct, we need to use higher precision
   | String => "String"
   | Serial => "Int32"
   | Json => "String"
-  | Date
-  | DateNull => "DateTime64(3, 'UTC')"
-  | Custom(name) =>
-    // Check if it's a NUMERIC with precision
-    if name->Js.String2.startsWith("NUMERIC(") {
-      // Extract precision from NUMERIC(p, s) or use default
-      name
-      ->Js.String2.replace("NUMERIC", "Decimal128")
-      ->Js.String2.replaceByRe(%re("/\((\d+),\s*(\d+)\)/"), "(18)")
-    } else {
-      // For enums and other custom types, return String as fallback
-      "String"
-    }
+  | Date => "DateTime64(3, 'UTC')"
+  | Enum(_) => "String"
+  | Entity(_) => "String"
+  | BigDecimal({}) => "Decimal128"
   }
 
   isNullable ? `Nullable(${baseType})` : baseType
-}
-
-// Helper to check if a field has an enum type
-let hasEnumField = (entity: Internal.entityConfig, ~enumNames: array<string>): bool => {
-  entity.table
-  ->Table.getFields
-  ->Belt.Array.some(field =>
-    switch field.fieldType {
-    | Table.Custom(name) => enumNames->Js.Array2.includes(name)
-    | _ => false
-    }
-  )
 }
 
 // Generate CREATE TABLE query for entity history table
@@ -103,7 +82,7 @@ let initialize = async (
   ~username: string,
   ~password: string,
   ~entities: array<Internal.entityConfig>,
-  ~enums: array<Internal.enumConfig<Internal.enum>>,
+  ~enums as _: array<Internal.enumConfig<Internal.enum>>,
 ) => {
   let client = createClient({
     url: host,
@@ -116,30 +95,9 @@ let initialize = async (
     await client->exec({query: `CREATE DATABASE ${database}`})
     await client->exec({query: `USE ${database}`})
 
-    // Get enum names for filtering
-    let enumNames = enums->Belt.Array.map(e => e.name)
-
-    // Filter entities: skip those with enum fields or array fields
-    let validEntities = entities->Belt.Array.keep(entity => {
-      let hasEnums = hasEnumField(entity, ~enumNames)
-      let hasArrays =
-        entity.entityHistory.table
-        ->Table.getFields
-        ->Belt.Array.some(field => field.isArray)
-
-      !hasEnums && !hasArrays
-    })
-
-    Logging.trace(
-      `Creating ClickHouse history tables for ${validEntities
-        ->Belt.Array.length
-        ->Belt.Int.toString} entities (filtered ${(entities->Belt.Array.length -
-          validEntities->Belt.Array.length)->Belt.Int.toString} entities with enums/arrays)`,
-    )
-
     // Create tables for valid entities
-    for i in 0 to validEntities->Belt.Array.length - 1 {
-      let entity = validEntities->Belt.Array.getUnsafe(i)
+    for i in 0 to entities->Belt.Array.length - 1 {
+      let entity = entities->Belt.Array.getUnsafe(i)
       switch makeClickHouseHistoryTableQuery(entity, ~database) {
       | Some(query) => {
           Logging.trace(`Creating ClickHouse table: ${entity.name}`)

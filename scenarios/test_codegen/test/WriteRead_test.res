@@ -48,9 +48,8 @@ describe("Write/read tests", () => {
       bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
       optBigDecimal: Some(BigDecimal.fromStringUnsafe("2.2")),
       arrayOfBigDecimals: [BigDecimal.fromStringUnsafe("3.3"), BigDecimal.fromStringUnsafe("4.4")],
-      //TODO: get timestamp working
-      // timestamp: mockDate(~day=1),
-      // optTimestamp: Some(mockDate(~day=2)),
+      timestamp: mockDate(~day=1),
+      optTimestamp: Some(mockDate(~day=2)),
       // arrayOfTimestamps: [Js.Date.fromFloat(3.3), Js.Date.fromFloat(4.4)],
       // arrayOfTimestamps: [],
       json: %raw(`{"foo": ["bar"]}`),
@@ -74,6 +73,8 @@ describe("Write/read tests", () => {
       bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
       enumField: ADMIN,
       optEnumField: Some(ADMIN),
+      timestamp: mockDate(~day=1),
+      optTimestamp: Some(mockDate(~day=2)),
     }
 
     sourceMock.resolveGetItemsOrThrow([
