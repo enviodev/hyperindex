@@ -562,6 +562,7 @@ let rec writeBatch = async (
   ~allEntities,
   ~setEffectCacheOrThrow,
   ~batchCache,
+  ~mirror: option<Mirror.t>=?,
   ~escapeTables=?,
 ) => {
   try {
@@ -686,6 +687,21 @@ let rec writeBatch = async (
                 ),
               )
               ->ignore
+
+              // Mirror to ClickHouse if configured
+              switch mirror {
+              | Some(mirror) =>
+                promises
+                ->Js.Array2.push(
+                  mirror.setOrThrow(
+                    ~items=batchSetUpdates,
+                    ~itemSchema=entityConfig.entityHistory.setUpdateSchema,
+                    ~table=entityConfig.entityHistory.table,
+                  ),
+                )
+                ->ignore
+              | None => ()
+              }
             }
           }
 
@@ -864,6 +880,7 @@ let rec writeBatch = async (
       ~setEffectCacheOrThrow,
       ~batchCache,
       ~allEntities,
+      ~mirror?,
     )
   }
 }
@@ -1375,6 +1392,7 @@ let make = (
       ~allEntities,
       ~setEffectCacheOrThrow,
       ~batchCache,
+      ~mirror?,
     )
   }
 

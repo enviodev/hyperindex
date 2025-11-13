@@ -20,6 +20,15 @@ external exec: (client, execParams) => promise<unit> = "exec"
 @send
 external close: client => promise<unit> = "close"
 
+type insertParams<'a> = {
+  table: string,
+  values: array<'a>,
+  format: string,
+}
+
+@send
+external insert: (client, insertParams<'a>) => promise<unit> = "insert"
+
 let getClickHouseFieldType = (
   ~fieldType: Table.fieldType,
   ~isNullable: bool,
@@ -60,6 +69,39 @@ let getClickHouseFieldType = (
   isNullable ? `Nullable(${baseType})` : baseType
 }
 
+let setOrThrow = async (
+  client,
+  ~items: array<'item>,
+  ~table: Table.table,
+  ~itemSchema: S.t<'item>,
+  ~database: string,
+) => {
+  if items->Array.length === 0 {
+    ()
+  } else {
+    try {
+      // Convert entity updates to ClickHouse row format
+      let values = items->Js.Array2.map(item => {
+        item->S.reverseConvertOrThrow(itemSchema)
+      })
+
+      await client->insert({
+        table: `${database}.\`${table.tableName}\``,
+        values,
+        format: "JSONEachRow",
+      })
+    } catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert items into ClickHouse table "${table.tableName}"`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
+    }
+  }
+}
+
 // Generate CREATE TABLE query for entity history table
 let makeCreateHistoryTableQuery = (entity: Internal.entityConfig, ~database: string) => {
   let historyTable = entity.entityHistory.table
@@ -94,19 +136,11 @@ ORDER BY (id, ${EntityHistory.checkpointIdFieldName})`
 
 // Initialize ClickHouse tables for entities
 let initialize = async (
-  ~host: string,
+  client,
   ~database: string,
-  ~username: string,
-  ~password: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Internal.enumConfig<Internal.enum>>,
 ) => {
-  let client = createClient({
-    url: host,
-    username,
-    password,
-  })
-
   try {
     await client->exec({query: `DROP DATABASE IF EXISTS ${database}`})
     await client->exec({query: `CREATE DATABASE ${database}`})
@@ -117,13 +151,11 @@ let initialize = async (
         client->exec({query: makeCreateHistoryTableQuery(entity, ~database)})
       ),
     )->Promise.ignoreValue
-    await client->close
 
     Logging.trace("ClickHouse mirror initialization completed successfully")
   } catch {
   | exn => {
       Logging.errorWithExn(exn, "Failed to initialize ClickHouse mirror")
-      await client->close
       Js.Exn.raiseError("ClickHouse initialization failed")
     }
   }
