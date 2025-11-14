@@ -40,16 +40,23 @@ let getClickHouseFieldType = (
   | Serial => "Int32"
   | BigInt({?precision}) =>
     switch precision {
-    | None => `UInt256` // FIXME: Should use String here?
-    | Some(precision) => `Decimal(${precision->Js.Int.toString},0)`
+    | None => "String" // Fallback for unbounded BigInt
+    | Some(precision) =>
+      if precision > 38 {
+        "String"
+      } else {
+        `Decimal(${precision->Js.Int.toString},0)`
+      }
     }
   | BigDecimal({?config}) =>
     switch config {
-    | None =>
-      Js.Exn.raiseError(
-        "Please provide a @config(precision: <precision>, scale: <scale>) directive on the BigDecimal field for ClickHouse to work correctly",
-      )
-    | Some((precision, scale)) => `Decimal(${precision->Js.Int.toString},${scale->Js.Int.toString})`
+    | None => "String" // Fallback for unbounded BigInt
+    | Some((precision, scale)) =>
+      if precision > 38 || scale > precision {
+        "String"
+      } else {
+        `Decimal(${precision->Js.Int.toString},${scale->Js.Int.toString})`
+      }
     }
   | Boolean => "Bool"
   | Number => "Float64"
