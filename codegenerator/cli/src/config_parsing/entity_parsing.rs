@@ -1962,7 +1962,7 @@ type RelatedEntity {
             .unwrap();
 
         assert_eq!(pg_field.field_name, "relatedEntity");
-        assert_eq!(pg_field.field_type, PGPrimitive::String);
+        assert_eq!(pg_field.field_type, PGPrimitive::Entity("RelatedEntity".to_string()));
         assert!(!pg_field.is_index);
         assert!(!pg_field.is_array);
         assert!(!pg_field.is_nullable);

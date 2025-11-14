@@ -367,6 +367,8 @@ let registerProcessEventBatchMetrics = (
   Prometheus.incrementLoadEntityDurationCounter(~duration=loadDuration)
   Prometheus.incrementEventRouterDurationCounter(~duration=handlerDuration)
   Prometheus.incrementExecuteBatchDurationCounter(~duration=dbWriteDuration)
+  Prometheus.incrementStorageWriteTimeCounter(~duration=dbWriteDuration)
+  Prometheus.incrementStorageWriteCounter()
 }
 
 type logPartitionInfo = {
