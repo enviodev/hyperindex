@@ -32,12 +32,13 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
       let fieldName = field->Table.getDbFieldName
 
       {
-        `"${fieldName}" ${switch fieldType {
-          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${pgSchema}".${name}`
-          // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
-          | Numeric if isArray && isNumericArrayAsText => (Table.Text :> string)
-          | _ => (fieldType :> string)
-          }}${isArray ? "[]" : ""}${switch defaultValue {
+        `"${fieldName}" ${Table.getPgFieldType(
+            ~fieldType,
+            ~pgSchema,
+            ~isArray,
+            ~isNullable,
+            ~isNumericArrayAsText,
+          )}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
           | None => isNullable ? `` : ` NOT NULL`
           }}`
@@ -554,13 +555,16 @@ let executeSet = (
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
+  ~rawEvents,
   ~pgSchema,
-  ~inMemoryStore: InMemoryStore.t,
+  ~rollbackTargetCheckpointId,
   ~isInReorgThreshold,
   ~config: Config.t,
-  ~allEntities,
+  ~allEntities: array<Internal.entityConfig>,
   ~setEffectCacheOrThrow,
-  ~batchCache,
+  ~updatedEffectsCache,
+  ~updatedEntities: array<Persistence.updatedEntity>,
+  ~mirrorPromise: option<promise<unit>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -578,25 +582,17 @@ let rec writeBatch = async (
           ~pgSchema,
         )
       },
-      ~items=inMemoryStore.rawEvents->InMemoryTable.values,
+      ~items=rawEvents,
     )
 
-    let setEntities = allEntities->Belt.Array.map(entityConfig => {
+    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
-      let rows =
-        inMemoryStore
-        ->InMemoryStore.getInMemTable(~entityConfig)
-        ->InMemoryTable.Entity.rows
-
-      rows->Js.Array2.forEach(row => {
+      updates->Js.Array2.forEach(row => {
         switch row {
-        | Updated({latest: {entityUpdateAction: Set(entity)}}) =>
-          entitiesToSet->Belt.Array.push(entity)
-        | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
-          idsToDelete->Belt.Array.push(entityId)
-        | _ => ()
+        | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
+        | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
         }
       })
 
@@ -616,29 +612,28 @@ let rec writeBatch = async (
             let batchDeleteCheckpointIds = []
             let batchDeleteEntityIds = []
 
-            rows->Js.Array2.forEach(row => {
-              switch row {
-              | Updated({history, containsRollbackDiffChange}) =>
+            updates->Js.Array2.forEach(update => {
+              switch update {
+              | {history, containsRollbackDiffChange} =>
                 history->Js.Array2.forEach(
-                  (entityUpdate: EntityHistory.entityUpdate<'a>) => {
+                  (change: Change.t<'a>) => {
                     if !containsRollbackDiffChange {
                       // For every update we want to make sure that there's an existing history item
                       // with the current entity state. So we backfill history with checkpoint id 0,
                       // before writing updates. Don't do this if the update has a rollback diff change.
-                      backfillHistoryIds->Utils.Set.add(entityUpdate.entityId)->ignore
+                      backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
                     }
-                    switch entityUpdate.entityUpdateAction {
-                    | Delete => {
-                        batchDeleteEntityIds->Belt.Array.push(entityUpdate.entityId)->ignore
+                    switch change {
+                    | Delete({entityId}) => {
+                        batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
                         batchDeleteCheckpointIds
-                        ->Belt.Array.push(entityUpdate.checkpointId)
+                        ->Belt.Array.push(change->Change.getCheckpointId)
                         ->ignore
                       }
-                    | Set(_) => batchSetUpdates->Js.Array2.push(entityUpdate)->ignore
+                    | Set(_) => batchSetUpdates->Js.Array2.push(change)->ignore
                     }
                   },
                 )
-              | _ => ()
               }
             })
 
@@ -667,8 +662,8 @@ let rec writeBatch = async (
             if batchSetUpdates->Utils.Array.notEmpty {
               if shouldRemoveInvalidUtf8 {
                 let entities = batchSetUpdates->Js.Array2.map(batchSetUpdate => {
-                  switch batchSetUpdate.entityUpdateAction {
-                  | Set(entity) => entity
+                  switch batchSetUpdate {
+                  | Set({entity}) => entity
                   | _ => Js.Exn.raiseError("Expected Set action")
                   }
                 })
@@ -679,7 +674,7 @@ let rec writeBatch = async (
               ->Js.Array2.push(
                 sql->setOrThrow(
                   ~items=batchSetUpdates,
-                  ~itemSchema=entityConfig.entityHistory.setUpdateSchema,
+                  ~itemSchema=entityConfig.entityHistory.setChangeSchema,
                   ~table=entityConfig.entityHistory.table,
                   ~pgSchema,
                 ),
@@ -756,8 +751,8 @@ let rec writeBatch = async (
     //In the event of a rollback, rollback all meta tables based on the given
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
-    let rollbackTables = switch inMemoryStore {
-    | {rollbackTargetCheckpointId: Some(rollbackTargetCheckpointId)} =>
+    let rollbackTables = switch rollbackTargetCheckpointId {
+    | Some(rollbackTargetCheckpointId) =>
       Some(
         sql => {
           let promises = allEntities->Js.Array2.map(entityConfig => {
@@ -776,7 +771,7 @@ let rec writeBatch = async (
           Promise.all(promises)
         },
       )
-    | _ => None
+    | None => None
     }
 
     try {
@@ -820,11 +815,17 @@ let rec writeBatch = async (
           await setOperations
           ->Belt.Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
+          ->Promise.ignoreValue
+
+          switch mirrorPromise {
+          | Some(mirrorPromise) => await mirrorPromise
+          | None => ()
+          }
         }),
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
-        batchCache
-        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.effectBatchCache) => {
+        updatedEffectsCache
+        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
           setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
@@ -855,14 +856,17 @@ let rec writeBatch = async (
     await writeBatch(
       sql,
       ~escapeTables,
+      ~rawEvents,
       ~batch,
       ~pgSchema,
-      ~inMemoryStore,
+      ~rollbackTargetCheckpointId,
       ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
-      ~batchCache,
+      ~updatedEffectsCache,
       ~allEntities,
+      ~updatedEntities,
+      ~mirrorPromise,
     )
   }
 }
@@ -876,6 +880,7 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
+  ~mirror: option<Mirror.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -1005,6 +1010,12 @@ let make = (
       Js.Exn.raiseError(
         `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_PUBLIC_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,
       )
+    }
+
+    // Call mirror.initialize before executing PG queries
+    switch mirror {
+    | Some(mirror) => await mirror.initialize(~chainConfigs, ~entities, ~enums)
+    | None => ()
     }
 
     let queries = makeInitializeTransaction(
@@ -1351,22 +1362,43 @@ let make = (
 
   let writeBatchMethod = async (
     ~batch,
-    ~inMemoryStore,
+    ~rawEvents,
+    ~rollbackTargetCheckpointId,
     ~isInReorgThreshold,
     ~config,
     ~allEntities,
-    ~batchCache,
+    ~updatedEffectsCache,
+    ~updatedEntities,
   ) => {
+    // Mirror to ClickHouse if configured
+    let mirrorPromise = switch mirror {
+    | Some(mirror) => {
+        let timerRef = Hrtime.makeTimer()
+        Some(
+          mirror.writeBatch(~updatedEntities)->Promise.thenResolve(_ => {
+            Prometheus.MirrorWrite.increment(
+              ~mirrorName=mirror.name,
+              ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+            )
+          }),
+        )
+      }
+    | None => None
+    }
+
     await writeBatch(
       sql,
       ~batch,
+      ~rawEvents,
       ~pgSchema,
-      ~inMemoryStore,
+      ~rollbackTargetCheckpointId,
       ~isInReorgThreshold,
       ~config,
       ~allEntities,
       ~setEffectCacheOrThrow,
-      ~batchCache,
+      ~updatedEffectsCache,
+      ~updatedEntities,
+      ~mirrorPromise,
     )
   }
 

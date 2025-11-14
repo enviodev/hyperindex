@@ -18,11 +18,10 @@ let prepareRollbackDiff = async (~persistence: Persistence.t, ~rollbackTargetChe
       removedIdsResult->Js.Array2.forEach(data => {
         deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
         entityTable->InMemoryTable.Entity.set(
-          {
+          Delete({
             entityId: data["id"],
             checkpointId: 0,
-            entityUpdateAction: Delete,
-          },
+          }),
           ~shouldSaveHistory=false,
           ~containsRollbackDiffChange=true,
         )
@@ -34,11 +33,11 @@ let prepareRollbackDiff = async (~persistence: Persistence.t, ~rollbackTargetChe
       restoredEntities->Belt.Array.forEach((entity: Entities.internalEntity) => {
         setEntities->Utils.Dict.push(entityConfig.name, entity.id)
         entityTable->InMemoryTable.Entity.set(
-          {
+          Set({
             entityId: entity.id,
             checkpointId: 0,
-            entityUpdateAction: Set(entity),
-          },
+            entity,
+          }),
           ~shouldSaveHistory=false,
           ~containsRollbackDiffChange=true,
         )

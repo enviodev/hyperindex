@@ -591,6 +591,8 @@ Gravatar.FactoryEvent.handlerWithLoader({
           json: { foo: ["bar"] },
           enumField: "ADMIN",
           optEnumField: "ADMIN",
+          timestamp: new Date(1725265940437),
+          optTimestamp: new Date(1725265940438),
         });
         context.EntityWithAllTypes.set({
           id: "2",
@@ -615,6 +617,8 @@ Gravatar.FactoryEvent.handlerWithLoader({
           json: { foo: ["bar"] },
           enumField: "ADMIN",
           optEnumField: "ADMIN",
+          timestamp: new Date(1725265940437),
+          optTimestamp: new Date(1725265940438),
         });
         break;
 

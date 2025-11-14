@@ -115,9 +115,8 @@ type EntityWithAllTypes {
   optBigDecimal: BigDecimal
   bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
   arrayOfBigDecimals: [BigDecimal!]!
-  # NOTE: Timestamp serialization is currently just a type cast and so testing is non deterministic
-  # timestamp: Timestamp!
-  # optTimestamp: Timestamp
+  timestamp: Timestamp!
+  optTimestamp: Timestamp
   # NOTE: array of timestamps has the same problem as array of booleans described above
   # arrayOfTimestamps: [Timestamp!]!
   json: Json!
@@ -152,6 +151,8 @@ type EntityWithAllNonArrayTypes {
   bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
   enumField: AccountType!
   optEnumField: AccountType
+  timestamp: Timestamp!
+  optTimestamp: Timestamp
 }
 
 type CustomSelectionTestPass {

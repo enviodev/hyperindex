@@ -319,8 +319,8 @@ let makeCacheTable = (~effectName) => {
   Table.mkTable(
     cacheTablePrefix ++ effectName,
     ~fields=[
-      Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-      Table.mkField("output", JsonB, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
+      Table.mkField("id", String, ~fieldSchema=S.string, ~isPrimaryKey=true),
+      Table.mkField("output", Json, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
     ],
   )
 }
@@ -339,13 +339,9 @@ type reorgCheckpoint = {
   blockHash: string,
 }
 
-type entityValueAtStartOfBatch<'entityType> =
-  | NotSet // The entity isn't in the DB yet
-  | AlreadySet('entityType)
-
-type updatedValue<'entityType> = {
-  latest: EntityHistory.entityUpdate<'entityType>,
-  history: array<EntityHistory.entityUpdate<'entityType>>,
+type inMemoryStoreEntityUpdate<'entity> = {
+  latestChange: Change.t<'entity>,
+  history: array<Change.t<'entity>>,
   // In the event of a rollback, some entity updates may have been
   // been affected by a rollback diff. If there was no rollback diff
   // this will always be false.
@@ -356,6 +352,7 @@ type updatedValue<'entityType> = {
   containsRollbackDiffChange: bool,
 }
 
-type inMemoryStoreRowEntity<'entityType> =
-  | Updated(updatedValue<'entityType>)
-  | InitialReadFromDb(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
+@unboxed
+type inMemoryStoreEntityStatus<'entity> =
+  | Updated(inMemoryStoreEntityUpdate<'entity>)
+  | Loaded // This means there is no change from the db.

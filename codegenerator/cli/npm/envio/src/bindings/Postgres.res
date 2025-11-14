@@ -99,3 +99,18 @@ external makeSql: (~config: poolConfig) => sql = "postgres"
 @send
 external preparedUnsafe: (sql, string, unknown, @as(json`{prepare: true}`) _) => promise<'a> =
   "unsafe"
+
+@unboxed
+type columnType =
+  | @as("INTEGER") Integer
+  | @as("BIGINT") BigInt
+  | @as("BOOLEAN") Boolean
+  | @as("NUMERIC") Numeric
+  | @as("DOUBLE PRECISION") DoublePrecision
+  | @as("TEXT") Text
+  | @as("SERIAL") Serial
+  | @as("JSONB") JsonB
+  | @as("TIMESTAMP WITH TIME ZONE") TimestampWithTimezone
+  | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithTimezoneNull
+  | @as("TIMESTAMP") TimestampWithoutTimezone
+  | Custom(string)

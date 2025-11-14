@@ -118,11 +118,10 @@ let makeStoreOperatorEntity = (
     let table = cloned->getStore
 
     table->set(
-      {
+      Delete({
         entityId,
-        entityUpdateAction: Delete,
         checkpointId: 0,
-      },
+      }),
       ~shouldSaveHistory=false,
     )
 
@@ -135,11 +134,11 @@ let makeStoreOperatorEntity = (
     let entityId = entity->getKey
 
     table->set(
-      {
+      Set({
         entityId,
-        entityUpdateAction: Set(entity),
         checkpointId: 0,
-      },
+        entity,
+      }),
       ~shouldSaveHistory=false,
     )
 
@@ -211,7 +210,7 @@ let executeRowsEntity = (
   ~inMemoryStore: InMemoryStore.t,
   ~entityConfig: Internal.entityConfig,
 ) => {
-   let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
+  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
     inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let inMemTable = getInMemTable(inMemoryStore)
@@ -220,18 +219,20 @@ let executeRowsEntity = (
   ->InMemoryTable.values
   ->Array.forEach(row => {
     let mockDbTable = mockDb->getInternalDb->getInMemTable
-    switch row.entityRow {
-    | Updated({latest: {entityUpdateAction: Set(entity)}})
-    | InitialReadFromDb(AlreadySet(entity)) =>
-      let key = (entity: Internal.entity).id
-      mockDbTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=true,
-        ~key,
-        ~entity=Some(entity),
-      )
-    | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
+    switch row {
+    | {status: Updated({latestChange: Set({entity})})}
+    | {status: Loaded, latest: Some(entity)} => {
+        let key = (entity: Internal.entity).id
+        mockDbTable->InMemoryTable.Entity.initValue(
+          ~allowOverWriteEntity=true,
+          ~key,
+          ~entity=Some(entity),
+        )
+      }
+
+    | {status: Updated({latestChange: Delete({entityId})})} =>
       mockDbTable.table.dict->deleteDictKey(entityId)
-    | InitialReadFromDb(NotSet) => ()
+    | {status: Loaded, latest: None} => ()
     }
   })
 }
@@ -598,11 +599,13 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) => Promise.resolve(([], [])),
     writeBatch: (
       ~batch as _,
-      ~inMemoryStore as _,
+      ~rawEvents as _,
+      ~rollbackTargetCheckpointId as _,
       ~isInReorgThreshold as _,
       ~config as _,
       ~allEntities as _,
-      ~batchCache as _,
+      ~updatedEffectsCache as _,
+      ~updatedEntities as _,
     ) => Promise.resolve(),
   }
 }

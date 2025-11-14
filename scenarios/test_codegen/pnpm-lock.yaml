@@ -35,10 +35,6 @@ importers:
       viem:
         specifier: 2.21.0
         version: 2.21.0(typescript@5.5.4)
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
     devDependencies:
       '@glennsl/rescript-jest':
         specifier: ^0.9.2
@@ -94,6 +90,10 @@ importers:
       ts-node:
         specifier: ^10.9.1
         version: 10.9.2(@types/node@18.19.47)(typescript@5.5.4)
+    optionalDependencies:
+      generated:
+        specifier: ./generated
+        version: link:generated
 
   ../helpers:
     dependencies:
@@ -143,7 +143,7 @@ importers:
         specifier: 16.4.5
         version: 16.4.5
       envio:
-        specifier: file:/Users/dzakh/.cursor/worktrees/hyperindex/BHcot/codegenerator/target/debug/envio/../../../cli/npm/envio
+        specifier: file:/Users/dzakh/code/envio/hyperindex/codegenerator/target/debug/envio/../../../cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio(typescript@5.5.4)
       ethers:
         specifier: 6.8.0
@@ -365,6 +365,13 @@ packages:
 
   '@bcoe/v8-coverage@0.2.3':
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
+
+  '@clickhouse/client-common@1.12.1':
+    resolution: {integrity: sha512-ccw1N6hB4+MyaAHIaWBwGZ6O2GgMlO99FlMj0B0UEGfjxM9v5dYVYql6FpP19rMwrVAroYs/IgX2vyZEBvzQLg==}
+
+  '@clickhouse/client@1.12.1':
+    resolution: {integrity: sha512-7ORY85rphRazqHzImNXMrh4vsaPrpetFoTWpZYueCO2bbO6PXYDXp/GQ4DgxnGIqbWB/Di1Ai+Xuwq2o7DJ36A==}
+    engines: {node: '>=16'}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -3799,6 +3806,12 @@ snapshots:
 
   '@bcoe/v8-coverage@0.2.3': {}
 
+  '@clickhouse/client-common@1.12.1': {}
+
+  '@clickhouse/client@1.12.1':
+    dependencies:
+      '@clickhouse/client-common': 1.12.1
+
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
@@ -5452,6 +5465,7 @@ snapshots:
 
   envio@file:../../codegenerator/cli/npm/envio(typescript@5.5.4):
     dependencies:
+      '@clickhouse/client': 1.12.1
       '@elastic/ecs-pino-format': 1.4.0
       '@envio-dev/hyperfuel-client': 1.2.2
       '@envio-dev/hypersync-client': 0.6.6
