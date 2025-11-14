@@ -36,10 +36,15 @@ type initialState = {
 
 type operator = [#">" | #"=" | #"<"]
 
-type effectBatchCache = {
+type updatedEffectCache = {
   effect: Internal.effect,
   items: array<Internal.effectCacheItem>,
   shouldInitialize: bool,
+}
+
+type updatedEntity = {
+  entityConfig: Internal.entityConfig,
+  updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
 }
 
 type storage = {
@@ -118,11 +123,13 @@ type storage = {
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
-    ~inMemoryStore: InMemoryStore.t,
+    ~rawEvents: array<InternalTable.RawEvents.t>,
+    ~rollbackTargetCheckpointId: option<int>,
     ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,
-    ~batchCache: array<effectBatchCache>,
+    ~updatedEffectsCache: array<updatedEffectCache>,
+    ~updatedEntities: array<updatedEntity>,
   ) => promise<unit>,
 }
 
@@ -239,26 +246,79 @@ let getInitializedState = persistence => {
   }
 }
 
-let getEffectBatchCache = (persistence, ~effect: Internal.effect, ~items, ~invalidationsCount) => {
+let writeBatch = (
+  persistence,
+  ~batch,
+  ~config,
+  ~inMemoryStore: InMemoryStore.t,
+  ~isInReorgThreshold,
+) =>
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
     Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
-  | Ready({cache}) => {
-      let effectName = effect.name
-      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
-      | Some(c) => c
-      | None => {
-          let c = {effectName, count: 0}
-          cache->Js.Dict.set(effectName, c)
-          c
-        }
+  | Ready({cache}) =>
+    let updatedEntities = persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
+      let updates =
+        inMemoryStore
+        ->InMemoryStore.getInMemTable(~entityConfig)
+        ->InMemoryTable.Entity.updates
+      if updates->Utils.Array.isEmpty {
+        None
+      } else {
+        Some({entityConfig, updates})
       }
-      let shouldInitialize = effectCacheRecord.count === 0
-      effectCacheRecord.count =
-        effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-      {effect, items, shouldInitialize}
-    }
+    })
+    persistence.storage.writeBatch(
+      ~batch,
+      ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
+      ~rollbackTargetCheckpointId=inMemoryStore.rollbackTargetCheckpointId,
+      ~isInReorgThreshold,
+      ~config,
+      ~allEntities=persistence.allEntities,
+      ~updatedEntities,
+      ~updatedEffectsCache={
+        inMemoryStore.effects
+        ->Js.Dict.keys
+        ->Belt.Array.keepMapU(effectName => {
+          let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
+          let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+          switch idsToStore {
+          | [] => None
+          | ids => {
+              let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+              ids->Belt.Array.forEachWithIndex((index, id) => {
+                items->Js.Array2.unsafe_set(
+                  index,
+                  (
+                    {
+                      id,
+                      output: dict->Js.Dict.unsafeGet(id),
+                    }: Internal.effectCacheItem
+                  ),
+                )
+              })
+              Some({
+                let effectName = effect.name
+                let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(
+                  effectName,
+                ) {
+                | Some(c) => c
+                | None => {
+                    let c = {effectName, count: 0}
+                    cache->Js.Dict.set(effectName, c)
+                    c
+                  }
+                }
+                let shouldInitialize = effectCacheRecord.count === 0
+                effectCacheRecord.count =
+                  effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
+                Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+                {effect, items, shouldInitialize}
+              })
+            }
+          }
+        })
+      },
+    )
   }
-}

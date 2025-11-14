@@ -339,13 +339,9 @@ type reorgCheckpoint = {
   blockHash: string,
 }
 
-type entityValueAtStartOfBatch<'entityType> =
-  | NotSet // The entity isn't in the DB yet
-  | AlreadySet('entityType)
-
-type updatedValue<'entityType> = {
-  latest: Change.t<'entityType>,
-  history: array<Change.t<'entityType>>,
+type inMemoryStoreEntityUpdate<'entity> = {
+  latestChange: Change.t<'entity>,
+  history: array<Change.t<'entity>>,
   // In the event of a rollback, some entity updates may have been
   // been affected by a rollback diff. If there was no rollback diff
   // this will always be false.
@@ -356,6 +352,7 @@ type updatedValue<'entityType> = {
   containsRollbackDiffChange: bool,
 }
 
-type inMemoryStoreRowEntity<'entityType> =
-  | Updated(updatedValue<'entityType>)
-  | InitialReadFromDb(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
+@unboxed
+type inMemoryStoreEntityStatus<'entity> =
+  | Updated(inMemoryStoreEntityUpdate<'entity>)
+  | Loaded // This means there is no change from the db.

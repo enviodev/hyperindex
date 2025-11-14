@@ -197,11 +197,13 @@ module Storage = {
           Promise.resolve(([], [])),
         writeBatch: (
           ~batch as _,
-          ~inMemoryStore as _,
+          ~rawEvents as _,
+          ~rollbackTargetCheckpointId as _,
           ~isInReorgThreshold as _,
           ~config as _,
           ~allEntities as _,
-          ~batchCache as _,
+          ~updatedEffectsCache as _,
+          ~updatedEntities as _,
         ) => Promise.resolve(),
       },
     }

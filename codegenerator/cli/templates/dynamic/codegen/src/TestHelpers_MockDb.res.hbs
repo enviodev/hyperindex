@@ -219,17 +219,20 @@ let executeRowsEntity = (
   ->InMemoryTable.values
   ->Array.forEach(row => {
     let mockDbTable = mockDb->getInternalDb->getInMemTable
-    switch row.entityRow {
-    | Updated({latest: Set({entity})})
-    | InitialReadFromDb(AlreadySet(entity)) =>
-      let key = (entity: Internal.entity).id
-      mockDbTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=true,
-        ~key,
-        ~entity=Some(entity),
-      )
-    | Updated({latest: Delete({entityId})}) => mockDbTable.table.dict->deleteDictKey(entityId)
-    | InitialReadFromDb(NotSet) => ()
+    switch row {
+    | {status: Updated({latestChange: Set({entity})})}
+    | {status: Loaded, latest: Some(entity)} => {
+        let key = (entity: Internal.entity).id
+        mockDbTable->InMemoryTable.Entity.initValue(
+          ~allowOverWriteEntity=true,
+          ~key,
+          ~entity=Some(entity),
+        )
+      }
+
+    | {status: Updated({latestChange: Delete({entityId})})} =>
+      mockDbTable.table.dict->deleteDictKey(entityId)
+    | {status: Loaded, latest: None} => ()
     }
   })
 }
@@ -596,11 +599,13 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) => Promise.resolve(([], [])),
     writeBatch: (
       ~batch as _,
-      ~inMemoryStore as _,
+      ~rawEvents as _,
+      ~rollbackTargetCheckpointId as _,
       ~isInReorgThreshold as _,
       ~config as _,
       ~allEntities as _,
-      ~batchCache as _,
+      ~updatedEffectsCache as _,
+      ~updatedEntities as _,
     ) => Promise.resolve(),
   }
 }

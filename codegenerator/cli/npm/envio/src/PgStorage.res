@@ -555,14 +555,16 @@ let executeSet = (
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
+  ~rawEvents,
   ~pgSchema,
-  ~inMemoryStore: InMemoryStore.t,
+  ~rollbackTargetCheckpointId,
   ~isInReorgThreshold,
   ~config: Config.t,
-  ~allEntities,
+  ~allEntities: array<Internal.entityConfig>,
   ~setEffectCacheOrThrow,
-  ~batchCache,
-  ~mirror: option<Mirror.t>=?,
+  ~updatedEffectsCache,
+  ~updatedEntities: array<Persistence.updatedEntity>,
+  ~mirrorPromise: option<promise<unit>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -580,23 +582,17 @@ let rec writeBatch = async (
           ~pgSchema,
         )
       },
-      ~items=inMemoryStore.rawEvents->InMemoryTable.values,
+      ~items=rawEvents,
     )
 
-    let setEntities = allEntities->Belt.Array.map(entityConfig => {
+    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
-      let rows =
-        inMemoryStore
-        ->InMemoryStore.getInMemTable(~entityConfig)
-        ->InMemoryTable.Entity.rows
-
-      rows->Js.Array2.forEach(row => {
+      updates->Js.Array2.forEach(row => {
         switch row {
-        | Updated({latest: Set({entity})}) => entitiesToSet->Belt.Array.push(entity)
-        | Updated({latest: Delete({entityId})}) => idsToDelete->Belt.Array.push(entityId)
-        | _ => ()
+        | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
+        | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
         }
       })
 
@@ -616,9 +612,9 @@ let rec writeBatch = async (
             let batchDeleteCheckpointIds = []
             let batchDeleteEntityIds = []
 
-            rows->Js.Array2.forEach(row => {
-              switch row {
-              | Updated({history, containsRollbackDiffChange}) =>
+            updates->Js.Array2.forEach(update => {
+              switch update {
+              | {history, containsRollbackDiffChange} =>
                 history->Js.Array2.forEach(
                   (change: Change.t<'a>) => {
                     if !containsRollbackDiffChange {
@@ -638,7 +634,6 @@ let rec writeBatch = async (
                     }
                   },
                 )
-              | _ => ()
               }
             })
 
@@ -685,21 +680,6 @@ let rec writeBatch = async (
                 ),
               )
               ->ignore
-
-              // Mirror to ClickHouse if configured
-              switch mirror {
-              | Some(mirror) =>
-                promises
-                ->Js.Array2.push(
-                  mirror.setOrThrow(
-                    ~items=batchSetUpdates,
-                    ~itemSchema=entityConfig.entityHistory.setChangeSchema,
-                    ~table=entityConfig.entityHistory.table,
-                  ),
-                )
-                ->ignore
-              | None => ()
-              }
             }
           }
 
@@ -771,8 +751,8 @@ let rec writeBatch = async (
     //In the event of a rollback, rollback all meta tables based on the given
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
-    let rollbackTables = switch inMemoryStore {
-    | {rollbackTargetCheckpointId: Some(rollbackTargetCheckpointId)} =>
+    let rollbackTables = switch rollbackTargetCheckpointId {
+    | Some(rollbackTargetCheckpointId) =>
       Some(
         sql => {
           let promises = allEntities->Js.Array2.map(entityConfig => {
@@ -791,7 +771,7 @@ let rec writeBatch = async (
           Promise.all(promises)
         },
       )
-    | _ => None
+    | None => None
     }
 
     try {
@@ -835,11 +815,17 @@ let rec writeBatch = async (
           await setOperations
           ->Belt.Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
+          ->Promise.ignoreValue
+
+          switch mirrorPromise {
+          | Some(mirrorPromise) => await mirrorPromise
+          | None => ()
+          }
         }),
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
-        batchCache
-        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.effectBatchCache) => {
+        updatedEffectsCache
+        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
           setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
@@ -870,15 +856,17 @@ let rec writeBatch = async (
     await writeBatch(
       sql,
       ~escapeTables,
+      ~rawEvents,
       ~batch,
       ~pgSchema,
-      ~inMemoryStore,
+      ~rollbackTargetCheckpointId,
       ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
-      ~batchCache,
+      ~updatedEffectsCache,
       ~allEntities,
-      ~mirror?,
+      ~updatedEntities,
+      ~mirrorPromise,
     )
   }
 }
@@ -1374,23 +1362,43 @@ let make = (
 
   let writeBatchMethod = async (
     ~batch,
-    ~inMemoryStore,
+    ~rawEvents,
+    ~rollbackTargetCheckpointId,
     ~isInReorgThreshold,
     ~config,
     ~allEntities,
-    ~batchCache,
+    ~updatedEffectsCache,
+    ~updatedEntities,
   ) => {
+    // Mirror to ClickHouse if configured
+    let mirrorPromise = switch mirror {
+    | Some(mirror) => {
+        let timerRef = Hrtime.makeTimer()
+        Some(
+          mirror.writeBatch(~updatedEntities)->Promise.thenResolve(_ => {
+            Prometheus.MirrorWrite.increment(
+              ~mirrorName=mirror.name,
+              ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+            )
+          }),
+        )
+      }
+    | None => None
+    }
+
     await writeBatch(
       sql,
       ~batch,
+      ~rawEvents,
       ~pgSchema,
-      ~inMemoryStore,
+      ~rollbackTargetCheckpointId,
       ~isInReorgThreshold,
       ~config,
       ~allEntities,
       ~setEffectCacheOrThrow,
-      ~batchCache,
-      ~mirror?,
+      ~updatedEffectsCache,
+      ~updatedEntities,
+      ~mirrorPromise,
     )
   }
 

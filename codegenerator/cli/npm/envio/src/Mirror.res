@@ -1,14 +1,11 @@
 type t = {
+  name: string,
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Internal.enumConfig<Internal.enum>>=?,
   ) => promise<unit>,
-  setOrThrow: 'item. (
-    ~items: array<'item>,
-    ~table: Table.table,
-    ~itemSchema: S.t<'item>,
-  ) => promise<unit>,
+  writeBatch: (~updatedEntities: array<Persistence.updatedEntity>) => promise<unit>,
 }
 
 let makeClickHouse = (~host, ~database, ~username, ~password): t => {
@@ -19,11 +16,24 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   })
 
   {
+    name: "ClickHouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
       ClickHouse.initialize(client, ~database, ~entities, ~enums)
     },
-    setOrThrow: (~items, ~table, ~itemSchema) => {
-      ClickHouse.setOrThrow(client, ~items, ~table, ~itemSchema, ~database)
+    writeBatch: (~updatedEntities) => {
+      Promise.all(
+        updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
+          ClickHouse.setOrThrow(
+            client,
+            ~items=updates->Js.Array2.map(update => {
+              update.latestChange
+            }),
+            ~table=entityConfig.entityHistory.table,
+            ~itemSchema=entityConfig.entityHistory.setChangeSchema,
+            ~database,
+          )
+        }),
+      )->Promise.ignoreValue
     },
   }
 }

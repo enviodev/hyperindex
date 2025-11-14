@@ -759,3 +759,24 @@ module StorageLoad = {
     sizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=size)
   }
 }
+
+module MirrorWrite = {
+  let mirrorLabelsSchema = S.object(s => s.field("mirror", S.string))
+
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_mirror_write_time",
+    ~help="Processing time taken to write data to mirror. (milliseconds)",
+    ~labelSchema=mirrorLabelsSchema,
+  )
+
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_mirror_write_count",
+    ~help="Cumulative number of successful mirror write operations during the indexing process.",
+    ~labelSchema=mirrorLabelsSchema,
+  )
+
+  let increment = (~mirrorName, ~timeMillis) => {
+    timeCounter->SafeCounter.handleInt(~labels={mirrorName}, ~value=timeMillis)
+    counter->SafeCounter.increment(~labels={mirrorName})
+  }
+}
