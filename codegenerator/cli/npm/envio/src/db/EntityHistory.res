@@ -7,36 +7,26 @@ module RowAction = {
   let schema = S.enum(variants)
 }
 
-type entityUpdateAction<'entityType> =
-  | Set('entityType)
-  | Delete
-
-type entityUpdate<'entityType> = {
-  entityId: string,
-  entityUpdateAction: entityUpdateAction<'entityType>,
-  checkpointId: int,
-}
-
 // Prefix with envio_ to avoid colleasions
 let changeFieldName = "envio_change"
 let checkpointIdFieldName = "envio_checkpoint_id"
 
-let makeSetUpdateSchema: S.t<'entity> => S.t<entityUpdate<'entity>> = entitySchema => {
+let makeSetUpdateSchema: S.t<'entity> => S.t<Change.t<'entity>> = entitySchema => {
   S.object(s => {
     s.tag(changeFieldName, RowAction.SET)
-    {
+    Change.Set({
       checkpointId: s.field(checkpointIdFieldName, S.int),
       entityId: s.field("id", S.string),
-      entityUpdateAction: Set(s.flatten(entitySchema)),
-    }
+      entity: s.flatten(entitySchema),
+    })
   })
 }
 
 type t<'entity> = {
   table: table,
-  setUpdateSchema: S.t<entityUpdate<'entity>>,
+  setChangeSchema: S.t<Change.t<'entity>>,
   // Used for parsing
-  setUpdateSchemaRows: S.t<array<entityUpdate<'entity>>>,
+  setChangeSchemaRows: S.t<array<Change.t<'entity>>>,
   makeInsertDeleteUpdatesQuery: (~pgSchema: string) => string,
   makeGetRollbackRemovedIdsQuery: (~pgSchema: string) => string,
   makeGetRollbackRestoredEntitiesQuery: (~pgSchema: string) => string,
@@ -95,7 +85,7 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
     ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
   )
 
-  let setUpdateSchema = makeSetUpdateSchema(schema)
+  let setChangeSchema = makeSetUpdateSchema(schema)
 
   let makeInsertDeleteUpdatesQuery = {
     // Get all field names for the INSERT statement
@@ -161,8 +151,8 @@ ORDER BY id, "${checkpointIdFieldName}" DESC`
 
   {
     table,
-    setUpdateSchema,
-    setUpdateSchemaRows: S.array(setUpdateSchema),
+    setChangeSchema,
+    setChangeSchemaRows: S.array(setChangeSchema),
     makeInsertDeleteUpdatesQuery,
     makeGetRollbackRemovedIdsQuery,
     makeGetRollbackRestoredEntitiesQuery,

@@ -344,8 +344,8 @@ type entityValueAtStartOfBatch<'entityType> =
   | AlreadySet('entityType)
 
 type updatedValue<'entityType> = {
-  latest: EntityHistory.entityUpdate<'entityType>,
-  history: array<EntityHistory.entityUpdate<'entityType>>,
+  latest: Change.t<'entityType>,
+  history: array<Change.t<'entityType>>,
   // In the event of a rollback, some entity updates may have been
   // been affected by a rollback diff. If there was no rollback diff
   // this will always be false.

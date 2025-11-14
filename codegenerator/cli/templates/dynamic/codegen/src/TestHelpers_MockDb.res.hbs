@@ -118,11 +118,10 @@ let makeStoreOperatorEntity = (
     let table = cloned->getStore
 
     table->set(
-      {
+      Delete({
         entityId,
-        entityUpdateAction: Delete,
         checkpointId: 0,
-      },
+      }),
       ~shouldSaveHistory=false,
     )
 
@@ -135,11 +134,11 @@ let makeStoreOperatorEntity = (
     let entityId = entity->getKey
 
     table->set(
-      {
+      Set({
         entityId,
-        entityUpdateAction: Set(entity),
         checkpointId: 0,
-      },
+        entity,
+      }),
       ~shouldSaveHistory=false,
     )
 
@@ -211,7 +210,7 @@ let executeRowsEntity = (
   ~inMemoryStore: InMemoryStore.t,
   ~entityConfig: Internal.entityConfig,
 ) => {
-   let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
+  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
     inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let inMemTable = getInMemTable(inMemoryStore)
@@ -221,7 +220,7 @@ let executeRowsEntity = (
   ->Array.forEach(row => {
     let mockDbTable = mockDb->getInternalDb->getInMemTable
     switch row.entityRow {
-    | Updated({latest: {entityUpdateAction: Set(entity)}})
+    | Updated({latest: Set({entity})})
     | InitialReadFromDb(AlreadySet(entity)) =>
       let key = (entity: Internal.entity).id
       mockDbTable->InMemoryTable.Entity.initValue(
@@ -229,8 +228,7 @@ let executeRowsEntity = (
         ~key,
         ~entity=Some(entity),
       )
-    | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
-      mockDbTable.table.dict->deleteDictKey(entityId)
+    | Updated({latest: Delete({entityId})}) => mockDbTable.table.dict->deleteDictKey(entityId)
     | InitialReadFromDb(NotSet) => ()
     }
   })

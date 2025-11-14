@@ -594,10 +594,8 @@ let rec writeBatch = async (
 
       rows->Js.Array2.forEach(row => {
         switch row {
-        | Updated({latest: {entityUpdateAction: Set(entity)}}) =>
-          entitiesToSet->Belt.Array.push(entity)
-        | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
-          idsToDelete->Belt.Array.push(entityId)
+        | Updated({latest: Set({entity})}) => entitiesToSet->Belt.Array.push(entity)
+        | Updated({latest: Delete({entityId})}) => idsToDelete->Belt.Array.push(entityId)
         | _ => ()
         }
       })
@@ -622,21 +620,21 @@ let rec writeBatch = async (
               switch row {
               | Updated({history, containsRollbackDiffChange}) =>
                 history->Js.Array2.forEach(
-                  (entityUpdate: EntityHistory.entityUpdate<'a>) => {
+                  (change: Change.t<'a>) => {
                     if !containsRollbackDiffChange {
                       // For every update we want to make sure that there's an existing history item
                       // with the current entity state. So we backfill history with checkpoint id 0,
                       // before writing updates. Don't do this if the update has a rollback diff change.
-                      backfillHistoryIds->Utils.Set.add(entityUpdate.entityId)->ignore
+                      backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
                     }
-                    switch entityUpdate.entityUpdateAction {
-                    | Delete => {
-                        batchDeleteEntityIds->Belt.Array.push(entityUpdate.entityId)->ignore
+                    switch change {
+                    | Delete({entityId}) => {
+                        batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
                         batchDeleteCheckpointIds
-                        ->Belt.Array.push(entityUpdate.checkpointId)
+                        ->Belt.Array.push(change->Change.getCheckpointId)
                         ->ignore
                       }
-                    | Set(_) => batchSetUpdates->Js.Array2.push(entityUpdate)->ignore
+                    | Set(_) => batchSetUpdates->Js.Array2.push(change)->ignore
                     }
                   },
                 )
@@ -669,8 +667,8 @@ let rec writeBatch = async (
             if batchSetUpdates->Utils.Array.notEmpty {
               if shouldRemoveInvalidUtf8 {
                 let entities = batchSetUpdates->Js.Array2.map(batchSetUpdate => {
-                  switch batchSetUpdate.entityUpdateAction {
-                  | Set(entity) => entity
+                  switch batchSetUpdate {
+                  | Set({entity}) => entity
                   | _ => Js.Exn.raiseError("Expected Set action")
                   }
                 })
@@ -681,7 +679,7 @@ let rec writeBatch = async (
               ->Js.Array2.push(
                 sql->setOrThrow(
                   ~items=batchSetUpdates,
-                  ~itemSchema=entityConfig.entityHistory.setUpdateSchema,
+                  ~itemSchema=entityConfig.entityHistory.setChangeSchema,
                   ~table=entityConfig.entityHistory.table,
                   ~pgSchema,
                 ),
@@ -695,7 +693,7 @@ let rec writeBatch = async (
                 ->Js.Array2.push(
                   mirror.setOrThrow(
                     ~items=batchSetUpdates,
-                    ~itemSchema=entityConfig.entityHistory.setUpdateSchema,
+                    ~itemSchema=entityConfig.entityHistory.setChangeSchema,
                     ~table=entityConfig.entityHistory.table,
                   ),
                 )

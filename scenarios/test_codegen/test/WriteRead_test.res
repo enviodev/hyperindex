@@ -104,11 +104,11 @@ describe("Write/read tests", () => {
     Assert.deepEqual(
       await indexerMock.queryHistory(module(Entities.EntityWithAllTypes)),
       [
-        {
+        Set({
           checkpointId: 1,
           entityId: "1",
-          entityUpdateAction: Set(entityWithAllTypes),
-        },
+          entity: entityWithAllTypes,
+        }),
       ],
     )
     Assert.deepEqual(
@@ -118,11 +118,11 @@ describe("Write/read tests", () => {
     Assert.deepEqual(
       await indexerMock.queryHistory(module(Entities.EntityWithAllNonArrayTypes)),
       [
-        {
+        Set({
           checkpointId: 1,
           entityId: "1",
-          entityUpdateAction: Set(entityWithAllNonArrayTypes),
-        },
+          entity: entityWithAllNonArrayTypes,
+        }),
       ],
     )
 
@@ -141,13 +141,13 @@ describe("Write/read tests", () => {
         module(Entities.EntityWith63LenghtName______________________________________one),
       ),
       [
-        {
+        Set({
           checkpointId: 1,
           entityId: "1",
-          entityUpdateAction: Set({
+          entity: {
             id: "1",
-          }),
-        },
+          },
+        }),
       ],
     )
     Assert.deepEqual(
@@ -165,13 +165,13 @@ describe("Write/read tests", () => {
         module(Entities.EntityWith63LenghtName______________________________________two),
       ),
       [
-        {
+        Set({
           checkpointId: 1,
           entityId: "2",
-          entityUpdateAction: Set({
+          entity: {
             id: "2",
-          }),
-        },
+          },
+        }),
       ],
     )
 

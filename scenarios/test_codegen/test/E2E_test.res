@@ -283,30 +283,30 @@ describe("E2E tests", () => {
           },
         ],
         [
-          {
+          Set({
             checkpointId: 2,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-0",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 4,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-1",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 5,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-2",
-            }),
-          },
+            },
+          }),
         ],
       ),
     )

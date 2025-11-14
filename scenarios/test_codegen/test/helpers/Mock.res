@@ -8,11 +8,11 @@ module InMemoryStore = {
       )
     let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
     inMemTable->InMemoryTable.Entity.set(
-      {
+      Set({
         entityId: entity->Entities.getEntityId,
         checkpointId: 0,
-        entityUpdateAction: Set(entity),
-      },
+        entity,
+      }),
       ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
@@ -233,7 +233,7 @@ module Indexer = {
     getRollbackReadyPromise: unit => promise<unit>,
     query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
     queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<EntityHistory.entityUpdate<'entity>>,
+      array<Change.t<'entity>>,
     >,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
@@ -387,23 +387,20 @@ module Indexer = {
           items->S.parseOrThrow(
             S.array(
               S.union([
-                entityConfig.entityHistory.setUpdateSchema,
-                S.object((s): EntityHistory.entityUpdate<'entity> => {
+                entityConfig.entityHistory.setChangeSchema,
+                S.object((s): Change.t<'entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-                  {
+                  Delete({
                     entityId: s.field("id", S.string),
                     checkpointId: s.field(EntityHistory.checkpointIdFieldName, S.int),
-                    entityUpdateAction: Delete,
-                  }
+                  })
                 }),
               ]),
             ),
           )
         })
         ->(
-          Utils.magic: promise<array<EntityHistory.entityUpdate<Internal.entity>>> => promise<
-            array<EntityHistory.entityUpdate<entity>>,
-          >
+          Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         )
       },
       queryCheckpoints: () => {

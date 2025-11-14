@@ -132,43 +132,42 @@ describe("E2E rollback tests", () => {
           },
         ],
         [
-          {
+          Set({
             checkpointId: firstHistoryCheckpointId,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "value-2",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: firstHistoryCheckpointId,
             entityId: "2",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "2",
               value: "value-2",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: firstHistoryCheckpointId + 1,
             entityId: "3",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "3",
               value: "value-1",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: firstHistoryCheckpointId,
             entityId: "4",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "4",
               value: "value-1",
-            }),
-          },
-          {
+            },
+          }),
+          Delete({
             checkpointId: firstHistoryCheckpointId + 1,
             entityId: "4",
-            entityUpdateAction: Delete,
-          },
+          }),
         ],
       ),
       ~message="Should have two entities in the db",
@@ -276,22 +275,22 @@ describe("E2E rollback tests", () => {
           },
         ],
         [
-          {
+          Set({
             checkpointId: 1,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "value-1",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 1,
             entityId: "2",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "2",
               value: "value-2",
-            }),
-          },
+            },
+          }),
         ],
       ),
       ~message="Should correctly rollback entities",
@@ -973,46 +972,46 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
         ],
         [
-          {
+          Set({
             checkpointId: 3,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-0",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 4,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-2",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 5,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-3",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 6,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-4",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 7,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-5",
-            }),
-          },
+            },
+          }),
         ],
       ),
       ~message=`Should create history rows and checkpoints`,
@@ -1182,30 +1181,30 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
         ],
         [
-          {
+          Set({
             checkpointId: 3,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-0",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 4,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-2",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: 5,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-4",
-            }),
-          },
+            },
+          }),
         ],
       ),
     )
@@ -1376,46 +1375,46 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 3,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 4,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-2",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 5,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-3",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 6,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-4",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 7,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-5",
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message=`Should create history rows and checkpoints`,
@@ -1433,14 +1432,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 6,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
@@ -1556,30 +1555,30 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 3,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 4,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-2",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 5,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-4",
-              }),
-            },
+              },
+            }),
           ],
         ),
       )
@@ -1596,14 +1595,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 5,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
@@ -1756,30 +1755,30 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 4,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 6,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-1",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 7,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-2",
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message=`Should create multiple history rows:
@@ -1798,14 +1797,14 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 5,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
@@ -1969,22 +1968,22 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 4,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
+              },
+            }),
+            Set({
               checkpointId: 6,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-3",
-              }),
-            },
+              },
+            }),
           ],
         ),
       )
@@ -2001,14 +2000,14 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
+            Set({
               checkpointId: 5,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
