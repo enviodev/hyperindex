@@ -109,7 +109,8 @@ let getPgFieldType = (
   let columnType = switch fieldType {
   | String => (Postgres.Text :> string)
   | Boolean => (Postgres.Boolean :> string)
-  | Int32 | Uint32 => (Postgres.Integer :> string)
+  | Int32 => (Postgres.Integer :> string)
+  | Uint32 => (Postgres.BigInt :> string)
   | Number => (Postgres.DoublePrecision :> string)
   | BigInt({?precision}) =>
     (Postgres.Numeric :> string) ++
