@@ -1122,7 +1122,6 @@ let injectedTaskReducer = (
 
       let chainManager = {
         ...state.chainManager,
-        committedCheckpointId: rollbackTargetCheckpointId,
         chainFetchers,
       }
 
