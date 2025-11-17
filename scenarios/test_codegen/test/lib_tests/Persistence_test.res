@@ -13,7 +13,7 @@ describe("Test Persistence layer init", () => {
     )
     Assert.deepEqual(
       persistence.allEnums,
-      [Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+      [Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
       ~message=`All enums should automatically include the indexer core ones`,
     )
     Assert.deepEqual(

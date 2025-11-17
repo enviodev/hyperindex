@@ -98,10 +98,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
   // Optimized enum creation - direct when cleanRun, conditional otherwise
-  enums->Js.Array2.forEach((enumConfig: Internal.enumConfig<Internal.enum>) => {
+  enums->Js.Array2.forEach((enumConfig: Table.enumConfig<Table.enum>) => {
     // Create base enum creation query once
     let enumCreateQuery = `CREATE TYPE "${pgSchema}".${enumConfig.name} AS ENUM(${enumConfig.variants
-      ->Js.Array2.map(v => `'${v->(Utils.magic: Internal.enum => string)}'`)
+      ->Js.Array2.map(v => `'${v->(Utils.magic: Table.enum => string)}'`)
       ->Js.Array2.joinWith(", ")});`
 
     query := query.contents ++ "\n" ++ enumCreateQuery

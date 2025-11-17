@@ -48,7 +48,7 @@ module Storage = {
     initializeCalls: array<{
       "entities": array<Internal.entityConfig>,
       "chainConfigs": array<Config.chain>,
-      "enums": array<Internal.enumConfig<Internal.enum>>,
+      "enums": array<Table.enumConfig<Table.enum>>,
     }>,
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,

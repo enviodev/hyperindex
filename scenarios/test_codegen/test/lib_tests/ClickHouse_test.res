@@ -13,14 +13,17 @@ describe("Test ClickHouse SQL generation functions", () => {
   \`id\` String,
   \`optionalStringToTestLinkedEntities\` Nullable(String),
   \`envio_checkpoint_id\` UInt32,
-  \`envio_change\` String
+  \`envio_change\` Enum8('SET', 'DELETE')
 )
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`
 
-        Assert.equal(query, expectedQuery, ~message="A entity history table SQL should match exactly")
+        Assert.equal(
+          query,
+          expectedQuery,
+          ~message="A entity history table SQL should match exactly",
+        )
       },
     )
   })
 })
-

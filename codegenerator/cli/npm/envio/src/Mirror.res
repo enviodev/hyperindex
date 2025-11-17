@@ -3,7 +3,7 @@ type t = {
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
-    ~enums: array<Internal.enumConfig<Internal.enum>>=?,
+    ~enums: array<Table.enumConfig<Table.enum>>=?,
   ) => promise<unit>,
   writeBatch: (~updatedEntities: array<Persistence.updatedEntity>) => promise<unit>,
 }

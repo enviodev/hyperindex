@@ -63,7 +63,20 @@ let getClickHouseFieldType = (
   | String => "String"
   | Json => "String"
   | Date => "DateTime64(3, 'UTC')"
-  | Enum(_) => "String"
+  | Enum({config}) => {
+      let variantsLength = config.variants->Belt.Array.length
+      // Theoretically we can store 256 variants in Enum8,
+      // but it'd require to explicitly start with a negative index (probably)
+      let enumType = variantsLength <= 127 ? "Enum8" : "Enum16"
+      let enumValues =
+        config.variants
+        ->Belt.Array.map(variant => {
+          let variantStr = variant->(Utils.magic: 'a => string)
+          `'${variantStr}'`
+        })
+        ->Js.Array2.joinWith(", ")
+      `${enumType}(${enumValues})`
+    }
   | Entity(_) => "String"
   }
 
@@ -146,7 +159,7 @@ let initialize = async (
   client,
   ~database: string,
   ~entities: array<Internal.entityConfig>,
-  ~enums as _: array<Internal.enumConfig<Internal.enum>>,
+  ~enums as _: array<Table.enumConfig<Table.enum>>,
 ) => {
   try {
     await client->exec({query: `DROP DATABASE IF EXISTS ${database}`})

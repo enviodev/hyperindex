@@ -122,7 +122,7 @@ describe("Test PgStorage SQL generation functions", () => {
           )->Entities.entityModToInternal,
           module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
         ]
-        let enums = [Enums.EntityType.config->Internal.fromGenericEnumConfig]
+        let enums = [Enums.EntityType.config->Table.fromGenericEnumConfig]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",

@@ -3,6 +3,20 @@ open Belt
 type primitive
 type derived
 
+type enum
+type enumConfig<'enum> = {
+  name: string,
+  variants: array<'enum>,
+  schema: S.t<'enum>,
+}
+external fromGenericEnumConfig: enumConfig<'enum> => enumConfig<enum> = "%identity"
+
+let makeEnumConfig = (~name, ~variants) => {
+  name,
+  variants,
+  schema: S.enum(variants),
+}
+
 @tag("type")
 type fieldType =
   | String
@@ -15,7 +29,7 @@ type fieldType =
   | Serial
   | Json
   | Date
-  | Enum({name: string})
+  | Enum({config: enumConfig<enum>})
   | Entity({name: string})
 
 type field = {
@@ -115,7 +129,7 @@ let getPgFieldType = (
   | Json => (Postgres.JsonB :> string)
   | Date =>
     (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)
-  | Enum({name}) => `"${pgSchema}".${name}`
+  | Enum({config}) => `"${pgSchema}".${config.name}`
   | Entity(_) => (Postgres.Text :> string) // FIXME: Will it work correctly if id is not a text column?
   }
 

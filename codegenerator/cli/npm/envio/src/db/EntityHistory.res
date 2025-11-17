@@ -5,6 +5,11 @@ module RowAction = {
   let variants = [SET, DELETE]
   let name = "ENVIO_HISTORY_CHANGE"
   let schema = S.enum(variants)
+  let config: Table.enumConfig<t> = {
+    name,
+    variants,
+    schema,
+  }
 }
 
 // Prefix with envio_ to avoid colleasions
@@ -68,7 +73,11 @@ let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> 
     }
   )
 
-  let actionField = mkField(changeFieldName, Enum({name: RowAction.name}), ~fieldSchema=S.never)
+  let actionField = mkField(
+    changeFieldName,
+    Enum({config: RowAction.config->Table.fromGenericEnumConfig}),
+    ~fieldSchema=S.never,
+  )
 
   let checkpointIdField = mkField(
     checkpointIdFieldName,

@@ -56,7 +56,7 @@ type storage = {
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
-    ~enums: array<Internal.enumConfig<Internal.enum>>=?,
+    ~enums: array<Table.enumConfig<Table.enum>>=?,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
   @raises("StorageError")
@@ -141,19 +141,12 @@ type storageStatus =
 type t = {
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
-  allEnums: array<Internal.enumConfig<Internal.enum>>,
+  allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
 }
 
 exception StorageError({message: string, reason: exn})
-
-let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
-  name: EntityHistory.RowAction.name,
-  variants: EntityHistory.RowAction.variants,
-  schema: EntityHistory.RowAction.schema,
-  default: SET,
-}
 
 let make = (
   ~userEntities,
@@ -163,7 +156,7 @@ let make = (
 ) => {
   let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
   let allEnums =
-    allEnums->Js.Array2.concat([entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig])
+    allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
     userEntities,
     allEntities,

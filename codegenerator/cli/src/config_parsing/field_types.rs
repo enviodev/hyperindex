@@ -2,6 +2,8 @@ use core::fmt;
 use serde::Serialize;
 use std::fmt::Display;
 
+use crate::utils::text::Capitalize;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Primitive {
     Boolean,
@@ -37,7 +39,10 @@ impl Primitive {
             Self::Json => "Json".to_string(),
             Self::Date => "Date".to_string(),
             Self::Number => "Number".to_string(),
-            Self::Enum(enum_name) => format!("Enum({{name: \"{enum_name}\"}})"),
+            Self::Enum(enum_name) => {
+                let capitalized_enum_name = enum_name.capitalize();
+                format!("Enum({{config: Enums.{capitalized_enum_name}.config->Table.fromGenericEnumConfig}})")
+            }
             Self::Entity(entity_name) => format!("Entity({{name: \"{entity_name}\"}})"),
         }
     }
