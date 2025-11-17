@@ -154,6 +154,61 @@ ENGINE = MergeTree()
 ORDER BY (id, ${EntityHistory.checkpointIdFieldName})`
 }
 
+// Generate CREATE VIEW query for entity current state
+let makeCreateViewQuery = (entity: Internal.entityConfig, ~database: string) => {
+  let historyTable = entity.entityHistory.table
+  let historyTableName = historyTable.tableName
+
+  // Fields for outer SELECT (exclude both envio_checkpoint_id and envio_change)
+  let outerFields =
+    historyTable.fields
+    ->Belt.Array.keepMap(field => {
+      switch field {
+      | Field(field) => {
+          let fieldName = field->Table.getDbFieldName
+          if (
+            fieldName == EntityHistory.checkpointIdFieldName ||
+              fieldName == EntityHistory.changeFieldName
+          ) {
+            None
+          } else {
+            Some(`\`${fieldName}\``)
+          }
+        }
+      | DerivedFrom(_) => None
+      }
+    })
+    ->Js.Array2.joinWith(", ")
+
+  // Fields for inner SELECT (exclude only envio_change)
+  let innerFields =
+    historyTable.fields
+    ->Belt.Array.keepMap(field => {
+      switch field {
+      | Field(field) => {
+          let fieldName = field->Table.getDbFieldName
+          if fieldName == EntityHistory.changeFieldName {
+            None
+          } else {
+            Some(`\`${fieldName}\``)
+          }
+        }
+      | DerivedFrom(_) => None
+      }
+    })
+    ->Js.Array2.joinWith(", ")
+
+  `CREATE VIEW IF NOT EXISTS ${database}.\`${entity.name}\` AS
+SELECT ${outerFields}
+FROM (
+  SELECT ${innerFields}
+  FROM ${database}.\`${historyTableName}\`
+  ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
+  LIMIT 1 BY \`id\`
+)
+WHERE \`${EntityHistory.changeFieldName}\` = 'SET'`
+}
+
 // Initialize ClickHouse tables for entities
 let initialize = async (
   client,
@@ -169,6 +224,12 @@ let initialize = async (
     await Promise.all(
       entities->Belt.Array.map(entity =>
         client->exec({query: makeCreateHistoryTableQuery(entity, ~database)})
+      ),
+    )->Promise.ignoreValue
+
+    await Promise.all(
+      entities->Belt.Array.map(entity =>
+        client->exec({query: makeCreateViewQuery(entity, ~database)})
       ),
     )->Promise.ignoreValue
 
