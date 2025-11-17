@@ -1268,12 +1268,20 @@ let make = (
       ->(Utils.magic: promise<array<unknown>> => promise<array<Internal.reorgCheckpoint>>),
     ))
 
+    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]
+
+    // Resume mirror if present - needed to rollback any reorg changes
+    switch mirror {
+    | Some(mirror) => await mirror.resume(~checkpointId)
+    | None => ()
+    }
+
     {
       cleanRun: false,
       reorgCheckpoints,
       cache,
       chains,
-      checkpointId: (checkpointIdResult->Belt.Array.getUnsafe(0))["id"],
+      checkpointId,
     }
   }
 

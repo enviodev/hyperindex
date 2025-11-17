@@ -5,6 +5,7 @@ type t = {
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
   ) => promise<unit>,
+  resume: (~checkpointId: int) => promise<unit>,
   writeBatch: (~updatedEntities: array<Persistence.updatedEntity>) => promise<unit>,
 }
 
@@ -19,6 +20,9 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
     name: "ClickHouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
       ClickHouse.initialize(client, ~database, ~entities, ~enums)
+    },
+    resume: (~checkpointId) => {
+      ClickHouse.resume(client, ~database, ~checkpointId)
     },
     writeBatch: (~updatedEntities) => {
       Promise.all(

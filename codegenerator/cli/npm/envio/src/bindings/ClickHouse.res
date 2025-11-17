@@ -29,6 +29,15 @@ type insertParams<'a> = {
 @send
 external insert: (client, insertParams<'a>) => promise<unit> = "insert"
 
+type queryParams = {query: string}
+type queryResult<'a>
+
+@send
+external query: (client, queryParams) => promise<queryResult<'a>> = "query"
+
+@send
+external json: queryResult<'a> => promise<'a> = "json"
+
 let getClickHouseFieldType = (
   ~fieldType: Table.fieldType,
   ~isNullable: bool,
@@ -238,6 +247,45 @@ let initialize = async (
   | exn => {
       Logging.errorWithExn(exn, "Failed to initialize ClickHouse mirror")
       Js.Exn.raiseError("ClickHouse initialization failed")
+    }
+  }
+}
+
+// Resume ClickHouse mirror after reorg by deleting rows with checkpoint IDs higher than target
+let resume = async (client, ~database: string, ~checkpointId: int) => {
+  try {
+    // Try to use the database - will throw if it doesn't exist
+    try {
+      await client->exec({query: `USE ${database}`})
+    } catch {
+    | exn =>
+      Logging.errorWithExn(
+        exn,
+        `ClickHouse mirror database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
+      )
+      Js.Exn.raiseError("ClickHouse resume failed")
+    }
+
+    // Get all history tables
+    let tablesResult = await client->query({
+      query: `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%'`,
+    })
+    let tables: array<{"name": string}> = await tablesResult->json
+
+    // Delete rows with checkpoint IDs higher than the target for each history table
+    await Promise.all(
+      tables->Belt.Array.map(table => {
+        let tableName = table["name"]
+        client->exec({
+          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Belt.Int.toString}`,
+        })
+      }),
+    )->Promise.ignoreValue
+  } catch {
+  | Persistence.StorageError(_) as exn => raise(exn)
+  | exn => {
+      Logging.errorWithExn(exn, "Failed to resume ClickHouse mirror")
+      Js.Exn.raiseError("ClickHouse resume failed")
     }
   }
 }
