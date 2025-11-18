@@ -59,7 +59,7 @@ let getClickHouseFieldType = (
     }
   | BigDecimal({?config}) =>
     switch config {
-    | None => "String" // Fallback for unbounded BigInt
+    | None => "String" // Fallback for unbounded BigDecimal
     | Some((precision, scale)) =>
       if precision > 38 || scale > precision {
         "String"

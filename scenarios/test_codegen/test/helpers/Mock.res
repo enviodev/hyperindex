@@ -192,7 +192,8 @@ module Storage = {
           Js.Exn.raiseError("Not implemented"),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
           Js.Exn.raiseError("Not implemented"),
-        getRollbackProgressDiff: _ => Js.Exn.raiseError("Not implemented"),
+        getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
+          Js.Exn.raiseError("Not implemented"),
         getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
           Js.Exn.raiseError("Not implemented"),
         writeBatch: (
