@@ -55,7 +55,7 @@ ORDER BY (id, envio_checkpoint_id)`
         let entity = module(Entities.EntityWithAllTypes)->Entities.entityModToInternal
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
-        let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` AS
+        let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` AS
 SELECT \`arrayOfBigDecimals\`, \`arrayOfBigInts\`, \`arrayOfFloats\`, \`arrayOfInts\`, \`arrayOfStrings\`, \`bigDecimal\`, \`bigDecimalWithConfig\`, \`bigInt\`, \`bool\`, \`enumField\`, \`float_\`, \`id\`, \`int_\`, \`json\`, \`optBigDecimal\`, \`optBigInt\`, \`optBool\`, \`optEnumField\`, \`optFloat\`, \`optInt\`, \`optString\`, \`optTimestamp\`, \`string\`, \`timestamp\`
 FROM (
   SELECT \`arrayOfBigDecimals\`, \`arrayOfBigInts\`, \`arrayOfFloats\`, \`arrayOfInts\`, \`arrayOfStrings\`, \`bigDecimal\`, \`bigDecimalWithConfig\`, \`bigInt\`, \`bool\`, \`enumField\`, \`float_\`, \`id\`, \`int_\`, \`json\`, \`optBigDecimal\`, \`optBigInt\`, \`optBool\`, \`optEnumField\`, \`optFloat\`, \`optInt\`, \`optString\`, \`optTimestamp\`, \`string\`, \`timestamp\`, \`envio_change\`

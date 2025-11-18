@@ -221,7 +221,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     })
     ->Js.Array2.joinWith(", ")
 
-  `CREATE VIEW IF NOT EXISTS ${database}.\`${historyTableName}\` AS
+  `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\` AS
 SELECT ${entityFields}
 FROM (
   SELECT ${entityFields}, \`${EntityHistory.changeFieldName}\`
