@@ -257,7 +257,7 @@ describe("E2E rollback tests", () => {
       (
         [
           {
-            id: 1,
+            id: firstHistoryCheckpointId + 2,
             blockHash: Js.Null.Value("0x101"),
             blockNumber: 101,
             chainId: 1337,
@@ -276,7 +276,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: 1,
+            checkpointId: firstHistoryCheckpointId + 2,
             entityId: "1",
             entity: {
               Entities.SimpleEntity.id: "1",
@@ -284,7 +284,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 1,
+            checkpointId: firstHistoryCheckpointId + 2,
             entityId: "2",
             entity: {
               Entities.SimpleEntity.id: "2",
@@ -521,7 +521,7 @@ describe("E2E rollback tests", () => {
       await indexerMock.queryCheckpoints(),
       [
         {
-          id: 1,
+          id: 3,
           eventsProcessed: 0,
           chainId: 1337,
           blockNumber: 102,
@@ -1167,7 +1167,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100
           {
-            id: 5,
+            id: 9,
             eventsProcessed: 2,
             chainId: 100,
             blockNumber: 102,
@@ -1198,7 +1198,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           }),
           Set({
-            checkpointId: 5,
+            checkpointId: 9,
             entityId: "1",
             entity: {
               Entities.SimpleEntity.id: "1",
@@ -1541,7 +1541,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             // for chain 1337. After rollback it was removed
             // and replaced with chain id 100
             {
-              id: 5,
+              id: 9,
               eventsProcessed: 2,
               chainId: 100,
               blockNumber: 102,
@@ -1572,7 +1572,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               },
             }),
             Set({
-              checkpointId: 5,
+              checkpointId: 9,
               entityId: "1",
               entity: {
                 Entities.SimpleEntity.id: "1",
@@ -1596,7 +1596,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           ],
           [
             Set({
-              checkpointId: 5,
+              checkpointId: 9,
               entityId: "foo",
               entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
@@ -1947,14 +1947,14 @@ Sorted by timestamp and chain id`,
             // Block 101 for chain 100 is skipped,
             // since it doesn't have events processed or block hash
             {
-              id: 5,
+              id: 8,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 102,
               blockHash: Js.Null.Null,
             },
             {
-              id: 6,
+              id: 9,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 103,
@@ -1977,7 +1977,7 @@ Sorted by timestamp and chain id`,
               },
             }),
             Set({
-              checkpointId: 6,
+              checkpointId: 9,
               entityId: "1",
               entity: {
                 Entities.SimpleEntity.id: "1",
@@ -2001,7 +2001,7 @@ Sorted by timestamp and chain id`,
           ],
           [
             Set({
-              checkpointId: 5,
+              checkpointId: 8,
               entityId: "foo",
               entity: {
                 Entities.EntityWithBigDecimal.id: "foo",

@@ -5,11 +5,11 @@ describe("Test ClickHouse SQL generation functions", () => {
     Async.it(
       "Should create SQL for A entity history table",
       async () => {
-        let entity = module(Entities.A)->Entities.entityModToInternal
-        let query = ClickHouse.makeCreateHistoryTableQuery(entity, ~database="test_db")
+        let entityConfig = module(Entities.A)->Entities.entityModToInternal
+        let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_A\` (
-  \`b_id\` Nullable(String),
+  \`b_id\` String,
   \`id\` String,
   \`optionalStringToTestLinkedEntities\` Nullable(String),
   \`envio_checkpoint_id\` UInt32,

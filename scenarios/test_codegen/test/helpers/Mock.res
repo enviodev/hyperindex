@@ -382,19 +382,22 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
-            ~tableName=entityConfig.entityHistory.table.tableName,
+            ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
           ),
         )
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(
             S.array(
               S.union([
-                entityConfig.entityHistory.setChangeSchema,
+                PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
                 S.object((s): Change.t<'entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                   Delete({
                     entityId: s.field("id", S.string),
-                    checkpointId: s.field(EntityHistory.checkpointIdFieldName, S.int),
+                    checkpointId: s.field(
+                      EntityHistory.checkpointIdFieldName,
+                      EntityHistory.unsafeCheckpointIdSchema,
+                    ),
                   })
                 }),
               ]),

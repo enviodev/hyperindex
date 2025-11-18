@@ -99,6 +99,8 @@ let getFieldName = fieldOrDerived =>
   | DerivedFrom({fieldName}) => fieldName
   }
 
+let idFieldName = "id"
+
 let getPgFieldType = (
   ~fieldType: fieldType,
   ~pgSchema,

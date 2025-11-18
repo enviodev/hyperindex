@@ -98,24 +98,56 @@ let getClickHouseFieldType = (
   isNullable ? `Nullable(${baseType})` : baseType
 }
 
-let setOrThrow = async (
+let setUpdatesOrThrow = async (
   client,
-  ~items: array<'item>,
-  ~table: Table.table,
-  ~itemSchema: S.t<'item>,
+  ~updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
+  ~entityConfig: Internal.entityConfig,
   ~database: string,
 ) => {
-  if items->Array.length === 0 {
+  if updates->Array.length === 0 {
     ()
   } else {
+    let {convertOrThrow, tableName} = switch entityConfig.clickHouseSetUpdatesCache {
+    | Some(cache) => cache
+    | None =>
+      let cache: Internal.clickHouseSetUpdatesCache = {
+        tableName: `${database}.\`${EntityHistory.historyTableName(
+            ~entityName=entityConfig.name,
+            ~entityIndex=entityConfig.index,
+          )}\``,
+        convertOrThrow: S.compile(
+          S.union([
+            EntityHistory.makeSetUpdateSchema(entityConfig.schema),
+            S.object(s => {
+              s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+              Change.Delete({
+                entityId: s.field(Table.idFieldName, S.string),
+                checkpointId: s.field(
+                  EntityHistory.checkpointIdFieldName,
+                  EntityHistory.unsafeCheckpointIdSchema,
+                ),
+              })
+            }),
+          ]),
+          ~input=Value,
+          ~output=Json,
+          ~typeValidation=false,
+          ~mode=Sync,
+        ),
+      }
+
+      entityConfig.clickHouseSetUpdatesCache = Some(cache)
+      cache
+    }
+
     try {
       // Convert entity updates to ClickHouse row format
-      let values = items->Js.Array2.map(item => {
-        item->S.reverseConvertOrThrow(itemSchema)
+      let values = updates->Js.Array2.map(update => {
+        update.latestChange->convertOrThrow
       })
 
       await client->insert({
-        table: `${database}.\`${table.tableName}\``,
+        table: tableName,
         values,
         format: "JSONEachRow",
       })
@@ -123,7 +155,7 @@ let setOrThrow = async (
     | exn =>
       raise(
         Persistence.StorageError({
-          message: `Failed to insert items into ClickHouse table "${table.tableName}"`,
+          message: `Failed to insert items into ClickHouse table "${tableName}"`,
           reason: exn->Utils.prettifyExn,
         }),
       )
@@ -132,90 +164,72 @@ let setOrThrow = async (
 }
 
 // Generate CREATE TABLE query for entity history table
-let makeCreateHistoryTableQuery = (entity: Internal.entityConfig, ~database: string) => {
-  let historyTable = entity.entityHistory.table
+let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
+  let fieldDefinitions = entityConfig.table.fields->Belt.Array.keepMap(field => {
+    switch field {
+    | Field(field) =>
+      Some({
+        let fieldName = field->Table.getDbFieldName
+        let clickHouseType = getClickHouseFieldType(
+          ~fieldType=field.fieldType,
+          ~isNullable=field.isNullable,
+          ~isArray=field.isArray,
+        )
+        `\`${fieldName}\` ${clickHouseType}`
+      })
+    | DerivedFrom(_) => None
+    }
+  })
 
-  let fieldDefinitions =
-    historyTable.fields
-    ->Belt.Array.keepMap(field => {
-      switch field {
-      | Field(field) =>
-        Some({
-          let fieldName = field->Table.getDbFieldName
-          let clickHouseType = getClickHouseFieldType(
-            ~fieldType=field.fieldType,
-            ~isNullable=field.isNullable,
-            ~isArray=field.isArray,
-          )
-          `\`${fieldName}\` ${clickHouseType}`
-        })
-      | DerivedFrom(_) => None
-      }
-    })
-    ->Js.Array2.joinWith(",\n  ")
-
-  let tableName = historyTable.tableName
-
-  `CREATE TABLE IF NOT EXISTS ${database}.\`${tableName}\` (
-  ${fieldDefinitions}
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
+      ~entityName=entityConfig.name,
+      ~entityIndex=entityConfig.index,
+    )}\` (
+  ${fieldDefinitions->Js.Array2.joinWith(",\n  ")},
+  \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
+      ~fieldType=Uint32,
+      ~isNullable=false,
+      ~isArray=false,
+    )},
+  \`${EntityHistory.changeFieldName}\` ${getClickHouseFieldType(
+      ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
+      ~isNullable=false,
+      ~isArray=false,
+    )}
 )
 ENGINE = MergeTree()
-ORDER BY (id, ${EntityHistory.checkpointIdFieldName})`
+ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 // Generate CREATE VIEW query for entity current state
-let makeCreateViewQuery = (entity: Internal.entityConfig, ~database: string) => {
-  let historyTable = entity.entityHistory.table
-  let historyTableName = historyTable.tableName
+let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
+  let historyTableName = EntityHistory.historyTableName(
+    ~entityName=entityConfig.name,
+    ~entityIndex=entityConfig.index,
+  )
 
-  // Fields for outer SELECT (exclude both envio_checkpoint_id and envio_change)
-  let outerFields =
-    historyTable.fields
+  let entityFields =
+    entityConfig.table.fields
     ->Belt.Array.keepMap(field => {
       switch field {
       | Field(field) => {
           let fieldName = field->Table.getDbFieldName
-          if (
-            fieldName == EntityHistory.checkpointIdFieldName ||
-              fieldName == EntityHistory.changeFieldName
-          ) {
-            None
-          } else {
-            Some(`\`${fieldName}\``)
-          }
+          Some(`\`${fieldName}\``)
         }
       | DerivedFrom(_) => None
       }
     })
     ->Js.Array2.joinWith(", ")
 
-  // Fields for inner SELECT (exclude only envio_change)
-  let innerFields =
-    historyTable.fields
-    ->Belt.Array.keepMap(field => {
-      switch field {
-      | Field(field) => {
-          let fieldName = field->Table.getDbFieldName
-          if fieldName == EntityHistory.changeFieldName {
-            None
-          } else {
-            Some(`\`${fieldName}\``)
-          }
-        }
-      | DerivedFrom(_) => None
-      }
-    })
-    ->Js.Array2.joinWith(", ")
-
-  `CREATE VIEW IF NOT EXISTS ${database}.\`${entity.name}\` AS
-SELECT ${outerFields}
+  `CREATE VIEW IF NOT EXISTS ${database}.\`${historyTableName}\` AS
+SELECT ${entityFields}
 FROM (
-  SELECT ${innerFields}
+  SELECT ${entityFields}, \`${EntityHistory.changeFieldName}\`
   FROM ${database}.\`${historyTableName}\`
   ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
-  LIMIT 1 BY \`id\`
+  LIMIT 1 BY \`${Table.idFieldName}\`
 )
-WHERE \`${EntityHistory.changeFieldName}\` = 'SET'`
+WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
 // Initialize ClickHouse tables for entities
@@ -231,14 +245,14 @@ let initialize = async (
     await client->exec({query: `USE ${database}`})
 
     await Promise.all(
-      entities->Belt.Array.map(entity =>
-        client->exec({query: makeCreateHistoryTableQuery(entity, ~database)})
+      entities->Belt.Array.map(entityConfig =>
+        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
       ),
     )->Promise.ignoreValue
 
     await Promise.all(
-      entities->Belt.Array.map(entity =>
-        client->exec({query: makeCreateViewQuery(entity, ~database)})
+      entities->Belt.Array.map(entityConfig =>
+        client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
     )->Promise.ignoreValue
 

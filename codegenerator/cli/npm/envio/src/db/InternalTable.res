@@ -59,8 +59,6 @@ module DynamicContractRegistry = {
     ],
   )
 
-  let entityHistory = table->EntityHistory.fromTable(~schema, ~entityIndex=index)
-
   external castToInternal: t => Internal.entity = "%identity"
 
   let config = {
@@ -69,7 +67,6 @@ module DynamicContractRegistry = {
     schema,
     rowsSchema,
     table,
-    entityHistory,
   }->Internal.fromGenericEntityConfig
 }
 

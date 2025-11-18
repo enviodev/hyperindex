@@ -246,13 +246,18 @@ let fuelTransferParamsSchema = S.schema(s => {
 })
 
 type entity = private {id: string}
+type clickHouseSetUpdatesCache = {
+  tableName: string,
+  convertOrThrow: Change.t<entity> => Js.Json.t,
+}
 type genericEntityConfig<'entity> = {
   name: string,
   index: int,
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
-  entityHistory: EntityHistory.t<'entity>,
+  mutable clickHouseSetUpdatesCache?: clickHouseSetUpdatesCache,
+  mutable pgEntityHistoryCache?: EntityHistory.pgEntityHistory<'entity>,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"
