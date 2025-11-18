@@ -1510,7 +1510,7 @@ let make = (
       ~lastKnownValidBlockNumber,
     )
 
-  let getRollbackProgressDiff = rollbackTargetCheckpointId =>
+  let getRollbackProgressDiff = (~rollbackTargetCheckpointId) =>
     InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~rollbackTargetCheckpointId)
 
   let getRollbackData = async (

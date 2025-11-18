@@ -6,4 +6,4 @@ type t<'entity> =
 @get
 external getEntityId: t<'entity> => string = "entityId"
 @get
-external getCheckpointId: t<'entity> => int = "checkpointId"
+external getCheckpointId: t<'entity> => float = "checkpointId"

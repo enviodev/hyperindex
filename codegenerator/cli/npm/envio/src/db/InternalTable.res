@@ -472,7 +472,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
     ->Promise.ignoreValue
   }
 
-  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: int) => {
+  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
     sql
     ->Postgres.preparedUnsafe(
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
@@ -514,7 +514,7 @@ LIMIT 1;`
       makeGetRollbackTargetCheckpointQuery(~pgSchema),
       (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
     )
-    ->(Utils.magic: promise<unknown> => promise<array<{"id": int}>>)
+    ->(Utils.magic: promise<unknown> => promise<array<{"id": Internal.checkpointId}>>)
   }
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
@@ -527,7 +527,11 @@ WHERE "${(#id: field :> string)}" > $1
 GROUP BY "${(#chain_id: field :> string)}";`
   }
 
-  let getRollbackProgressDiff = (sql, ~pgSchema, ~rollbackTargetCheckpointId: int) => {
+  let getRollbackProgressDiff = (
+    sql,
+    ~pgSchema,
+    ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ) => {
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema),

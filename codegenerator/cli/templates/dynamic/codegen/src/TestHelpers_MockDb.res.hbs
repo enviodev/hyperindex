@@ -593,10 +593,14 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     hasEntityHistoryRows: () => Promise.resolve(false),
     setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
     pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not used yet"),
-    pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) => Promise.resolve(),
-    getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => Promise.resolve([]),
-    getRollbackProgressDiff: _ => Promise.resolve([]),
-    getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) => Promise.resolve(([], [])),
+    pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
+      Js.Exn.raiseError("Not used yet"),
+    getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+      Js.Exn.raiseError("Not used yet"),
+    getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
+      Js.Exn.raiseError("Not used yet"),
+    getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+      Js.Exn.raiseError("Not used yet"),
     writeBatch: (
       ~batch as _,
       ~rawEvents as _,
@@ -606,7 +610,7 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
       ~allEntities as _,
       ~updatedEffectsCache as _,
       ~updatedEntities as _,
-    ) => Promise.resolve(),
+    ) => Js.Exn.raiseError("Not used yet"),
   }
 }
 and /**

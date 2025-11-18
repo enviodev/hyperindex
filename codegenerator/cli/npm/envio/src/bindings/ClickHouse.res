@@ -372,6 +372,11 @@ let resume = async (client, ~database: string, ~checkpointId: float) => {
         })
       }),
     )->Promise.ignoreValue
+
+    // Delete stale checkpoints
+    await client->exec({
+      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->Belt.Float.toString}`,
+    })
   } catch {
   | Persistence.StorageError(_) as exn => raise(exn)
   | exn => {

@@ -51,7 +51,7 @@ type t = {
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Internal.entity>>,
   effects: dict<effectCacheInMemTable>,
-  rollbackTargetCheckpointId: option<int>,
+  rollbackTargetCheckpointId: option<Internal.checkpointId>,
 }
 
 let make = (~entities: array<Internal.entityConfig>, ~rollbackTargetCheckpointId=?): t => {

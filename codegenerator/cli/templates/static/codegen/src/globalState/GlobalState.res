@@ -1029,7 +1029,7 @@ let injectedTaskReducer = (
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
         ) {
         | [checkpoint] => checkpoint["id"]
-        | _ => 0
+        | _ => 0.
         }
       }
 
@@ -1039,7 +1039,7 @@ let injectedTaskReducer = (
 
       {
         let rollbackProgressDiff = await state.indexer.persistence.storage.getRollbackProgressDiff(
-          rollbackTargetCheckpointId,
+          ~rollbackTargetCheckpointId,
         )
         for idx in 0 to rollbackProgressDiff->Js.Array2.length - 1 {
           let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
@@ -1059,7 +1059,7 @@ let injectedTaskReducer = (
           )
           newProgressBlockNumberPerChain->Utils.Dict.setByInt(
             diff["chain_id"],
-            if rollbackTargetCheckpointId === 0 && diff["chain_id"] === reorgChainId {
+            if rollbackTargetCheckpointId === 0. && diff["chain_id"] === reorgChainId {
               Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
             } else {
               diff["new_progress_block_number"]

@@ -29,7 +29,7 @@ type initialState = {
   cleanRun: bool,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
-  checkpointId: float,
+  checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
@@ -95,20 +95,22 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpointId: float) => promise<unit>,
+  pruneStaleCheckpoints: (~safeCheckpointId: Internal.checkpointId) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
-    ~safeCheckpointId: float,
+    ~safeCheckpointId: Internal.checkpointId,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
-  ) => promise<array<{"id": int}>>,
+  ) => promise<array<{"id": Internal.checkpointId}>>,
   // Get rollback progress diff
-  getRollbackProgressDiff: int => promise<
+  getRollbackProgressDiff: (
+    ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ) => promise<
     array<{
       "chain_id": int,
       "events_processed_diff": string,
@@ -118,13 +120,13 @@ type storage = {
   // Get rollback data for entity
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
-    ~rollbackTargetCheckpointId: int,
+    ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => promise<(array<{"id": string}>, array<unknown>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
     ~rawEvents: array<InternalTable.RawEvents.t>,
-    ~rollbackTargetCheckpointId: option<int>,
+    ~rollbackTargetCheckpointId: option<Internal.checkpointId>,
     ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,

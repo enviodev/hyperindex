@@ -144,7 +144,7 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
   ->Promise.ignoreValue
 }
 
-let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: int) => {
+let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: float) => {
   sql
   ->Postgres.preparedUnsafe(
     `DELETE FROM "${pgSchema}"."${historyTableName(
