@@ -668,7 +668,7 @@ let rec writeBatch = async (
   ~setEffectCacheOrThrow,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~sinkPromise: option<promise<unit>>,
+  ~sinkPromise: option<promise<option<exn>>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -924,7 +924,10 @@ let rec writeBatch = async (
           ->Promise.ignoreValue
 
           switch sinkPromise {
-          | Some(sinkPromise) => await sinkPromise
+          | Some(sinkPromise) => switch await sinkPromise {
+            | Some(exn) => raise(exn)
+            | None => ()
+            }
           | None => ()
           }
         }),
@@ -1537,12 +1540,16 @@ let make = (
     | Some(sink) => {
         let timerRef = Hrtime.makeTimer()
         Some(
-          sink.writeBatch(~updatedEntities)->Promise.thenResolve(_ => {
+          sink.writeBatch(~batch, ~updatedEntities)
+          ->Promise.thenResolve(_ => {
             Prometheus.SinkWrite.increment(
               ~sinkName=sink.name,
               ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
             )
-          }),
+            None
+          })
+          // Otherwise it fails with unhandled exception
+          ->Promise.catchResolve(exn => Some(exn)),
         )
       }
     | None => None

@@ -1,6 +1,27 @@
 open RescriptMocha
 
 describe("Test ClickHouse SQL generation functions", () => {
+  describe("makeCreateCheckpointsTableQuery", () => {
+    Async.it(
+      "Should create SQL for checkpoints table",
+      async () => {
+        let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db")
+
+        let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` (
+  \`id\` Int32,
+  \`chain_id\` Int32,
+  \`block_number\` Int32,
+  \`block_hash\` Nullable(String),
+  \`events_processed\` Int32
+)
+ENGINE = MergeTree()
+ORDER BY (id)`
+
+        Assert.equal(query, expectedQuery, ~message="Checkpoints table SQL should match exactly")
+      },
+    )
+  })
+
   describe("makeCreateHistoryTableQuery", () => {
     Async.it(
       "Should create SQL for A entity history table",

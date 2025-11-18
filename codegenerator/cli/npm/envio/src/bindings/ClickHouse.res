@@ -98,6 +98,42 @@ let getClickHouseFieldType = (
   isNullable ? `Nullable(${baseType})` : baseType
 }
 
+let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) => {
+  let checkpointsCount = batch.checkpointIds->Array.length
+  if checkpointsCount === 0 {
+    ()
+  } else {
+    // Convert columnar data to row format for JSONCompactEachRow
+    let checkpointRows = []
+    for idx in 0 to checkpointsCount - 1 {
+      let row = [
+        batch.checkpointIds->Belt.Array.getUnsafe(idx),
+        batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
+        batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
+        batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx)->Utils.magic,
+        batch.checkpointEventsProcessed->Belt.Array.getUnsafe(idx),
+      ]
+      checkpointRows->Js.Array2.push(row->Utils.magic)->ignore
+    }
+
+    try {
+      await client->insert({
+        table: `${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
+        values: checkpointRows,
+        format: "JSONCompactEachRow",
+      })
+    } catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert checkpoints into ClickHouse table "${InternalTable.Checkpoints.table.tableName}"`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
+    }
+  }
+}
+
 let setUpdatesOrThrow = async (
   client,
   ~updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
@@ -201,6 +237,41 @@ ENGINE = MergeTree()
 ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
+// Generate CREATE TABLE query for checkpoints
+let makeCreateCheckpointsTableQuery = (~database: string) => {
+  let idField = (#id: InternalTable.Checkpoints.field :> string)
+  let chainIdField = (#chain_id: InternalTable.Checkpoints.field :> string)
+  let blockNumberField = (#block_number: InternalTable.Checkpoints.field :> string)
+  let blockHashField = (#block_hash: InternalTable.Checkpoints.field :> string)
+  let eventsProcessedField = (#events_processed: InternalTable.Checkpoints.field :> string)
+
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\` (
+  \`${idField}\` ${getClickHouseFieldType(~fieldType=Int32, ~isNullable=false, ~isArray=false)},
+  \`${chainIdField}\` ${getClickHouseFieldType(
+      ~fieldType=Int32,
+      ~isNullable=false,
+      ~isArray=false,
+    )},
+  \`${blockNumberField}\` ${getClickHouseFieldType(
+      ~fieldType=Int32,
+      ~isNullable=false,
+      ~isArray=false,
+    )},
+  \`${blockHashField}\` ${getClickHouseFieldType(
+      ~fieldType=String,
+      ~isNullable=true,
+      ~isArray=false,
+    )},
+  \`${eventsProcessedField}\` ${getClickHouseFieldType(
+      ~fieldType=Int32,
+      ~isNullable=false,
+      ~isArray=false,
+    )}
+)
+ENGINE = MergeTree()
+ORDER BY (${idField})`
+}
+
 // Generate CREATE VIEW query for entity current state
 let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
   let historyTableName = EntityHistory.historyTableName(
@@ -255,6 +326,8 @@ let initialize = async (
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
     )->Promise.ignoreValue
+
+    await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
 
     Logging.trace("ClickHouse sink initialization completed successfully")
   } catch {

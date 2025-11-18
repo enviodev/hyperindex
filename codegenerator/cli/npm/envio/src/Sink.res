@@ -6,7 +6,10 @@ type t = {
     ~enums: array<Table.enumConfig<Table.enum>>=?,
   ) => promise<unit>,
   resume: (~checkpointId: int) => promise<unit>,
-  writeBatch: (~updatedEntities: array<Persistence.updatedEntity>) => promise<unit>,
+  writeBatch: (
+    ~batch: Batch.t,
+    ~updatedEntities: array<Persistence.updatedEntity>,
+  ) => promise<unit>,
 }
 
 let makeClickHouse = (~host, ~database, ~username, ~password): t => {
@@ -32,12 +35,13 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
     resume: (~checkpointId) => {
       ClickHouse.resume(client, ~database, ~checkpointId)
     },
-    writeBatch: (~updatedEntities) => {
-      Promise.all(
+    writeBatch: async (~batch, ~updatedEntities) => {
+      await Promise.all(
         updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
           ClickHouse.setUpdatesOrThrow(client, ~updates, ~entityConfig, ~database)
         }),
       )->Promise.ignoreValue
+      await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
     },
   }
 }
