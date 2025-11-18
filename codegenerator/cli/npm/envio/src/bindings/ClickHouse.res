@@ -325,14 +325,13 @@ let initialize = async (
         client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
       ),
     )->Promise.ignoreValue
+    await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
     )->Promise.ignoreValue
-
-    await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
 
     Logging.trace("ClickHouse sink initialization completed successfully")
   } catch {
