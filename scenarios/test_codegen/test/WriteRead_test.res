@@ -105,7 +105,7 @@ describe("Write/read tests", () => {
       await indexerMock.queryHistory(module(Entities.EntityWithAllTypes)),
       [
         Set({
-          checkpointId: 1,
+          checkpointId: 1.,
           entityId: "1",
           entity: entityWithAllTypes,
         }),
@@ -119,7 +119,7 @@ describe("Write/read tests", () => {
       await indexerMock.queryHistory(module(Entities.EntityWithAllNonArrayTypes)),
       [
         Set({
-          checkpointId: 1,
+          checkpointId: 1.,
           entityId: "1",
           entity: entityWithAllNonArrayTypes,
         }),
@@ -142,7 +142,7 @@ describe("Write/read tests", () => {
       ),
       [
         Set({
-          checkpointId: 1,
+          checkpointId: 1.,
           entityId: "1",
           entity: {
             id: "1",
@@ -166,7 +166,7 @@ describe("Write/read tests", () => {
       ),
       [
         Set({
-          checkpointId: 1,
+          checkpointId: 1.,
           entityId: "2",
           entity: {
             id: "2",

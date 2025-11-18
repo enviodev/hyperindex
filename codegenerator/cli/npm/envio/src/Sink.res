@@ -5,7 +5,7 @@ type t = {
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
   ) => promise<unit>,
-  resume: (~checkpointId: int) => promise<unit>,
+  resume: (~checkpointId: float) => promise<unit>,
   writeBatch: (
     ~batch: Batch.t,
     ~updatedEntities: array<Persistence.updatedEntity>,

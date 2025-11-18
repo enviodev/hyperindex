@@ -639,9 +639,18 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   })
   let selectPartsStr = selectParts->Js.Array2.joinWith(", ")
 
+  // Get the PostgreSQL type for the checkpoint ID field
+  let checkpointIdPgType = Table.getPgFieldType(
+    ~fieldType=EntityHistory.checkpointIdFieldType,
+    ~pgSchema,
+    ~isArray=false,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+  )
+
   `INSERT INTO "${pgSchema}"."${historyTableName}" (${allHistoryFieldNamesStr})
 SELECT ${selectPartsStr}
-FROM UNNEST($1::text[], $2::int[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 let executeSet = (
@@ -924,7 +933,8 @@ let rec writeBatch = async (
           ->Promise.ignoreValue
 
           switch sinkPromise {
-          | Some(sinkPromise) => switch await sinkPromise {
+          | Some(sinkPromise) =>
+            switch await sinkPromise {
             | Some(exn) => raise(exn)
             | None => ()
             }
@@ -1419,7 +1429,7 @@ let make = (
       }),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": int}>>),
+      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": float}>>),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<Internal.reorgCheckpoint>>),
@@ -1480,7 +1490,7 @@ let make = (
       %raw(`undefined`)
     )
 
-  let pruneStaleCheckpoints = safeCheckpointId =>
+  let pruneStaleCheckpoints = (~safeCheckpointId) =>
     InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpointId)
 
   let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~safeCheckpointId) =>

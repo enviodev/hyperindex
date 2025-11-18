@@ -29,7 +29,7 @@ type initialState = {
   cleanRun: bool,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
-  checkpointId: int,
+  checkpointId: float,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
@@ -95,12 +95,12 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: int => promise<unit>,
+  pruneStaleCheckpoints: (~safeCheckpointId: float) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
-    ~safeCheckpointId: int,
+    ~safeCheckpointId: float,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
@@ -315,3 +315,64 @@ let writeBatch = (
       },
     )
   }
+
+let prepareRollbackDiff = async (
+  persistence: t,
+  ~rollbackTargetCheckpointId,
+  ~rollbackDiffCheckpointId,
+) => {
+  let inMemStore = InMemoryStore.make(
+    ~entities=persistence.allEntities,
+    ~rollbackTargetCheckpointId,
+  )
+
+  let deletedEntities = Js.Dict.empty()
+  let setEntities = Js.Dict.empty()
+
+  let _ =
+    await persistence.allEntities
+    ->Belt.Array.map(async entityConfig => {
+      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
+
+      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+        ~entityConfig,
+        ~rollbackTargetCheckpointId,
+      )
+
+      // Process removed IDs
+      removedIdsResult->Js.Array2.forEach(data => {
+        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+        entityTable->InMemoryTable.Entity.set(
+          Delete({
+            entityId: data["id"],
+            checkpointId: rollbackDiffCheckpointId,
+          }),
+          ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
+        )
+      })
+
+      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+      // Process restored entities
+      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+        entityTable->InMemoryTable.Entity.set(
+          Set({
+            entityId: entity.id,
+            checkpointId: rollbackDiffCheckpointId,
+            entity,
+          }),
+          ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
+        )
+      })
+    })
+    ->Promise.all
+
+  {
+    "inMemStore": inMemStore,
+    "deletedEntities": deletedEntities,
+    "setEntities": setEntities,
+  }
+}

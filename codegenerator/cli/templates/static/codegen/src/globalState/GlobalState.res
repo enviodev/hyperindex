@@ -195,7 +195,11 @@ let updateChainMetadataTable = (
 Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
-let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~indexer: Indexer.t) => {
+let updateProgressedChains = (
+  chainManager: ChainManager.t,
+  ~batch: Batch.t,
+  ~indexer: Indexer.t,
+) => {
   Prometheus.ProgressBatchCount.increment()
 
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
@@ -818,7 +822,7 @@ let injectedTaskReducer = (
       switch state.chainManager->ChainManager.getSafeCheckpointId {
       | None => ()
       | Some(safeCheckpointId) =>
-        await state.indexer.persistence.storage.pruneStaleCheckpoints(safeCheckpointId)
+        await state.indexer.persistence.storage.pruneStaleCheckpoints(~safeCheckpointId)
 
         for idx in 0 to Entities.allEntities->Array.length - 1 {
           if idx !== 0 {
@@ -829,12 +833,11 @@ let injectedTaskReducer = (
           let entityConfig = Entities.allEntities->Array.getUnsafe(idx)
           let timeRef = Hrtime.makeTimer()
           try {
-            let () =
-              await state.indexer.persistence.storage.pruneStaleEntityHistory(
-                ~entityName=entityConfig.name,
-                ~entityIndex=entityConfig.index,
-                ~safeCheckpointId,
-              )
+            let () = await state.indexer.persistence.storage.pruneStaleEntityHistory(
+              ~entityName=entityConfig.name,
+              ~entityIndex=entityConfig.index,
+              ~safeCheckpointId,
+            )
           } catch {
           | exn =>
             exn->ErrorHandling.mkLogAndRaise(
@@ -894,9 +897,17 @@ let injectedTaskReducer = (
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
+      //In the case of a rollback, use the provided in memory store
+      //With rolled back values
+      let rollbackInMemStore = switch state.rollbackState {
+      | RollbackReady({diffInMemoryStore}) => Some(diffInMemoryStore)
+      | _ => None
+      }
+
       let batch =
         state.chainManager->ChainManager.createBatch(
           ~batchSizeTarget=state.indexer.config.batchSize,
+          ~isRollback=rollbackInMemStore !== None,
         )
 
       let progressedChainsById = batch.progressedChainsById
@@ -942,14 +953,10 @@ let injectedTaskReducer = (
         dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
-        //In the case of a rollback, use the provided in memory store
-        //With rolled back values
-        let rollbackInMemStore = switch state.rollbackState {
-        | RollbackReady({diffInMemoryStore}) => Some(diffInMemoryStore)
-        | _ => None
-        }
-
-        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make(~entities=Entities.allEntities))
+        let inMemoryStore =
+          rollbackInMemStore->Option.getWithDefault(
+            InMemoryStore.make(~entities=Entities.allEntities),
+          )
 
         inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
 
@@ -1031,10 +1038,9 @@ let injectedTaskReducer = (
       let rollbackedProcessedEvents = ref(0)
 
       {
-        let rollbackProgressDiff =
-          await state.indexer.persistence.storage.getRollbackProgressDiff(
-            rollbackTargetCheckpointId,
-          )
+        let rollbackProgressDiff = await state.indexer.persistence.storage.getRollbackProgressDiff(
+          rollbackTargetCheckpointId,
+        )
         for idx in 0 to rollbackProgressDiff->Js.Array2.length - 1 {
           let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
           eventsProcessedDiffByChain->Utils.Dict.setByInt(
@@ -1115,10 +1121,11 @@ let injectedTaskReducer = (
       })
 
       // Construct in Memory store with rollback diff
-      let diff = await IO.prepareRollbackDiff(
-        ~rollbackTargetCheckpointId,
-        ~persistence=state.indexer.persistence,
-      )
+      let diff =
+        await state.indexer.persistence->Persistence.prepareRollbackDiff(
+          ~rollbackTargetCheckpointId,
+          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId +. 1.,
+        )
 
       let chainManager = {
         ...state.chainManager,

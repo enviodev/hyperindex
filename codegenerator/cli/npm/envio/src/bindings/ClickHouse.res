@@ -106,14 +106,15 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     // Convert columnar data to row format for JSONCompactEachRow
     let checkpointRows = []
     for idx in 0 to checkpointsCount - 1 {
-      let row = [
+      checkpointRows
+      ->Js.Array2.push((
         batch.checkpointIds->Belt.Array.getUnsafe(idx),
         batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
-        batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx)->Utils.magic,
+        batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx),
         batch.checkpointEventsProcessed->Belt.Array.getUnsafe(idx),
-      ]
-      checkpointRows->Js.Array2.push(row->Utils.magic)->ignore
+      ))
+      ->ignore
     }
 
     try {
@@ -339,7 +340,7 @@ let initialize = async (
 }
 
 // Resume ClickHouse sink after reorg by deleting rows with checkpoint IDs higher than target
-let resume = async (client, ~database: string, ~checkpointId: int) => {
+let resume = async (client, ~database: string, ~checkpointId: float) => {
   try {
     // Try to use the database - will throw if it doesn't exist
     try {
@@ -364,7 +365,7 @@ let resume = async (client, ~database: string, ~checkpointId: int) => {
       tables->Belt.Array.map(table => {
         let tableName = table["name"]
         client->exec({
-          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Belt.Int.toString}`,
+          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Belt.Float.toString}`,
         })
       }),
     )->Promise.ignoreValue

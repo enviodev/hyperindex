@@ -120,7 +120,7 @@ let makeStoreOperatorEntity = (
     table->set(
       Delete({
         entityId,
-        checkpointId: 0,
+        checkpointId: 0.,
       }),
       ~shouldSaveHistory=false,
     )
@@ -136,7 +136,7 @@ let makeStoreOperatorEntity = (
     table->set(
       Set({
         entityId,
-        checkpointId: 0,
+        checkpointId: 0.,
         entity,
       }),
       ~shouldSaveHistory=false,
@@ -414,7 +414,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
-        checkpointId: 0,
+        checkpointId: 0.,
       }),
     }
     let indexer = {
@@ -485,7 +485,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     }
 
     let batch = Batch.prepareUnorderedBatch(
-      ~checkpointIdBeforeBatch=0,
+      ~checkpointIdBeforeBatch=0.,
       ~chainsBeforeBatch=ChainMap.fromArrayUnsafe([
         (
           processingChain,
@@ -592,7 +592,7 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     executeUnsafe: _ => Js.Exn.raiseError("Not used yet"),
     hasEntityHistoryRows: () => Promise.resolve(false),
     setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
-    pruneStaleCheckpoints: _ => Promise.resolve(),
+    pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not used yet"),
     pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) => Promise.resolve(),
     getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => Promise.resolve([]),
     getRollbackProgressDiff: _ => Promise.resolve([]),

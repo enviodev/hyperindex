@@ -384,7 +384,7 @@ module Checkpoints = {
   ]
 
   type t = {
-    id: int,
+    id: float,
     @as("chain_id")
     chainId: int,
     @as("block_number")
@@ -395,7 +395,7 @@ module Checkpoints = {
     eventsProcessed: int,
   }
 
-  let initialCheckpointId = 0
+  let initialCheckpointId = 0.
 
   let table = mkTable(
     "envio_checkpoints",
@@ -435,7 +435,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
-    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->Belt.Int.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->Belt.Float.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
   }
 
   let makeInsertCheckpointQuery = (~pgSchema) => {
@@ -465,7 +465,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
         checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<int>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
+          (array<float>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
         ) => unknown
       ),
     )
@@ -485,7 +485,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
     `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
   }
 
-  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: int) => {
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: float) => {
     sql
     ->Postgres.preparedUnsafe(
       makePruneStaleCheckpointsQuery(~pgSchema),

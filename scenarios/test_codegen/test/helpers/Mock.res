@@ -10,7 +10,7 @@ module InMemoryStore = {
     inMemTable->InMemoryTable.Entity.set(
       Set({
         entityId: entity->Entities.getEntityId,
-        checkpointId: 0,
+        checkpointId: 0.,
         entity,
       }),
       ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
@@ -184,17 +184,17 @@ module Storage = {
         setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
           implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
         },
-        executeUnsafe: _ => Promise.resolve(%raw(`undefined`)),
-        hasEntityHistoryRows: () => Promise.resolve(false),
-        setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
-        pruneStaleCheckpoints: _ => Promise.resolve(),
+        executeUnsafe: _ => Js.Exn.raiseError("Not implemented"),
+        hasEntityHistoryRows: () => Js.Exn.raiseError("Not implemented"),
+        setChainMeta: _ => Js.Exn.raiseError("Not implemented"),
+        pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not implemented"),
         pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-          Promise.resolve(),
+          Js.Exn.raiseError("Not implemented"),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
-          Promise.resolve([]),
-        getRollbackProgressDiff: _ => Promise.resolve([]),
+          Js.Exn.raiseError("Not implemented"),
+        getRollbackProgressDiff: _ => Js.Exn.raiseError("Not implemented"),
         getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
-          Promise.resolve(([], [])),
+          Js.Exn.raiseError("Not implemented"),
         writeBatch: (
           ~batch as _,
           ~rawEvents as _,
@@ -204,7 +204,7 @@ module Storage = {
           ~allEntities as _,
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
-        ) => Promise.resolve(),
+        ) => Js.Exn.raiseError("Not implemented"),
       },
     }
   }
@@ -218,7 +218,7 @@ module Storage = {
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
-        checkpointId: 0,
+        checkpointId: 0.,
       }),
     }
   }

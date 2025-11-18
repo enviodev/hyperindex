@@ -24,10 +24,10 @@ let unsafeCheckpointIdSchema =
   ->S.transform(s => {
     parser: string =>
       switch string->Belt.Float.fromString {
-      | Some(float) => float->(Utils.magic: float => int)
+      | Some(float) => float
       | None => s.fail("The string is not valid CheckpointId")
       },
-    serializer: int => int->Belt.Int.toString,
+    serializer: float => float->Belt.Float.toString,
   })
 
 let makeSetUpdateSchema: S.t<'entity> => S.t<Change.t<'entity>> = entitySchema => {

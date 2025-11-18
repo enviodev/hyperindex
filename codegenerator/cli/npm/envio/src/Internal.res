@@ -316,7 +316,7 @@ type noEventFilters
 
 type reorgCheckpoint = {
   @as("id")
-  checkpointId: int,
+  checkpointId: float,
   @as("chain_id")
   chainId: int,
   @as("block_number")

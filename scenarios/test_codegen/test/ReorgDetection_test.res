@@ -19,7 +19,7 @@ describe("Validate reorg detection functions", () => {
         blockHash,
       )): Internal.reorgCheckpoint => {
         chainId: 0, // It's not used
-        checkpointId: 0, // It's not used
+        checkpointId: 0., // It's not used
         blockNumber,
         blockHash,
       }),
