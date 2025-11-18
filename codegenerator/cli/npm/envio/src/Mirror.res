@@ -16,6 +16,14 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
     password,
   })
 
+  // Don't assign it to client immediately,
+  // since it will fail if the database doesn't exist
+  // Call USE database instead
+  let database = switch database {
+  | Some(database) => database
+  | None => "envio_mirror"
+  }
+
   {
     name: "ClickHouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
