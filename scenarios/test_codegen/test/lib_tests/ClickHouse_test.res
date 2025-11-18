@@ -81,6 +81,7 @@ SELECT \`arrayOfBigDecimals\`, \`arrayOfBigInts\`, \`arrayOfFloats\`, \`arrayOfI
 FROM (
   SELECT \`arrayOfBigDecimals\`, \`arrayOfBigInts\`, \`arrayOfFloats\`, \`arrayOfInts\`, \`arrayOfStrings\`, \`bigDecimal\`, \`bigDecimalWithConfig\`, \`bigInt\`, \`bool\`, \`enumField\`, \`float_\`, \`id\`, \`int_\`, \`json\`, \`optBigDecimal\`, \`optBigInt\`, \`optBool\`, \`optEnumField\`, \`optFloat\`, \`optInt\`, \`optString\`, \`optTimestamp\`, \`string\`, \`timestamp\`, \`envio_change\`
   FROM test_db.\`envio_history_EntityWithAllTypes\`
+  WHERE \`envio_checkpoint_id\` <= (SELECT max(id) FROM test_db.\`envio_checkpoints\`)
   ORDER BY \`envio_checkpoint_id\` DESC
   LIMIT 1 BY \`id\`
 )

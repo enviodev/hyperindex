@@ -280,6 +280,9 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     ~entityIndex=entityConfig.index,
   )
 
+  let checkpointsTableName = InternalTable.Checkpoints.table.tableName
+  let checkpointIdField = (#id: InternalTable.Checkpoints.field :> string)
+
   let entityFields =
     entityConfig.table.fields
     ->Belt.Array.keepMap(field => {
@@ -298,6 +301,7 @@ SELECT ${entityFields}
 FROM (
   SELECT ${entityFields}, \`${EntityHistory.changeFieldName}\`
   FROM ${database}.\`${historyTableName}\`
+  WHERE \`${EntityHistory.checkpointIdFieldName}\` <= (SELECT max(${checkpointIdField}) FROM ${database}.\`${checkpointsTableName}\`)
   ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
   LIMIT 1 BY \`${Table.idFieldName}\`
 )
