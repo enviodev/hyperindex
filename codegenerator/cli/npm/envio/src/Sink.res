@@ -21,7 +21,7 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   // Call USE database instead
   let database = switch database {
   | Some(database) => database
-  | None => "envio_mirror"
+  | None => "envio_sink"
   }
 
   {

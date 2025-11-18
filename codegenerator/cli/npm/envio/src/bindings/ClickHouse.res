@@ -256,16 +256,16 @@ let initialize = async (
       ),
     )->Promise.ignoreValue
 
-    Logging.trace("ClickHouse mirror initialization completed successfully")
+    Logging.trace("ClickHouse sink initialization completed successfully")
   } catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse mirror")
+      Logging.errorWithExn(exn, "Failed to initialize ClickHouse sink")
       Js.Exn.raiseError("ClickHouse initialization failed")
     }
   }
 }
 
-// Resume ClickHouse mirror after reorg by deleting rows with checkpoint IDs higher than target
+// Resume ClickHouse sink after reorg by deleting rows with checkpoint IDs higher than target
 let resume = async (client, ~database: string, ~checkpointId: int) => {
   try {
     // Try to use the database - will throw if it doesn't exist
@@ -275,7 +275,7 @@ let resume = async (client, ~database: string, ~checkpointId: int) => {
     | exn =>
       Logging.errorWithExn(
         exn,
-        `ClickHouse mirror database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
+        `ClickHouse sink database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
       )
       Js.Exn.raiseError("ClickHouse resume failed")
     }
@@ -298,7 +298,7 @@ let resume = async (client, ~database: string, ~checkpointId: int) => {
   } catch {
   | Persistence.StorageError(_) as exn => raise(exn)
   | exn => {
-      Logging.errorWithExn(exn, "Failed to resume ClickHouse mirror")
+      Logging.errorWithExn(exn, "Failed to resume ClickHouse sink")
       Js.Exn.raiseError("ClickHouse resume failed")
     }
   }

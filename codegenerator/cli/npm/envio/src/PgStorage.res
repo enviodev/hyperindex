@@ -668,7 +668,7 @@ let rec writeBatch = async (
   ~setEffectCacheOrThrow,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~mirrorPromise: option<promise<unit>>,
+  ~sinkPromise: option<promise<unit>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -923,8 +923,8 @@ let rec writeBatch = async (
           ->Promise.all
           ->Promise.ignoreValue
 
-          switch mirrorPromise {
-          | Some(mirrorPromise) => await mirrorPromise
+          switch sinkPromise {
+          | Some(sinkPromise) => await sinkPromise
           | None => ()
           }
         }),
@@ -972,7 +972,7 @@ let rec writeBatch = async (
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
-      ~mirrorPromise,
+      ~sinkPromise,
     )
   }
 }
@@ -1034,7 +1034,7 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
-  ~mirror: option<Mirror.t>=?,
+  ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -1166,9 +1166,9 @@ let make = (
       )
     }
 
-    // Call mirror.initialize before executing PG queries
-    switch mirror {
-    | Some(mirror) => await mirror.initialize(~chainConfigs, ~entities, ~enums)
+    // Call sink.initialize before executing PG queries
+    switch sink {
+    | Some(sink) => await sink.initialize(~chainConfigs, ~entities, ~enums)
     | None => ()
     }
 
@@ -1424,9 +1424,9 @@ let make = (
 
     let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]
 
-    // Resume mirror if present - needed to rollback any reorg changes
-    switch mirror {
-    | Some(mirror) => await mirror.resume(~checkpointId)
+    // Resume sink if present - needed to rollback any reorg changes
+    switch sink {
+    | Some(sink) => await sink.resume(~checkpointId)
     | None => ()
     }
 
@@ -1532,14 +1532,14 @@ let make = (
     ~updatedEffectsCache,
     ~updatedEntities,
   ) => {
-    // Mirror to ClickHouse if configured
-    let mirrorPromise = switch mirror {
-    | Some(mirror) => {
+    // Initialize sink if configured
+    let sinkPromise = switch sink {
+    | Some(sink) => {
         let timerRef = Hrtime.makeTimer()
         Some(
-          mirror.writeBatch(~updatedEntities)->Promise.thenResolve(_ => {
-            Prometheus.MirrorWrite.increment(
-              ~mirrorName=mirror.name,
+          sink.writeBatch(~updatedEntities)->Promise.thenResolve(_ => {
+            Prometheus.SinkWrite.increment(
+              ~sinkName=sink.name,
               ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
             )
           }),
@@ -1560,7 +1560,7 @@ let make = (
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities,
-      ~mirrorPromise,
+      ~sinkPromise,
     )
   }
 
