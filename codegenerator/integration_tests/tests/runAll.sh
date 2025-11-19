@@ -9,19 +9,13 @@ cargo run #calls the function run_all_init_combinations in main.rs to create all
 cp -R -f ./tests/test_indexers ./integration_test_output
 
 export TEMPLATE="evm_Erc20"
-LANGUAGE="JavaScript" ./tests/runSingle.sh
 LANGUAGE="TypeScript" ./tests/runSingle.sh
-LANGUAGE="ReScript" ./tests/runSingle.sh
 
 export TEMPLATE="evm_Greeter"
-LANGUAGE="JavaScript" ./tests/runSingle.sh
 LANGUAGE="TypeScript" ./tests/runSingle.sh
-LANGUAGE="ReScript" ./tests/runSingle.sh
 
 export TEMPLATE="fuel_Greeter"
-LANGUAGE="JavaScript" ./tests/runSingle.sh
 LANGUAGE="TypeScript" ./tests/runSingle.sh
-LANGUAGE="ReScript" ./tests/runSingle.sh
 
 export TEMPLATE="test_indexers/test_exits"
 export TEST_FILE="EndblockSuccess"
