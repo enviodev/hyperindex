@@ -8,5 +8,5 @@ type UniswapV3Pool_Swap {
   amount1: BigInt!                          # Token1 amount in the swap (positive/negative)
   sqrtPriceX96: BigInt!                     # Current sqrt(price) after the swap (Q96 format)
   liquidity: BigInt!                        # Liquidity at the time of the swap
-  pool: String!                             # Address of thepool where the swap occurred
+  pool: String!                             # Address of the pool where the swap occurred
 }
