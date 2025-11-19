@@ -8,12 +8,12 @@ describe("Test Persistence layer init", () => {
 
     Assert.deepEqual(
       persistence.allEntities,
-      [module(InternalTable.DynamicContractRegistry)->Entities.entityModToInternal],
+      [InternalTable.DynamicContractRegistry.config],
       ~message=`All entities should automatically include the indexer core ones`,
     )
     Assert.deepEqual(
       persistence.allEnums,
-      [Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+      [EntityHistory.RowAction.config->Table.fromGenericEnumConfig],
       ~message=`All enums should automatically include the indexer core ones`,
     )
     Assert.deepEqual(
@@ -79,7 +79,7 @@ describe("Test Persistence layer init", () => {
       chains: [],
       cache: Js.Dict.empty(),
       reorgCheckpoints: [],
-      checkpointId: 0,
+      checkpointId: 0.,
     }
     storageMock.resolveInitialize(initialState)
     let _ = await Promise.resolve()
@@ -145,7 +145,7 @@ describe("Test Persistence layer init", () => {
       chains: [],
       cache: Js.Dict.empty(),
       reorgCheckpoints: [],
-      checkpointId: 0,
+      checkpointId: 0.,
     }
     storageMock.resolveLoadInitialState(initialState)
     let _ = await Promise.resolve()

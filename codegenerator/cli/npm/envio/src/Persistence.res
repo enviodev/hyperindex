@@ -29,17 +29,22 @@ type initialState = {
   cleanRun: bool,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
-  checkpointId: int,
+  checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
 
 type operator = [#">" | #"=" | #"<"]
 
-type effectBatchCache = {
+type updatedEffectCache = {
   effect: Internal.effect,
   items: array<Internal.effectCacheItem>,
   shouldInitialize: bool,
+}
+
+type updatedEntity = {
+  entityConfig: Internal.entityConfig,
+  updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
 }
 
 type storage = {
@@ -51,7 +56,7 @@ type storage = {
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
-    ~enums: array<Internal.enumConfig<Internal.enum>>=?,
+    ~enums: array<Table.enumConfig<Table.enum>>=?,
   ) => promise<initialState>,
   resumeInitialState: unit => promise<initialState>,
   @raises("StorageError")
@@ -90,20 +95,22 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: int => promise<unit>,
+  pruneStaleCheckpoints: (~safeCheckpointId: Internal.checkpointId) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
-    ~safeCheckpointId: int,
+    ~safeCheckpointId: Internal.checkpointId,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
-  ) => promise<array<{"id": int}>>,
+  ) => promise<array<{"id": Internal.checkpointId}>>,
   // Get rollback progress diff
-  getRollbackProgressDiff: int => promise<
+  getRollbackProgressDiff: (
+    ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ) => promise<
     array<{
       "chain_id": int,
       "events_processed_diff": string,
@@ -113,16 +120,18 @@ type storage = {
   // Get rollback data for entity
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
-    ~rollbackTargetCheckpointId: int,
+    ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => promise<(array<{"id": string}>, array<unknown>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
-    ~inMemoryStore: InMemoryStore.t,
+    ~rawEvents: array<InternalTable.RawEvents.t>,
+    ~rollbackTargetCheckpointId: option<Internal.checkpointId>,
     ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,
-    ~batchCache: array<effectBatchCache>,
+    ~updatedEffectsCache: array<updatedEffectCache>,
+    ~updatedEntities: array<updatedEntity>,
   ) => promise<unit>,
 }
 
@@ -134,19 +143,12 @@ type storageStatus =
 type t = {
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
-  allEnums: array<Internal.enumConfig<Internal.enum>>,
+  allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
 }
 
 exception StorageError({message: string, reason: exn})
-
-let entityHistoryActionEnumConfig: Internal.enumConfig<EntityHistory.RowAction.t> = {
-  name: EntityHistory.RowAction.name,
-  variants: EntityHistory.RowAction.variants,
-  schema: EntityHistory.RowAction.schema,
-  default: SET,
-}
 
 let make = (
   ~userEntities,
@@ -156,7 +158,7 @@ let make = (
 ) => {
   let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
   let allEnums =
-    allEnums->Js.Array2.concat([entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig])
+    allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
     userEntities,
     allEntities,
@@ -239,26 +241,140 @@ let getInitializedState = persistence => {
   }
 }
 
-let getEffectBatchCache = (persistence, ~effect: Internal.effect, ~items, ~invalidationsCount) => {
+let writeBatch = (
+  persistence,
+  ~batch,
+  ~config,
+  ~inMemoryStore: InMemoryStore.t,
+  ~isInReorgThreshold,
+) =>
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
     Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
-  | Ready({cache}) => {
-      let effectName = effect.name
-      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
-      | Some(c) => c
-      | None => {
-          let c = {effectName, count: 0}
-          cache->Js.Dict.set(effectName, c)
-          c
-        }
+  | Ready({cache}) =>
+    let updatedEntities = persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
+      let updates =
+        inMemoryStore
+        ->InMemoryStore.getInMemTable(~entityConfig)
+        ->InMemoryTable.Entity.updates
+      if updates->Utils.Array.isEmpty {
+        None
+      } else {
+        Some({entityConfig, updates})
       }
-      let shouldInitialize = effectCacheRecord.count === 0
-      effectCacheRecord.count =
-        effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-      {effect, items, shouldInitialize}
-    }
+    })
+    persistence.storage.writeBatch(
+      ~batch,
+      ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
+      ~rollbackTargetCheckpointId=inMemoryStore.rollbackTargetCheckpointId,
+      ~isInReorgThreshold,
+      ~config,
+      ~allEntities=persistence.allEntities,
+      ~updatedEntities,
+      ~updatedEffectsCache={
+        inMemoryStore.effects
+        ->Js.Dict.keys
+        ->Belt.Array.keepMapU(effectName => {
+          let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
+          let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+          switch idsToStore {
+          | [] => None
+          | ids => {
+              let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+              ids->Belt.Array.forEachWithIndex((index, id) => {
+                items->Js.Array2.unsafe_set(
+                  index,
+                  (
+                    {
+                      id,
+                      output: dict->Js.Dict.unsafeGet(id),
+                    }: Internal.effectCacheItem
+                  ),
+                )
+              })
+              Some({
+                let effectName = effect.name
+                let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(
+                  effectName,
+                ) {
+                | Some(c) => c
+                | None => {
+                    let c = {effectName, count: 0}
+                    cache->Js.Dict.set(effectName, c)
+                    c
+                  }
+                }
+                let shouldInitialize = effectCacheRecord.count === 0
+                effectCacheRecord.count =
+                  effectCacheRecord.count + items->Js.Array2.length - invalidationsCount
+                Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+                {effect, items, shouldInitialize}
+              })
+            }
+          }
+        })
+      },
+    )
+  }
+
+let prepareRollbackDiff = async (
+  persistence: t,
+  ~rollbackTargetCheckpointId,
+  ~rollbackDiffCheckpointId,
+) => {
+  let inMemStore = InMemoryStore.make(
+    ~entities=persistence.allEntities,
+    ~rollbackTargetCheckpointId,
+  )
+
+  let deletedEntities = Js.Dict.empty()
+  let setEntities = Js.Dict.empty()
+
+  let _ =
+    await persistence.allEntities
+    ->Belt.Array.map(async entityConfig => {
+      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
+
+      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+        ~entityConfig,
+        ~rollbackTargetCheckpointId,
+      )
+
+      // Process removed IDs
+      removedIdsResult->Js.Array2.forEach(data => {
+        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+        entityTable->InMemoryTable.Entity.set(
+          Delete({
+            entityId: data["id"],
+            checkpointId: rollbackDiffCheckpointId,
+          }),
+          ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
+        )
+      })
+
+      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+      // Process restored entities
+      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+        entityTable->InMemoryTable.Entity.set(
+          Set({
+            entityId: entity.id,
+            checkpointId: rollbackDiffCheckpointId,
+            entity,
+          }),
+          ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
+        )
+      })
+    })
+    ->Promise.all
+
+  {
+    "inMemStore": inMemStore,
+    "deletedEntities": deletedEntities,
+    "setEntities": setEntities,
   }
 }

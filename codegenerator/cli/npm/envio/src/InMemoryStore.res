@@ -22,9 +22,7 @@ module EntityTables = {
     switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
     | Some(table) =>
       table->(
-        Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
-          entity,
-        >
+        Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<entity>
       )
 
     | None =>
@@ -53,13 +51,10 @@ type t = {
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Internal.entity>>,
   effects: dict<effectCacheInMemTable>,
-  rollbackTargetCheckpointId: option<int>,
+  rollbackTargetCheckpointId: option<Internal.checkpointId>,
 }
 
-let make = (
-  ~entities: array<Internal.entityConfig>,
-  ~rollbackTargetCheckpointId=?,
-): t => {
+let make = (~entities: array<Internal.entityConfig>, ~rollbackTargetCheckpointId=?): t => {
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
@@ -105,9 +100,7 @@ let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpoint
 
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
-    inMemoryStore->getInMemTable(
-      ~entityConfig=InternalTable.DynamicContractRegistry.config,
-    )
+    inMemoryStore->getInMemTable(~entityConfig=InternalTable.DynamicContractRegistry.config)
 
   let itemIdx = ref(0)
 
@@ -140,11 +133,11 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
           }
 
           inMemTable->InMemoryTable.Entity.set(
-            {
+            Set({
               entityId: entity.id,
               checkpointId,
-              entityUpdateAction: Set(entity->InternalTable.DynamicContractRegistry.castToInternal),
-            },
+              entity: entity->InternalTable.DynamicContractRegistry.castToInternal,
+            }),
             ~shouldSaveHistory,
           )
         }
@@ -154,4 +147,3 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
 }
-

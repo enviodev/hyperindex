@@ -2,7 +2,7 @@ let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema
 
 type contextParams = {
   item: Internal.item,
-  checkpointId: int,
+  checkpointId: float,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
@@ -151,11 +151,11 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            {
+            Set({
               entityId: entity.id,
               checkpointId: params.checkpointId,
-              entityUpdateAction: Set(entity),
-            },
+              entity,
+            }),
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }
@@ -228,11 +228,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.inMemoryStore
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
           ->InMemoryTable.Entity.set(
-            {
+            Delete({
               entityId,
               checkpointId: params.checkpointId,
-              entityUpdateAction: Delete,
-            },
+            }),
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }

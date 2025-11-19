@@ -39,7 +39,8 @@ module Entity = {
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
 
   type entityWithIndices<'entity> = {
-    entityRow: Internal.inMemoryStoreRowEntity<'entity>,
+    latest: option<'entity>,
+    status: Internal.inMemoryStoreEntityStatus<'entity>,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
   }
   type t<'entity> = {
@@ -147,18 +148,20 @@ module Entity = {
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
     if shouldWriteEntity {
       let entityIndices = Utils.Set.make()
-      let initialStoreRow: Internal.inMemoryStoreRowEntity<'entity> = switch entity {
+      switch entity {
       | Some(entity) =>
         //update table indices in the case where there
         //is an already set entity
         inMemTable->updateIndices(~entity, ~entityIndices)
-        InitialReadFromDb(AlreadySet(entity))
-
-      | None => InitialReadFromDb(NotSet)
+      | None => ()
       }
       inMemTable.table.dict->Js.Dict.set(
         key->inMemTable.table.hash,
-        {entityRow: initialStoreRow, entityIndices},
+        {
+          latest: entity,
+          status: Loaded,
+          entityIndices,
+        },
       )
     }
   }
@@ -166,56 +169,64 @@ module Entity = {
   let setRow = set
   let set = (
     inMemTable: t<'entity>,
-    entityUpdate: EntityHistory.entityUpdate<'entity>,
+    change: Change.t<'entity>,
     ~shouldSaveHistory,
     ~containsRollbackDiffChange=false,
   ) => {
     //New entity row with only the latest update
     @inline
-    let newEntityRow = () => Internal.Updated({
-      latest: entityUpdate,
-      history: shouldSaveHistory ? [entityUpdate] : [],
+    let newStatus = () => Internal.Updated({
+      latestChange: change,
+      history: shouldSaveHistory
+        ? [change]
+        : Utils.Array.immutableEmpty->(Utils.magic: array<unknown> => array<Change.t<'entity>>),
       containsRollbackDiffChange,
     })
+    let latest = switch change {
+    | Set({entity}) => Some(entity)
+    | Delete(_) => None
+    }
 
-    let {entityRow, entityIndices} = switch inMemTable.table->get(entityUpdate.entityId) {
-    | None => {entityRow: newEntityRow(), entityIndices: Utils.Set.make()}
-    | Some({entityRow: InitialReadFromDb(_), entityIndices}) => {
-        entityRow: newEntityRow(),
+    let updatedEntityRecord = switch inMemTable.table->get(change->Change.getEntityId) {
+    | None => {latest, status: newStatus(), entityIndices: Utils.Set.make()}
+    | Some({status: Loaded, entityIndices}) => {
+        latest,
+        status: newStatus(),
         entityIndices,
       }
-    | Some({entityRow: Updated(previous_values), entityIndices}) =>
-      let entityRow = Internal.Updated({
-        latest: entityUpdate,
+    | Some({status: Updated(previous_values), entityIndices}) =>
+      let newStatus = Internal.Updated({
+        latestChange: change,
         history: switch shouldSaveHistory {
         // This prevents two db actions in the same event on the same entity from being recorded to the history table.
-        | true if previous_values.latest.checkpointId === entityUpdate.checkpointId =>
+        | true
+          if previous_values.latestChange->Change.getCheckpointId ===
+            change->Change.getCheckpointId =>
           previous_values.history->Utils.Array.setIndexImmutable(
             previous_values.history->Array.length - 1,
-            entityUpdate,
+            change,
           )
-        | true => [...previous_values.history, entityUpdate]
+        | true => [...previous_values.history, change]
         | false => previous_values.history
         },
         containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
-      {entityRow, entityIndices}
+      {latest, status: newStatus, entityIndices}
     }
 
-    switch entityUpdate.entityUpdateAction {
-    | Set(entity) => inMemTable->updateIndices(~entity, ~entityIndices)
-    | Delete => inMemTable->deleteEntityFromIndices(~entityId=entityUpdate.entityId, ~entityIndices)
+    switch change {
+    | Set({entity}) =>
+      inMemTable->updateIndices(~entity, ~entityIndices=updatedEntityRecord.entityIndices)
+    | Delete({entityId}) =>
+      inMemTable->deleteEntityFromIndices(
+        ~entityId,
+        ~entityIndices=updatedEntityRecord.entityIndices,
+      )
     }
-    inMemTable.table->setRow(entityUpdate.entityId, {entityRow, entityIndices})
+    inMemTable.table->setRow(change->Change.getEntityId, updatedEntityRecord)
   }
 
-  let rowToEntity = row =>
-    switch row.entityRow {
-    | Internal.Updated({latest: {entityUpdateAction: Set(entity)}}) => Some(entity)
-    | Updated({latest: {entityUpdateAction: Delete}}) => None
-    | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
-    | InitialReadFromDb(NotSet) => None
-    }
+  let rowToEntity = row => row.latest
 
   let getRow = get
 
@@ -330,10 +341,15 @@ module Entity = {
       }
     }
 
-  let rows = (inMemTable: t<'entity>) => {
+  let updates = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.map(v => v.entityRow)
+    ->Array.keepMapU(v =>
+      switch v.status {
+      | Updated(update) => Some(update)
+      | Loaded => None
+      }
+    )
   }
 
   let values = (inMemTable: t<'entity>) => {
@@ -353,4 +369,3 @@ module Entity = {
     },
   }
 }
-

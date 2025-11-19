@@ -4,7 +4,7 @@
 // The safe checkpoint id can be used to optimize checkpoints traverse logic and
 // make pruning operation super cheap.
 type t = {
-  checkpointIds: array<int>,
+  checkpointIds: array<float>,
   checkpointBlockNumbers: array<int>,
   maxReorgDepth: int,
 }
@@ -37,9 +37,10 @@ let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) =
   let safeBlockNumber = sourceBlockNumber - safeCheckpointTracking.maxReorgDepth
 
   switch safeCheckpointTracking.checkpointIds {
-  | [] => 0
+  | [] => 0.
   | _
-    if safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(0) > safeBlockNumber => 0
+    if safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(0) >
+      safeBlockNumber => 0.
   | [checkpointId] => checkpointId
   | _ => {
       let trackingCheckpointsCount = safeCheckpointTracking.checkpointIds->Array.length
@@ -70,7 +71,7 @@ let updateOnNewBatch = (
   safeCheckpointTracking: t,
   ~sourceBlockNumber: int,
   ~chainId: int,
-  ~batchCheckpointIds: array<int>,
+  ~batchCheckpointIds: array<float>,
   ~batchCheckpointBlockNumbers: array<int>,
   ~batchCheckpointChainIds: array<int>,
 ) => {

@@ -10,7 +10,6 @@ module type Entity = {
   let schema: S.t<t>
   let rowsSchema: S.t<array<t>>
   let table: Table.table
-  let entityHistory: EntityHistory.t<t>
 }
 external entityModToInternal: module(Entity with type t = 'a) => Internal.entityConfig = "%identity"
 external entityModsToInternal: array<module(Entity)> => array<Internal.entityConfig> = "%identity"
@@ -98,8 +97,6 @@ module {{entity.name.capitalized}} = {
     ],
   {{/if}}
   )
-
-  let entityHistory = table->EntityHistory.fromTable(~schema, ~entityIndex=index)
 
   external castToInternal: t => Internal.entity = "%identity"
 }

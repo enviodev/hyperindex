@@ -16,6 +16,18 @@ let executeBatchDurationCounter = PromClient.Counter.makeCounter({
   "labelNames": [],
 })
 
+let storageWriteTimeCounter = PromClient.Counter.makeCounter({
+  "name": "envio_storage_write_time",
+  "help": "Cumulative time spent writing batches to storage in milliseconds",
+  "labelNames": [],
+})
+
+let storageWriteCounter = PromClient.Counter.makeCounter({
+  "name": "envio_storage_write_count",
+  "help": "Total number of batch writes to storage",
+  "labelNames": [],
+})
+
 let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
   "name": "hyperindex_synced_to_head",
   "help": "All chains fully synced",
@@ -211,6 +223,14 @@ let incrementEventRouterDurationCounter = (~duration) => {
 
 let incrementExecuteBatchDurationCounter = (~duration) => {
   executeBatchDurationCounter->PromClient.Counter.incMany(duration)
+}
+
+let incrementStorageWriteTimeCounter = (~duration) => {
+  storageWriteTimeCounter->PromClient.Counter.incMany(duration)
+}
+
+let incrementStorageWriteCounter = () => {
+  storageWriteCounter->PromClient.Counter.inc
 }
 
 let setSourceChainHeight = (~blockNumber, ~chainId) => {
@@ -737,5 +757,26 @@ module StorageLoad = {
     counter->SafeCounter.increment(~labels={operation})
     whereSizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=whereSize)
     sizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=size)
+  }
+}
+
+module SinkWrite = {
+  let sinkLabelsSchema = S.object(s => s.field("sink", S.string))
+
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_sink_write_time",
+    ~help="Processing time taken to write data to sink. (milliseconds)",
+    ~labelSchema=sinkLabelsSchema,
+  )
+
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_sink_write_count",
+    ~help="Cumulative number of successful sink write operations during the indexing process.",
+    ~labelSchema=sinkLabelsSchema,
+  )
+
+  let increment = (~sinkName, ~timeMillis) => {
+    timeCounter->SafeCounter.handleInt(~labels={sinkName}, ~value=timeMillis)
+    counter->SafeCounter.increment(~labels={sinkName})
   }
 }
