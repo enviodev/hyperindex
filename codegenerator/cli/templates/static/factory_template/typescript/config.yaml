@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
-name: factory-pattern
+name: Factory Contract
 description: Example indexer for indexing factory-deployed contracts
 contracts:
     - name: UniswapV3Factory
