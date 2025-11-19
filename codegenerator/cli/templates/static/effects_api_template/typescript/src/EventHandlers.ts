@@ -6,7 +6,7 @@ import { mainnet } from "viem/chains";
 // Create a Viem client for mainnet RPC reads
 const client = createPublicClient({
   chain: mainnet,
-  transport: http(process.env.ETHEREUM_MAINNET_RPC!),
+  transport: http(process.env.ETHEREUM_MAINNET_RPC!, { batch: true }),
 });
 
 // Minimal ABI to fetch ERC20 decimals

@@ -13,9 +13,7 @@
 *.cma
 *.a
 *.cmxa
-*.obj
 *~
-*.annot
 *.cmj
 *.bak
 lib/*
@@ -27,7 +25,6 @@ lib/*
 /node_modules/
 benchmarks/
 artifacts
-cache
 build
 *.res.js
 *.res.mjs

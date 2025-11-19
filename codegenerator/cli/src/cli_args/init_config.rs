@@ -30,7 +30,7 @@ pub mod evm {
     pub enum Template {
         Greeter,
         Erc20,
-        #[strum(serialize = "Feature: Effects API")]
+        #[strum(serialize = "Feature: External Calls")]
         EffectsApi
     }
 
