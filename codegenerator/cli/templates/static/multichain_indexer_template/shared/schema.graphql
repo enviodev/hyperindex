@@ -1,38 +1,9 @@
-type UniswapV3Factory_FeeAmountEnabled {
-  # id is the unique identifier for this event
-  id: ID!
-  # chainId is the ID of the blockchain where this event occurred
-  chainId: Int! @index
-  # fee is the newly enabled fee tier
-  fee: BigInt!
-  # tickSpacing is the minimum number of ticks between initialized ticks for this fee tier
-  tickSpacing: BigInt!
-}
-
-type UniswapV3Factory_OwnerChanged {
-  # id is the unique identifier for this event
-  id: ID!
-  # chainId is the ID of the blockchain where this event occurred
-  chainId: Int! @index
-  # oldOwner is the address of the previous factory owner
-  oldOwner: String!
-  # newOwner is the address of the new factory owner
-  newOwner: String!
-}
-
 type UniswapV3Factory_PoolCreated {
   # id is the unique identifier for this event
   id: ID!
   # chainId is the ID of the blockchain where this event occurred
   chainId: Int! @index
-  # token0 is the address of the first token in the pool 
-  token0: String!
-  # token1 is the address of the second token in the pool
-  token1: String!
-  # fee is the fee tier used by the created pool
-  fee: BigInt!
-  # tickSpacing is the minimum number of ticks between initialized ticks for this pool
-  tickSpacing: BigInt!
   # pool is the address of the newly created Uniswap V3 pool
   pool: String!
 }
+
