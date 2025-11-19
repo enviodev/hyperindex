@@ -30,6 +30,8 @@ pub mod evm {
     pub enum Template {
         Greeter,
         Erc20,
+        #[strum(serialize = "Feature: Effects API")]
+        EffectsApi
     }
 
     ///A an object that holds all the values a user can select during
