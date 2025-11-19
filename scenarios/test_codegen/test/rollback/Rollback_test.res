@@ -9,7 +9,7 @@ describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
     ~sourceMock: Mock.Source.t,
     ~indexerMock: Mock.Indexer.t,
-    ~firstHistoryCheckpointId=2,
+    ~firstHistoryCheckpointId=2.,
   ) => {
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Utils.Array.last,
@@ -110,7 +110,7 @@ describe("E2E rollback tests", () => {
             eventsProcessed: 2,
           },
           {
-            id: firstHistoryCheckpointId + 1,
+            id: firstHistoryCheckpointId +. 1.,
             blockHash: Js.Null.Value("0x102"),
             blockNumber: 102,
             chainId: 1337,
@@ -132,43 +132,42 @@ describe("E2E rollback tests", () => {
           },
         ],
         [
-          {
+          Set({
             checkpointId: firstHistoryCheckpointId,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "value-2",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: firstHistoryCheckpointId,
             entityId: "2",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "2",
               value: "value-2",
-            }),
-          },
-          {
-            checkpointId: firstHistoryCheckpointId + 1,
+            },
+          }),
+          Set({
+            checkpointId: firstHistoryCheckpointId +. 1.,
             entityId: "3",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "3",
               value: "value-1",
-            }),
-          },
-          {
+            },
+          }),
+          Set({
             checkpointId: firstHistoryCheckpointId,
             entityId: "4",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "4",
               value: "value-1",
-            }),
-          },
-          {
-            checkpointId: firstHistoryCheckpointId + 1,
+            },
+          }),
+          Delete({
+            checkpointId: firstHistoryCheckpointId +. 1.,
             entityId: "4",
-            entityUpdateAction: Delete,
-          },
+          }),
         ],
       ),
       ~message="Should have two entities in the db",
@@ -258,7 +257,7 @@ describe("E2E rollback tests", () => {
       (
         [
           {
-            id: 1,
+            id: firstHistoryCheckpointId +. 3.,
             blockHash: Js.Null.Value("0x101"),
             blockNumber: 101,
             chainId: 1337,
@@ -276,22 +275,22 @@ describe("E2E rollback tests", () => {
           },
         ],
         [
-          {
-            checkpointId: 1,
+          Set({
+            checkpointId: firstHistoryCheckpointId +. 3.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "value-1",
-            }),
-          },
-          {
-            checkpointId: 1,
+            },
+          }),
+          Set({
+            checkpointId: firstHistoryCheckpointId +. 3.,
             entityId: "2",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "2",
               value: "value-2",
-            }),
-          },
+            },
+          }),
         ],
       ),
       ~message="Should correctly rollback entities",
@@ -443,7 +442,7 @@ describe("E2E rollback tests", () => {
         await indexerMock.queryCheckpoints(),
         [
           {
-            id: 2,
+            id: 2.,
             eventsProcessed: 0,
             chainId: 1337,
             blockNumber: 102,
@@ -522,7 +521,7 @@ describe("E2E rollback tests", () => {
       await indexerMock.queryCheckpoints(),
       [
         {
-          id: 1,
+          id: 4.,
           eventsProcessed: 0,
           chainId: 1337,
           blockNumber: 102,
@@ -566,7 +565,7 @@ describe("E2E rollback tests", () => {
       await testSingleChainRollback(
         ~sourceMock=sourceMock1,
         ~indexerMock,
-        ~firstHistoryCheckpointId=3,
+        ~firstHistoryCheckpointId=3.,
       )
     },
   )
@@ -922,35 +921,35 @@ This might be wrong after we start exposing a block hash for progress block.`,
       (
         [
           {
-            id: 3,
+            id: 3.,
             eventsProcessed: 1,
             chainId: 100,
             blockNumber: 101,
             blockHash: Js.Null.Value("0x101"),
           },
           {
-            id: 4,
+            id: 4.,
             eventsProcessed: 2,
             chainId: 1337,
             blockNumber: 101,
             blockHash: Js.Null.Value("0x101"),
           },
           {
-            id: 5,
+            id: 5.,
             eventsProcessed: 1,
             chainId: 1337,
             blockNumber: 102,
             blockHash: Js.Null.Value("0x102"),
           },
           {
-            id: 6,
+            id: 6.,
             eventsProcessed: 1,
             chainId: 100,
             blockNumber: 102,
             blockHash: Js.Null.Value("0x102"),
           },
           {
-            id: 7,
+            id: 7.,
             eventsProcessed: 1,
             chainId: 1337,
             blockNumber: 103,
@@ -959,7 +958,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           // Block 104 is skipped, since we don't have
           // ether events processed or block hash for it
           {
-            id: 8,
+            id: 8.,
             eventsProcessed: 0,
             chainId: 1337,
             blockNumber: 105,
@@ -973,46 +972,46 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
         ],
         [
-          {
-            checkpointId: 3,
+          Set({
+            checkpointId: 3.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-0",
-            }),
-          },
-          {
-            checkpointId: 4,
+            },
+          }),
+          Set({
+            checkpointId: 4.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-2",
-            }),
-          },
-          {
-            checkpointId: 5,
+            },
+          }),
+          Set({
+            checkpointId: 5.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-3",
-            }),
-          },
-          {
-            checkpointId: 6,
+            },
+          }),
+          Set({
+            checkpointId: 6.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-4",
-            }),
-          },
-          {
-            checkpointId: 7,
+            },
+          }),
+          Set({
+            checkpointId: 7.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-5",
-            }),
-          },
+            },
+          }),
         ],
       ),
       ~message=`Should create history rows and checkpoints`,
@@ -1151,14 +1150,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
       (
         [
           {
-            id: 3,
+            id: 3.,
             eventsProcessed: 1,
             chainId: 100,
             blockNumber: 101,
             blockHash: Js.Null.Value("0x101"),
           },
           {
-            id: 4,
+            id: 4.,
             eventsProcessed: 2,
             chainId: 1337,
             blockNumber: 101,
@@ -1168,7 +1167,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100
           {
-            id: 5,
+            id: 10.,
             eventsProcessed: 2,
             chainId: 100,
             blockNumber: 102,
@@ -1182,30 +1181,30 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
         ],
         [
-          {
-            checkpointId: 3,
+          Set({
+            checkpointId: 3.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-0",
-            }),
-          },
-          {
-            checkpointId: 4,
+            },
+          }),
+          Set({
+            checkpointId: 4.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-2",
-            }),
-          },
-          {
-            checkpointId: 5,
+            },
+          }),
+          Set({
+            checkpointId: 10.,
             entityId: "1",
-            entityUpdateAction: Set({
+            entity: {
               Entities.SimpleEntity.id: "1",
               value: "call-4",
-            }),
-          },
+            },
+          }),
         ],
       ),
     )
@@ -1325,35 +1324,35 @@ This might be wrong after we start exposing a block hash for progress block.`,
         (
           [
             {
-              id: 3,
+              id: 3.,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 101,
               blockHash: Js.Null.Value("0x101"),
             },
             {
-              id: 4,
+              id: 4.,
               eventsProcessed: 2,
               chainId: 1337,
               blockNumber: 101,
               blockHash: Js.Null.Value("0x101"),
             },
             {
-              id: 5,
+              id: 5.,
               eventsProcessed: 1,
               chainId: 1337,
               blockNumber: 102,
               blockHash: Js.Null.Value("0x102"),
             },
             {
-              id: 6,
+              id: 6.,
               eventsProcessed: 2,
               chainId: 100,
               blockNumber: 102,
               blockHash: Js.Null.Value("0x102"),
             },
             {
-              id: 7,
+              id: 7.,
               eventsProcessed: 1,
               chainId: 1337,
               blockNumber: 103,
@@ -1362,7 +1361,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             // Block 104 is skipped, since we don't have
             // ether events processed or block hash for it
             {
-              id: 8,
+              id: 8.,
               eventsProcessed: 0,
               chainId: 1337,
               blockNumber: 105,
@@ -1376,46 +1375,46 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
-              checkpointId: 3,
+            Set({
+              checkpointId: 3.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
-              checkpointId: 4,
+              },
+            }),
+            Set({
+              checkpointId: 4.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-2",
-              }),
-            },
-            {
-              checkpointId: 5,
+              },
+            }),
+            Set({
+              checkpointId: 5.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-3",
-              }),
-            },
-            {
-              checkpointId: 6,
+              },
+            }),
+            Set({
+              checkpointId: 6.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-4",
-              }),
-            },
-            {
-              checkpointId: 7,
+              },
+            }),
+            Set({
+              checkpointId: 7.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-5",
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message=`Should create history rows and checkpoints`,
@@ -1433,14 +1432,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
-              checkpointId: 6,
+            Set({
+              checkpointId: 6.,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
@@ -1525,14 +1524,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
         (
           [
             {
-              id: 3,
+              id: 3.,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 101,
               blockHash: Js.Null.Value("0x101"),
             },
             {
-              id: 4,
+              id: 4.,
               eventsProcessed: 2,
               chainId: 1337,
               blockNumber: 101,
@@ -1542,7 +1541,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             // for chain 1337. After rollback it was removed
             // and replaced with chain id 100
             {
-              id: 5,
+              id: 10.,
               eventsProcessed: 2,
               chainId: 100,
               blockNumber: 102,
@@ -1556,30 +1555,30 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
-              checkpointId: 3,
+            Set({
+              checkpointId: 3.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
-              checkpointId: 4,
+              },
+            }),
+            Set({
+              checkpointId: 4.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-2",
-              }),
-            },
-            {
-              checkpointId: 5,
+              },
+            }),
+            Set({
+              checkpointId: 10.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-4",
-              }),
-            },
+              },
+            }),
           ],
         ),
       )
@@ -1596,14 +1595,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
-              checkpointId: 5,
+            Set({
+              checkpointId: 10.,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
@@ -1707,42 +1706,42 @@ This might be wrong after we start exposing a block hash for progress block.`,
         (
           [
             {
-              id: 2,
+              id: 2.,
               eventsProcessed: 0,
               chainId: 100,
               blockNumber: 101,
               blockHash: Js.Null.Value("0x101"),
             },
             {
-              id: 3,
+              id: 3.,
               eventsProcessed: 0,
               chainId: 1337,
               blockNumber: 100,
               blockHash: Js.Null.Value("0x100"),
             },
             {
-              id: 4,
+              id: 4.,
               eventsProcessed: 1,
               chainId: 1337,
               blockNumber: 101,
               blockHash: Js.Null.Value("0x101"),
             },
             {
-              id: 5,
+              id: 5.,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 102,
               blockHash: Js.Null.Null,
             },
             {
-              id: 6,
+              id: 6.,
               eventsProcessed: 1,
               chainId: 1337,
               blockNumber: 102,
               blockHash: Js.Null.Value("0x102"),
             },
             {
-              id: 7,
+              id: 7.,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 103,
@@ -1756,30 +1755,30 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           ],
           [
-            {
-              checkpointId: 4,
+            Set({
+              checkpointId: 4.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
-              checkpointId: 6,
+              },
+            }),
+            Set({
+              checkpointId: 6.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-1",
-              }),
-            },
-            {
-              checkpointId: 7,
+              },
+            }),
+            Set({
+              checkpointId: 7.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-2",
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message=`Should create multiple history rows:
@@ -1798,14 +1797,14 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
-              checkpointId: 5,
+            Set({
+              checkpointId: 5.,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
@@ -1925,21 +1924,21 @@ Sorted by timestamp and chain id`,
         (
           [
             {
-              id: 2,
+              id: 2.,
               eventsProcessed: 0,
               chainId: 100,
               blockNumber: 101,
               blockHash: Js.Null.Value("0x101"),
             },
             {
-              id: 3,
+              id: 3.,
               eventsProcessed: 0,
               chainId: 1337,
               blockNumber: 100,
               blockHash: Js.Null.Value("0x100"),
             },
             {
-              id: 4,
+              id: 4.,
               eventsProcessed: 1,
               chainId: 1337,
               blockNumber: 101,
@@ -1948,14 +1947,14 @@ Sorted by timestamp and chain id`,
             // Block 101 for chain 100 is skipped,
             // since it doesn't have events processed or block hash
             {
-              id: 5,
+              id: 9.,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 102,
               blockHash: Js.Null.Null,
             },
             {
-              id: 6,
+              id: 10.,
               eventsProcessed: 1,
               chainId: 100,
               blockNumber: 103,
@@ -1969,22 +1968,22 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
-              checkpointId: 4,
+            Set({
+              checkpointId: 4.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-0",
-              }),
-            },
-            {
-              checkpointId: 6,
+              },
+            }),
+            Set({
+              checkpointId: 10.,
               entityId: "1",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.SimpleEntity.id: "1",
                 value: "call-3",
-              }),
-            },
+              },
+            }),
           ],
         ),
       )
@@ -2001,14 +2000,14 @@ Sorted by timestamp and chain id`,
             },
           ],
           [
-            {
-              checkpointId: 5,
+            Set({
+              checkpointId: 9.,
               entityId: "foo",
-              entityUpdateAction: Set({
+              entity: {
                 Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
-              }),
-            },
+              },
+            }),
           ],
         ),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",

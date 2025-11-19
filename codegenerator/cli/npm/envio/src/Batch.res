@@ -24,7 +24,7 @@ type t = {
   items: array<Internal.item>,
   progressedChainsById: dict<chainAfterBatch>,
   // Unnest-like checkpoint fields:
-  checkpointIds: array<int>,
+  checkpointIds: array<float>,
   checkpointChainIds: array<int>,
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Js.Null.t<string>>,
@@ -196,7 +196,7 @@ let addReorgCheckpoints = (
     for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
       switch reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber) {
       | Js.Null.Value(hash) =>
-        let checkpointId = prevCheckpointId.contents + 1
+        let checkpointId = prevCheckpointId.contents +. 1.
         prevCheckpointId := checkpointId
 
         mutCheckpointIds->Js.Array2.push(checkpointId)->ignore
@@ -277,7 +277,7 @@ let prepareOrderedBatch = (
               ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
             )
 
-          let checkpointId = prevCheckpointId.contents + 1
+          let checkpointId = prevCheckpointId.contents +. 1.
 
           items
           ->Js.Array2.push(item0)
@@ -421,7 +421,7 @@ let prepareUnorderedBatch = (
               ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
             )
 
-          let checkpointId = prevCheckpointId.contents + 1
+          let checkpointId = prevCheckpointId.contents +. 1.
 
           checkpointIds->Js.Array2.push(checkpointId)->ignore
           checkpointChainIds->Js.Array2.push(fetchState.chainId)->ignore

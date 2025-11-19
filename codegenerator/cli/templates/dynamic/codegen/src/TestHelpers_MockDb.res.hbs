@@ -118,11 +118,10 @@ let makeStoreOperatorEntity = (
     let table = cloned->getStore
 
     table->set(
-      {
+      Delete({
         entityId,
-        entityUpdateAction: Delete,
-        checkpointId: 0,
-      },
+        checkpointId: 0.,
+      }),
       ~shouldSaveHistory=false,
     )
 
@@ -135,11 +134,11 @@ let makeStoreOperatorEntity = (
     let entityId = entity->getKey
 
     table->set(
-      {
+      Set({
         entityId,
-        entityUpdateAction: Set(entity),
-        checkpointId: 0,
-      },
+        checkpointId: 0.,
+        entity,
+      }),
       ~shouldSaveHistory=false,
     )
 
@@ -211,7 +210,7 @@ let executeRowsEntity = (
   ~inMemoryStore: InMemoryStore.t,
   ~entityConfig: Internal.entityConfig,
 ) => {
-   let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
+  let getInMemTable = (inMemoryStore: InMemoryStore.t) =>
     inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
 
   let inMemTable = getInMemTable(inMemoryStore)
@@ -220,18 +219,20 @@ let executeRowsEntity = (
   ->InMemoryTable.values
   ->Array.forEach(row => {
     let mockDbTable = mockDb->getInternalDb->getInMemTable
-    switch row.entityRow {
-    | Updated({latest: {entityUpdateAction: Set(entity)}})
-    | InitialReadFromDb(AlreadySet(entity)) =>
-      let key = (entity: Internal.entity).id
-      mockDbTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=true,
-        ~key,
-        ~entity=Some(entity),
-      )
-    | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
+    switch row {
+    | {status: Updated({latestChange: Set({entity})})}
+    | {status: Loaded, latest: Some(entity)} => {
+        let key = (entity: Internal.entity).id
+        mockDbTable->InMemoryTable.Entity.initValue(
+          ~allowOverWriteEntity=true,
+          ~key,
+          ~entity=Some(entity),
+        )
+      }
+
+    | {status: Updated({latestChange: Delete({entityId})})} =>
       mockDbTable.table.dict->deleteDictKey(entityId)
-    | InitialReadFromDb(NotSet) => ()
+    | {status: Loaded, latest: None} => ()
     }
   })
 }
@@ -413,7 +414,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
-        checkpointId: 0,
+        checkpointId: 0.,
       }),
     }
     let indexer = {
@@ -484,7 +485,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     }
 
     let batch = Batch.prepareUnorderedBatch(
-      ~checkpointIdBeforeBatch=0,
+      ~checkpointIdBeforeBatch=0.,
       ~chainsBeforeBatch=ChainMap.fromArrayUnsafe([
         (
           processingChain,
@@ -591,19 +592,25 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
     executeUnsafe: _ => Js.Exn.raiseError("Not used yet"),
     hasEntityHistoryRows: () => Promise.resolve(false),
     setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
-    pruneStaleCheckpoints: _ => Promise.resolve(),
-    pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) => Promise.resolve(),
-    getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => Promise.resolve([]),
-    getRollbackProgressDiff: _ => Promise.resolve([]),
-    getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) => Promise.resolve(([], [])),
+    pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not used yet"),
+    pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
+      Js.Exn.raiseError("Not used yet"),
+    getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+      Js.Exn.raiseError("Not used yet"),
+    getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
+      Js.Exn.raiseError("Not used yet"),
+    getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+      Js.Exn.raiseError("Not used yet"),
     writeBatch: (
       ~batch as _,
-      ~inMemoryStore as _,
+      ~rawEvents as _,
+      ~rollbackTargetCheckpointId as _,
       ~isInReorgThreshold as _,
       ~config as _,
       ~allEntities as _,
-      ~batchCache as _,
-    ) => Promise.resolve(),
+      ~updatedEffectsCache as _,
+      ~updatedEntities as _,
+    ) => Js.Exn.raiseError("Not used yet"),
   }
 }
 and /**

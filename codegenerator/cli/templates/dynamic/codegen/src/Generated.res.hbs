@@ -157,6 +157,12 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
     ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
+    ~sink=?{
+      switch Env.ClickHouseSink.host {
+      | Some(host) => Some(Sink.makeClickHouse(~host, ~database=Env.ClickHouseSink.database, ~username=Env.ClickHouseSink.username, ~password=Env.ClickHouseSink.password))
+      | None => None
+      }
+    },
     ~onInitialize=?{
       if isHasuraEnabled {
         Some(

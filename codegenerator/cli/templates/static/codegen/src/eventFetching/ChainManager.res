@@ -1,7 +1,7 @@
 open Belt
 
 type t = {
-  committedCheckpointId: int,
+  committedCheckpointId: float,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   multichain: Config.multichain,
   isInReorgThreshold: bool,
@@ -26,7 +26,7 @@ let makeFromConfig = (~config: Config.t, ~registrations): t => {
       ChainFetcher.makeFromConfig(_, ~config, ~registrations, ~targetBufferSize),
     )
   {
-    committedCheckpointId: 0,
+    committedCheckpointId: 0.,
     chainFetchers,
     multichain: config.multichain,
     isInReorgThreshold: false,
@@ -119,9 +119,14 @@ let nextItemIsNone = (chainManager: t): bool => {
   )
 }
 
-let createBatch = (chainManager: t, ~batchSizeTarget: int): Batch.t => {
+let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): Batch.t => {
   Batch.make(
-    ~checkpointIdBeforeBatch=chainManager.committedCheckpointId,
+    ~checkpointIdBeforeBatch=chainManager.committedCheckpointId +. (
+      // Since for rollback we have a diff checkpoint id.
+      // This is needed to currectly overwrite old state
+      // in an append-only ClickHouse insert.
+      isRollback ? 1. : 0.
+    ),
     ~chainsBeforeBatch=chainManager.chainFetchers->ChainMap.map((cf): Batch.chainBeforeBatch => {
       fetchState: cf.fetchState,
       progressBlockNumber: cf.committedProgressBlockNumber,
@@ -147,7 +152,7 @@ let isActivelyIndexing = chainManager =>
 let getSafeCheckpointId = (chainManager: t) => {
   let chainFetchers = chainManager.chainFetchers->ChainMap.values
 
-  let infinity = (%raw(`Infinity`): int)
+  let infinity = (%raw(`Infinity`): float)
   let result = ref(infinity)
 
   for idx in 0 to chainFetchers->Array.length - 1 {
@@ -166,7 +171,7 @@ let getSafeCheckpointId = (chainManager: t) => {
     }
   }
 
-  if result.contents === infinity || result.contents === 0 {
+  if result.contents === infinity || result.contents === 0. {
     None // No safe checkpoint found
   } else {
     Some(result.contents)

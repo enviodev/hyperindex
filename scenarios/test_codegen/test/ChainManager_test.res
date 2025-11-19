@@ -125,7 +125,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     {
       ChainManager.chainFetchers,
       multichain: Ordered,
-      committedCheckpointId: 0,
+      committedCheckpointId: 0.,
       isInReorgThreshold: false,
     },
     numberOfMockEventsCreated.contents,
@@ -160,6 +160,7 @@ describe("ChainManager", () => {
           let {items, totalBatchSize, progressedChainsById} = ChainManager.createBatch(
             chainManager,
             ~batchSizeTarget=10000,
+            ~isRollback=false,
           )
 
           // ensure that the events are ordered correctly

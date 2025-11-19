@@ -151,7 +151,7 @@
 //       let _ = await storage.initialize(
 //         ~chainConfigs=[],
 //         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-//         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+//         ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //       )
 //     } catch {
 //     | exn =>
@@ -563,7 +563,7 @@
 //       let _ = await storage.initialize(
 //         ~chainConfigs=[],
 //         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-//         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+//         ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //       )
 
 //       let _ =
@@ -747,7 +747,7 @@
 //       let _ = await storage.initialize(
 //         ~chainConfigs=[],
 //         ~entities=[module(TestEntity)->Entities.entityModToInternal],
-//         ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+//         ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //       )
 
 //       let _ =
@@ -990,7 +990,7 @@
 //     let _ = await storage.initialize(
 //       ~entities=[module(TestEntity)->Entities.entityModToInternal],
 //       ~chainConfigs=[],
-//       ~enums=[Persistence.entityHistoryActionEnumConfig->Internal.fromGenericEnumConfig],
+//       ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //     )
 
 //     let _ =

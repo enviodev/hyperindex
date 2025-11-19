@@ -201,6 +201,8 @@ module UnsafeIntOperators = {
 type asyncIterator<'a>
 
 module Array = {
+  let immutableEmpty: array<unknown> = []
+
   @send
   external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"
 

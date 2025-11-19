@@ -5,41 +5,47 @@ module RowAction = {
   let variants = [SET, DELETE]
   let name = "ENVIO_HISTORY_CHANGE"
   let schema = S.enum(variants)
-}
-
-type entityUpdateAction<'entityType> =
-  | Set('entityType)
-  | Delete
-
-type entityUpdate<'entityType> = {
-  entityId: string,
-  entityUpdateAction: entityUpdateAction<'entityType>,
-  checkpointId: int,
+  let config: Table.enumConfig<t> = {
+    name,
+    variants,
+    schema,
+  }
 }
 
 // Prefix with envio_ to avoid colleasions
 let changeFieldName = "envio_change"
-let checkpointIdFieldName = "checkpoint_id"
+let checkpointIdFieldName = "envio_checkpoint_id"
+let checkpointIdFieldType = Uint32
+let changeFieldType = Enum({config: RowAction.config->Table.fromGenericEnumConfig})
 
-let makeSetUpdateSchema: S.t<'entity> => S.t<entityUpdate<'entity>> = entitySchema => {
+let unsafeCheckpointIdSchema =
+  S.string
+  ->S.setName("CheckpointId")
+  ->S.transform(s => {
+    parser: string =>
+      switch string->Belt.Float.fromString {
+      | Some(float) => float
+      | None => s.fail("The string is not valid CheckpointId")
+      },
+    serializer: float => float->Belt.Float.toString,
+  })
+
+let makeSetUpdateSchema: S.t<'entity> => S.t<Change.t<'entity>> = entitySchema => {
   S.object(s => {
     s.tag(changeFieldName, RowAction.SET)
-    {
-      checkpointId: s.field(checkpointIdFieldName, S.int),
-      entityId: s.field("id", S.string),
-      entityUpdateAction: Set(s.flatten(entitySchema)),
-    }
+    Change.Set({
+      checkpointId: s.field(checkpointIdFieldName, unsafeCheckpointIdSchema),
+      entityId: s.field(Table.idFieldName, S.string),
+      entity: s.flatten(entitySchema),
+    })
   })
 }
 
-type t<'entity> = {
-  table: table,
-  setUpdateSchema: S.t<entityUpdate<'entity>>,
+type pgEntityHistory<'entity> = {
+  table: Table.table,
+  setChangeSchema: S.t<Change.t<'entity>>,
   // Used for parsing
-  setUpdateSchemaRows: S.t<array<entityUpdate<'entity>>>,
-  makeInsertDeleteUpdatesQuery: (~pgSchema: string) => string,
-  makeGetRollbackRemovedIdsQuery: (~pgSchema: string) => string,
-  makeGetRollbackRestoredEntitiesQuery: (~pgSchema: string) => string,
+  setChangeSchemaRows: S.t<array<Change.t<'entity>>>,
 }
 
 let maxPgTableNameLength = 63
@@ -52,120 +58,6 @@ let historyTableName = (~entityName, ~entityIndex) => {
       entityIndexStr
   } else {
     fullName
-  }
-}
-
-let fromTable = (table: table, ~schema: S.t<'entity>, ~entityIndex): t<'entity> => {
-  let id = "id"
-
-  let dataFields = table.fields->Belt.Array.keepMap(field =>
-    switch field {
-    | Field(field) =>
-      switch field.fieldName {
-      //id is not nullable and should be part of the pk
-      | "id" => {...field, fieldName: id, isPrimaryKey: true}->Field->Some
-      | _ =>
-        {
-          ...field,
-          isNullable: true, //All entity fields are nullable in the case
-          isIndex: false, //No need to index any additional entity data fields in entity history
-        }
-        ->Field
-        ->Some
-      }
-
-    | DerivedFrom(_) => None
-    }
-  )
-
-  let actionField = mkField(changeFieldName, Custom(RowAction.name), ~fieldSchema=S.never)
-
-  let checkpointIdField = mkField(
-    checkpointIdFieldName,
-    Integer,
-    ~fieldSchema=S.int,
-    ~isPrimaryKey=true,
-  )
-
-  let entityTableName = table.tableName
-  let historyTableName = historyTableName(~entityName=entityTableName, ~entityIndex)
-  //ignore composite indices
-  let table = mkTable(
-    historyTableName,
-    ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
-  )
-
-  let setUpdateSchema = makeSetUpdateSchema(schema)
-
-  let makeInsertDeleteUpdatesQuery = {
-    // Get all field names for the INSERT statement
-    let allFieldNames = table.fields->Belt.Array.map(field => field->getFieldName)
-    let allFieldNamesStr =
-      allFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
-
-    // Build the SELECT part: id from unnest, checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
-    let selectParts = allFieldNames->Belt.Array.map(fieldName => {
-      switch fieldName {
-      | "id" => "u.id"
-      | field if field == checkpointIdFieldName => "u.checkpoint_id"
-      | field if field == changeFieldName => "'DELETE'"
-      | _ => "NULL"
-      }
-    })
-    let selectPartsStr = selectParts->Js.Array2.joinWith(", ")
-    (~pgSchema) => {
-      `INSERT INTO "${pgSchema}"."${historyTableName}" (${allFieldNamesStr})
-SELECT ${selectPartsStr}
-FROM UNNEST($1::text[], $2::int[]) AS u(id, checkpoint_id)`
-    }
-  }
-
-  // Get data field names for rollback queries (exclude changeFieldName and checkpointIdFieldName)
-  let dataFieldNames =
-    table.fields
-    ->Belt.Array.map(field => field->getFieldName)
-    ->Belt.Array.keep(fieldName =>
-      fieldName != changeFieldName && fieldName != checkpointIdFieldName
-    )
-  let dataFieldsCommaSeparated =
-    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
-
-  // Returns entity IDs that were created after the rollback target and have no history before it.
-  // These entities should be deleted during rollback.
-  let makeGetRollbackRemovedIdsQuery = (~pgSchema) => {
-    `SELECT DISTINCT id
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${checkpointIdFieldName}" > $1
-  AND NOT EXISTS (
-    SELECT 1
-    FROM "${pgSchema}"."${historyTableName}" h
-    WHERE h.id = "${historyTableName}".id
-      AND h."${checkpointIdFieldName}" <= $1
-  )`
-  }
-
-  // Returns the most recent entity state for IDs that need to be restored during rollback.
-  // For each ID modified after the rollback target, retrieves its latest state at or before the target.
-  let makeGetRollbackRestoredEntitiesQuery = (~pgSchema) => {
-    `SELECT DISTINCT ON (id) ${dataFieldsCommaSeparated}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${checkpointIdFieldName}" <= $1
-  AND EXISTS (
-    SELECT 1
-    FROM "${pgSchema}"."${historyTableName}" h
-    WHERE h.id = "${historyTableName}".id
-      AND h."${checkpointIdFieldName}" > $1
-  )
-ORDER BY id, "${checkpointIdFieldName}" DESC`
-  }
-
-  {
-    table,
-    setUpdateSchema,
-    setUpdateSchemaRows: S.array(setUpdateSchema),
-    makeInsertDeleteUpdatesQuery,
-    makeGetRollbackRemovedIdsQuery,
-    makeGetRollbackRestoredEntitiesQuery,
   }
 }
 
@@ -225,11 +117,11 @@ let pruneStaleEntityHistory = (
 }
 
 // If an entity doesn't have a history before the update
-// we create it automatically with checkpoint_id 0
+// we create it automatically with envio_checkpoint_id 0
 let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (
-  SELECT UNNEST($1::${(Text: Table.fieldType :> string)}[]) AS id
+  SELECT UNNEST($1::${(Text: Postgres.columnType :> string)}[]) AS id
 ),
 missing_history AS (
   SELECT e.*
@@ -252,22 +144,7 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
   ->Promise.ignoreValue
 }
 
-let insertDeleteUpdates = (
-  sql,
-  ~pgSchema,
-  ~entityHistory,
-  ~batchDeleteEntityIds,
-  ~batchDeleteCheckpointIds,
-) => {
-  sql
-  ->Postgres.preparedUnsafe(
-    entityHistory.makeInsertDeleteUpdatesQuery(~pgSchema),
-    (batchDeleteEntityIds, batchDeleteCheckpointIds)->Obj.magic,
-  )
-  ->Promise.ignoreValue
-}
-
-let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: int) => {
+let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: float) => {
   sql
   ->Postgres.preparedUnsafe(
     `DELETE FROM "${pgSchema}"."${historyTableName(

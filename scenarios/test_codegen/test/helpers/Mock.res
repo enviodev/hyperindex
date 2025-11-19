@@ -8,11 +8,11 @@ module InMemoryStore = {
       )
     let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
     inMemTable->InMemoryTable.Entity.set(
-      {
+      Set({
         entityId: entity->Entities.getEntityId,
-        checkpointId: 0,
-        entityUpdateAction: Set(entity),
-      },
+        checkpointId: 0.,
+        entity,
+      }),
       ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
@@ -48,7 +48,7 @@ module Storage = {
     initializeCalls: array<{
       "entities": array<Internal.entityConfig>,
       "chainConfigs": array<Config.chain>,
-      "enums": array<Internal.enumConfig<Internal.enum>>,
+      "enums": array<Table.enumConfig<Table.enum>>,
     }>,
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
@@ -184,25 +184,28 @@ module Storage = {
         setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
           implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
         },
-        executeUnsafe: _ => Promise.resolve(%raw(`undefined`)),
-        hasEntityHistoryRows: () => Promise.resolve(false),
-        setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
-        pruneStaleCheckpoints: _ => Promise.resolve(),
+        executeUnsafe: _ => Js.Exn.raiseError("Not implemented"),
+        hasEntityHistoryRows: () => Js.Exn.raiseError("Not implemented"),
+        setChainMeta: _ => Js.Exn.raiseError("Not implemented"),
+        pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not implemented"),
         pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-          Promise.resolve(),
+          Js.Exn.raiseError("Not implemented"),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
-          Promise.resolve([]),
-        getRollbackProgressDiff: _ => Promise.resolve([]),
+          Js.Exn.raiseError("Not implemented"),
+        getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
+          Js.Exn.raiseError("Not implemented"),
         getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
-          Promise.resolve(([], [])),
+          Js.Exn.raiseError("Not implemented"),
         writeBatch: (
           ~batch as _,
-          ~inMemoryStore as _,
+          ~rawEvents as _,
+          ~rollbackTargetCheckpointId as _,
           ~isInReorgThreshold as _,
           ~config as _,
           ~allEntities as _,
-          ~batchCache as _,
-        ) => Promise.resolve(),
+          ~updatedEffectsCache as _,
+          ~updatedEntities as _,
+        ) => Js.Exn.raiseError("Not implemented"),
       },
     }
   }
@@ -216,7 +219,7 @@ module Storage = {
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
-        checkpointId: 0,
+        checkpointId: 0.,
       }),
     }
   }
@@ -233,7 +236,7 @@ module Indexer = {
     getRollbackReadyPromise: unit => promise<unit>,
     query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
     queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<EntityHistory.entityUpdate<'entity>>,
+      array<Change.t<'entity>>,
     >,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
@@ -380,30 +383,30 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
-            ~tableName=entityConfig.entityHistory.table.tableName,
+            ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
           ),
         )
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(
             S.array(
               S.union([
-                entityConfig.entityHistory.setUpdateSchema,
-                S.object((s): EntityHistory.entityUpdate<'entity> => {
+                PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
+                S.object((s): Change.t<'entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-                  {
+                  Delete({
                     entityId: s.field("id", S.string),
-                    checkpointId: s.field(EntityHistory.checkpointIdFieldName, S.int),
-                    entityUpdateAction: Delete,
-                  }
+                    checkpointId: s.field(
+                      EntityHistory.checkpointIdFieldName,
+                      EntityHistory.unsafeCheckpointIdSchema,
+                    ),
+                  })
                 }),
               ]),
             ),
           )
         })
         ->(
-          Utils.magic: promise<array<EntityHistory.entityUpdate<Internal.entity>>> => promise<
-            array<EntityHistory.entityUpdate<entity>>,
-          >
+          Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         )
       },
       queryCheckpoints: () => {

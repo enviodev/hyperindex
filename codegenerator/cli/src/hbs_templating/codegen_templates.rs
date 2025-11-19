@@ -10,8 +10,8 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
+        field_types,
         human_config::evm::{For, Rpc, RpcSyncConfig},
-        postgres_types,
         system_config::{
             self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource,
             SelectedField, SystemConfig,
@@ -215,7 +215,7 @@ pub struct DerivedFieldTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
-    pub postgres_fields: Vec<postgres_types::Field>,
+    pub postgres_fields: Vec<field_types::Field>,
     pub composite_indices: Vec<Vec<String>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
