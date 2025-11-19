@@ -17,6 +17,7 @@ impl Template for evm::Template {
         match self {
             evm::Template::Greeter => "greeter",
             evm::Template::Erc20 => "erc20",
+            evm::Template::Factory => "factory",
         }
         .to_string()
     }

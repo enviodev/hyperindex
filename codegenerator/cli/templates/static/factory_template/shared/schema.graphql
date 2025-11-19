@@ -1,0 +1,12 @@
+
+
+type UniswapV3Pool_Swap {
+  id: ID!                                   # Unique swap ID (tx hash + log index)
+  sender: String!                           # Address that initiated the swap
+  recipient: String!                        # Address receiving the output tokens
+  amount0: BigInt!                          # Token0 amount in the swap (positive/negative)
+  amount1: BigInt!                          # Token1 amount in the swap (positive/negative)
+  sqrtPriceX96: BigInt!                     # Current sqrt(price) after the swap (Q96 format)
+  liquidity: BigInt!                        # Liquidity at the time of the swap
+  pool: String!                             # Address of thepool where the swap occurred
+}
