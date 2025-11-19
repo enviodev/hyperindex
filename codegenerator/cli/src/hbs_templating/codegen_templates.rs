@@ -1361,7 +1361,7 @@ impl ProjectTemplate {
 
         let relative_path_to_generated_from_root =
             diff_from_current(&project_paths.generated, &project_paths.project_root)
-                .context("Failed to get relative path from generated to project root")?;
+                .context("Failed to get relative path from project root to generated")?;
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
