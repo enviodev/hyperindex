@@ -1,6 +1,7 @@
 import assert from "assert";
 import { it } from "mocha";
 import { TestHelpers, User } from "generated";
+
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {

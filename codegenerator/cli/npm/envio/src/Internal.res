@@ -246,35 +246,21 @@ let fuelTransferParamsSchema = S.schema(s => {
 })
 
 type entity = private {id: string}
+type clickHouseSetUpdatesCache = {
+  tableName: string,
+  convertOrThrow: Change.t<entity> => Js.Json.t,
+}
 type genericEntityConfig<'entity> = {
   name: string,
   index: int,
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
-  entityHistory: EntityHistory.t<'entity>,
+  mutable clickHouseSetUpdatesCache?: clickHouseSetUpdatesCache,
+  mutable pgEntityHistoryCache?: EntityHistory.pgEntityHistory<'entity>,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"
-
-type enum
-type enumConfig<'enum> = {
-  name: string,
-  variants: array<'enum>,
-  schema: S.t<'enum>,
-  default: 'enum,
-}
-external fromGenericEnumConfig: enumConfig<'enum> => enumConfig<enum> = "%identity"
-
-let makeEnumConfig = (~name, ~variants) => {
-  name,
-  variants,
-  schema: S.enum(variants),
-  default: switch variants->Belt.Array.get(0) {
-  | Some(v) => v
-  | None => Js.Exn.raiseError("No variants defined for enum " ++ name)
-  },
-}
 
 type effectInput
 type effectOutput
@@ -319,8 +305,8 @@ let makeCacheTable = (~effectName) => {
   Table.mkTable(
     cacheTablePrefix ++ effectName,
     ~fields=[
-      Table.mkField("id", Text, ~fieldSchema=S.string, ~isPrimaryKey=true),
-      Table.mkField("output", JsonB, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
+      Table.mkField("id", String, ~fieldSchema=S.string, ~isPrimaryKey=true),
+      Table.mkField("output", Json, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
     ],
   )
 }
@@ -328,9 +314,11 @@ let makeCacheTable = (~effectName) => {
 @genType.import(("./Types.ts", "Invalid"))
 type noEventFilters
 
+type checkpointId = float
+
 type reorgCheckpoint = {
   @as("id")
-  checkpointId: int,
+  checkpointId: float,
   @as("chain_id")
   chainId: int,
   @as("block_number")
@@ -339,13 +327,9 @@ type reorgCheckpoint = {
   blockHash: string,
 }
 
-type entityValueAtStartOfBatch<'entityType> =
-  | NotSet // The entity isn't in the DB yet
-  | AlreadySet('entityType)
-
-type updatedValue<'entityType> = {
-  latest: EntityHistory.entityUpdate<'entityType>,
-  history: array<EntityHistory.entityUpdate<'entityType>>,
+type inMemoryStoreEntityUpdate<'entity> = {
+  latestChange: Change.t<'entity>,
+  history: array<Change.t<'entity>>,
   // In the event of a rollback, some entity updates may have been
   // been affected by a rollback diff. If there was no rollback diff
   // this will always be false.
@@ -356,6 +340,7 @@ type updatedValue<'entityType> = {
   containsRollbackDiffChange: bool,
 }
 
-type inMemoryStoreRowEntity<'entityType> =
-  | Updated(updatedValue<'entityType>)
-  | InitialReadFromDb(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
+@unboxed
+type inMemoryStoreEntityStatus<'entity> =
+  | Updated(inMemoryStoreEntityUpdate<'entity>)
+  | Loaded // This means there is no change from the db.

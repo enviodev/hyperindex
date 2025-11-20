@@ -48,9 +48,8 @@ describe("Write/read tests", () => {
       bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
       optBigDecimal: Some(BigDecimal.fromStringUnsafe("2.2")),
       arrayOfBigDecimals: [BigDecimal.fromStringUnsafe("3.3"), BigDecimal.fromStringUnsafe("4.4")],
-      //TODO: get timestamp working
-      // timestamp: mockDate(~day=1),
-      // optTimestamp: Some(mockDate(~day=2)),
+      timestamp: mockDate(~day=1),
+      optTimestamp: Some(mockDate(~day=2)),
       // arrayOfTimestamps: [Js.Date.fromFloat(3.3), Js.Date.fromFloat(4.4)],
       // arrayOfTimestamps: [],
       json: %raw(`{"foo": ["bar"]}`),
@@ -74,6 +73,8 @@ describe("Write/read tests", () => {
       bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
       enumField: ADMIN,
       optEnumField: Some(ADMIN),
+      timestamp: mockDate(~day=1),
+      optTimestamp: Some(mockDate(~day=2)),
     }
 
     sourceMock.resolveGetItemsOrThrow([
@@ -103,11 +104,11 @@ describe("Write/read tests", () => {
     Assert.deepEqual(
       await indexerMock.queryHistory(module(Entities.EntityWithAllTypes)),
       [
-        {
-          checkpointId: 1,
+        Set({
+          checkpointId: 1.,
           entityId: "1",
-          entityUpdateAction: Set(entityWithAllTypes),
-        },
+          entity: entityWithAllTypes,
+        }),
       ],
     )
     Assert.deepEqual(
@@ -117,11 +118,11 @@ describe("Write/read tests", () => {
     Assert.deepEqual(
       await indexerMock.queryHistory(module(Entities.EntityWithAllNonArrayTypes)),
       [
-        {
-          checkpointId: 1,
+        Set({
+          checkpointId: 1.,
           entityId: "1",
-          entityUpdateAction: Set(entityWithAllNonArrayTypes),
-        },
+          entity: entityWithAllNonArrayTypes,
+        }),
       ],
     )
 
@@ -140,13 +141,13 @@ describe("Write/read tests", () => {
         module(Entities.EntityWith63LenghtName______________________________________one),
       ),
       [
-        {
-          checkpointId: 1,
+        Set({
+          checkpointId: 1.,
           entityId: "1",
-          entityUpdateAction: Set({
+          entity: {
             id: "1",
-          }),
-        },
+          },
+        }),
       ],
     )
     Assert.deepEqual(
@@ -164,13 +165,13 @@ describe("Write/read tests", () => {
         module(Entities.EntityWith63LenghtName______________________________________two),
       ),
       [
-        {
-          checkpointId: 1,
+        Set({
+          checkpointId: 1.,
           entityId: "2",
-          entityUpdateAction: Set({
+          entity: {
             id: "2",
-          }),
-        },
+          },
+        }),
       ],
     )
 

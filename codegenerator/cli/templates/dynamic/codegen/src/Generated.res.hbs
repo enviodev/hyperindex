@@ -1,25 +1,54 @@
 @val external require: string => unit = "require"
 
-let registerContractHandlers = (
-  ~contractName,
-  ~handlerPathRelativeToRoot,
-  ~handlerPathRelativeToConfig,
-) => {
-  try {
-    require(`../${Path.relativePathToRootFromGenerated}/${handlerPathRelativeToRoot}`)
+let registerContractHandlers = (~contractName, ~handler: option<string>) => {
+  switch handler {
+  | None => ()
+  | Some(handlerPath) =>
+    try {
+      require(handlerPath)
+    } catch {
+    | exn =>
+      Js.Exn.raiseError(
+        `Failed to load handler file for contract ${contractName}: ${handlerPath} with error: ${exn
+          ->Utils.prettifyExn
+          ->Obj.magic}`,
+      )
+    }
+  }
+}
+
+@module("node:fs/promises") external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
+
+let autoLoadFromSrcHandlers = async () => {
+  // Relatvie to cwd (project root)
+  let srcPattern = `./{{#if handlers_path}}{{handlers_path}}{{else}}src/handlers{{/if}}/**/*.{js,ts}`
+  let handlerFiles = try {
+    let iterator = await globIterator(srcPattern)
+    await iterator->Utils.Array.fromAsyncIterator
   } catch {
   | exn =>
-    let params = {
-      "Contract Name": contractName,
-      "Expected Handler Path": handlerPathRelativeToConfig,
-      "Code": "EE500",
-    }
-    let logger = Logging.createChild(~params)
-
-    let errHandler = exn->ErrorHandling.make(~msg="Failed to import handler file", ~logger)
-    errHandler->ErrorHandling.log
-    errHandler->ErrorHandling.raiseExn
+    Js.Exn.raiseError(
+      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js 22.10.0 version. Error: ${exn
+          ->Utils.prettifyExn
+          ->Obj.magic}`,
+    )
   }
+
+  handlerFiles->Js.Array2.forEach(file => {
+    try {
+      // Since srcPattern is relative to project root,
+      // and we require relative to the module (Generated.res)
+      // We need to prepend additional "../" and {{relative_path_to_root_from_generated}} to the file path
+      %raw(`require("../{{relative_path_to_root_from_generated}}/" + file)`)
+    } catch {
+    | exn =>
+      Js.Exn.raiseError(
+        `Failed to auto-load handler file: ${file} with error: ${exn
+          ->Utils.prettifyExn
+          ->Obj.magic}`,
+      )
+    }
+  })
 }
 
 let makeGeneratedConfig = () => {
@@ -96,18 +125,21 @@ let makeGeneratedConfig = () => {
 
 let configWithoutRegistrations = makeGeneratedConfig()
 
-let registerAllHandlers = () => {
+let registerAllHandlers = async () => {
   EventRegister.startRegistration(
     ~platform=configWithoutRegistrations.platform,
     ~multichain=configWithoutRegistrations.multichain,
     ~preloadHandlers=configWithoutRegistrations.preloadHandlers,
   )
 
+  // Auto-load all .js files from src/handlers directory
+  await autoLoadFromSrcHandlers()
+
+  // Load contract-specific handlers (existing behavior)
   {{#each codegen_contracts as |contract|}}
   registerContractHandlers(
     ~contractName="{{contract.name.capitalized}}",
-    ~handlerPathRelativeToRoot="{{contract.handler.relative_to_project_root}}",
-    ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
+    ~handler={{#if contract.handler}}Some(`../${Path.relativePathToRootFromGenerated}/{{contract.handler}}`){{else}}None{{/if}},
   )
   {{/each}}
 
@@ -125,6 +157,12 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
     ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
+    ~sink=?{
+      switch Env.ClickHouseSink.host {
+      | Some(host) => Some(Sink.makeClickHouse(~host, ~database=Env.ClickHouseSink.database, ~username=Env.ClickHouseSink.username, ~password=Env.ClickHouseSink.password))
+      | None => None
+      }
+    },
     ~onInitialize=?{
       if isHasuraEnabled {
         Some(
@@ -187,12 +225,13 @@ let codegenPersistence = Persistence.make(
 )
 
 %%private(let indexer: ref<option<Indexer.t>> = ref(None))
-let getIndexer = () => {
+let getIndexer = async () => {
   switch indexer.contents {
   | Some(indexer) => indexer
   | None =>
+    let registrations = await registerAllHandlers()
     let i = {
-      Indexer.registrations: registerAllHandlers(),
+      Indexer.registrations: registrations,
       // Need to recreate initial config one more time,
       // since configWithoutRegistrations called register for event
       // before they were ready

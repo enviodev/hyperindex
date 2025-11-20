@@ -32,12 +32,13 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
       let fieldName = field->Table.getDbFieldName
 
       {
-        `"${fieldName}" ${switch fieldType {
-          | Custom(name) if !(name->Js.String2.startsWith("NUMERIC(")) => `"${pgSchema}".${name}`
-          // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
-          | Numeric if isArray && isNumericArrayAsText => (Table.Text :> string)
-          | _ => (fieldType :> string)
-          }}${isArray ? "[]" : ""}${switch defaultValue {
+        `"${fieldName}" ${Table.getPgFieldType(
+            ~fieldType,
+            ~pgSchema,
+            ~isArray,
+            ~isNullable,
+            ~isNumericArrayAsText,
+          )}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
           | None => isNullable ? `` : ` NOT NULL`
           }}`
@@ -54,6 +55,73 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
   `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
       : ""});`
+}
+
+let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgEntityHistory<
+  'entity,
+> => {
+  switch entityConfig.pgEntityHistoryCache {
+  | Some(cache) => cache
+  | None =>
+    let cache = {
+      let id = "id"
+
+      let dataFields = entityConfig.table.fields->Belt.Array.keepMap(field =>
+        switch field {
+        | Field(field) =>
+          switch field.fieldName {
+          //id is not nullable and should be part of the pk
+          | "id" => {...field, fieldName: id, isPrimaryKey: true}->Table.Field->Some
+          | _ =>
+            {
+              ...field,
+              isNullable: true, //All entity fields are nullable in the case
+              isIndex: false, //No need to index any additional entity data fields in entity history
+            }
+            ->Field
+            ->Some
+          }
+
+        | DerivedFrom(_) => None
+        }
+      )
+
+      let actionField = Table.mkField(
+        EntityHistory.changeFieldName,
+        EntityHistory.changeFieldType,
+        ~fieldSchema=S.never,
+      )
+
+      let checkpointIdField = Table.mkField(
+        EntityHistory.checkpointIdFieldName,
+        EntityHistory.checkpointIdFieldType,
+        ~fieldSchema=EntityHistory.unsafeCheckpointIdSchema,
+        ~isPrimaryKey=true,
+      )
+
+      let entityTableName = entityConfig.table.tableName
+      let historyTableName = EntityHistory.historyTableName(
+        ~entityName=entityTableName,
+        ~entityIndex=entityConfig.index,
+      )
+      //ignore composite indices
+      let table = Table.mkTable(
+        historyTableName,
+        ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
+      )
+
+      let setChangeSchema = EntityHistory.makeSetUpdateSchema(entityConfig.schema)
+
+      {
+        EntityHistory.table,
+        setChangeSchema,
+        setChangeSchemaRows: S.array(setChangeSchema),
+      }
+    }
+
+    entityConfig.pgEntityHistoryCache = Some(cache)
+    cache
+  }
 }
 
 let makeInitializeTransaction = (
@@ -74,10 +142,10 @@ let makeInitializeTransaction = (
 
   let allTables = generalTables->Array.copy
   let allEntityTables = []
-  entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
-    allEntityTables->Js.Array2.push(entity.table)->ignore
-    allTables->Js.Array2.push(entity.table)->ignore
-    allTables->Js.Array2.push(entity.entityHistory.table)->ignore
+  entities->Js.Array2.forEach((entityConfig: Internal.entityConfig) => {
+    allEntityTables->Js.Array2.push(entityConfig.table)->ignore
+    allTables->Js.Array2.push(entityConfig.table)->ignore
+    allTables->Js.Array2.push(getEntityHistory(~entityConfig).table)->ignore
   })
   let derivedSchema = Schema.make(allEntityTables)
 
@@ -97,10 +165,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
   // Optimized enum creation - direct when cleanRun, conditional otherwise
-  enums->Js.Array2.forEach((enumConfig: Internal.enumConfig<Internal.enum>) => {
+  enums->Js.Array2.forEach((enumConfig: Table.enumConfig<Table.enum>) => {
     // Create base enum creation query once
     let enumCreateQuery = `CREATE TYPE "${pgSchema}".${enumConfig.name} AS ENUM(${enumConfig.variants
-      ->Js.Array2.map(v => `'${v->(Utils.magic: Internal.enum => string)}'`)
+      ->Js.Array2.map(v => `'${v->(Utils.magic: Table.enum => string)}'`)
       ->Js.Array2.joinWith(", ")});`
 
     query := query.contents ++ "\n" ++ enumCreateQuery
@@ -539,6 +607,52 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
   }
 }
 
+let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+  let historyTableName = EntityHistory.historyTableName(
+    ~entityName=entityConfig.name,
+    ~entityIndex=entityConfig.index,
+  )
+
+  // Get all field names for the INSERT statement
+  let allHistoryFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+    switch fieldOrDerived {
+    | Field(field) => field->Table.getDbFieldName->Some
+    | DerivedFrom(_) => None
+    }
+  )
+  allHistoryFieldNames->Js.Array2.push(EntityHistory.checkpointIdFieldName)->ignore
+  allHistoryFieldNames->Js.Array2.push(EntityHistory.changeFieldName)->ignore
+
+  let allHistoryFieldNamesStr =
+    allHistoryFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
+
+  // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
+  let selectParts = allHistoryFieldNames->Belt.Array.map(fieldName => {
+    switch fieldName {
+    | field if field == Table.idFieldName => `u.${Table.idFieldName}`
+    | field if field == EntityHistory.checkpointIdFieldName =>
+      `u.${EntityHistory.checkpointIdFieldName}`
+    | field if field == EntityHistory.changeFieldName =>
+      `'${(EntityHistory.RowAction.DELETE :> string)}'`
+    | _ => "NULL"
+    }
+  })
+  let selectPartsStr = selectParts->Js.Array2.joinWith(", ")
+
+  // Get the PostgreSQL type for the checkpoint ID field
+  let checkpointIdPgType = Table.getPgFieldType(
+    ~fieldType=EntityHistory.checkpointIdFieldType,
+    ~pgSchema,
+    ~isArray=false,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+  )
+
+  `INSERT INTO "${pgSchema}"."${historyTableName}" (${allHistoryFieldNamesStr})
+SELECT ${selectPartsStr}
+FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+}
+
 let executeSet = (
   sql: Postgres.sql,
   ~items: array<'a>,
@@ -554,13 +668,16 @@ let executeSet = (
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
+  ~rawEvents,
   ~pgSchema,
-  ~inMemoryStore: InMemoryStore.t,
+  ~rollbackTargetCheckpointId,
   ~isInReorgThreshold,
   ~config: Config.t,
-  ~allEntities,
+  ~allEntities: array<Internal.entityConfig>,
   ~setEffectCacheOrThrow,
-  ~batchCache,
+  ~updatedEffectsCache,
+  ~updatedEntities: array<Persistence.updatedEntity>,
+  ~sinkPromise: option<promise<option<exn>>>,
   ~escapeTables=?,
 ) => {
   try {
@@ -578,25 +695,17 @@ let rec writeBatch = async (
           ~pgSchema,
         )
       },
-      ~items=inMemoryStore.rawEvents->InMemoryTable.values,
+      ~items=rawEvents,
     )
 
-    let setEntities = allEntities->Belt.Array.map(entityConfig => {
+    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
-      let rows =
-        inMemoryStore
-        ->InMemoryStore.getInMemTable(~entityConfig)
-        ->InMemoryTable.Entity.rows
-
-      rows->Js.Array2.forEach(row => {
+      updates->Js.Array2.forEach(row => {
         switch row {
-        | Updated({latest: {entityUpdateAction: Set(entity)}}) =>
-          entitiesToSet->Belt.Array.push(entity)
-        | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
-          idsToDelete->Belt.Array.push(entityId)
-        | _ => ()
+        | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
+        | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
         }
       })
 
@@ -616,29 +725,28 @@ let rec writeBatch = async (
             let batchDeleteCheckpointIds = []
             let batchDeleteEntityIds = []
 
-            rows->Js.Array2.forEach(row => {
-              switch row {
-              | Updated({history, containsRollbackDiffChange}) =>
+            updates->Js.Array2.forEach(update => {
+              switch update {
+              | {history, containsRollbackDiffChange} =>
                 history->Js.Array2.forEach(
-                  (entityUpdate: EntityHistory.entityUpdate<'a>) => {
+                  (change: Change.t<'a>) => {
                     if !containsRollbackDiffChange {
                       // For every update we want to make sure that there's an existing history item
                       // with the current entity state. So we backfill history with checkpoint id 0,
                       // before writing updates. Don't do this if the update has a rollback diff change.
-                      backfillHistoryIds->Utils.Set.add(entityUpdate.entityId)->ignore
+                      backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
                     }
-                    switch entityUpdate.entityUpdateAction {
-                    | Delete => {
-                        batchDeleteEntityIds->Belt.Array.push(entityUpdate.entityId)->ignore
+                    switch change {
+                    | Delete({entityId}) => {
+                        batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
                         batchDeleteCheckpointIds
-                        ->Belt.Array.push(entityUpdate.checkpointId)
+                        ->Belt.Array.push(change->Change.getCheckpointId)
                         ->ignore
                       }
-                    | Set(_) => batchSetUpdates->Js.Array2.push(entityUpdate)->ignore
+                    | Set(_) => batchSetUpdates->Js.Array2.push(change)->ignore
                     }
                   },
                 )
-              | _ => ()
               }
             })
 
@@ -655,32 +763,34 @@ let rec writeBatch = async (
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
               promises->Belt.Array.push(
-                sql->EntityHistory.insertDeleteUpdates(
-                  ~pgSchema,
-                  ~entityHistory=entityConfig.entityHistory,
-                  ~batchDeleteEntityIds,
-                  ~batchDeleteCheckpointIds,
-                ),
+                sql
+                ->Postgres.preparedUnsafe(
+                  makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
+                  (batchDeleteEntityIds, batchDeleteCheckpointIds)->Obj.magic,
+                )
+                ->Promise.ignoreValue,
               )
             }
 
             if batchSetUpdates->Utils.Array.notEmpty {
               if shouldRemoveInvalidUtf8 {
                 let entities = batchSetUpdates->Js.Array2.map(batchSetUpdate => {
-                  switch batchSetUpdate.entityUpdateAction {
-                  | Set(entity) => entity
+                  switch batchSetUpdate {
+                  | Set({entity}) => entity
                   | _ => Js.Exn.raiseError("Expected Set action")
                   }
                 })
                 entities->removeInvalidUtf8InPlace
               }
 
+              let entityHistory = getEntityHistory(~entityConfig)
+
               promises
               ->Js.Array2.push(
                 sql->setOrThrow(
                   ~items=batchSetUpdates,
-                  ~itemSchema=entityConfig.entityHistory.setUpdateSchema,
-                  ~table=entityConfig.entityHistory.table,
+                  ~itemSchema=entityHistory.setChangeSchema,
+                  ~table=entityHistory.table,
                   ~pgSchema,
                 ),
               )
@@ -756,8 +866,8 @@ let rec writeBatch = async (
     //In the event of a rollback, rollback all meta tables based on the given
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
-    let rollbackTables = switch inMemoryStore {
-    | {rollbackTargetCheckpointId: Some(rollbackTargetCheckpointId)} =>
+    let rollbackTables = switch rollbackTargetCheckpointId {
+    | Some(rollbackTargetCheckpointId) =>
       Some(
         sql => {
           let promises = allEntities->Js.Array2.map(entityConfig => {
@@ -776,7 +886,7 @@ let rec writeBatch = async (
           Promise.all(promises)
         },
       )
-    | _ => None
+    | None => None
     }
 
     try {
@@ -820,11 +930,21 @@ let rec writeBatch = async (
           await setOperations
           ->Belt.Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
+          ->Promise.ignoreValue
+
+          switch sinkPromise {
+          | Some(sinkPromise) =>
+            switch await sinkPromise {
+            | Some(exn) => raise(exn)
+            | None => ()
+            }
+          | None => ()
+          }
         }),
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
-        batchCache
-        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.effectBatchCache) => {
+        updatedEffectsCache
+        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
           setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
@@ -855,16 +975,67 @@ let rec writeBatch = async (
     await writeBatch(
       sql,
       ~escapeTables,
+      ~rawEvents,
       ~batch,
       ~pgSchema,
-      ~inMemoryStore,
+      ~rollbackTargetCheckpointId,
       ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
-      ~batchCache,
+      ~updatedEffectsCache,
       ~allEntities,
+      ~updatedEntities,
+      ~sinkPromise,
     )
   }
+}
+
+// Returns the most recent entity state for IDs that need to be restored during rollback.
+// For each ID modified after the rollback target, retrieves its latest state at or before the target.
+let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+  let dataFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+    switch fieldOrDerived {
+    | Field(field) => field->Table.getDbFieldName->Some
+    | DerivedFrom(_) => None
+    }
+  )
+
+  let dataFieldsCommaSeparated =
+    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
+
+  let historyTableName = EntityHistory.historyTableName(
+    ~entityName=entityConfig.name,
+    ~entityIndex=entityConfig.index,
+  )
+
+  `SELECT DISTINCT ON (${Table.idFieldName}) ${dataFieldsCommaSeparated}
+FROM "${pgSchema}"."${historyTableName}"
+WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
+  AND EXISTS (
+    SELECT 1
+    FROM "${pgSchema}"."${historyTableName}" h
+    WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
+      AND h."${EntityHistory.checkpointIdFieldName}" > $1
+  )
+ORDER BY ${Table.idFieldName}, "${EntityHistory.checkpointIdFieldName}" DESC`
+}
+
+// Returns entity IDs that were created after the rollback target and have no history before it.
+// These entities should be deleted during rollback.
+let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+  let historyTableName = EntityHistory.historyTableName(
+    ~entityName=entityConfig.name,
+    ~entityIndex=entityConfig.index,
+  )
+  `SELECT DISTINCT ${Table.idFieldName}
+FROM "${pgSchema}"."${historyTableName}"
+WHERE "${EntityHistory.checkpointIdFieldName}" > $1
+AND NOT EXISTS (
+  SELECT 1
+  FROM "${pgSchema}"."${historyTableName}" h
+  WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
+    AND h."${EntityHistory.checkpointIdFieldName}" <= $1
+)`
 }
 
 let make = (
@@ -876,6 +1047,7 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
+  ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
@@ -1005,6 +1177,12 @@ let make = (
       Js.Exn.raiseError(
         `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_PUBLIC_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,
       )
+    }
+
+    // Call sink.initialize before executing PG queries
+    switch sink {
+    | Some(sink) => await sink.initialize(~chainConfigs, ~entities, ~enums)
+    | None => ()
     }
 
     let queries = makeInitializeTransaction(
@@ -1251,18 +1429,26 @@ let make = (
       }),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": int}>>),
+      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": float}>>),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<Internal.reorgCheckpoint>>),
     ))
+
+    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]
+
+    // Resume sink if present - needed to rollback any reorg changes
+    switch sink {
+    | Some(sink) => await sink.resume(~checkpointId)
+    | None => ()
+    }
 
     {
       cleanRun: false,
       reorgCheckpoints,
       cache,
       chains,
-      checkpointId: (checkpointIdResult->Belt.Array.getUnsafe(0))["id"],
+      checkpointId,
     }
   }
 
@@ -1304,7 +1490,7 @@ let make = (
       %raw(`undefined`)
     )
 
-  let pruneStaleCheckpoints = safeCheckpointId =>
+  let pruneStaleCheckpoints = (~safeCheckpointId) =>
     InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpointId)
 
   let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~safeCheckpointId) =>
@@ -1324,7 +1510,7 @@ let make = (
       ~lastKnownValidBlockNumber,
     )
 
-  let getRollbackProgressDiff = rollbackTargetCheckpointId =>
+  let getRollbackProgressDiff = (~rollbackTargetCheckpointId) =>
     InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~rollbackTargetCheckpointId)
 
   let getRollbackData = async (
@@ -1335,14 +1521,14 @@ let make = (
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
-        entityConfig.entityHistory.makeGetRollbackRemovedIdsQuery(~pgSchema),
+        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId]->Utils.magic,
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Postgres.preparedUnsafe(
-        entityConfig.entityHistory.makeGetRollbackRestoredEntitiesQuery(~pgSchema),
+        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId]->Utils.magic,
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
@@ -1351,22 +1537,47 @@ let make = (
 
   let writeBatchMethod = async (
     ~batch,
-    ~inMemoryStore,
+    ~rawEvents,
+    ~rollbackTargetCheckpointId,
     ~isInReorgThreshold,
     ~config,
     ~allEntities,
-    ~batchCache,
+    ~updatedEffectsCache,
+    ~updatedEntities,
   ) => {
+    // Initialize sink if configured
+    let sinkPromise = switch sink {
+    | Some(sink) => {
+        let timerRef = Hrtime.makeTimer()
+        Some(
+          sink.writeBatch(~batch, ~updatedEntities)
+          ->Promise.thenResolve(_ => {
+            Prometheus.SinkWrite.increment(
+              ~sinkName=sink.name,
+              ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+            )
+            None
+          })
+          // Otherwise it fails with unhandled exception
+          ->Promise.catchResolve(exn => Some(exn)),
+        )
+      }
+    | None => None
+    }
+
     await writeBatch(
       sql,
       ~batch,
+      ~rawEvents,
       ~pgSchema,
-      ~inMemoryStore,
+      ~rollbackTargetCheckpointId,
       ~isInReorgThreshold,
       ~config,
       ~allEntities,
       ~setEffectCacheOrThrow,
-      ~batchCache,
+      ~updatedEffectsCache,
+      ~updatedEntities,
+      ~sinkPromise,
     )
   }
 

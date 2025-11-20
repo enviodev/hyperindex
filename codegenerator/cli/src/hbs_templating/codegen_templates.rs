@@ -10,18 +10,15 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
+        field_types,
         human_config::evm::{For, Rpc, RpcSyncConfig},
-        postgres_types,
         system_config::{
             self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource,
             SelectedField, SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
-    project_paths::{
-        handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
-        ParsedProjectPaths,
-    },
+    project_paths::{path_utils::add_trailing_relative_dot, ParsedProjectPaths},
     rescript_types::{
         RescriptRecordField, RescriptSchemaMode, RescriptTypeExpr, RescriptTypeIdent,
     },
@@ -218,7 +215,7 @@ pub struct DerivedFieldTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
-    pub postgres_fields: Vec<postgres_types::Field>,
+    pub postgres_fields: Vec<field_types::Field>,
     pub composite_indices: Vec<Vec<String>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
@@ -807,18 +804,16 @@ pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
     pub module_code: String,
-    pub handler: HandlerPathsTemplate,
+    pub handler: Option<String>,
 }
 
 impl ContractTemplate {
     fn from_config_contract(
         contract: &system_config::Contract,
-        project_paths: &ParsedProjectPaths,
         config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
-        let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
-            .context("Failed building handler paths template")?;
+        let handler = contract.handler_path.clone();
         let codegen_events = contract
             .events
             .iter()
@@ -1266,7 +1261,6 @@ struct SelectedFieldTemplate {
 pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
-    has_typescript: bool,
     entities: Vec<EntityRecordTypeTemplate>,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
@@ -1286,8 +1280,10 @@ pub struct ProjectTemplate {
     ts_types_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
+    relative_path_to_generated_from_root: String,
     lowercase_addresses: bool,
     should_use_hypersync_client_decoder: bool,
+    handlers_path: Option<String>,
 }
 
 impl ProjectTemplate {
@@ -1310,9 +1306,7 @@ impl ProjectTemplate {
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
-            .map(|cfg_contract| {
-                ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
-            })
+            .map(|cfg_contract| ContractTemplate::from_config_contract(cfg_contract, cfg))
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;
 
@@ -1365,13 +1359,13 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to get relative path from output directory to project root")?;
 
+        let relative_path_to_generated_from_root =
+            diff_from_current(&project_paths.generated, &project_paths.project_root)
+                .context("Failed to get relative path from project root to generated")?;
+
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
         let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
-
-        let has_typescript = codegen_contracts
-            .iter()
-            .any(|contract| contract.handler.relative_to_config.ends_with(".ts"));
 
         let types_code = format!(
             r#"@genType
@@ -1390,7 +1384,6 @@ type chain = [{chain_id_type}]"#,
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
-            has_typescript,
             codegen_contracts,
             entities,
             gql_enums,
@@ -1411,8 +1404,10 @@ type chain = [{chain_id_type}]"#,
             ts_types_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
+            relative_path_to_generated_from_root,
             lowercase_addresses: cfg.lowercase_addresses,
             should_use_hypersync_client_decoder: cfg.should_use_hypersync_client_decoder,
+            handlers_path: cfg.handlers.clone(),
         })
     }
 }

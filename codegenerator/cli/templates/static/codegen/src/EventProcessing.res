@@ -188,10 +188,7 @@ let runHandlerOrThrow = async (
       await handler(
         (
           {
-            block: indexer.config.platform->Platform.makeBlockEvent(
-              ~blockNumber,
-              ~chainId,
-            ),
+            block: indexer.config.platform->Platform.makeBlockEvent(~blockNumber, ~chainId),
             context: UserContext.getHandlerContext(contextParams),
           }: Internal.onBlockArgs
         ),
@@ -288,10 +285,7 @@ let preloadBatchOrThrow = async (
         try {
           promises->Array.push(
             handler({
-              block: platform->Platform.makeBlockEvent(
-                ~blockNumber,
-                ~chainId,
-              ),
+              block: platform->Platform.makeBlockEvent(~blockNumber, ~chainId),
               context: UserContext.getHandlerContext({
                 item,
                 inMemoryStore,
@@ -367,6 +361,8 @@ let registerProcessEventBatchMetrics = (
   Prometheus.incrementLoadEntityDurationCounter(~duration=loadDuration)
   Prometheus.incrementEventRouterDurationCounter(~duration=handlerDuration)
   Prometheus.incrementExecuteBatchDurationCounter(~duration=dbWriteDuration)
+  Prometheus.incrementStorageWriteTimeCounter(~duration=dbWriteDuration)
+  Prometheus.incrementStorageWriteCounter()
 }
 
 type logPartitionInfo = {
@@ -430,44 +426,11 @@ let processEventBatch = async (
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     try {
-      await indexer.persistence.storage.writeBatch(
+      await indexer.persistence->Persistence.writeBatch(
         ~batch,
+        ~config=indexer.config,
         ~inMemoryStore,
         ~isInReorgThreshold,
-        ~config=indexer.config,
-        ~allEntities=indexer.persistence.allEntities,
-        ~batchCache={
-          inMemoryStore.effects
-          ->Js.Dict.keys
-          ->Belt.Array.keepMapU(effectName => {
-            let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
-            let {idsToStore, dict, effect, invalidationsCount} = inMemTable
-            switch idsToStore {
-            | [] => None
-            | ids => {
-                let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-                ids->Belt.Array.forEachWithIndex((index, id) => {
-                  items->Js.Array2.unsafe_set(
-                    index,
-                    (
-                      {
-                        id,
-                        output: dict->Js.Dict.unsafeGet(id),
-                      }: Internal.effectCacheItem
-                    ),
-                  )
-                })
-                Some(
-                  indexer.persistence->Persistence.getEffectBatchCache(
-                    ~effect,
-                    ~items,
-                    ~invalidationsCount,
-                  ),
-                )
-              }
-            }
-          })
-        },
       )
 
       let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

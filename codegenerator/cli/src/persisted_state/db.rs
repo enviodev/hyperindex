@@ -38,22 +38,19 @@ impl PersistedState {
                 envio_version,
                 config_hash,
                 schema_hash,
-                handler_files_hash,
                 abi_files_hash
             ) VALUES (
                 $1, 
                 $2, 
                 $3, 
                 $4, 
-                $5, 
-                $6
+                $5
             )
             ON CONFLICT (id) DO UPDATE
             SET 
                 envio_version = EXCLUDED.envio_version,
                 config_hash = EXCLUDED.config_hash,
                 schema_hash = EXCLUDED.schema_hash,
-                handler_files_hash = EXCLUDED.handler_files_hash,
                 abi_files_hash = EXCLUDED.abi_files_hash
             "#,
             public_schema
@@ -62,7 +59,6 @@ impl PersistedState {
         .bind(&self.envio_version)
         .bind(&self.config_hash)
         .bind(&self.schema_hash)
-        .bind(&self.handler_files_hash)
         .bind(&self.abi_files_hash)
         .execute(pool)
         .await
@@ -87,7 +83,6 @@ impl PersistedStateExists {
             envio_version,
             config_hash,
             schema_hash,
-            handler_files_hash,
             abi_files_hash
             FROM \"{}\".persisted_state WHERE id = 1",
             public_schema

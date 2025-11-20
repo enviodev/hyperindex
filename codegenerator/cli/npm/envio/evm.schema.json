@@ -124,6 +124,13 @@
           "type": "null"
         }
       ]
+    },
+    "handlers": {
+      "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "additionalProperties": false,
@@ -153,8 +160,11 @@
           ]
         },
         "handler": {
-          "description": "The relative path to a file where handlers are registered for the given contract",
-          "type": "string"
+          "description": "Optional relative path to a file where handlers are registered for the given contract. If not provided, handlers can be auto-loaded from src directory.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "events": {
           "description": "A list of events that should be indexed on this contract",
@@ -167,7 +177,6 @@
       "additionalProperties": false,
       "required": [
         "name",
-        "handler",
         "events"
       ]
     },
@@ -611,8 +620,11 @@
           ]
         },
         "handler": {
-          "description": "The relative path to a file where handlers are registered for the given contract",
-          "type": "string"
+          "description": "Optional relative path to a file where handlers are registered for the given contract. If not provided, handlers can be auto-loaded from src directory.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "events": {
           "description": "A list of events that should be indexed on this contract",
