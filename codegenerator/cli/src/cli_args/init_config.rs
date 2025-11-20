@@ -30,6 +30,8 @@ pub mod evm {
     pub enum Template {
         Greeter,
         Erc20,
+        #[strum(serialize = "Feature: Factory Contract")]
+        FeatureFactory,
     }
 
     ///A an object that holds all the values a user can select during
