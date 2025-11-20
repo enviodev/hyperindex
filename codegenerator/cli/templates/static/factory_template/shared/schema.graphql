@@ -1,6 +1,6 @@
 type UniswapV3Pool_Swap {
   id: ID!                                   # Unique swap ID (tx hash + log index)
-  chainId: Int!                               # Chain ID where the swap occurred
+  chainId: Int!                             # Chain ID where the swap occurred
   sender: String!                           # Address that initiated the swap
   recipient: String!                        # Address receiving the output tokens
   amount0: BigInt!                          # Token0 amount in the swap (positive/negative)
