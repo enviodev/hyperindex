@@ -79,13 +79,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                     &init_config.language, &parsed_project_paths.project_root,
                 ))?;
 
-            let evm_config = generate_config_from_subgraph_id(
-                &parsed_project_paths.project_root,
-                cid,
-                &init_config.language,
-            )
-            .await
-            .context("Failed generating config from subgraph")?;
+            let evm_config =
+                generate_config_from_subgraph_id(&parsed_project_paths.project_root, cid)
+                    .await
+                    .context("Failed generating config from subgraph")?;
 
             let system_config = SystemConfig::from_human_config(
                 HumanConfig::Evm(evm_config),
@@ -169,6 +166,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 .generate_contract_import_templates(
                     &init_config.language,
                     &parsed_project_paths.project_root,
+                    true, // is_fuel
                 )
                 .context(
                     "Failed generating contract import templates for schema and event handlers.",
@@ -222,6 +220,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 .generate_contract_import_templates(
                     &init_config.language,
                     &parsed_project_paths.project_root,
+                    false, // is_fuel
                 )
                 .context(
                     "Failed generating contract import templates for schema and event handlers.",

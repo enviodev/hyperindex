@@ -13,13 +13,14 @@
     "db-down": "node -e 'require(`./src/db/Migrations.res.js`).runDownMigrations(true)'",
     "db-setup": "node -e 'require(`./src/db/Migrations.res.js`).runUpMigrations(true, true)'",
     "print-benchmark-summary": "node -e 'require(`./src/Benchmark.res.js`).Summary.printSummary()'",
-    "start": "{{#if has_typescript}}ts-{{/if}}node src/Index.res.js"
+    {{!-- We need this to always have cwd at the root of the project --}}
+    "start": "cd {{relative_path_to_root_from_generated}} && ts-node {{relative_path_to_generated_from_root}}/src/Index.res.js"
   },
   "keywords": [
     "ReScript"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0 <=22.10.0"
   },
   "author": "",
   "license": "MIT",
@@ -32,9 +33,7 @@
     "@fuel-ts/utils": "0.96.1",
     "@fuel-ts/address": "0.96.1",
     {{/if}}
-    {{#if has_typescript}}
     "ts-node": "10.9.1",
-    {{/if}}
     "@rescript/react": "0.12.1",
     "bignumber.js": "9.1.2",
     "date-fns": "3.3.1",

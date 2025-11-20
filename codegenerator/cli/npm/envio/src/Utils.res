@@ -198,6 +198,8 @@ module UnsafeIntOperators = {
   external \"-": (int, int) => int = "%subfloat"
 }
 
+type asyncIterator<'a>
+
 module Array = {
   let immutableEmpty: array<unknown> = []
 
@@ -360,6 +362,19 @@ Helper to check if a value exists in an array
   external copy: array<'a> => array<'a> = "slice"
 
   @send external at: (array<'a>, int) => option<'a> = "at"
+
+  /**
+  Converts an async iterator to an array by iterating through all values
+  */
+  let fromAsyncIterator: asyncIterator<string> => promise<
+    array<string>,
+  > = %raw(`async (iterator) => {
+    const result = [];
+    for await (const item of iterator) {
+      result.push(item);
+    }
+    return result;
+  }`)
 }
 
 module String = {

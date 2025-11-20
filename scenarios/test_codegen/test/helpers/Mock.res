@@ -259,7 +259,7 @@ module Indexer = {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
 
-    let registrations = Generated.registerAllHandlers()
+    let registrations = await Generated.registerAllHandlers()
 
     let config = {
       let config = Generated.makeGeneratedConfig()
