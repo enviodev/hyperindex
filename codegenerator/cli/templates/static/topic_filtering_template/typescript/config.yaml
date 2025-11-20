@@ -6,7 +6,6 @@ networks:
       start_block: 23596675
       contracts:
           - name: ERC20
-            handler: src/EventHandlers.ts
             events:
                 - event: "Transfer(address indexed from, address indexed to, uint256 value)"
 
