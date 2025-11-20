@@ -28,6 +28,9 @@ use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
 #[strum(serialize_all = "kebab-case")]
 #[repr(u64)]
 pub enum Network {
+    #[subenum(HypersyncNetwork)]
+    Ab = 36888,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Abstract = 2741,
 
@@ -48,6 +51,9 @@ pub enum Network {
 
     #[subenum(NetworkWithExplorer)]
     ArbitrumTestnet = 421611,
+
+    #[subenum(HypersyncNetwork)]
+    ArcTestnet = 5042002,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Aurora = 1313161554,
@@ -110,19 +116,14 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     CeloBaklava = 62320,
 
-    #[subenum(HypersyncNetwork)]
     ChainwebTestnet20 = 5920,
 
-    #[subenum(HypersyncNetwork)]
     ChainwebTestnet21 = 5921,
 
-    #[subenum(HypersyncNetwork)]
     ChainwebTestnet22 = 5922,
 
-    #[subenum(HypersyncNetwork)]
     ChainwebTestnet23 = 5923,
 
-    #[subenum(HypersyncNetwork)]
     ChainwebTestnet24 = 5924,
 
     #[subenum(HypersyncNetwork)]
@@ -240,6 +241,9 @@ pub enum Network {
     MegaethTestnet = 6342,
 
     #[subenum(HypersyncNetwork)]
+    MegaethTestnet2 = 6343,
+
+    #[subenum(HypersyncNetwork)]
     Merlin = 4200,
 
     #[subenum(HypersyncNetwork)]
@@ -342,6 +346,9 @@ pub enum Network {
     ScrollSepolia = 534351,
 
     #[subenum(HypersyncNetwork)]
+    Sentient = 6767,
+
+    #[subenum(HypersyncNetwork)]
     SentientTestnet = 1184075182,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -355,6 +362,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Sonic = 146,
+
+    #[subenum(HypersyncNetwork)]
+    SonicTestnet = 14601,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Sophon = 50104,
@@ -371,7 +381,7 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Taiko = 167000,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     Tangle = 5845,
 
     #[subenum(HypersyncNetwork)]
@@ -557,13 +567,18 @@ impl Network {
             | Network::Xdc
             | Network::XdcTestnet
             | Network::Abstract
+            | Network::Ab
+            | Network::ArcTestnet
             | Network::Hyperliquid
             | Network::PharosDevnet
             | Network::Superseed
             | Network::MegaethTestnet
+            | Network::MegaethTestnet2
             | Network::Curtis
             | Network::Worldchain
             | Network::Sonic
+            | Network::SonicTestnet
+            | Network::Sentient
             | Network::Swell
             | Network::Taraxa => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
@@ -612,7 +627,7 @@ impl HypersyncNetwork {
         match self {
             EthereumMainnet | Optimism | MonadTestnet | Gnosis | Base => Gold,
 
-            Xdc | Polygon | ArbitrumOne | MegaethTestnet => Silver,
+            Xdc | Polygon | ArbitrumOne | MegaethTestnet | MegaethTestnet2 | Sonic => Silver,
 
             Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
             | Taraxa | Plasma => Bronze,
@@ -622,11 +637,11 @@ impl HypersyncNetwork {
             | CitreaTestnet | BscTestnet | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet
             | BlastSepolia | Holesky | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal
             | Soneium | BaseSepolia | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet
-            | Morph | Harmony | Saakuru | Cyber | Superseed | Sonic | Worldchain | Sophon
-            | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam
-            | ChainwebTestnet20 | ChainwebTestnet21 | ChainwebTestnet22 | ChainwebTestnet23
-            | ChainwebTestnet24 | Plume | Scroll | AuroraTurbo | Tangle | Damon
-            | SentientTestnet => Stone,
+            | Morph | Harmony | Saakuru | Cyber | Superseed | Worldchain | Sophon | Fantom
+            | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam | Plume | Scroll
+            | AuroraTurbo | Damon | SentientTestnet | Ab | ArcTestnet | Sentient | SonicTestnet => {
+                Stone
+            }
         }
     }
 
