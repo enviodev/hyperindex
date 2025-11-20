@@ -1644,6 +1644,7 @@ packages:
 
   envio@file:../../codegenerator/cli/npm/envio:
     resolution: {directory: ../../codegenerator/cli/npm/envio, type: directory}
+    engines: {node: '>=22.0.0'}
     hasBin: true
 
   error-ex@1.3.2:

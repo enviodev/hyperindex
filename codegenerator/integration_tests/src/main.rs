@@ -68,34 +68,30 @@ impl InitCombo {
 }
 
 fn generate_init_args_combinations() -> Vec<InitCombo> {
-    Language::iter()
-        .flat_map(|l| {
-            init_config::evm::Template::iter()
-                .map(|t| {
-                    InitCombo::new(
-                        format!("evm_{t}"),
-                        l.clone(),
-                        InitFlow::Template(clap_definitions::evm::TemplateArgs {
-                            template: Some(t.clone()),
-                        }),
-                    )
-                })
-                .chain(init_config::fuel::Template::iter().map(|t| {
-                    InitCombo::new(
-                        format!("fuel_{t}"),
-                        l.clone(),
-                        InitFlow::Fuel {
-                            init_flow: Some(clap_definitions::fuel::InitFlow::Template(
-                                clap_definitions::fuel::TemplateArgs {
-                                    template: Some(t.clone()),
-                                },
-                            )),
-                        },
-                    )
-                }))
-                .collect::<Vec<_>>()
+    init_config::evm::Template::iter()
+        .map(|t| {
+            InitCombo::new(
+                format!("evm_{t}"),
+                Language::TypeScript,
+                InitFlow::Template(clap_definitions::evm::TemplateArgs {
+                    template: Some(t.clone()),
+                }),
+            )
         })
-        .collect()
+        .chain(init_config::fuel::Template::iter().map(|t| {
+            InitCombo::new(
+                format!("fuel_{t}"),
+                Language::TypeScript,
+                InitFlow::Fuel {
+                    init_flow: Some(clap_definitions::fuel::InitFlow::Template(
+                        clap_definitions::fuel::TemplateArgs {
+                            template: Some(t.clone()),
+                        },
+                    )),
+                },
+            )
+        }))
+        .collect::<Vec<_>>()
 }
 
 async fn run_all_init_combinations() {
