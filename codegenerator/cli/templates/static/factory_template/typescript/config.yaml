@@ -3,11 +3,9 @@ name: Factory Contract
 description: Example indexer for indexing factory-deployed contracts
 contracts:
     - name: UniswapV3Factory
-      handler: src/EventHandlers.ts
       events:
           - event: PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
     - name: UniswapV3Pool
-      handler: src/EventHandlers.ts
       events:
           - event: Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
 

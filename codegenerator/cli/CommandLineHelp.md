@@ -142,7 +142,7 @@ Initialize Evm indexer from an example template
 
 * `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
-  Possible values: `greeter`, `erc20`, `factory`
+  Possible values: `greeter`, `erc20`, `feature-factory`
 
 
 

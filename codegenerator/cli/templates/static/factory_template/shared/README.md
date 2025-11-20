@@ -23,6 +23,7 @@ Example:
 In the case of **Uniswap V3 Factory**, the handler looks like this:
 
 ```ts
+// src/handlers/UniswapV3Factory.ts
 UniswapV3Factory.PoolCreated.contractRegister(({ event, context }) => {
     context.addUniswapV3Pool(event.params.pool);
 });
