@@ -86,11 +86,7 @@ let make = (
           notRegisteredEvents->Array.push(eventConfig)
         }
         // Skip events marked as onlyWhenReady if the chain is not ready yet
-        let shouldIncludeBasedOnReadiness = if onlyWhenReady && !isReady {
-          false
-        } else {
-          true
-        }
+        let shouldIncludeBasedOnReadiness = !onlyWhenReady || isReady
         isRegistered && shouldIncludeBasedOnReadiness
       }
 
