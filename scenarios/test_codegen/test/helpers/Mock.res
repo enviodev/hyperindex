@@ -767,6 +767,7 @@ let evmEventConfig = (
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
+  ~onlyWhenReady=false,
 ): Internal.evmEventConfig => {
   {
     id,
@@ -781,6 +782,7 @@ let evmEventConfig = (
     paramsRawEventSchema: S.literal(%raw(`null`))
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+    onlyWhenReady,
     blockSchema: blockSchema
     ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
     ->Utils.magic,

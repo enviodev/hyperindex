@@ -1782,6 +1782,7 @@ let register = (): Internal.evmEventConfig => {{
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  onlyWhenReady: false,
   }}
 }}"#
             ),
@@ -1797,6 +1798,7 @@ let register = (): Internal.evmEventConfig => {{
                 sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                     .to_string(),
                 field_selection: None,
+                only_when_ready: false,
             },
             false,
         )
@@ -1877,6 +1879,7 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  onlyWhenReady: false,
   }
 }"#.to_string(),
             }
@@ -1898,6 +1901,7 @@ let register = (): Internal.evmEventConfig => {
                         data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
                     }],
                 }),
+                only_when_ready: false,
             },
             false,
         )
@@ -1978,6 +1982,7 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  onlyWhenReady: false,
   }
 }"#.to_string(),
             }

@@ -944,11 +944,13 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                                 name: "NewGreeting".to_string(),
                                 log_id: None,
                                 type_: None,
+                                only_when_ready: None,
                             },
                             fuel::EventConfig {
                                 name: "ClearGreeting".to_string(),
                                 log_id: None,
                                 type_: None,
+                                only_when_ready: None,
                             },
                         ],
                     }),
