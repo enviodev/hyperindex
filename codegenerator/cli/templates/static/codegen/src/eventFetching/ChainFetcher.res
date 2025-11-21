@@ -55,11 +55,14 @@ let make = (
 
   let notRegisteredEvents = []
 
+  // Check if the chain is ready (has caught up to head or endblock)
+  let isReady = timestampCaughtUpToHeadOrEndblock !== None
+
   chainConfig.contracts->Array.forEach(contract => {
     let contractName = contract.name
 
     contract.events->Array.forEach(eventConfig => {
-      let {isWildcard} = eventConfig
+      let {isWildcard, onlyWhenReady} = eventConfig
       let hasContractRegister = eventConfig.contractRegister->Option.isSome
 
       // Should validate the events
@@ -74,6 +77,7 @@ let make = (
 
       // Filter out non-preRegistration events on preRegistration phase
       // so we don't care about it in fetch state and workers anymore
+      // Also filter out events that are only tracked when ready if the chain is not ready yet
       let shouldBeIncluded = if config.enableRawEvents {
         true
       } else {
@@ -81,7 +85,13 @@ let make = (
         if !isRegistered {
           notRegisteredEvents->Array.push(eventConfig)
         }
-        isRegistered
+        // Skip events marked as onlyWhenReady if the chain is not ready yet
+        let shouldIncludeBasedOnReadiness = if onlyWhenReady && !isReady {
+          false
+        } else {
+          true
+        }
+        isRegistered && shouldIncludeBasedOnReadiness
       }
 
       if shouldBeIncluded {

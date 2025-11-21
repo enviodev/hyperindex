@@ -143,7 +143,7 @@ importers:
         specifier: 16.4.5
         version: 16.4.5
       envio:
-        specifier: file:/Users/dzakh/code/envio/hyperindex/codegenerator/target/debug/envio/../../../cli/npm/envio
+        specifier: file:/Users/enguerrand/dev/nim/hyperindex/codegenerator/target/debug/envio/../../../cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio(typescript@5.5.4)
       ethers:
         specifier: 6.8.0
@@ -1644,7 +1644,7 @@ packages:
 
   envio@file:../../codegenerator/cli/npm/envio:
     resolution: {directory: ../../codegenerator/cli/npm/envio, type: directory}
-    engines: {node: '>=22.0.0'}
+    engines: {node: '>=22.0.0 <=22.10.0'}
     hasBin: true
 
   error-ex@1.3.2:

@@ -103,6 +103,8 @@ type eventConfig = private {
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
+  // If true, this event will only be tracked when the chain is ready (after historical backfill)
+  onlyWhenReady: bool,
 }
 
 type fuelEventKind =

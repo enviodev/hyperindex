@@ -542,6 +542,15 @@ pub mod evm {
                            event"
         )]
         pub field_selection: Option<FieldSelection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        #[schemars(
+            description = "If true, this event will only be tracked when the chain is ready (after \
+                           historical backfill is complete). No queries will be made for this event \
+                           during historical sync. Useful for speeding up indexing when historical \
+                           data is not needed. (default: false)"
+        )]
+        pub only_when_ready: Option<bool>,
     }
 }
 
@@ -701,6 +710,15 @@ pub mod fuel {
                            logged struct/enum name."
         )]
         pub log_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        #[schemars(
+            description = "If true, this event will only be tracked when the chain is ready (after \
+                           historical backfill is complete). No queries will be made for this event \
+                           during historical sync. Useful for speeding up indexing when historical \
+                           data is not needed. (default: false)"
+        )]
+        pub only_when_ready: Option<bool>,
     }
 }
 
