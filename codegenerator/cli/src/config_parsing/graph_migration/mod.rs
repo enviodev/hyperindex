@@ -342,6 +342,7 @@ pub async fn generate_config_from_subgraph_id(
                                 event: event_name.to_string(),
                                 name: None,
                                 field_selection: None,
+                                only_when_ready: None,
                             };
 
                             Ok(event)

@@ -1244,6 +1244,7 @@ pub struct Event {
     pub name: String,
     pub sighash: String,
     pub field_selection: Option<FieldSelection>,
+    pub only_when_ready: bool,
 }
 
 impl Event {
@@ -1335,6 +1336,7 @@ impl Event {
                     }
                     None => None,
                 },
+                only_when_ready: event_config.only_when_ready.unwrap_or(false),
             })
         }
 
@@ -1414,6 +1416,7 @@ impl Event {
                         kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
                         sighash: log.id,
                         field_selection: None,
+                        only_when_ready: event_config.only_when_ready.unwrap_or(false),
                     }
                 }
                 EventType::Mint => Event {
@@ -1421,24 +1424,28 @@ impl Event {
                     kind: EventKind::Fuel(FuelEventKind::Mint),
                     sighash: "mint".to_string(),
                     field_selection: None,
+                    only_when_ready: event_config.only_when_ready.unwrap_or(false),
                 },
                 EventType::Burn => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Burn),
                     sighash: "burn".to_string(),
                     field_selection: None,
+                    only_when_ready: event_config.only_when_ready.unwrap_or(false),
                 },
                 EventType::Transfer => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Transfer),
                     sighash: "transfer".to_string(),
                     field_selection: None,
+                    only_when_ready: event_config.only_when_ready.unwrap_or(false),
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Call),
                     sighash: "call".to_string(),
                     field_selection: None,
+                    only_when_ready: event_config.only_when_ready.unwrap_or(false),
                 },
             };
 

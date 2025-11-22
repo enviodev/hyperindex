@@ -338,6 +338,7 @@ pub struct EventMod {
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
     pub preload_handlers: bool,
+    pub only_when_ready: bool,
 }
 
 impl Display for EventMod {
@@ -417,6 +418,7 @@ impl EventMod {
                 ),
             };
 
+        let only_when_ready_code = if self.only_when_ready { "true" } else { "false" };
         let base_event_config_code = format!(
             r#"id,
   name,
@@ -424,7 +426,8 @@ impl EventMod {
   isWildcard: (handlerRegister->EventRegister.isWildcard),
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  onlyWhenReady: {only_when_ready_code},"#
         );
 
         let non_event_mod_code = match fuel_event_kind_code {
@@ -655,6 +658,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
             preload_handlers: preload_handlers,
+            only_when_ready: config_event.only_when_ready,
         };
         EventTemplate {
             name: event_name,
@@ -682,6 +686,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
             preload_handlers: preload_handlers,
+            only_when_ready: config_event.only_when_ready,
         };
         EventTemplate {
             name: event_name,
@@ -745,6 +750,7 @@ impl EventTemplate {
                     custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
                     preload_handlers: preload_handlers,
+                    only_when_ready: config_event.only_when_ready,
                 };
 
                 Ok(EventTemplate {
@@ -773,6 +779,7 @@ impl EventTemplate {
                             custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
                             preload_handlers: preload_handlers,
+                            only_when_ready: config_event.only_when_ready,
                         };
 
                         Ok(EventTemplate {
@@ -1775,6 +1782,7 @@ let register = (): Internal.evmEventConfig => {{
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  onlyWhenReady: false,
   }}
 }}"#
             ),
@@ -1790,6 +1798,7 @@ let register = (): Internal.evmEventConfig => {{
                 sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                     .to_string(),
                 field_selection: None,
+                only_when_ready: false,
             },
             false,
         )
@@ -1870,6 +1879,7 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  onlyWhenReady: false,
   }
 }"#.to_string(),
             }
@@ -1891,6 +1901,7 @@ let register = (): Internal.evmEventConfig => {
                         data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
                     }],
                 }),
+                only_when_ready: false,
             },
             false,
         )
@@ -1971,6 +1982,7 @@ let register = (): Internal.evmEventConfig => {
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
   paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+  onlyWhenReady: false,
   }
 }"#.to_string(),
             }

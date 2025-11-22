@@ -58,6 +58,7 @@ pub mod evm {
                         event: EvmAbi::event_signature_from_abi_event(&event),
                         name: None,
                         field_selection: None,
+                        only_when_ready: None,
                     })
                     .collect();
 

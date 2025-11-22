@@ -12,6 +12,8 @@ contracts:
     handler: ./src/EventHandlers.res.js
     events:
       - event: "EmptyEvent()"
+      - event: "OnlyWhenReadyEvent()"
+        only_when_ready: true
   - name: EventFiltersTest
     handler: ./src/EventHandlers.res.js
     events:
