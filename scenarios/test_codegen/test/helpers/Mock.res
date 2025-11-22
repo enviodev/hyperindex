@@ -471,6 +471,7 @@ module Source = {
     logIndex: int,
     handler?: Types.HandlerTypes.loader<unit, unit>,
     contractRegister?: Types.HandlerTypes.contractRegister<unit>,
+    onlyWhenReady?: bool,
   }
 
   type t = {
@@ -668,7 +669,7 @@ module Source = {
                             blockSchema: S.object(_ => ())->Utils.magic,
                             transactionSchema: S.object(_ => ())->Utils.magic,
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
-                            onlyWhenReady: false,
+                            onlyWhenReady: item.onlyWhenReady->Option.getWithDefault(false),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
