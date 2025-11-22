@@ -21,7 +21,7 @@ describe("OnlyWhenReady Event Filtering", () => {
       contracts: [
         {
           name: "TestContract",
-          abi: [],
+          abi: Ethers.makeAbi(%raw("[]")),
           addresses: [mockAddress],
           events: eventConfigs,
           startBlock: None,
