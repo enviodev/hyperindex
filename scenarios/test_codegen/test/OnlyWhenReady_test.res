@@ -12,7 +12,6 @@ describe("OnlyWhenReady Event Filtering", () => {
     {
       id: chainId,
       startBlock,
-      endBlock: None,
       sources: [
         Config.HyperSync({
           endpointUrl: "http://localhost:8080",
