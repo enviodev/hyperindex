@@ -21,6 +21,7 @@ describe("OnlyWhenReady Event Filtering", () => {
       contracts: [
         {
           name: "TestContract",
+          abi: [],
           addresses: [mockAddress],
           events: eventConfigs,
           startBlock: None,
