@@ -29,19 +29,20 @@ describe("OnlyWhenReady Event Filtering", () => {
     }
   }
 
-  let makeConfig = (~enableRawEvents=false): Config.t => {
-    {
-      shouldRollbackOnReorg: true,
-      isUnorderedMultichainMode: false,
-      enableRawEvents,
-      maxAddrInPartition: 100,
-      syncConfig: Rpc,
-      dbWriteBatchSize: 100,
-      numEventsProcessedUntilThrottle: 1000,
-      eventBatchSize: 1000,
-      defaultStartBlock: 0,
-      chainMap: ChainMap.empty(),
-    }
+  let makeConfig = (~enableRawEvents=false, ~chains=[]): Config.t => {
+    Config.make(
+      ~shouldRollbackOnReorg=true,
+      ~shouldSaveFullHistory=false,
+      ~chains,
+      ~enableRawEvents,
+      ~preloadHandlers=false,
+      ~ecosystem=Platform.Evm,
+      ~batchSize=5000,
+      ~lowercaseAddresses=false,
+      ~multichain=Config.Unordered,
+      ~shouldUseHypersyncClientDecoder=true,
+      ~maxAddrInPartition=100,
+    )
   }
 
   let makeRegistrations = (): EventRegister.registrations => {
@@ -65,7 +66,7 @@ describe("OnlyWhenReady Event Filtering", () => {
       ) :> Internal.eventConfig)
 
       let chainConfig = makeChainConfig(~eventConfigs=[regularEvent, onlyWhenReadyEvent])
-      let config = makeConfig()
+      let config = makeConfig(~chains=[chainConfig])
       let registrations = makeRegistrations()
 
       // Chain is NOT ready (timestampCaughtUpToHeadOrEndblock = None)
@@ -108,7 +109,7 @@ describe("OnlyWhenReady Event Filtering", () => {
       ) :> Internal.eventConfig)
 
       let chainConfig = makeChainConfig(~eventConfigs=[regularEvent, onlyWhenReadyEvent])
-      let config = makeConfig()
+      let config = makeConfig(~chains=[chainConfig])
       let registrations = makeRegistrations()
 
       // Chain IS ready (timestampCaughtUpToHeadOrEndblock = Some)
@@ -156,7 +157,7 @@ describe("OnlyWhenReady Event Filtering", () => {
       ) :> Internal.eventConfig)
 
       let chainConfig = makeChainConfig(~eventConfigs=[regularEvent1, regularEvent2])
-      let config = makeConfig()
+      let config = makeConfig(~chains=[chainConfig])
       let registrations = makeRegistrations()
 
       // Test with chain NOT ready
@@ -212,7 +213,7 @@ describe("OnlyWhenReady Event Filtering", () => {
       ) :> Internal.eventConfig)
 
       let chainConfig = makeChainConfig(~eventConfigs=[onlyWhenReadyEvent])
-      let config = makeConfig(~enableRawEvents=true)
+      let config = makeConfig(~enableRawEvents=true, ~chains=[chainConfig])
       let registrations = makeRegistrations()
 
       // With raw events enabled, events should be included even if not ready
