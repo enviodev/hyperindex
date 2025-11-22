@@ -19,6 +19,8 @@
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
+    "podman-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local podman up",
+    "podman-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local podman down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
     "start": "ts-node ./generated/src/Index.res.js"
   },
