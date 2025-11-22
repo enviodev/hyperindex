@@ -3,18 +3,45 @@ open RescriptMocha
 
 describe("OnlyWhenReady Event Filtering", () => {
   let chainId = 1337
+  let chain = ChainMap.Chain.makeUnsafe(~chainId)
   let mockAddress = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
   let makeChainConfig = (
     ~eventConfigs: array<Internal.eventConfig>,
     ~startBlock=0,
   ): Config.chain => {
+    let evmEventConfigs = eventConfigs->(
+      Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
+    )
+    let evmContracts = [
+      {
+        Internal.name: "TestContract",
+        abi: Ethers.makeAbi(%raw("[]")),
+        events: evmEventConfigs,
+      },
+    ]
     {
       id: chainId,
       startBlock,
       sources: [
-        Config.HyperSync({
-          endpointUrl: "http://localhost:8080",
+        RpcSource.make({
+          chain,
+          contracts: evmContracts,
+          sourceFor: Sync,
+          syncConfig: NetworkSources.getSyncConfig({
+            initialBlockInterval: 10000,
+            backoffMultiplicative: 1.0,
+            accelerationAdditive: 1000,
+            intervalCeiling: 10000,
+            backoffMillis: 1000,
+            queryTimeoutMillis: 10000,
+            fallbackStallTimeout: 5000,
+          }),
+          url: "http://localhost:8080",
+          eventRouter: evmEventConfigs->EventRouter.fromEvmEventModsOrThrow(~chain),
+          shouldUseHypersyncClientDecoder: false,
+          lowercaseAddresses: false,
+          allEventSignatures: [],
         }),
       ],
       maxReorgDepth: 100,
