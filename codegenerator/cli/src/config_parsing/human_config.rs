@@ -437,6 +437,12 @@ pub mod evm {
                            in the future."
         )]
         Fallback,
+        #[schemars(
+            description = "Use RPC for real-time indexing only. HyperSync will be used for \
+                           historical sync, then automatically switch to this RPC once synced \
+                           for lower latency."
+        )]
+        Live,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
