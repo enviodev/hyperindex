@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: Factory Contract
+description: Example indexer for indexing factory-deployed contracts
+contracts:
+  - name: UniswapV3Factory
+    events:
+      - event: PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
+  - name: UniswapV3Pool
+    events:
+      - event: Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
+
+networks:
+  - id: 1 # Ethereum Mainnet
+    start_block: 0
+    contracts:
+      - name: UniswapV3Factory
+        address:
+          - 0x1F98431c8aD98523631AE4a59f267346ea31F984
+      - name: UniswapV3Pool
+  - id: 130 # Unichain Mainnet
+    start_block: 0
+    contracts:
+      - name: UniswapV3Factory
+        address:
+          - 0x1F98400000000000000000000000000000000003
+      - name: UniswapV3Pool
+  - id: 42161 # Arbitrum Mainnet
+    start_block: 0
+    contracts:
+      - name: UniswapV3Factory
+        address:
+          - 0x1F98431c8aD98523631AE4a59f267346ea31F984
+      - name: UniswapV3Pool
+  - id: 10 # Optimism Mainnet
+    start_block: 0
+    contracts:
+      - name: UniswapV3Factory
+        address:
+          - 0x1F98431c8aD98523631AE4a59f267346ea31F984
+      - name: UniswapV3Pool
+  - id: 8453 # Base Mainnet
+    start_block: 0
+    contracts:
+      - name: UniswapV3Factory
+        address:
+          - 0x33128a8fC17869897dcE68Ed026d694621f6FDfD
+      - name: UniswapV3Pool
+unordered_multichain_mode: true
+preload_handlers: true
