@@ -1,0 +1,12 @@
+type Transfer {
+  # id is combination of chain id, block number, and log index 
+  id: ID!
+  # amount is the amount of tokens transferred
+  amount: BigInt!
+  # from is the account that sent the tokens
+  from: String!
+  # to is the account that received the tokens
+  to: String!
+  # contract is the token contract address
+  contract: String!
+}
