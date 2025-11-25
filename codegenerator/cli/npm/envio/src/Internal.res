@@ -189,6 +189,8 @@ type onBlockConfig = {
   endBlock: option<int>,
   interval: int,
   handler: onBlockArgs => promise<unit>,
+  // If true, this block handler will only be invoked when the chain is ready (after historical backfill)
+  onlyWhenReady: bool,
 }
 
 @tag("kind")

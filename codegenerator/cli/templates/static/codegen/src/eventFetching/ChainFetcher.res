@@ -132,9 +132,10 @@ let make = (
 
   let onBlockConfigs =
     registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
-  switch onBlockConfigs {
+  // Filter out onlyWhenReady block handlers if the chain is not ready yet
+  let filteredOnBlockConfigs = switch onBlockConfigs {
   | Some(onBlockConfigs) =>
-    // TODO: Move it to the EventRegister module
+    // TODO: Move validation to the EventRegister module
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
       if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
@@ -152,7 +153,12 @@ let make = (
       | None => ()
       }
     })
-  | None => ()
+    // Filter out block handlers marked as onlyWhenReady if the chain is not ready yet
+    let filtered = onBlockConfigs->Array.keep(onBlockConfig => {
+      !onBlockConfig.onlyWhenReady || isReady
+    })
+    filtered->Utils.Array.notEmpty ? Some(filtered) : None
+  | None => None
   }
 
   let fetchState = FetchState.make(
@@ -169,7 +175,7 @@ let make = (
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
-    ~onBlockConfigs?,
+    ~onBlockConfigs=?filteredOnBlockConfigs,
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {

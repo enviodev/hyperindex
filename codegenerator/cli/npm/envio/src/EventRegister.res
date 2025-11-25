@@ -75,6 +75,7 @@ let onBlockOptionsSchema = S.schema(s =>
     "interval": s.matches(S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
     "startBlock": s.matches(S.option(S.int)),
     "endBlock": s.matches(S.option(S.int)),
+    "onlyWhenReady": s.matches(S.option(S.bool)->S.Option.getOr(false)),
   }
 )
 
@@ -123,6 +124,7 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
               interval: options["interval"],
               chainId,
               handler,
+              onlyWhenReady: options["onlyWhenReady"],
             }: Internal.onBlockConfig
           ),
         ],
@@ -138,6 +140,7 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
             interval: options["interval"],
             chainId,
             handler,
+            onlyWhenReady: options["onlyWhenReady"],
           }: Internal.onBlockConfig
         ),
       )
