@@ -1,0 +1,10 @@
+type UniswapV3Factory_PoolCreated {
+  id: ID!                  # Unique ID for the event (tx hash + log index)
+  token0: String!          # Address of token0 in the pool
+  token0Decimals: Int!     # Decimals of token0 (from ERC20)
+  token1: String!          # Address of token1 in the pool
+  token1Decimals: Int!     # Decimals of token1 (from ERC20)
+  fee: BigInt!             # Pool fee tier (e.g., 500, 3000, 10000)
+  tickSpacing: BigInt!     # Tick spacing for the pool ticks
+  pool: String!            # Address of the created Uniswap V3 pool
+}
