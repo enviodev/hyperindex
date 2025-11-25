@@ -1650,7 +1650,7 @@ impl FieldSelection {
                 Tx::ChainId => Res::option(Res::Int),
                 Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
                 Tx::BlobVersionedHashes => Res::option(Res::array(Res::String)),
-                Tx::Kind => Res::option(Res::Int),
+                Tx::Type => Res::option(Res::Int),
                 Tx::L1Fee => Res::option(Res::BigInt),
                 Tx::L1GasPrice => Res::option(Res::BigInt),
                 Tx::L1GasUsed => Res::option(Res::BigInt),
