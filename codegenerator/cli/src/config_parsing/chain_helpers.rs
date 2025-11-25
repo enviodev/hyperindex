@@ -261,6 +261,9 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
 
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Monad = 143,
+
     #[subenum(NetworkWithExplorer, HypersyncNetwork)]
     MonadTestnet = 10143,
 
@@ -562,6 +565,7 @@ impl Network {
             | Network::Metall2
             | Network::Berachain
             | Network::MonadTestnet
+            | Network::Monad
             | Network::MosaicMatrix
             | Network::Unichain
             | Network::Xdc
@@ -625,7 +629,7 @@ impl HypersyncNetwork {
         use ChainTier::*;
         use HypersyncNetwork::*;
         match self {
-            EthereumMainnet | Optimism | MonadTestnet | Gnosis | Base => Gold,
+            EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Base => Gold,
 
             Xdc | Polygon | ArbitrumOne | MegaethTestnet | MegaethTestnet2 | Sonic => Silver,
 
