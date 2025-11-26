@@ -489,7 +489,7 @@ type t = {
 }
 
 @module("@envio-dev/hypersync-client") @scope("HypersyncClient")
-external make: cfg => t = "HypersyncClient"
+external makeWithAgent: (cfg, ~userAgent: string) => t = "newWithAgent"
 
 let make = (
   ~url,
@@ -502,19 +502,24 @@ let make = (
   ~retryBaseMs=?,
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
-) =>
-  make({
-    url,
-    enableChecksumAddresses,
-    apiToken,
-    httpReqTimeoutMillis,
-    maxNumRetries,
-    ?serializationFormat,
-    ?enableQueryCaching,
-    ?retryBaseMs,
-    ?retryBackoffMs,
-    ?retryCeilingMs,
-  })
+) => {
+  let envioVersion = Utils.EnvioPackage.json.version->Belt.Option.getWithDefault("unknown")
+  makeWithAgent(
+    {
+      url,
+      enableChecksumAddresses,
+      apiToken,
+      httpReqTimeoutMillis,
+      maxNumRetries,
+      ?serializationFormat,
+      ?enableQueryCaching,
+      ?retryBaseMs,
+      ?retryBackoffMs,
+      ?retryCeilingMs,
+    },
+    ~userAgent=`hyperindex/${envioVersion}`,
+  )
+}
 
 module Decoder = {
   type rec decodedSolType<'a> = {val: 'a}
