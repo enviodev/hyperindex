@@ -5,6 +5,8 @@ type serializationFormat =
   // Use Cap'n Proto binary serialization
   | CapnProto
 
+let serializationFormatSchema = S.enum([Json, CapnProto])
+
 type cfg = {
   /** HyperSync server URL. */
   url: string,

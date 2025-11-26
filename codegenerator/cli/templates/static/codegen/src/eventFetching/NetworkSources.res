@@ -69,6 +69,8 @@ let evm = (
         clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
+        serializationFormat: Env.hypersyncClientSerialzationFormat,
+        enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
       }),
     ]
   | _ => []

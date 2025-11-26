@@ -49,6 +49,16 @@ Default is 0 so that the indexer can handle retries internally
 let hyperSyncClientMaxRetries =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
 
+let hypersyncClientSerialzationFormat =
+  envSafe->EnvSafe.get(
+    "ENVIO_HYPERSYNC_CLIENT_SERIALIZATION_FORMAT",
+    HyperSyncClient.serializationFormatSchema,
+    ~fallback=Json,
+  )
+
+let hypersyncClientEnableQueryCaching =
+  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=false)
+
 module Benchmark = {
   module SaveDataStrategy: {
     type t
@@ -138,12 +148,12 @@ module ClickHouseSink = {
   let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_HOST", S.option(S.string))
   let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_DATABASE", S.option(S.string))
   let username = switch host {
-    | None => ""
-    | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_USERNAME", S.string)
+  | None => ""
+  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_USERNAME", S.string)
   }
   let password = switch host {
-    | None => ""
-    | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_PASSWORD", S.string)
+  | None => ""
+  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_PASSWORD", S.string)
   }
 }
 
@@ -191,7 +201,6 @@ module Hasura = {
 }
 
 module Configurable = {
-
   /**
     Used for backwards compatability
   */

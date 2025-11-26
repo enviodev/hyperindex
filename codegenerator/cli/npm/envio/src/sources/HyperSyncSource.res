@@ -155,6 +155,8 @@ type options = {
   clientMaxRetries: int,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
+  serializationFormat: HyperSyncClient.serializationFormat,
+  enableQueryCaching: bool,
 }
 
 let make = (
@@ -169,6 +171,8 @@ let make = (
     clientMaxRetries,
     clientTimeoutMillis,
     lowercaseAddresses,
+    serializationFormat,
+    enableQueryCaching,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -183,6 +187,8 @@ let make = (
     ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~enableChecksumAddresses=!lowercaseAddresses,
+    ~serializationFormat,
+    ~enableQueryCaching,
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
