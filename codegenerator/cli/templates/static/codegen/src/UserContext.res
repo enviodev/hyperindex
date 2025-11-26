@@ -261,6 +261,10 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
 
     | "isPreload" => params.isPreload->Utils.magic
     | "chains" => params.chains->Utils.magic
+    | "chain" =>
+      let eventItem = params.item->Internal.castUnsafeEventItem
+      let chainId = eventItem.chain->ChainMap.Chain.toChainId
+      params.chains->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Utils.magic
     | _ =>
       switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>

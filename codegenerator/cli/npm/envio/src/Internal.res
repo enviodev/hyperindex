@@ -54,8 +54,8 @@ type entityHandlerContext<'entity> = {
   deleteUnsafe: string => unit,
 }
 
-@genType
 type chainInfo = {
+  id: int,
   // true when the chain has completed initial sync and is processing live events
   // false during historical synchronization
   isReady: bool,
@@ -67,6 +67,7 @@ type loaderReturn
 type handlerContext = private {
   isPreload: bool,
   chains: chains,
+  chain: chainInfo,
 }
 type handlerArgs = {
   event: event,

@@ -18,7 +18,8 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
     chains->Js.Dict.set(
       chainId,
       {
-        Internal.isReady: isReady,
+        Internal.id: chain->ChainMap.Chain.toChainId,
+        isReady: isReady,
       },
     )
   })

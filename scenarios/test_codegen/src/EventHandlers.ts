@@ -1,6 +1,6 @@
-import { deepEqual, fail } from "assert";
+import { deepEqual, equal, fail } from "assert";
 import { createEffect, Effect, S, Logger, EffectCaller } from "envio";
-import { TestEvents } from "generated";
+import { chain, TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
 import {
@@ -149,6 +149,9 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     parentHash: "0xParentHash",
   });
   S.assertOrThrow(event.block, blockSchema)!;
+  let chainFromChains = context.chains[event.chainId];
+  deepEqual(context.chain.id, event.chainId);
+  equal(chainFromChains, context.chain);
 
   // We already do type checking in the tests,
   // but double-check that we receive correct types
@@ -180,9 +183,20 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chains,
       {
-        [chainId: string]: {
+        [chainId in chain]: {
+          readonly id: chain;
           readonly isReady: boolean;
         };
+      }
+    >
+  >(true);
+
+  expectType<
+    TypeEqual<
+      typeof context.chain,
+      {
+        readonly id: chain;
+        readonly isReady: boolean;
       }
     >
   >(true);

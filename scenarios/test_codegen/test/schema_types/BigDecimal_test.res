@@ -40,7 +40,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
     let chains = Js.Dict.empty()
-    chains->Js.Dict.set("1", {Internal.isReady: false})
+    chains->Js.Dict.set("1", {id: 1, Internal.isReady: false})
 
     let handlerContext = UserContext.getHandlerContext({
       item,

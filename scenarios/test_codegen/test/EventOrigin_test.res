@@ -5,7 +5,7 @@ describe("Chains State", () => {
     it(
       "should have isReady field set to false",
       () => {
-        let chainInfo: Internal.chainInfo = {isReady: false}
+        let chainInfo: Internal.chainInfo = {id: 1, isReady: false}
         Assert.equal(chainInfo.isReady, false)
       },
     )
@@ -13,7 +13,7 @@ describe("Chains State", () => {
     it(
       "should have isReady field set to true",
       () => {
-        let chainInfo: Internal.chainInfo = {isReady: true}
+        let chainInfo: Internal.chainInfo = {id: 1, isReady: true}
         Assert.equal(chainInfo.isReady, true)
       },
     )
@@ -24,8 +24,8 @@ describe("Chains State", () => {
       "should support multiple chains with different states",
       () => {
         let chains: Internal.chains = Js.Dict.empty()
-        chains->Js.Dict.set("1", {Internal.isReady: false})
-        chains->Js.Dict.set("2", {Internal.isReady: true})
+        chains->Js.Dict.set("1", {Internal.id: 1, isReady: false})
+        chains->Js.Dict.set("2", {Internal.id: 2, isReady: true})
 
         Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(false))
         Assert.equal(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isReady), Some(true))
@@ -45,7 +45,7 @@ describe("Chains State", () => {
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
         let chains = Js.Dict.empty()
-        chains->Js.Dict.set("1", {Internal.isReady: false})
+        chains->Js.Dict.set("1", {Internal.id: 1, isReady: false})
 
         let handlerContext = UserContext.getHandlerContext({
           item,
