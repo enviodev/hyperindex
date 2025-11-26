@@ -33,7 +33,7 @@ export type {{#if preload_handlers}}HandlerContext{{else}}LoaderContext{{/if}} =
    *            false during historical synchronization
    */
   readonly chains: {
-    [chainId: `${chain}`]: {
+    [chainId in chain]: {
       readonly id: chain;
       readonly isReady: boolean;
     };
