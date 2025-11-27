@@ -502,6 +502,9 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
 
 let cacheTablePrefixLength = Internal.cacheTablePrefix->String.length
 
+// Chunk size threshold: 99MB (99 * 1024 * 1024 bytes)
+let chunkSizeThresholdBytes = 99 * 1024 * 1024
+
 type schemaCacheTableInfo = {
   @as("table_name")
   tableName: string,
@@ -1070,6 +1073,89 @@ let make = (
     envioTables->Utils.Array.notEmpty
   }
 
+  // Helper: Check if a filename is a chunk file (matches pattern _XXXXX.tsv)
+  let isChunkFile = (filename: string): bool => {
+    let chunkPattern = %re("/_\\d{5}\\.tsv$/")
+    chunkPattern->Js.Re.test_(filename)
+  }
+
+  // Helper: Extract base name from chunk file (e.g., "cache_00001.tsv" -> "cache")
+  let extractBaseNameFromChunk = (filename: string): option<string> => {
+    if isChunkFile(filename) {
+      // Remove _XXXXX.tsv pattern to get base name
+      let pattern = %re("/_\\d{5}\\.tsv$/")
+      switch pattern->Js.Re.exec_(filename) {
+      | Some(_) =>
+        // Find the last underscore before the chunk number
+        let lastUnderscoreIdx = filename->Js.String2.lastIndexOf("_")
+        if lastUnderscoreIdx >= 0 {
+          filename->Js.String2.slice(~from=0, ~to_=lastUnderscoreIdx)->Some
+        } else {
+          None
+        }
+      | None => None
+      }
+    } else {
+      None
+    }
+  }
+
+  // Helper: Extract base name from non-chunked file (e.g., "cache.tsv" -> "cache")
+  let extractBaseNameFromFile = (filename: string): string => {
+    filename->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
+  }
+
+  // Merge chunked TSV files back into a single file
+  // chunkFilePaths should be sorted array of chunk file paths
+  // Returns path to the merged file
+  let mergeChunkedFiles = async (
+    ~chunkFilePaths: array<string>,
+    ~outputFilePath: NodeJs.Path.t,
+  ) => {
+    try {
+      if chunkFilePaths->Array.length === 0 {
+        Js.Exn.raiseError("No chunk files to merge")
+      } else {
+        // Read all chunks
+        let allLines: ref<array<string>> = ref([])
+        let header: ref<option<string>> = ref(None)
+
+        for idx in 0 to chunkFilePaths->Array.length - 1 {
+          let chunkPath = chunkFilePaths->Js.Array2.unsafe_get(idx)
+          let chunkContent = await NodeJs.Fs.Promises.readFile(
+            ~filepath=NodeJs.Path.resolve([chunkPath]),
+            ~encoding=Utf8,
+          )
+          let lines = chunkContent->Js.String2.split("\n")->Belt.Array.keep(line => line->String.length > 0)
+
+          if lines->Array.length > 0 {
+            let chunkHeader = lines->Js.Array2.unsafe_get(0)
+            let dataLines = lines->Js.Array2.sliceFrom(1)
+
+            // Store header from first chunk only
+            if header.contents === None {
+              header.contents = Some(chunkHeader)
+              allLines.contents = allLines.contents->Js.Array2.concat([chunkHeader])
+            }
+
+            // Add all data lines from this chunk
+            allLines.contents = allLines.contents->Js.Array2.concat(dataLines)
+          }
+        }
+
+        // Write merged content to output file
+        let mergedContent = allLines.contents->Js.Array2.joinWith("\n") ++ "\n"
+        await NodeJs.Fs.Promises.writeFile(~filepath=outputFilePath, ~content=mergedContent)
+
+        outputFilePath->NodeJs.Path.toString
+      }
+    } catch {
+    | exn =>
+      Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to merge chunked files`)
+      raise(exn)
+    }
+  }
+
   let restoreEffectCache = async (~withUpload) => {
     if withUpload {
       // Try to restore cache tables from binary files
@@ -1086,36 +1172,116 @@ let make = (
             entry->Js.String2.endsWith(".tsv")
           })
 
-          let _ =
-            await cacheFiles
-            ->Js.Array2.map(entry => {
-              let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
-              let table = Internal.makeCacheTable(~effectName)
+          // Separate chunked files from regular files
+          let chunkedFiles: ref<dict<array<string>>> = ref(Js.Dict.empty())
+          let regularFiles: ref<array<string>> = ref([])
 
-              sql
-              ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
-              ->Promise.then(() => {
-                let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
+          cacheFiles->Js.Array2.forEach(entry => {
+            if isChunkFile(entry) {
+              // Group chunked files by base name
+              switch extractBaseNameFromChunk(entry) {
+              | Some(baseName) => {
+                  let filePath = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
+                  Utils.Dict.push(chunkedFiles.contents, baseName, filePath)
+                }
+              | None => () // Skip invalid chunk files
+              }
+            } else {
+              // Regular file
+              let filePath = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
+              regularFiles.contents = regularFiles.contents->Js.Array2.concat([filePath])
+            }
+          })
 
-                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
+          // Process chunked files: merge each group, then import
+          let chunkPromises = chunkedFiles.contents
+          ->Js.Dict.keys
+          ->Js.Array2.map(async baseName => {
+            let chunkFilePaths = chunkedFiles.contents->Js.Dict.unsafeGet(baseName)
+            // Sort chunk files to ensure correct order
+            let sortedChunks = chunkFilePaths->Belt.Array.copy->Js.Array2.sortInPlaceWith((a, b) => {
+              a->String.compare(b)
+            })
 
-                Promise.make(
-                  (resolve, reject) => {
-                    NodeJs.ChildProcess.execWithOptions(
-                      command,
-                      psqlExecOptions,
-                      (~error, ~stdout, ~stderr as _) => {
-                        switch error {
-                        | Value(error) => reject(error)
-                        | Null => resolve(stdout)
-                        }
-                      },
-                    )
+            // Merge chunks into a temporary file
+            let mergedFilePath = NodeJs.Path.join(cacheDirPath, baseName ++ "_merged.tmp.tsv")
+            let mergedFile = await mergeChunkedFiles(
+              ~chunkFilePaths=sortedChunks,
+              ~outputFilePath=mergedFilePath,
+            )
+
+            // Import the merged file
+            let effectName = baseName
+            let table = Internal.makeCacheTable(~effectName)
+
+            let _ = await sql
+            ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+
+            let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${mergedFile}`
+
+            let _ = await Promise.make(
+              (resolve, reject) => {
+                NodeJs.ChildProcess.execWithOptions(
+                  command,
+                  psqlExecOptions,
+                  (~error, ~stdout, ~stderr as _) => {
+                    switch error {
+                    | Value(error) => reject(error)
+                    | Null => resolve(stdout)
+                    }
                   },
                 )
-              })
+              },
+            )
+
+            // Clean up merged temporary file
+            let _ = await NodeJs.Fs.Promises.unlink(mergedFilePath)
+            ()
+          })
+
+          // Process regular files: import normally
+          let regularPromises = regularFiles.contents
+          ->Js.Array2.map(entry => {
+            // Extract filename from full path (last part after /)
+            let lastSlashIdx = entry->Js.String2.lastIndexOf("/")
+            let fileName = if lastSlashIdx >= 0 {
+              entry->Js.String2.sliceToEnd(~from=lastSlashIdx + 1)
+            } else {
+              entry
+            }
+            let effectName = extractBaseNameFromFile(fileName)
+            let table = Internal.makeCacheTable(~effectName)
+
+            sql
+            ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
+            ->Promise.then(() => {
+              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${entry}`
+
+              Promise.make(
+                (resolve, reject) => {
+                  NodeJs.ChildProcess.execWithOptions(
+                    command,
+                    psqlExecOptions,
+                    (~error, ~stdout, ~stderr as _) => {
+                      switch error {
+                      | Value(error) => reject(error)
+                      | Null => resolve(stdout)
+                      }
+                    },
+                  )
+                },
+              )
+              ->Promise.thenResolve(_ => ())
             })
-            ->Promise.all
+          })
+
+          // Wait for all imports to complete
+          // Convert promises to promise<unit> using ignoreValue
+          let chunkPromisesUnit = chunkPromises->Js.Array2.map(promise => Promise.ignoreValue(promise))
+          let regularPromisesUnit = regularPromises->Js.Array2.map(promise => Promise.ignoreValue(promise))
+          let _ = await Promise.all(
+            chunkPromisesUnit->Js.Array2.concat(regularPromisesUnit),
+          )
 
           Logging.info("Successfully uploaded cache.")
         }
@@ -1346,6 +1512,96 @@ let make = (
     await setOrThrow(~items, ~table, ~itemSchema)
   }
 
+  // Split a TSV file into chunks if it exceeds the size threshold
+  // Returns array of file paths (original if not split, or chunk files if split)
+  let splitTsvFile = async (
+    ~inputFilePath: NodeJs.Path.t,
+    ~chunkSizeBytes: int,
+  ) => {
+    try {
+      // Read file content
+      let fileContent = await NodeJs.Fs.Promises.readFile(~filepath=inputFilePath, ~encoding=Utf8)
+      let lines = fileContent->Js.String2.split("\n")->Belt.Array.keep(line => line->String.length > 0)
+
+      if lines->Array.length === 0 {
+        // Empty file, return original
+        [inputFilePath->NodeJs.Path.toString]
+      } else {
+        // First line is the header
+        let header = lines->Js.Array2.unsafe_get(0)
+        let dataLines = lines->Js.Array2.sliceFrom(1)
+
+        // Collect chunks: each chunk is an array of lines (header + data)
+        let chunks: ref<array<array<string>>> = ref([])
+        let currentChunk: ref<array<string>> = ref([header])
+        let currentChunkSize = ref(header->String.length + 1) // +1 for newline
+
+        dataLines->Js.Array2.forEach(line => {
+          let lineSize = line->String.length + 1 // +1 for newline
+
+          // If adding this line would exceed chunk size, save current chunk and start new one
+          if currentChunkSize.contents + lineSize > chunkSizeBytes
+             && currentChunk.contents->Array.length > 1 {
+            // Save current chunk (has header + data lines)
+            chunks.contents = chunks.contents->Js.Array2.concat([currentChunk.contents])
+
+            // Start new chunk with header
+            currentChunk.contents = [header]
+            currentChunkSize.contents = header->String.length + 1
+          }
+
+          // Add line to current chunk
+          currentChunk.contents = currentChunk.contents->Js.Array2.concat([line])
+          currentChunkSize.contents = currentChunkSize.contents + lineSize
+        })
+
+        // Save final chunk if it has data
+        if currentChunk.contents->Array.length > 1 {
+          chunks.contents = chunks.contents->Js.Array2.concat([currentChunk.contents])
+        }
+
+        // If we only have one chunk (original file is small), return original
+        if chunks.contents->Array.length === 0 {
+          [inputFilePath->NodeJs.Path.toString]
+        } else {
+          // Write all chunks to files
+          let chunkFiles: ref<array<string>> = ref([])
+          let basePath = inputFilePath->NodeJs.Path.toString->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv
+
+          for idx in 0 to chunks.contents->Array.length - 1 {
+            let chunkNumRaw = (idx + 1)->Belt.Int.toString
+            // Pad with zeros to 5 digits (e.g., "00001", "00002")
+            let chunkNum = chunkNumRaw->String.length >= 5
+              ? chunkNumRaw
+              : {
+                  let padding = "00000"->Js.String2.slice(~from=0, ~to_=5 - chunkNumRaw->String.length)
+                  padding ++ chunkNumRaw
+                }
+            let chunkFilePath = `${basePath}_${chunkNum}.tsv`
+            let chunkLines = chunks.contents->Js.Array2.unsafe_get(idx)
+            let chunkContent = chunkLines->Js.Array2.joinWith("\n") ++ "\n"
+
+            await NodeJs.Fs.Promises.writeFile(
+              ~filepath=NodeJs.Path.resolve([chunkFilePath]),
+              ~content=chunkContent,
+            )
+            chunkFiles.contents = chunkFiles.contents->Js.Array2.concat([chunkFilePath])
+          }
+
+          // Delete original file
+          await NodeJs.Fs.Promises.unlink(inputFilePath)
+
+          chunkFiles.contents
+        }
+      }
+    } catch {
+    | exn =>
+      Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to split file ${inputFilePath->NodeJs.Path.toString}`)
+      // Return original file on error
+      [inputFilePath->NodeJs.Path.toString]
+    }
+  }
+
   let dumpEffectCache = async () => {
     try {
       let cacheTableInfo: array<schemaCacheTableInfo> =
@@ -1380,10 +1636,12 @@ let make = (
               let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
               let outputFile =
                 NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
+              let outputFilePath = NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")
 
               let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
 
-              Promise.make((resolve, reject) => {
+              // Export cache table to file
+              let _ = Promise.make((resolve, reject) => {
                 NodeJs.ChildProcess.execWithOptions(
                   command,
                   psqlExecOptions,
@@ -1395,6 +1653,26 @@ let make = (
                   },
                 )
               })
+
+              // Check file size after export
+              let stats = await NodeJs.Fs.Promises.stat(outputFilePath)
+              let fileSizeFloat = stats.size
+
+              if fileSizeFloat > chunkSizeThresholdBytes->Belt.Int.toFloat {
+                let sizeMB = fileSizeFloat /. (1024. *. 1024.)
+                let thresholdMB = chunkSizeThresholdBytes->Belt.Int.toFloat /. (1024. *. 1024.)
+                Logging.info(
+                  `Cache file ${cacheName}.tsv is ${sizeMB->Belt.Float.toString}MB, exceeds ${thresholdMB->Belt.Float.toString}MB threshold, splitting into chunks...`,
+                )
+                // Split file into chunks
+                let chunkFiles = await splitTsvFile(
+                  ~inputFilePath=outputFilePath,
+                  ~chunkSizeBytes=chunkSizeThresholdBytes,
+                )
+                Logging.info(
+                  `Cache file ${cacheName}.tsv split into ${chunkFiles->Js.Array2.length->Belt.Int.toString} chunk file(s)`,
+                )
+              }
             })
 
             let _ = await promises->Promise.all

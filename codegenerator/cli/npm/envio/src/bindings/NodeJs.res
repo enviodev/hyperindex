@@ -109,5 +109,13 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readdir: Path.t => Js.Promise.t<array<string>> = "readdir"
+
+    type stats = {size: float}
+
+    @module("fs") @scope("promises")
+    external stat: Path.t => Js.Promise.t<stats> = "stat"
+
+    @module("fs") @scope("promises")
+    external unlink: Path.t => Js.Promise.t<unit> = "unlink"
   }
 }
