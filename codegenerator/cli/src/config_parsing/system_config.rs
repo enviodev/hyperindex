@@ -42,6 +42,9 @@ type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
+use crate::config_parsing::human_config::NetworkId;
+include!(concat!(env!("OUT_DIR"), "/network_generated.rs"));
+
 #[derive(Debug, PartialEq)]
 pub enum Ecosystem {
     Evm,
@@ -668,10 +671,10 @@ impl SystemConfig {
                         .collect();
 
                     let network = Network {
-                        id: network.id,
-                        confirmed_block_threshold: network
-                            .confirmed_block_threshold
-                            .unwrap_or(get_confirmed_block_threshold_from_id(network.id)),
+                        id: (&network.id).try_into()?,
+                        confirmed_block_threshold: network.confirmed_block_threshold.unwrap_or(
+                            get_confirmed_block_threshold_from_id((&network.id).try_into()?),
+                        ),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         sync_source,
@@ -805,13 +808,18 @@ impl SystemConfig {
                     let sync_source = DataSource::Fuel {
                         hypersync_endpoint_url: match &network.hyperfuel_config {
                             Some(config) => config.url.clone(),
-                            None => match network.id {
-                                0 => "https://fuel-testnet.hypersync.xyz".to_string(),
-                                9889 => "https://fuel.hypersync.xyz".to_string(),
-                                _ => {
+                            None => match &network.id {
+                                NetworkId::Int(0) => {
+                                    "https://fuel-testnet.hypersync.xyz".to_string()
+                                }
+                                NetworkId::Int(9889) => "https://fuel.hypersync.xyz".to_string(),
+                                NetworkId::Int(id) => {
+                                    return Err(anyhow!("Fuel network id {} is not supported", id))
+                                }
+                                NetworkId::Name(name) => {
                                     return Err(anyhow!(
-                                        "Fuel network id {} is not supported",
-                                        network.id
+                                        "Fuel network name {} is not supported",
+                                        name
                                     ))
                                 }
                             },
@@ -830,7 +838,7 @@ impl SystemConfig {
                         .collect();
 
                     let network = Network {
-                        id: network.id,
+                        id: (&network.id).try_into()?,
                         start_block: network.start_block,
                         end_block: network.end_block,
                         confirmed_block_threshold: 0,
@@ -971,7 +979,7 @@ impl DataSource {
         };
         let hypersync_endpoint_url = match &network.hypersync_config {
             Some(config) => Some(config.url.to_string()),
-            None => match hypersync_endpoints::get_default_hypersync_endpoint(network.id) {
+            None => match hypersync_endpoints::get_default_hypersync_endpoint((&network.id).try_into()?) {
                 Ok(url) => Some(url),
                 Err(_) => None,
             },
@@ -1694,6 +1702,7 @@ mod test {
     use handlebars::Handlebars;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use crate::config_parsing::human_config::NetworkId;
 
     #[test]
     fn renders_nested_f32() {
@@ -1993,7 +2002,7 @@ mod test {
         use crate::config_parsing::human_config::evm::{HypersyncConfig, Network as EvmNetwork};
 
         let network = EvmNetwork {
-            id: 1,
+            id: NetworkId::Int(1),
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
             }),
@@ -2072,7 +2081,7 @@ mod test {
             output: None,
             contracts: None,
             networks: vec![EvmNetwork {
-                id: 1,
+                id: NetworkId::Int(1),
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,
@@ -2120,7 +2129,7 @@ mod test {
             output: Some("custom/output".to_string()),
             contracts: None,
             networks: vec![EvmNetwork {
-                id: 1,
+                id: NetworkId::Int(1),
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,

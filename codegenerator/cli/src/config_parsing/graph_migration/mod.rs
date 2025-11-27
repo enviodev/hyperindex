@@ -17,6 +17,7 @@ use tokio::{
     task::JoinSet,
     time::{timeout, Duration},
 };
+use crate::config_parsing::human_config::NetworkId;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -298,7 +299,7 @@ pub async fn generate_config_from_subgraph_id(
     for (graph_network, contracts) in &network_hashmap {
         // Create network object to be populated
         let mut network = Network {
-            id: chain_helpers::Network::from(*graph_network).get_network_id(),
+            id: NetworkId::Int(chain_helpers::Network::from(*graph_network).get_network_id()),
             hypersync_config: None,
             // TODO: update to the final rpc url
             rpc_config: None,

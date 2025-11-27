@@ -11,6 +11,7 @@ pub mod evm {
     use serde::{Deserialize, Serialize};
     use strum::{Display, EnumIter, EnumString};
 
+    use crate::config_parsing::human_config::NetworkId;
     use crate::{
         config_parsing::{
             chain_helpers,
@@ -61,37 +62,37 @@ pub mod evm {
                     })
                     .collect();
 
-            let config = if is_multi_chain_contract {
-                //Add the contract to global contract config and return none for local contract
-                //config
-                let global_contract = GlobalContract {
-                    name: selected_contract.name.clone(),
-                    config: ContractConfig {
+                let config = if is_multi_chain_contract {
+                    //Add the contract to global contract config and return none for local contract
+                    //config
+                    let global_contract = GlobalContract {
+                        name: selected_contract.name.clone(),
+                        config: ContractConfig {
+                            abi_file_path: None,
+                            handler: None,
+                            events: events.clone(),
+                        },
+                    };
+
+                    unique_hashmap::try_insert(
+                        &mut global_contracts,
+                        selected_contract.name.clone(),
+                        global_contract,
+                    )
+                    .context(format!(
+                        "Unexpected, failed to add global contract {}. Contract should have \
+                     unique names",
+                        selected_contract.name
+                    ))?;
+                    None
+                } else {
+                    //Return some for local contract config
+                    Some(ContractConfig {
                         abi_file_path: None,
                         handler: None,
-                        events: events.clone(),
-                    },
+                        events,
+                    })
                 };
-
-                unique_hashmap::try_insert(
-                    &mut global_contracts,
-                    selected_contract.name.clone(),
-                    global_contract,
-                )
-                .context(format!(
-                    "Unexpected, failed to add global contract {}. Contract should have \
-                     unique names",
-                    selected_contract.name
-                ))?;
-                None
-            } else {
-                //Return some for local contract config
-                Some(ContractConfig {
-                    abi_file_path: None,
-                    handler: None,
-                    events,
-                })
-            };
 
                 for selected_network in &selected_contract.networks {
                     let address = selected_network
@@ -123,7 +124,7 @@ pub mod evm {
                             };
 
                             Network {
-                                id: selected_network.network.get_network_id(),
+                                id: NetworkId::Int(selected_network.network.get_network_id()),
                                 hypersync_config: None,
                                 rpc_config: None,
                                 rpc,
@@ -161,7 +162,10 @@ pub mod evm {
                 schema: None,
                 output: None,
                 contracts,
-                networks: networks_map.into_values().sorted_by_key(|v| v.id).collect(),
+                networks: networks_map
+                    .into_values()
+                    .sorted_by_key(|v| v.id.as_u64())
+                    .collect(),
                 unordered_multichain_mode: Some(true),
                 event_decoder: None,
                 rollback_on_reorg: None,
@@ -206,6 +210,7 @@ pub mod fuel {
     use serde::{Deserialize, Serialize};
     use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
+    use crate::config_parsing::human_config::NetworkId;
     use crate::{
         config_parsing::human_config::{
             fuel::{
@@ -267,7 +272,7 @@ pub mod fuel {
                 match contracts_by_network.get(&network) {
                     None => (),
                     Some(contracts) => network_configs.push(NetworkConfig {
-                        id: network as u64,
+                        id: NetworkId::Int(network as u64),
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
@@ -281,11 +286,11 @@ pub mod fuel {
                                     .map(|a| a.to_string())
                                     .collect::<Vec<String>>()
                                     .into(),
-                            config: Some(ContractConfig {
-                                abi_file_path: selected_contract.get_vendored_abi_file_path(),
-                                handler: None,
-                                events: selected_contract.selected_events.clone(),
-                            }),
+                                config: Some(ContractConfig {
+                                    abi_file_path: selected_contract.get_vendored_abi_file_path(),
+                                    handler: None,
+                                    events: selected_contract.selected_events.clone(),
+                                }),
                                 start_block: None,
                             })
                             .collect(),

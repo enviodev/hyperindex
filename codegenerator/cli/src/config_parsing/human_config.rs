@@ -1,7 +1,10 @@
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::{borrow::Cow, fmt::Display};
+
+include!(concat!(env!("OUT_DIR"), "/network_generated.rs"));
 
 impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
     fn schema_name() -> Cow<'static, str> {
@@ -56,7 +59,66 @@ impl JsonSchema for Addresses {
     }
 }
 
-type NetworkId = u64;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum NetworkId {
+    Int(u64),
+    Name(String), // later validated against NETWORK_NAMES
+}
+
+impl schemars::JsonSchema for NetworkId {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "NetworkId".into()
+    }
+
+    fn json_schema(gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let int_schema = u64::json_schema(gen);
+
+        let name_schema = serde_json::json!({
+            "type": "string",
+            "enum": NETWORK_NAMES,
+        });
+
+        serde_json::from_value(serde_json::json!({
+            "anyOf": [
+                int_schema,
+                name_schema
+            ]
+        }))
+        .unwrap()
+    }
+}
+
+impl fmt::Display for NetworkId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NetworkId::Int(id) => write!(f, "{id}"),
+            NetworkId::Name(name) => write!(f, "{name}"),
+        }
+    }
+}
+
+impl NetworkId {
+    pub fn as_u64(&self) -> u64 {
+        // Safe because your mapping is authoritative
+        self.try_into().unwrap_or(u64::MAX)
+    }
+}
+
+impl TryFrom<&NetworkId> for u64 {
+    type Error = anyhow::Error;
+
+    fn try_from(n: &NetworkId) -> Result<Self, Self::Error> {
+        match n {
+            NetworkId::Int(id) => Ok(*id),
+            NetworkId::Name(name) => NETWORK_MAP
+                .iter()
+                .find(|(n2, _)| *n2 == name)
+                .map(|(_, id)| *id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown network: {}", name)),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -710,7 +772,10 @@ mod tests {
         evm::{ContractConfig, EventDecoder, HumanConfig, Network},
         NetworkContract,
     };
-    use crate::{config_parsing::human_config::fuel, utils::normalized_list::NormalizedList};
+    use crate::{
+        config_parsing::human_config::{fuel, NetworkId},
+        utils::normalized_list::NormalizedList,
+    };
     use pretty_assertions::assert_eq;
     use schemars::{schema_for, Schema};
     use serde_json::json;
@@ -908,7 +973,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             raw_events: None,
             preload_handlers: None,
             networks: vec![fuel::Network {
-                id: 0,
+                id: NetworkId::Int(0),
                 start_block: 0,
                 end_block: None,
                 hyperfuel_config: None,
@@ -998,7 +1063,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         assert_eq!(
             Network {
-                id: 1,
+                id: NetworkId::Int(1),
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,

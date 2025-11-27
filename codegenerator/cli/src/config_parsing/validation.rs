@@ -145,7 +145,7 @@ impl human_config::evm::Network {
                     finite_end_block
                 ))
             };
-            if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
+            if let Ok(network) = chain_helpers::Network::from_network_id((&self.id).try_into()?) {
                 match (self.end_block, network.get_finite_end_block()) {
                     (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
                         return make_err(finite_end_block)
