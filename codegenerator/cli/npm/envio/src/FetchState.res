@@ -1262,3 +1262,94 @@ let getUnorderedMultichainProgressBlockNumberAt = ({buffer} as fetchState: t, ~i
   | _ => bufferBlockNumber
   }
 }
+
+/**
+Activates deferred events and block handlers when the chain becomes ready.
+This is called when a chain transitions from historical sync to realtime.
+The deferred events will start being fetched from the current progress block.
+*/
+let activateDeferredEventsAndHandlers = (
+  fetchState: t,
+  ~deferredEventConfigs: array<Internal.eventConfig>,
+  ~deferredOnBlockConfigs: array<Internal.onBlockConfig>,
+): t => {
+  if deferredEventConfigs->Array.length === 0 && deferredOnBlockConfigs->Array.length === 0 {
+    fetchState
+  } else {
+    // Separate events into those that depend on addresses and those that don't
+    let notDependingOnAddresses = []
+    let dependingOnAddresses = []
+
+    deferredEventConfigs->Array.forEach(ec => {
+      if ec.dependsOnAddresses {
+        dependingOnAddresses->Array.push(ec)
+      } else {
+        notDependingOnAddresses->Array.push(ec)
+      }
+    })
+
+    // Start from the current latestFullyFetchedBlock
+    let newPartitions = []
+
+    // Create partition for events that don't depend on addresses
+    if notDependingOnAddresses->Array.length > 0 {
+      newPartitions->Array.push({
+        id: (fetchState.nextPartitionIndex + newPartitions->Array.length)->Int.toString,
+        status: {
+          fetchingStateId: None,
+        },
+        latestFetchedBlock: fetchState.latestFullyFetchedBlock,
+        selection: {
+          dependsOnAddresses: false,
+          eventConfigs: notDependingOnAddresses,
+        },
+        addressesByContractName: Js.Dict.empty(),
+      })
+    }
+
+    // For events that depend on addresses, we need to:
+    // 1. Add them to normalSelection
+    // 2. Add them to existing partitions that depend on addresses
+    let updatedNormalSelection = if dependingOnAddresses->Array.length > 0 {
+      {
+        dependsOnAddresses: true,
+        eventConfigs: fetchState.normalSelection.eventConfigs->Array.concat(dependingOnAddresses),
+      }
+    } else {
+      fetchState.normalSelection
+    }
+
+    // Update existing partitions that depend on addresses
+    let updatedPartitions = if dependingOnAddresses->Array.length > 0 {
+      fetchState.partitions->Array.map(p => {
+        if p.selection.dependsOnAddresses {
+          {
+            ...p,
+            selection: {
+              ...p.selection,
+              eventConfigs: p.selection.eventConfigs->Array.concat(dependingOnAddresses),
+            },
+          }
+        } else {
+          p
+        }
+      })
+    } else {
+      fetchState.partitions
+    }
+
+    // Combine partitions
+    let allPartitions = updatedPartitions->Array.concat(newPartitions)
+
+    // Add deferred block handlers
+    let updatedOnBlockConfigs = fetchState.onBlockConfigs->Array.concat(deferredOnBlockConfigs)
+
+    {
+      ...fetchState,
+      partitions: allPartitions,
+      nextPartitionIndex: fetchState.nextPartitionIndex + newPartitions->Array.length,
+      normalSelection: updatedNormalSelection,
+      onBlockConfigs: updatedOnBlockConfigs,
+    }
+  }
+}

@@ -22,6 +22,9 @@ type t = {
   numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
   safeCheckpointTracking: option<SafeCheckpointTracking.t>,
+  // Events and block handlers that should only be activated when the chain is ready
+  deferredEventConfigs: array<Internal.eventConfig>,
+  deferredOnBlockConfigs: array<Internal.onBlockConfig>,
 }
 
 //CONSTRUCTION
@@ -52,6 +55,8 @@ let make = (
   // Aggregate events we want to fetch
   let contracts = []
   let eventConfigs: array<Internal.eventConfig> = []
+  // Events deferred until chain is ready (onlyWhenReady: true)
+  let deferredEventConfigs: array<Internal.eventConfig> = []
 
   let notRegisteredEvents = []
 
@@ -90,8 +95,17 @@ let make = (
         isRegistered && shouldIncludeBasedOnReadiness
       }
 
+      // Store deferred events (registered but onlyWhenReady and not ready yet)
+      let shouldBeDeferred =
+        !config.enableRawEvents &&
+        (hasContractRegister || eventConfig.handler->Option.isSome) &&
+        onlyWhenReady &&
+        !isReady
+
       if shouldBeIncluded {
         eventConfigs->Array.push(eventConfig)
+      } else if shouldBeDeferred {
+        deferredEventConfigs->Array.push(eventConfig)
       }
     })
 
@@ -133,6 +147,8 @@ let make = (
   let onBlockConfigs =
     registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
   // Filter out onlyWhenReady block handlers if the chain is not ready yet
+  // and collect deferred block handlers
+  let deferredOnBlockConfigs: array<Internal.onBlockConfig> = []
   let filteredOnBlockConfigs = switch onBlockConfigs {
   | Some(onBlockConfigs) =>
     // TODO: Move validation to the EventRegister module
@@ -157,6 +173,14 @@ let make = (
     let filtered = onBlockConfigs->Array.keep(onBlockConfig => {
       !onBlockConfig.onlyWhenReady || isReady
     })
+    // Collect deferred block handlers
+    if !isReady {
+      onBlockConfigs->Array.forEach(onBlockConfig => {
+        if onBlockConfig.onlyWhenReady {
+          deferredOnBlockConfigs->Array.push(onBlockConfig)
+        }
+      })
+    }
     filtered->Utils.Array.notEmpty ? Some(filtered) : None
   | None => None
   }
@@ -211,6 +235,8 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
+    deferredEventConfigs,
+    deferredOnBlockConfigs,
   }
 }
 
@@ -474,3 +500,27 @@ let getLastKnownValidBlock = async (
 }
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
+
+/**
+Activates deferred events and block handlers when the chain becomes ready.
+Returns the updated ChainFetcher with the deferred events activated and cleared.
+*/
+let activateDeferredEventsAndHandlers = (chainFetcher: t): t => {
+  if (
+    chainFetcher.deferredEventConfigs->Array.length === 0 &&
+    chainFetcher.deferredOnBlockConfigs->Array.length === 0
+  ) {
+    chainFetcher
+  } else {
+    let updatedFetchState = chainFetcher.fetchState->FetchState.activateDeferredEventsAndHandlers(
+      ~deferredEventConfigs=chainFetcher.deferredEventConfigs,
+      ~deferredOnBlockConfigs=chainFetcher.deferredOnBlockConfigs,
+    )
+    {
+      ...chainFetcher,
+      fetchState: updatedFetchState,
+      deferredEventConfigs: [],
+      deferredOnBlockConfigs: [],
+    }
+  }
+}
