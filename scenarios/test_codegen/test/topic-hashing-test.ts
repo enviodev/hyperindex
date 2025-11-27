@@ -1,7 +1,7 @@
-import { TestEvents as GeneratedTestEvents } from "../generated/src/Types.res.js";
+import { TestEvents as GeneratedTestEvents } from "../generated/src/Types.res.mjs";
 
 // @ts-ignore
-import { GetLogs } from "envio/src/sources/Rpc.res.js";
+import { GetLogs } from "envio/src/sources/Rpc.res.mjs";
 import { TestEvents } from "../contracts/typechain-types";
 import assert from "assert";
 import { hashingTestParams } from "../src/EventHandlers";

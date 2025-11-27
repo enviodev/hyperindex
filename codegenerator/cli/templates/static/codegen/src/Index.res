@@ -57,7 +57,7 @@ let stateSchema = S.union([
 let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => {
   open Express
 
-  let app = makeCjs()
+  let app = make()
 
   let consoleCorsMiddleware = (req, res, next) => {
     switch req.headers->Js.Dict.get("origin") {

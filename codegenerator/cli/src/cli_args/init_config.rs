@@ -63,37 +63,37 @@ pub mod evm {
                     })
                     .collect();
 
-            let config = if is_multi_chain_contract {
-                //Add the contract to global contract config and return none for local contract
-                //config
-                let global_contract = GlobalContract {
-                    name: selected_contract.name.clone(),
-                    config: ContractConfig {
+                let config = if is_multi_chain_contract {
+                    //Add the contract to global contract config and return none for local contract
+                    //config
+                    let global_contract = GlobalContract {
+                        name: selected_contract.name.clone(),
+                        config: ContractConfig {
+                            abi_file_path: None,
+                            handler: None,
+                            events: events.clone(),
+                        },
+                    };
+
+                    unique_hashmap::try_insert(
+                        &mut global_contracts,
+                        selected_contract.name.clone(),
+                        global_contract,
+                    )
+                    .context(format!(
+                        "Unexpected, failed to add global contract {}. Contract should have \
+                     unique names",
+                        selected_contract.name
+                    ))?;
+                    None
+                } else {
+                    //Return some for local contract config
+                    Some(ContractConfig {
                         abi_file_path: None,
                         handler: None,
-                        events: events.clone(),
-                    },
+                        events,
+                    })
                 };
-
-                unique_hashmap::try_insert(
-                    &mut global_contracts,
-                    selected_contract.name.clone(),
-                    global_contract,
-                )
-                .context(format!(
-                    "Unexpected, failed to add global contract {}. Contract should have \
-                     unique names",
-                    selected_contract.name
-                ))?;
-                None
-            } else {
-                //Return some for local contract config
-                Some(ContractConfig {
-                    abi_file_path: None,
-                    handler: None,
-                    events,
-                })
-            };
 
                 for selected_network in &selected_contract.networks {
                     let address = selected_network
@@ -283,11 +283,11 @@ pub mod fuel {
                                     .map(|a| a.to_string())
                                     .collect::<Vec<String>>()
                                     .into(),
-                            config: Some(ContractConfig {
-                                abi_file_path: selected_contract.get_vendored_abi_file_path(),
-                                handler: None,
-                                events: selected_contract.selected_events.clone(),
-                            }),
+                                config: Some(ContractConfig {
+                                    abi_file_path: selected_contract.get_vendored_abi_file_path(),
+                                    handler: None,
+                                    events: selected_contract.selected_events.clone(),
+                                }),
                                 start_block: None,
                             })
                             .collect(),
@@ -341,16 +341,6 @@ pub enum Language {
     TypeScript,
     #[clap(name = "rescript")]
     ReScript,
-}
-
-impl Language {
-    // Logic to get the event handler directory based on the language
-    pub fn get_event_handler_directory(&self) -> String {
-        match self {
-            Language::ReScript => "./src/EventHandlers.res.js".to_string(),
-            Language::TypeScript => "src/EventHandlers.ts".to_string(),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

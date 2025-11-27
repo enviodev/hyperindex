@@ -56,6 +56,16 @@ module ChildProcess = {
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
 }
 
+module Url = {
+  type t
+  @module("url") external fileURLToPath: t => string = "fileURLToPath"
+}
+
+module ImportMeta = {
+  type t = {url: Url.t}
+  @val external importMeta: t = "import.meta"
+}
+
 module Path = {
   type t
 
@@ -63,10 +73,12 @@ module Path = {
   external resolve: array<string> => t = "resolve"
 
   @module("path") external join: (t, string) => t = "join"
+  @module("path") external dirname: string => t = "dirname"
 
   external toString: t => string = "%identity"
 
-  external __dirname: t = "__dirname"
+  // ESM-compatible __dirname replacement
+  let __dirname = dirname(Url.fileURLToPath(ImportMeta.importMeta.url))
 }
 
 module Fs = {

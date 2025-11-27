@@ -1,5 +1,7 @@
 external magic: 'a => 'b = "%identity"
 
+@val external importPath: string => promise<unknown> = "import"
+
 let delay = milliseconds =>
   Js.Promise2.make((~resolve, ~reject as _) => {
     let _interval = Js.Global.setTimeout(_ => {

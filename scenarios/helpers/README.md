@@ -19,5 +19,5 @@ npm install
 ## Run
 
 ```sh
-node src/Demo.res.js
+node src/Demo.res.mjs
 ```

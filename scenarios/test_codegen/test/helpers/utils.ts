@@ -1,5 +1,5 @@
-import { runUpMigrations } from "../../generated/src/db/Migrations.res.js";
-import { makeClient } from "../../generated/src/db/Db.res.js";
+import { runUpMigrations } from "../../generated/src/db/Migrations.res.mjs";
+import { makeClient } from "../../generated/src/db/Db.res.mjs";
 
 export const createSql = makeClient;
 

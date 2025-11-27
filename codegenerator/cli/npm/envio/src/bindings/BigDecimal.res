@@ -14,11 +14,11 @@ type rec t = {
 }
 
 // Constructors
-@new @module external fromBigInt: bigint => t = "bignumber.js"
-@new @module external fromFloat: float => t = "bignumber.js"
-@new @module external fromInt: int => t = "bignumber.js"
-@new @module external fromStringUnsafe: string => t = "bignumber.js"
-@new @module external fromString: string => option<t> = "bignumber.js"
+@new @module("bignumber.js") external fromBigInt: bigint => t = "default"
+@new @module("bignumber.js") external fromFloat: float => t = "default"
+@new @module("bignumber.js") external fromInt: int => t = "default"
+@new @module("bignumber.js") external fromStringUnsafe: string => t = "default"
+@new @module("bignumber.js") external fromString: string => option<t> = "default"
 
 // Methods
 @send external toString: t => string = "toString"

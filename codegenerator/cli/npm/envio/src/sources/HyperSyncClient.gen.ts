@@ -3,7 +3,7 @@
 /* eslint-disable */
 /* tslint:disable */
 
-import type {t as Address_t} from '../../src/Address.gen';
+import type {t as Address_t} from '../../src/Address.gen.js';
 
 export type ResponseTypes_accessList = { readonly address?: Address_t; readonly storageKeys?: string[] };
 

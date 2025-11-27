@@ -1,12 +1,13 @@
 {
   "name": "test-exits",
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
     "codegen": "envio codegen",
-    "start": "ts-node generated/src/Index.res.js"
+    "start": "ts-node generated/src/Index.res.mjs"
   },
   "devDependencies": {
     "@types/node": "^18.16.1",

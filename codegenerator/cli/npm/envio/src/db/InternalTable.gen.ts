@@ -3,9 +3,9 @@
 /* eslint-disable */
 /* tslint:disable */
 
-import type {Json_t as Js_Json_t} from '../../src/Js.shim';
+import type {Json_t as Js_Json_t} from '../../src/Js.shim.js';
 
-import type {t as Address_t} from '../../src/Address.gen';
+import type {t as Address_t} from '../../src/Address.gen.js';
 
 export type DynamicContractRegistry_t = {
   readonly id: string; 

@@ -3,9 +3,9 @@
 /* eslint-disable */
 /* tslint:disable */
 
-const EthersJS = require('./Ethers.res.js');
+import * as EthersJS from './Ethers.res.mjs';
 
-import type {t as Address_t} from '../../src/Address.gen';
+import type {t as Address_t} from '../../src/Address.gen.js';
 
 export const Addresses_mockAddresses: Address_t[] = EthersJS.Addresses.mockAddresses as any;
 

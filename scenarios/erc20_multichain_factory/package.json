@@ -1,6 +1,7 @@
 {
   "name": "erc20-multi-chain-factory",
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
     "clean": "rescript clean",
     "build": "rescript",
@@ -8,7 +9,7 @@
     "test": "pnpm build && mocha",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "pnpm build && envio dev",
-    "start": "pnpm build && node generated/src/Index.res.js"
+    "start": "pnpm build && node generated/src/Index.res.mjs"
   },
   "dependencies": {
     "envio": "file:../../codegenerator/cli/npm/envio",

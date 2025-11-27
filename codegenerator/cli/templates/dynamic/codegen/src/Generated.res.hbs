@@ -1,11 +1,9 @@
-@val external require: string => unit = "require"
-
-let registerContractHandlers = (~contractName, ~handler: option<string>) => {
+let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
   | None => ()
   | Some(handlerPath) =>
     try {
-      require(handlerPath)
+      let _ = await Utils.importPath(handlerPath)
     } catch {
     | exn =>
       Js.Exn.raiseError(
@@ -21,7 +19,7 @@ let registerContractHandlers = (~contractName, ~handler: option<string>) => {
 
 let autoLoadFromSrcHandlers = async () => {
   // Relatvie to cwd (project root)
-  let srcPattern = `./{{#if handlers_path}}{{handlers_path}}{{else}}src/handlers{{/if}}/**/*.{js,ts}`
+  let srcPattern = `./{{#if handlers_path}}{{handlers_path}}{{else}}src/handlers{{/if}}/**/*.{js,mjs,ts}`
   let handlerFiles = try {
     let iterator = await globIterator(srcPattern)
     await iterator->Utils.Array.fromAsyncIterator
@@ -34,21 +32,19 @@ let autoLoadFromSrcHandlers = async () => {
     )
   }
 
-  handlerFiles->Js.Array2.forEach(file => {
-    try {
-      // Since srcPattern is relative to project root,
-      // and we require relative to the module (Generated.res)
-      // We need to prepend additional "../" and {{relative_path_to_root_from_generated}} to the file path
-      %raw(`require("../{{relative_path_to_root_from_generated}}/" + file)`)
-    } catch {
-    | exn =>
-      Js.Exn.raiseError(
-        `Failed to auto-load handler file: ${file} with error: ${exn
-          ->Utils.prettifyExn
-          ->Obj.magic}`,
-      )
-    }
-  })
+  // Since srcPattern is relative to project root,
+  // and we import relative to the module (Generated.res)
+  // We need to prepend additional "../" and {{relative_path_to_root_from_generated}} to the file path
+  let _ = await handlerFiles
+    ->Js.Array2.map(file => {
+      Utils.importPath("../{{relative_path_to_root_from_generated}}/" ++ file)
+      ->Promise.catch(exn => {
+        Js.Exn.raiseError(
+          `Failed to auto-load handler file: ${file} with error: ${exn->Utils.prettifyExn->Obj.magic}`,
+        )
+      })
+    })
+    ->Promise.all
 }
 
 let makeGeneratedConfig = () => {
@@ -136,12 +132,14 @@ let registerAllHandlers = async () => {
   await autoLoadFromSrcHandlers()
 
   // Load contract-specific handlers (existing behavior)
-  {{#each codegen_contracts as |contract|}}
-  registerContractHandlers(
-    ~contractName="{{contract.name.capitalized}}",
-    ~handler={{#if contract.handler}}Some(`../${Path.relativePathToRootFromGenerated}/{{contract.handler}}`){{else}}None{{/if}},
-  )
-  {{/each}}
+  let _ = await [
+    {{#each codegen_contracts as |contract|}}
+    registerContractHandlers(
+      ~contractName="{{contract.name.capitalized}}",
+      ~handler={{#if contract.handler}}Some(`../${Path.relativePathToRootFromGenerated}/{{contract.handler}}`){{else}}None{{/if}},
+    ),
+    {{/each}}
+  ]->Promise.all
 
   EventRegister.finishRegistration()
 }

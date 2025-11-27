@@ -4,17 +4,18 @@
   "main": "index.js",
   "types": "index.d.ts",
   "private": true,
+  "type": "module",
   "scripts": {
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
     "format": "rescript format -all",
-    "db-up": "node -e 'require(`./src/db/Migrations.res.js`).runUpMigrations(true)'",
-    "db-down": "node -e 'require(`./src/db/Migrations.res.js`).runDownMigrations(true)'",
-    "db-setup": "node -e 'require(`./src/db/Migrations.res.js`).runUpMigrations(true, true)'",
-    "print-benchmark-summary": "node -e 'require(`./src/Benchmark.res.js`).Summary.printSummary()'",
+    "db-up": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))'",
+    "db-down": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))'",
+    "db-setup": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
+    "print-benchmark-summary": "node -e 'import(\"./src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
     {{!-- We need this to always have cwd at the root of the project --}}
-    "start": "cd {{relative_path_to_root_from_generated}} && ts-node {{relative_path_to_generated_from_root}}/src/Index.res.js"
+    "start": "cd {{relative_path_to_root_from_generated}} &&  node --loader {{relative_path_to_generated_from_root}}/node_modules/ts-node/esm.mjs --experimental-specifier-resolution=node {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
   },
   "keywords": [
     "ReScript"
