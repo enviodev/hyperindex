@@ -1107,6 +1107,7 @@ impl NetworkConfigTemplate {
                             match rpc.source_for {
                                 For::Sync => "Sync",
                                 For::Fallback => "Fallback",
+                                For::Live => "Live",
                             },
                             rpc_to_sync_config_options(rpc)
                         )
