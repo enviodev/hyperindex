@@ -503,7 +503,7 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
 let cacheTablePrefixLength = Internal.cacheTablePrefix->String.length
 
 // Chunk size threshold: 99MB (99 * 1024 * 1024 bytes)
-let chunkSizeThresholdBytes = 99 * 1024 * 1024
+let chunkSizeThresholdBytes = 1 * 1024 * 1024 / 6
 
 type schemaCacheTableInfo = {
   @as("table_name")
@@ -544,19 +544,37 @@ let getConnectedPsqlExec = {
           NodeJs.ChildProcess.exec(`${binary} --version`, (~error, ~stdout as _, ~stderr as _) => {
             switch error {
             | Value(_) => {
-                let binary = `docker-compose exec -T -u ${pgUser} ${pgDockerServiceName} psql`
+                // Use -f flag to specify docker-compose.yaml file path explicitly
+                // This avoids needing to change working directory, which causes shell issues
+                let binary1 = `docker-compose -f generated/docker-compose.yaml exec -T -u ${pgUser} ${pgDockerServiceName} psql`
                 NodeJs.ChildProcess.exec(
-                  `${binary} --version`,
+                  `${binary1} --version`,
                   (~error, ~stdout as _, ~stderr as _) => {
                     switch error {
-                    | Value(_) =>
-                      resolve(
-                        Error(`Please check if "psql" binary is installed or docker-compose is running for the local indexer.`),
-                      )
+                    | Value(_) => {
+                        let binary2 = `docker-compose -f erc20_multichain_factory/generated/docker-compose.yaml exec -T -u ${pgUser} ${pgDockerServiceName} psql`
+                        NodeJs.ChildProcess.exec(
+                          `${binary2} --version`,
+                          (~error, ~stdout as _, ~stderr as _) => {
+                            switch error {
+                            | Value(_) =>
+                              resolve(
+                                Error(`Please check if "psql" binary is installed or docker-compose is running for the local indexer.`),
+                              )
+                            | Null =>
+                              resolve(
+                                Ok(
+                                  `${binary2} -h ${pgHost} -p ${pgDockerServicePort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                                ),
+                              )
+                            }
+                          },
+                        )
+                      }
                     | Null =>
                       resolve(
                         Ok(
-                          `${binary} -h ${pgHost} -p ${pgDockerServicePort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                          `${binary1} -h ${pgHost} -p ${pgDockerServicePort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
                         ),
                       )
                     }
@@ -1075,25 +1093,65 @@ let make = (
 
   // Helper: Check if a filename is a chunk file (matches pattern _XXXXX.tsv)
   let isChunkFile = (filename: string): bool => {
-    let chunkPattern = %re("/_\\d{5}\\.tsv$/")
-    chunkPattern->Js.Re.test_(filename)
+    // Check if filename ends with .tsv by checking the last 4 characters
+    let filenameLength = filename->String.length
+    if filenameLength < 4 {
+      false
+    } else {
+      let extension = filename->Js.String2.sliceToEnd(~from=filenameLength - 4)
+      if extension !== ".tsv" {
+        false
+      } else {
+        // Find the last underscore before .tsv
+        let lastUnderscoreIdx = filename->Js.String2.lastIndexOf("_")
+        if lastUnderscoreIdx < 0 {
+          false
+        } else {
+          // Extract the part after the last underscore (should be XXXXX.tsv)
+          let afterUnderscore = filename->Js.String2.sliceToEnd(~from=lastUnderscoreIdx + 1)
+          // Check if it matches exactly 5 digits followed by .tsv
+          // afterUnderscore should be like "00001.tsv" (9 chars total: 5 digits + 4 for ".tsv")
+          let afterUnderscoreLength = afterUnderscore->String.length
+          if afterUnderscoreLength === 9 {
+            // Check if first 5 chars are digits and last 4 are ".tsv"
+            let digits = afterUnderscore->Js.String2.slice(~from=0, ~to_=5)
+            let extension = afterUnderscore->Js.String2.sliceToEnd(~from=5)
+            if extension === ".tsv" {
+              // Check if all 5 characters are digits using a simple loop
+              let rec checkAllDigits = (str: string, idx: int): bool => {
+                if idx >= 5 {
+                  true
+                } else {
+                  let code = str->Js.String2.charCodeAt(idx)
+                  if code >= 48. && code <= 57. {
+                    checkAllDigits(str, idx + 1)
+                  } else {
+                    false
+                  }
+                }
+              }
+              checkAllDigits(digits, 0)
+            } else {
+              false
+            }
+          } else {
+            false
+          }
+        }
+      }
+    }
   }
 
   // Helper: Extract base name from chunk file (e.g., "cache_00001.tsv" -> "cache")
   let extractBaseNameFromChunk = (filename: string): option<string> => {
     if isChunkFile(filename) {
-      // Remove _XXXXX.tsv pattern to get base name
-      let pattern = %re("/_\\d{5}\\.tsv$/")
-      switch pattern->Js.Re.exec_(filename) {
-      | Some(_) =>
-        // Find the last underscore before the chunk number
-        let lastUnderscoreIdx = filename->Js.String2.lastIndexOf("_")
-        if lastUnderscoreIdx >= 0 {
-          filename->Js.String2.slice(~from=0, ~to_=lastUnderscoreIdx)->Some
-        } else {
-          None
-        }
-      | None => None
+      // Find the last underscore before the chunk number
+      let lastUnderscoreIdx = filename->Js.String2.lastIndexOf("_")
+      if lastUnderscoreIdx >= 0 {
+        let baseName = filename->Js.String2.slice(~from=0, ~to_=lastUnderscoreIdx)
+        Some(baseName)
+      } else {
+        None
       }
     } else {
       None
@@ -1638,39 +1696,117 @@ let make = (
                 NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
               let outputFilePath = NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")
 
+              // Delete any existing files (single file or chunks) for this cache
+              try {
+                let existingFiles = await NodeJs.Fs.Promises.readdir(cacheDirPath)
+                let filesToDelete = existingFiles->Belt.Array.keep(file => {
+                  // Delete the single file if it exists
+                  let isSingleFile = file === cacheName ++ ".tsv"
+                  // Delete any chunk files for this cache
+                  let isChunkForCache = isChunkFile(file) && switch extractBaseNameFromChunk(file) {
+                  | Some(baseName) => baseName === cacheName
+                  | None => false
+                  }
+                  isSingleFile || isChunkForCache
+                })
+
+                // Delete all matching files
+                for idx in 0 to filesToDelete->Array.length - 1 {
+                  let fileToDelete = filesToDelete->Js.Array2.unsafe_get(idx)
+                  let filePath = NodeJs.Path.join(cacheDirPath, fileToDelete)
+                  try {
+                    await NodeJs.Fs.Promises.unlink(filePath)
+                  } catch {
+                  | _ => () // File might not exist, ignore error
+                  }
+                }
+              } catch {
+              | _ => () // Directory might not exist or be empty, ignore
+              }
+
               let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
 
-              // Export cache table to file
-              let _ = Promise.make((resolve, reject) => {
-                NodeJs.ChildProcess.execWithOptions(
-                  command,
-                  psqlExecOptions,
-                  (~error, ~stdout, ~stderr as _) => {
-                    switch error {
-                    | Value(error) => reject(error)
-                    | Null => resolve(stdout)
-                    }
-                  },
-                )
+              // If using docker-compose with -f flag, we don't need cwd, so use regular exec
+              // This avoids the shell ENOENT issue
+              let useRegularExec = psqlExec->Js.String2.includes("docker-compose") && psqlExec->Js.String2.includes("-f")
+
+              // Export cache table to file and wait for it to complete
+              let _ = await Promise.make((resolve, reject) => {
+                if useRegularExec {
+                  // Use regular exec when docker-compose has -f flag (no cwd needed)
+                  NodeJs.ChildProcess.exec(
+                    command,
+                    (~error, ~stdout, ~stderr as _) => {
+                      switch error {
+                      | Value(error) => reject(error)
+                      | Null => resolve(stdout)
+                      }
+                    },
+                  )
+                } else {
+                  // Use execWithOptions for regular psql or docker-compose without -f
+                  NodeJs.ChildProcess.execWithOptions(
+                    command,
+                    psqlExecOptions,
+                    (~error, ~stdout, ~stderr as _) => {
+                      switch error {
+                      | Value(error) => reject(error)
+                      | Null => resolve(stdout)
+                      }
+                    },
+                  )
+                }
               })
 
-              // Check file size after export
-              let stats = await NodeJs.Fs.Promises.stat(outputFilePath)
-              let fileSizeFloat = stats.size
+              // Wait a bit to ensure file is fully written, then check file size
+              // Retry stat with a small delay if file doesn't exist yet
+              let rec tryGetStats = async (~retryCount=0, ~maxRetries=5, ~retryDelay=200) => {
+                try {
+                  let fileStats = await NodeJs.Fs.Promises.stat(outputFilePath)
+                  Some(fileStats)
+                } catch {
+                | _ =>
+                  if retryCount < maxRetries {
+                    await Utils.delay(retryDelay)
+                    await tryGetStats(~retryCount=retryCount + 1, ~maxRetries, ~retryDelay)
+                  } else {
+                    None
+                  }
+                }
+              }
 
-              if fileSizeFloat > chunkSizeThresholdBytes->Belt.Int.toFloat {
-                let sizeMB = fileSizeFloat /. (1024. *. 1024.)
-                let thresholdMB = chunkSizeThresholdBytes->Belt.Int.toFloat /. (1024. *. 1024.)
-                Logging.info(
-                  `Cache file ${cacheName}.tsv is ${sizeMB->Belt.Float.toString}MB, exceeds ${thresholdMB->Belt.Float.toString}MB threshold, splitting into chunks...`,
-                )
-                // Split file into chunks
-                let chunkFiles = await splitTsvFile(
-                  ~inputFilePath=outputFilePath,
-                  ~chunkSizeBytes=chunkSizeThresholdBytes,
-                )
-                Logging.info(
-                  `Cache file ${cacheName}.tsv split into ${chunkFiles->Js.Array2.length->Belt.Int.toString} chunk file(s)`,
+              // Check if file exists and get its size
+              switch await tryGetStats() {
+              | Some(fileStats) => {
+                  let fileSizeFloat = fileStats.size
+                  let fileSizeKB = fileSizeFloat /. 1024.
+                  let fileSizeMB = fileSizeFloat /. (1024. *. 1024.)
+                  let thresholdKB = chunkSizeThresholdBytes->Belt.Int.toFloat /. 1024.
+                  let thresholdMB = chunkSizeThresholdBytes->Belt.Int.toFloat /. (1024. *. 1024.)
+
+                  Logging.info(
+                    `Cache file ${cacheName}.tsv size check: ${fileSizeKB->Belt.Float.toString}KB (${fileSizeMB->Belt.Float.toString}MB), threshold: ${thresholdKB->Belt.Float.toString}KB (${thresholdMB->Belt.Float.toString}MB)`,
+                  )
+
+                  if fileSizeFloat > chunkSizeThresholdBytes->Belt.Int.toFloat {
+                    let sizeMB = fileSizeFloat /. (1024. *. 1024.)
+                    let thresholdMB = chunkSizeThresholdBytes->Belt.Int.toFloat /. (1024. *. 1024.)
+                    Logging.info(
+                      `Cache file ${cacheName}.tsv is ${sizeMB->Belt.Float.toString}MB, exceeds ${thresholdMB->Belt.Float.toString}MB threshold, splitting into chunks...`,
+                    )
+                    // Split file into chunks (this will delete the original file)
+                    let chunkFiles = await splitTsvFile(
+                      ~inputFilePath=outputFilePath,
+                      ~chunkSizeBytes=chunkSizeThresholdBytes,
+                    )
+                    Logging.info(
+                      `Cache file ${cacheName}.tsv split into ${chunkFiles->Js.Array2.length->Belt.Int.toString} chunk file(s)`,
+                    )
+                  }
+                }
+              | None =>
+                Logging.error(
+                  `Failed to read file ${cacheName}.tsv after export - file may not have been created successfully`,
                 )
               }
             })

@@ -1,4 +1,41 @@
+// Cacheable effect for testing cache functionality  
+type getTokenMetadataInput = {
+  tokenAddress: string,
+  chainId: int,
+}
+
+type getTokenMetadataOutput = {
+  metadata: string,
+  processedAt: int,
+}
+
+let getTokenMetadataInputSchema = S.object((s): getTokenMetadataInput => {
+  tokenAddress: s.field("tokenAddress", S.string),
+  chainId: s.field("chainId", S.int),
+})
+
+let getTokenMetadataOutputSchema = S.object((s): getTokenMetadataOutput => {
+  metadata: s.field("metadata", S.string),
+  processedAt: s.field("processedAt", S.int),
+})
+
 open Entities
+
+let getTokenMetadata = Envio.createEffect(
+  {
+    name: "getTokenMetadata",
+    input: getTokenMetadataInputSchema,
+    output: getTokenMetadataOutputSchema,
+    rateLimit: Disable,
+    cache: true,
+  },
+  async ({input}) => {
+    // Simulate some processing that would benefit from caching
+    let metadata = `Metadata for token ${input.tokenAddress} on chain ${input.chainId->Belt.Int.toString}`
+    let processedAt = Js.Date.now()->Belt.Float.toInt
+    {metadata, processedAt}
+  },
+)
 
 Handlers.ERC20Factory.TokenCreated.contractRegister(async ({event, context}) => {
   context.addERC20(event.params.token)
@@ -104,6 +141,7 @@ let manipulateAccountBalance = (
   ->setAccountToken
 
 Handlers.ERC20.Transfer.handlerWithLoader({
+  wildcard: true,
   loader: async ({event, context}) => {
     let fromAccount_id = event.params.from->Address.toString
     let toAccount_id = event.params.to->Address.toString
@@ -117,6 +155,11 @@ Handlers.ERC20.Transfer.handlerWithLoader({
     )->Promise.all2
   },
   handler: async ({event, context, loaderReturn}) => {
+    // Call cacheable effect to generate cache entries
+    let tokenAddress = event.srcAddress->Address.toString
+    let chainId = (event.chainId :> int)
+    let _metadata = await context.effect(getTokenMetadata, {tokenAddress, chainId})
+    
     let (senderAccountToken, receiverAccountToken) = loaderReturn
     let {params: {from, to, value}, srcAddress} = event
     let fromAccount_id = from->Address.toString
