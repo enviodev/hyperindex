@@ -576,6 +576,11 @@
           "description": "Use RPC as a backup for the main data-source. Currently, it acts as a fallback when real-time indexing stalls, with potential for more cases in the future.",
           "type": "string",
           "const": "fallback"
+        },
+        {
+          "description": "Use RPC for real-time indexing only. HyperSync will be used for historical sync, then automatically switch to this RPC once synced for lower latency.",
+          "type": "string",
+          "const": "live"
         }
       ]
     },
