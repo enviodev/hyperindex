@@ -210,6 +210,12 @@ external getItemBlockNumber: item => int = "blockNumber"
 @get
 external getItemLogIndex: item => int = "logIndex"
 
+let getItemChainId = item =>
+  switch item {
+  | Event({chain}) => chain->ChainMap.Chain.toChainId
+  | Block({onBlockConfig: {chainId}}) => chainId
+  }
+
 @get
 external getItemDcs: item => option<dcs> = "dcs"
 @set
