@@ -134,6 +134,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
             name: log.event_name.clone(),
             log_id: Some(log.id.clone()),
             type_: None,
+            only_when_ready: None,
         })
         .collect();
 
@@ -147,6 +148,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
     selected_events.extend(event_names.iter().map(|&name| EventConfig {
         name: name.to_string(),
         log_id: None,
+        only_when_ready: None,
         type_: None,
     }));
     if !args.all_events {

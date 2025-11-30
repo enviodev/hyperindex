@@ -142,6 +142,13 @@
             "string",
             "null"
           ]
+        },
+        "onlyWhenReady": {
+          "description": "If true, this event will only be tracked when the chain is ready (after historical backfill is complete). No queries will be made for this event during historical sync. Useful for speeding up indexing when historical data is not needed. (default: false)",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,

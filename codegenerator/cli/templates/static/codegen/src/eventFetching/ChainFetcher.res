@@ -22,6 +22,9 @@ type t = {
   numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
   safeCheckpointTracking: option<SafeCheckpointTracking.t>,
+  // Events and block handlers that should only be activated when the chain is ready
+  deferredEventConfigs: array<Internal.eventConfig>,
+  deferredOnBlockConfigs: array<Internal.onBlockConfig>,
 }
 
 //CONSTRUCTION
@@ -52,14 +55,19 @@ let make = (
   // Aggregate events we want to fetch
   let contracts = []
   let eventConfigs: array<Internal.eventConfig> = []
+  // Events deferred until chain is ready (onlyWhenReady: true)
+  let deferredEventConfigs: array<Internal.eventConfig> = []
 
   let notRegisteredEvents = []
+
+  // Check if the chain is ready (has caught up to head or endblock)
+  let isReady = timestampCaughtUpToHeadOrEndblock !== None
 
   chainConfig.contracts->Array.forEach(contract => {
     let contractName = contract.name
 
     contract.events->Array.forEach(eventConfig => {
-      let {isWildcard} = eventConfig
+      let {isWildcard, onlyWhenReady} = eventConfig
       let hasContractRegister = eventConfig.contractRegister->Option.isSome
 
       // Should validate the events
@@ -74,6 +82,7 @@ let make = (
 
       // Filter out non-preRegistration events on preRegistration phase
       // so we don't care about it in fetch state and workers anymore
+      // Also filter out events that are only tracked when ready if the chain is not ready yet
       let shouldBeIncluded = if config.enableRawEvents {
         true
       } else {
@@ -81,11 +90,22 @@ let make = (
         if !isRegistered {
           notRegisteredEvents->Array.push(eventConfig)
         }
-        isRegistered
+        // Skip events marked as onlyWhenReady if the chain is not ready yet
+        let shouldIncludeBasedOnReadiness = !onlyWhenReady || isReady
+        isRegistered && shouldIncludeBasedOnReadiness
       }
+
+      // Store deferred events (registered but onlyWhenReady and not ready yet)
+      let shouldBeDeferred =
+        !config.enableRawEvents &&
+        (hasContractRegister || eventConfig.handler->Option.isSome) &&
+        onlyWhenReady &&
+        !isReady
 
       if shouldBeIncluded {
         eventConfigs->Array.push(eventConfig)
+      } else if shouldBeDeferred {
+        deferredEventConfigs->Array.push(eventConfig)
       }
     })
 
@@ -126,9 +146,12 @@ let make = (
 
   let onBlockConfigs =
     registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
-  switch onBlockConfigs {
+  // Filter out onlyWhenReady block handlers if the chain is not ready yet
+  // and collect deferred block handlers
+  let deferredOnBlockConfigs: array<Internal.onBlockConfig> = []
+  let filteredOnBlockConfigs = switch onBlockConfigs {
   | Some(onBlockConfigs) =>
-    // TODO: Move it to the EventRegister module
+    // TODO: Move validation to the EventRegister module
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
       if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
@@ -146,7 +169,20 @@ let make = (
       | None => ()
       }
     })
-  | None => ()
+    // Filter out block handlers marked as onlyWhenReady if the chain is not ready yet
+    let filtered = onBlockConfigs->Array.keep(onBlockConfig => {
+      !onBlockConfig.onlyWhenReady || isReady
+    })
+    // Collect deferred block handlers
+    if !isReady {
+      onBlockConfigs->Array.forEach(onBlockConfig => {
+        if onBlockConfig.onlyWhenReady {
+          deferredOnBlockConfigs->Array.push(onBlockConfig)
+        }
+      })
+    }
+    filtered->Utils.Array.notEmpty ? Some(filtered) : None
+  | None => None
   }
 
   let fetchState = FetchState.make(
@@ -163,7 +199,7 @@ let make = (
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
-    ~onBlockConfigs?,
+    ~onBlockConfigs=?filteredOnBlockConfigs,
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
@@ -199,6 +235,8 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
+    deferredEventConfigs,
+    deferredOnBlockConfigs,
   }
 }
 
@@ -462,3 +500,27 @@ let getLastKnownValidBlock = async (
 }
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
+
+/**
+Activates deferred events and block handlers when the chain becomes ready.
+Returns the updated ChainFetcher with the deferred events activated and cleared.
+*/
+let activateDeferredEventsAndHandlers = (chainFetcher: t): t => {
+  if (
+    chainFetcher.deferredEventConfigs->Array.length === 0 &&
+    chainFetcher.deferredOnBlockConfigs->Array.length === 0
+  ) {
+    chainFetcher
+  } else {
+    let updatedFetchState = chainFetcher.fetchState->FetchState.activateDeferredEventsAndHandlers(
+      ~deferredEventConfigs=chainFetcher.deferredEventConfigs,
+      ~deferredOnBlockConfigs=chainFetcher.deferredOnBlockConfigs,
+    )
+    {
+      ...chainFetcher,
+      fetchState: updatedFetchState,
+      deferredEventConfigs: [],
+      deferredOnBlockConfigs: [],
+    }
+  }
+}

@@ -289,7 +289,10 @@ let updateProgressedChains = (
      * The given chain fetcher is fetching at the head or latest processed block >= endblock
      * The given chain has processed all events on the queue
      * see https://github.com/Float-Capital/indexer/pull/1388 */
-    if cf->ChainFetcher.hasProcessedToEndblock {
+    // Track if this chain is transitioning to ready state
+    let wasNotReady = cf.timestampCaughtUpToHeadOrEndblock->Option.isNone
+
+    let updatedCf = if cf->ChainFetcher.hasProcessedToEndblock {
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
         cf.timestampCaughtUpToHeadOrEndblock->Option.isSome
@@ -329,6 +332,14 @@ let updateProgressedChains = (
     } else {
       //Default to just returning cf
       cf
+    }
+
+    // If transitioning to ready state, activate deferred events and handlers
+    let isNowReady = updatedCf.timestampCaughtUpToHeadOrEndblock->Option.isSome
+    if wasNotReady && isNowReady {
+      updatedCf->ChainFetcher.activateDeferredEventsAndHandlers
+    } else {
+      updatedCf
     }
   })
 
