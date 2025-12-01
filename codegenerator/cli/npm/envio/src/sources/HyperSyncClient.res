@@ -463,7 +463,7 @@ type eventStream
 
 @tag("type")
 type heightStreamEvent =
-  | Height(int)
+  | Height({height: int})
   | Connected
   | Reconnecting({delayMillis: int, errorMsg: string})
 

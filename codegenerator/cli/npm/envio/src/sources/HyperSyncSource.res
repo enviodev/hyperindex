@@ -180,9 +180,8 @@ module HeightState: {
   let start = async (state: t, ~chainId) => {
     while true {
       let height = await state.heightStream.recv()
-
       switch height {
-      | Height(h) => state.currentHeight = h
+      | Height({height}) => state.currentHeight = height
       | Connected =>
         Logging.trace({"msg": "HyperSync height stream is connected", "chainId": chainId})
         state.errMessage = None
