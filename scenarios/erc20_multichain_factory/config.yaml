@@ -6,6 +6,7 @@ field_selection:
   transaction_fields:
     - hash
     - transactionIndex
+    - type
   block_fields:
     - gasUsed #just an example to test codegen
 contracts:

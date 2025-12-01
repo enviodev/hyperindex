@@ -74,13 +74,13 @@ module EventFunctions = {
     @genType
     type t = {
       {{#each aggregated_field_selection.block_fields as | field |}}
-      {{field.name.camel}}?: {{field.res_type}},
+      @as("{{field.name.camel}}") {{field.res_name}}?: {{field.res_type}},
       {{/each}}
     }
 
     let toBlock = (_mock: t) => {
       {{#each aggregated_field_selection.block_fields as | field |}}
-      {{field.name.camel}}: _mock.{{field.name.camel}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
+      {{field.res_name}}: _mock.{{field.res_name}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
     }->(Utils.magic: Types.AggregatedBlock.t => Internal.eventBlock)
   }
@@ -89,13 +89,13 @@ module EventFunctions = {
     @genType
     type t = {
       {{#each aggregated_field_selection.transaction_fields as | field |}}
-      {{field.name.camel}}?: {{field.res_type}},
+      @as("{{field.name.camel}}") {{field.res_name}}?: {{field.res_type}},
       {{/each}}
     }
 
     let toTransaction = (_mock: t) => {
       {{#each aggregated_field_selection.transaction_fields as | field |}}
-      {{field.name.camel}}: _mock.{{field.name.camel}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
+      {{field.res_name}}: _mock.{{field.res_name}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
     }->(Utils.magic: Types.AggregatedTransaction.t => Internal.eventTransaction)
   }
