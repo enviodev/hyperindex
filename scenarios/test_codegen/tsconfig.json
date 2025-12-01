@@ -1,20 +1,27 @@
 {
+  /* For details: https://www.totaltypescript.com/tsconfig-cheat-sheet */
   "compilerOptions": {
-    "target": "es2020",
-    "module": "Node16",
-    "moduleResolution": "Node16",
-    "lib": ["es6"],
-    "allowJs": true,
-    "checkJs": false,
-    "outDir": "build",
-    "rootDirs": ["src", "generated", "test", "contracts/typechain-types"],
-    "strict": true,
-    "noImplicitAny": true,
+    /* Base Options: */
     "esModuleInterop": true,
+    "skipLibCheck": true,
+    "target": "es2022",
+    "allowJs": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true
-  },
-  "include": ["src", "generated", "test"],
-  "exclude": ["node_modules", "generated/node_modules"],
-  "files": ["./hardhat.config.ts"]
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    /* For running Envio: */
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+
+    /* Code doesn't run in the DOM: */
+    "lib": ["es2022"]
+  }
 }

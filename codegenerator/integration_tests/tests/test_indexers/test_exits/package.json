@@ -11,10 +11,9 @@
   },
   "devDependencies": {
     "@types/node": "^18.16.1",
-    "typescript": "^5.0.4"
+    "typescript": "5.9.3"
   },
   "dependencies": {
-    "ts-node": "^10.9.1",
     "envio": "file:../../../../cli/npm/envio"
   },
   "optionalDependencies": {

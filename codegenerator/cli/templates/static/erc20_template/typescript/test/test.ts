@@ -1,6 +1,5 @@
 import assert from "assert";
-import { TestHelpers } from "generated";
-import type { Account } from "generated";
+import { TestHelpers, type Account } from "generated";
 
 const { MockDb, ERC20, Addresses } = TestHelpers;
 

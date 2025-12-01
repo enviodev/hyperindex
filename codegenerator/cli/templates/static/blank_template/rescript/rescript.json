@@ -1,27 +1,23 @@
 {
-    "name": "EnvioIndexer",
-    "version": "0.1.0",
-    "sources": [
-        {
-            "dir": "src",
-            "subdirs": true
-        },
-        {
-            "dir": "test",
-            "subdirs": true
-        }
-    ],
-    "package-specs": {
-        "module": "esmodule",
-        "in-source": true
+  "name": "EnvioIndexer",
+  "version": "0.1.0",
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
     },
-    "jsx": {
-        "version": 4
-    },
-    "suffix": ".res.mjs",
-    "bs-dependencies": [
-        "generated",
-        "envio",
-        "rescript-schema"
-    ]
+    {
+      "dir": "test",
+      "subdirs": true
+    }
+  ],
+  "package-specs": {
+    "module": "esmodule",
+    "in-source": true
+  },
+  "jsx": {
+    "version": 4
+  },
+  "suffix": ".res.mjs",
+  "bs-dependencies": ["generated", "envio", "rescript-schema"]
 }

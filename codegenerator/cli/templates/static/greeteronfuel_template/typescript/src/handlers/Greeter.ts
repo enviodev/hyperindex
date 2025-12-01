@@ -1,4 +1,4 @@
-import { Greeter, User } from "generated";
+import { Greeter, type User } from "generated";
 
 // Handler for the NewGreeting event
 Greeter.NewGreeting.handler(async ({ event, context }) => {
@@ -37,4 +37,3 @@ Greeter.ClearGreeting.handler(async ({ event, context }) => {
     });
   }
 });
-

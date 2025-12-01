@@ -9,7 +9,7 @@
     "test": "pnpm build && mocha",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "pnpm build && envio dev",
-    "start": "pnpm build && node generated/src/Index.res.mjs"
+    "start": "pnpm build && envio start"
   },
   "dependencies": {
     "envio": "file:../../codegenerator/cli/npm/envio",
