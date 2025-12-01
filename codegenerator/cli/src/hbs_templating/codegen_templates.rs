@@ -1478,12 +1478,8 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
-            sources_code: format!(
-                "[HyperFuelSource.make({{chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})]"
-            ),
-            deprecated_sync_source_code: format!(
-                "HyperFuel({{endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})"
-            ),
+            sources_code: "[HyperFuelSource.make({chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
+            deprecated_sync_source_code: "HyperFuel({endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1640,21 +1636,17 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![],
-            sources_code: format!(
-                "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
                  ~allEventSignatures=[]->Belt.Array.concatMany, \
-                 ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)"
-            ),
-            deprecated_sync_source_code: format!(
-                "HyperSync({{endpointUrl: \"https://myskar.com\"}})"
-            ),
+                 ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://myskar.com\"})".to_string(),
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![],
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)"),
-            deprecated_sync_source_code: format!("HyperSync({{endpointUrl: \"https://137.hypersync.xyz\"}})"),
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://137.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
