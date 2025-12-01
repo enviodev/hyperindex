@@ -833,7 +833,7 @@ impl Field {
             } => {
                 let res_type = self
                     .field_type
-                    .to_rescript_type(&schema)
+                    .to_rescript_type(schema)
                     .context("Failed getting rescript type")?;
 
                 Ok(Some(PGField {
@@ -1418,10 +1418,10 @@ impl GqlScalar {
             GqlScalar::Bytes => PGPrimitive::String,
             GqlScalar::Json => PGPrimitive::Json,
             GqlScalar::BigInt(precision) => PGPrimitive::BigInt {
-                precision: precision.clone(),
+                precision: *precision,
             },
             GqlScalar::BigDecimal(precision_and_scale) => {
-                PGPrimitive::BigDecimal(precision_and_scale.clone())
+                PGPrimitive::BigDecimal(*precision_and_scale)
             }
             GqlScalar::Timestamp => PGPrimitive::Date,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {

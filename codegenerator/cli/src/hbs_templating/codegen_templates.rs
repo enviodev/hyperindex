@@ -417,15 +417,13 @@ impl EventMod {
                 ),
             };
 
-        let base_event_config_code = format!(
-            r#"id,
+        let base_event_config_code = r#"id,
   name,
   contractName,
   isWildcard: (handlerRegister->EventRegister.isWildcard),
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#
-        );
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
 
         let non_event_mod_code = match fuel_event_kind_code {
             None => format!(
@@ -455,17 +453,14 @@ let register = (): Internal.fuelEventConfig => {{
         };
 
         let types_code = if self.preload_handlers {
-            format!(
-                r#"@genType
+            r#"@genType
 type handlerArgs = Internal.genericHandlerArgs<event, handlerContext, unit>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#
-            )
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string()
         } else {
-            format!(
-                r#"@genType
+            r#"@genType
 type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
@@ -474,8 +469,7 @@ type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerCont
 @genType
 type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
 @genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#
-            )
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string()
         };
 
         format!(
@@ -654,7 +648,7 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
-            preload_handlers: preload_handlers,
+            preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -681,7 +675,7 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
-            preload_handlers: preload_handlers,
+            preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -744,7 +738,7 @@ impl EventTemplate {
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
-                    preload_handlers: preload_handlers,
+                    preload_handlers,
                 };
 
                 Ok(EventTemplate {
@@ -772,7 +766,7 @@ impl EventTemplate {
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
-                            preload_handlers: preload_handlers,
+                            preload_handlers,
                         };
 
                         Ok(EventTemplate {

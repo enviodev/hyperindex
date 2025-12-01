@@ -126,7 +126,7 @@ impl<'a> RelativeDir<'a> {
                 }
                 DirEntry::File(f) => {
                     // Skip .gitkeep files
-                    if path.file_name().map_or(false, |n| n == ".gitkeep") {
+                    if path.file_name().is_some_and(|n| n == ".gitkeep") {
                         continue;
                     }
                     fs::write(path, f.contents())?;
@@ -357,7 +357,7 @@ impl<'a> TemplateDirs<'a> {
 
         // Copy shared static content into the project root (not the generated folder)
         self.get_shared_static_dir()?
-            .extract(&project_root)
+            .extract(project_root)
             .context("Failed extracting shared static files")?;
 
         lang_files.extract(project_root).context(format!(
