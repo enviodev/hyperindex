@@ -616,7 +616,7 @@ let make = (
     name,
     sourceFor: Sync,
     chain,
-    pollingInterval: 50, // purely internal state polling since we now stream the height to the state
+    pollingInterval: 32, // purely internal state polling since we now stream the height to the state
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
