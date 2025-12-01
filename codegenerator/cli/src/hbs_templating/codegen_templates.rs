@@ -1158,10 +1158,12 @@ impl FieldSelection {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
         for field in options.block_fields.into_iter() {
+            let res_name = RescriptRecordField::to_valid_res_name(&field.name);
             let name: CaseOptions = field.name.into();
 
             block_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
+                res_name,
                 default_value_rescript: field.data_type.get_default_value_rescript(),
                 res_type: field.data_type.to_string(),
             });
@@ -1173,10 +1175,12 @@ impl FieldSelection {
         let mut transaction_field_templates = vec![];
         let mut all_transaction_fields = vec![];
         for field in options.transaction_fields.into_iter() {
+            let res_name = RescriptRecordField::to_valid_res_name(&field.name);
             let name: CaseOptions = field.name.into();
 
             transaction_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
+                res_name,
                 default_value_rescript: field.data_type.get_default_value_rescript(),
                 res_type: field.data_type.to_string(),
             });
@@ -1248,6 +1252,7 @@ impl FieldSelection {
 #[derive(Serialize)]
 struct SelectedFieldTemplate {
     name: CaseOptions,
+    res_name: String,
     res_type: String,
     default_value_rescript: String,
 }
