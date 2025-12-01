@@ -5,7 +5,7 @@ import { TestHelpers } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 
 // The same as for ReScript but in TS
-it("Handles event with a custom field selection (in TS)", async () => {
+it.only("Handles event with a custom field selection (in TS)", async () => {
   // Initializing the mock database
   const mockDbInitial = MockDb.createMockDb();
 
@@ -73,6 +73,8 @@ it("Handles event with a custom field selection (in TS)", async () => {
     event: event,
     mockDb: mockDbInitial,
   });
+
+  console.log(updatedMockDb.entities.CustomSelectionTestPass.get(hash));
 
   assert.notEqual(
     updatedMockDb.entities.CustomSelectionTestPass.get(hash),

@@ -24,7 +24,7 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
 @module("node:fs/promises") external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
 
 let autoLoadFromSrcHandlers = async () => {
-  // Relatvie to cwd (project root)
+  // Relative to cwd (project root)
   let srcPattern = `./{{#if handlers_path}}{{handlers_path}}{{else}}src/handlers{{/if}}/**/*.{js,mjs,ts}`
   let handlerFiles = try {
     let iterator = await globIterator(srcPattern)

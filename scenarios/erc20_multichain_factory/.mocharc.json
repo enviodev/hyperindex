@@ -1,5 +1,5 @@
 {
-  "spec": ["test/**/*.res.js"],
+  "spec": ["test/**/*.{ts,res.mjs}"],
   "timeout": 30000, //Mostly integration tests so just precaution to stop ci from breaking
   "exit": true
 }
