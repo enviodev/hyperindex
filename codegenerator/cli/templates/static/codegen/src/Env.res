@@ -53,11 +53,11 @@ let hypersyncClientSerialzationFormat =
   envSafe->EnvSafe.get(
     "ENVIO_HYPERSYNC_CLIENT_SERIALIZATION_FORMAT",
     HyperSyncClient.serializationFormatSchema,
-    ~fallback=Json,
+    ~fallback=CapnProto,
   )
 
 let hypersyncClientEnableQueryCaching =
-  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=false)
+  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=true)
 
 module Benchmark = {
   module SaveDataStrategy: {
