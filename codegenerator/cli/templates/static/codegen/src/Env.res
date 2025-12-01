@@ -49,7 +49,7 @@ Default is 0 so that the indexer can handle retries internally
 let hyperSyncClientMaxRetries =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
 
-let hypersyncClientSerialzationFormat =
+let hypersyncClientSerializationFormat =
   envSafe->EnvSafe.get(
     "ENVIO_HYPERSYNC_CLIENT_SERIALIZATION_FORMAT",
     HyperSyncClient.serializationFormatSchema,
