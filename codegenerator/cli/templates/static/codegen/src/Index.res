@@ -19,7 +19,7 @@ type state =
   | @as("initializing") Initializing({})
   | @as("active")
   Active({
-      envioVersion: option<string>,
+      envioVersion: string,
       chains: array<chainData>,
       indexerStartTime: Js.Date.t,
       isPreRegisteringDynamicContracts: bool,
@@ -44,7 +44,7 @@ let stateSchema = S.union([
   S.literal(Disabled({})),
   S.literal(Initializing({})),
   S.schema(s => Active({
-    envioVersion: s.matches(S.option(S.string)),
+    envioVersion: s.matches(S.string),
     chains: s.matches(S.array(chainDataSchema)),
     indexerStartTime: s.matches(S.datetime(S.string)),
     // Keep the field, since Dev Console expects it to be present
@@ -233,13 +233,8 @@ let main = async () => {
 
     let gsManagerRef = ref(None)
 
-    let envioVersion =
-      PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
-
-    switch envioVersion {
-    | Some(version) => Prometheus.Info.set(~version)
-    | None => ()
-    }
+    let envioVersion = Utils.EnvioPackage.json.version
+    Prometheus.Info.set(~version=envioVersion)
     Prometheus.RollbackEnabled.set(~enabled=indexer.config.shouldRollbackOnReorg)
 
     startServer(

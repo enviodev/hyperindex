@@ -503,7 +503,7 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
 ) => {
-  let envioVersion = Utils.EnvioPackage.json.version->Belt.Option.getWithDefault("unknown")
+  let envioVersion = Utils.EnvioPackage.json.version
   makeWithAgent(
     {
       url,
