@@ -10,7 +10,7 @@
     "codegen": "envio codegen",
     "dev": "envio dev",
     "test": "pnpm mocha",
-    "start": "ts-node generated/src/Index.res.mjs"
+    "start": "envio start"
   },
   "devDependencies": {
     "@types/chai": "^4.3.11",

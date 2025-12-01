@@ -1,3 +1,11 @@
+let displayImportError = exn => {
+  exn
+  ->Utils.prettifyExn
+  // We use inspect here, since if there's a ts-node error on import like (error TS2345),
+  // it's an object with empty prototype, which can't automatically convert to a string.
+  ->NodeJs.Util.inspect({depth: Int(5)})
+}
+
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
   | None => ()
@@ -7,9 +15,7 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
     } catch {
     | exn =>
       Js.Exn.raiseError(
-        `Failed to load handler file for contract ${contractName}: ${handlerPath} with error: ${exn
-          ->Utils.prettifyExn
-          ->Obj.magic}`,
+        `Failed to load handler file for contract ${contractName}: ${handlerPath} with error: ${exn->displayImportError}`,
       )
     }
   }
@@ -40,7 +46,7 @@ let autoLoadFromSrcHandlers = async () => {
       Utils.importPath("../{{relative_path_to_root_from_generated}}/" ++ file)
       ->Promise.catch(exn => {
         Js.Exn.raiseError(
-          `Failed to auto-load handler file: ${file} with error: ${exn->Utils.prettifyExn->Obj.magic}`,
+          `Failed to auto-load handler file: ${file} with error: ${exn->displayImportError}`,
         )
       })
     })

@@ -14,7 +14,7 @@
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- dev",
     "test": "rescript && pnpm mocha",
-    "start": "ts-node generated/src/Index.res.mjs"
+    "start": "envio start"
   },
   "devDependencies": {
     "@types/chai": "^4.3.11",
