@@ -833,7 +833,7 @@ impl Field {
             } => {
                 let res_type = self
                     .field_type
-                    .to_rescript_type(&schema)
+                    .to_rescript_type(schema)
                     .context("Failed getting rescript type")?;
 
                 Ok(Some(PGField {

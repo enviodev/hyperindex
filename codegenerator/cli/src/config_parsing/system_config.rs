@@ -93,10 +93,7 @@ impl EnvState {
                         }
                     }
                 };
-                match result {
-                    Ok(val) => Some(val),
-                    Err(_) => None,
-                }
+                result.ok()
             }
         }
     }
@@ -723,10 +720,10 @@ impl SystemConfig {
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
                     preload_handlers: evm_config.preload_handlers.unwrap_or(false),
-                    lowercase_addresses: match evm_config.address_format {
-                        Some(super::human_config::evm::AddressFormat::Lowercase) => true,
-                        _ => false,
-                    },
+                    lowercase_addresses: matches!(
+                        evm_config.address_format,
+                        Some(super::human_config::evm::AddressFormat::Lowercase)
+                    ),
                     should_use_hypersync_client_decoder: match evm_config.event_decoder {
                         Some(super::human_config::evm::EventDecoder::Viem) => false,
                         Some(super::human_config::evm::EventDecoder::HypersyncClient) | None => {
@@ -982,10 +979,7 @@ impl DataSource {
         };
         let hypersync_endpoint_url = match &network.hypersync_config {
             Some(config) => Some(config.url.to_string()),
-            None => match hypersync_endpoints::get_default_hypersync_endpoint(network.id) {
-                Ok(url) => Some(url),
-                Err(_) => None,
-            },
+            None => hypersync_endpoints::get_default_hypersync_endpoint(network.id).ok(),
         };
         let raw_rpcs = match (network.rpc_config, network.rpc) {
             (Some(_), Some(_)) => Err(anyhow!("EE106: Cannot define both rpc and deprecated rpc_config for the same network, please only use the rpc option. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
@@ -1669,7 +1663,7 @@ impl FieldSelection {
                 Tx::ChainId => Res::option(Res::Int),
                 Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
                 Tx::BlobVersionedHashes => Res::option(Res::array(Res::String)),
-                Tx::Kind => Res::option(Res::Int),
+                Tx::Type => Res::option(Res::Int),
                 Tx::L1Fee => Res::option(Res::BigInt),
                 Tx::L1GasPrice => Res::option(Res::BigInt),
                 Tx::L1GasUsed => Res::option(Res::BigInt),

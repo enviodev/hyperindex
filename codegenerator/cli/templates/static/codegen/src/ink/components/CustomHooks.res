@@ -2,7 +2,7 @@ open Belt
 module InitApi = {
   type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
   type body = {
-    envioVersion: option<string>,
+    envioVersion: string,
     envioApiToken: option<string>,
     ecosystem: ecosystem,
     hyperSyncNetworks: array<int>,
@@ -10,7 +10,7 @@ module InitApi = {
   }
 
   let bodySchema = S.object(s => {
-    envioVersion: s.field("envioVersion", S.option(S.string)),
+    envioVersion: s.field("envioVersion", S.string),
     envioApiToken: s.field("envioApiToken", S.option(S.string)),
     ecosystem: s.field("ecosystem", S.enum([Evm, Fuel])),
     hyperSyncNetworks: s.field("hyperSyncNetworks", S.array(S.int)),
@@ -80,8 +80,7 @@ module InitApi = {
   })
 
   let getMessages = async (~config) => {
-    let envioVersion =
-      PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
+    let envioVersion = Utils.EnvioPackage.json.version
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
     switch await route->Rest.fetch(body, ~client) {

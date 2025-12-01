@@ -409,7 +409,7 @@ impl AutoSchemaHandlerTemplate {
         // Copy shared static content into the project root (not the generated folder)
         template_dirs
             .get_shared_static_dir()?
-            .extract(&project_root)
+            .extract(project_root)
             .context("Failed extracting shared static files")?;
 
         let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);

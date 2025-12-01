@@ -125,7 +125,7 @@ impl<'a> RelativeDir<'a> {
                 }
                 DirEntry::File(f) => {
                     // Skip .gitkeep files
-                    if path.file_name().map_or(false, |n| n == ".gitkeep") {
+                    if path.file_name().is_some_and(|n| n == ".gitkeep") {
                         continue;
                     }
                     fs::write(path, f.contents())?;
@@ -356,7 +356,7 @@ impl<'a> TemplateDirs<'a> {
 
         // Copy shared static content into the project root (not the generated folder)
         self.get_shared_static_dir()?
-            .extract(&project_root)
+            .extract(project_root)
             .context("Failed extracting shared static files")?;
 
         lang_files.extract(project_root).context(format!(
@@ -436,7 +436,7 @@ mod test {
         for lang in template_langs.iter() {
             for template in evm::Template::iter() {
                 template_dirs
-                    .get_template_lang_dir(&template, &lang)
+                    .get_template_lang_dir(&template, lang)
                     .expect("static lang");
 
                 template_dirs
@@ -445,7 +445,7 @@ mod test {
             }
             for template in fuel::Template::iter() {
                 template_dirs
-                    .get_template_lang_dir(&template, &lang)
+                    .get_template_lang_dir(&template, lang)
                     .expect("static lang");
 
                 template_dirs
@@ -470,12 +470,12 @@ mod test {
         for lang in template_langs.iter() {
             for template in evm::Template::iter() {
                 template_dirs
-                    .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
+                    .get_and_extract_template(&template, lang, &(PathBuf::from(temp_dir.path())))
                     .expect("static lang");
             }
             for template in fuel::Template::iter() {
                 template_dirs
-                    .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
+                    .get_and_extract_template(&template, lang, &(PathBuf::from(temp_dir.path())))
                     .expect("static lang");
             }
         }
@@ -484,7 +484,7 @@ mod test {
             TempDir::new("init_extract_blank_lang_test").expect("Failed creating tempdir blank");
         for lang in template_langs.iter() {
             template_dirs
-                .get_and_extract_blank_template(&lang, &temp_dir.path().into())
+                .get_and_extract_blank_template(lang, &temp_dir.path().into())
                 .expect("static blank");
         }
     }
@@ -500,7 +500,7 @@ mod test {
 
         for lang in template_langs.iter() {
             template_dirs
-                .get_blank_lang_dir(&lang)
+                .get_blank_lang_dir(lang)
                 .expect("static blank lang");
         }
     }

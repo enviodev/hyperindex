@@ -49,6 +49,16 @@ Default is 0 so that the indexer can handle retries internally
 let hyperSyncClientMaxRetries =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
 
+let hypersyncClientSerializationFormat =
+  envSafe->EnvSafe.get(
+    "ENVIO_HYPERSYNC_CLIENT_SERIALIZATION_FORMAT",
+    HyperSyncClient.serializationFormatSchema,
+    ~fallback=CapnProto,
+  )
+
+let hypersyncClientEnableQueryCaching =
+  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=true)
+
 module Benchmark = {
   module SaveDataStrategy: {
     type t
@@ -178,7 +188,6 @@ module Hasura = {
 }
 
 module Configurable = {
-
   /**
     Used for backwards compatability
   */

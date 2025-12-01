@@ -21,7 +21,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 
-use std::path::PathBuf;
+use std::path::Path;
 
 pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) -> Result<()> {
     let template_dirs = TemplateDirs::new();
@@ -266,7 +266,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     }
 
     // If the project directory is not the current directory, print a message for user to cd into it
-    if parsed_project_paths.project_root != PathBuf::from(".") {
+    if parsed_project_paths.project_root != Path::new(".") {
         println!(
             "Please run `cd {}` to run the rest of the envio commands",
             parsed_project_paths.project_root.to_str().unwrap_or("")

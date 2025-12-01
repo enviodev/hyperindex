@@ -1,12 +1,33 @@
+/** Determines query serialization format for HTTP requests. */
+type serializationFormat =
+  // Use JSON serialization (default)
+  | Json
+  // Use Cap'n Proto binary serialization
+  | CapnProto
+
+let serializationFormatSchema = S.enum([Json, CapnProto])
+
 type cfg = {
-  url?: string,
-  bearerToken?: string,
+  /** HyperSync server URL. */
+  url: string,
+  /** HyperSync server api token. */
+  apiToken: string,
+  /** Milliseconds to wait for a response before timing out. Default: 30000. */
   httpReqTimeoutMillis?: int,
+  /** Number of retries to attempt before returning error. Default: 12. */
   maxNumRetries?: int,
+  /** Milliseconds that would be used for retry backoff increasing. Default: 500. */
   retryBackoffMs?: int,
+  /** Initial wait time for request backoff. Default: 200. */
   retryBaseMs?: int,
+  /** Ceiling time for request backoff. Default: 5000. */
   retryCeilingMs?: int,
+  /** Enable checksum addresses in responses. */
   enableChecksumAddresses?: bool,
+  /** Query serialization format to use for HTTP requests. Default: Json. */
+  serializationFormat?: serializationFormat,
+  /** Whether to use query caching when using CapnProto serialization format. */
+  enableQueryCaching?: bool,
 }
 
 module QueryTypes = {
@@ -67,7 +88,7 @@ module QueryTypes = {
     | GasUsed
     | ContractAddress
     | LogsBloom
-    | Kind
+    | Type
     | Root
     | Status
     | L1Fee
@@ -111,7 +132,7 @@ module QueryTypes = {
     | TraceAddress
     | TransactionHash
     | TransactionPosition
-    | Kind
+    | Type
     | Error
 
   type fieldSelection = {
@@ -133,7 +154,7 @@ module QueryTypes = {
     topic3,
   )
 
-  type logSelection = {
+  type logFilter = {
     /**
      * Address of the contract, any logs that has any of these addresses will be returned.
      * Empty means match all.
@@ -148,7 +169,7 @@ module QueryTypes = {
 
   let makeLogSelection = (~address, ~topics) => {address, topics}
 
-  type transactionSelection = {
+  type transactionFilter = {
     /**
      * Address the transaction should originate from. If transaction.from matches any of these, the transaction
      *  will be returned. Keep in mind that this has an and relationship with to filter, so each transaction should
@@ -167,7 +188,8 @@ module QueryTypes = {
     /** If tx.status matches this it will be returned. */
     status?: int,
     /** If transaction.type matches any of these values, the transaction will be returned */
-    kind?: array<int>,
+    @as("type")
+    type_?: array<int>,
     contractAddress?: array<Address.t>,
   }
 
@@ -177,7 +199,8 @@ module QueryTypes = {
     address?: array<Address.t>,
     callType?: array<string>,
     rewardType?: array<string>,
-    kind?: array<string>,
+    @as("type")
+    type_?: array<string>,
     sighash?: array<string>,
   }
 
@@ -214,12 +237,12 @@ module QueryTypes = {
      * List of log selections, these have an or relationship between them, so the query will return logs
      * that match any of these selections.
      */
-    logs?: array<logSelection>,
+    logs?: array<logFilter>,
     /**
      * List of transaction selections, the query will return transactions that match any of these selections and
      *  it will return transactions that are related to the returned logs.
      */
-    transactions?: array<transactionSelection>,
+    transactions?: array<transactionFilter>,
     /**
      * List of trace selections, the query will return traces that match any of these selections and
      *  it will re turn traces that are related to the returned logs.
@@ -360,7 +383,8 @@ module ResponseTypes = {
     gasUsed?: bigint,
     contractAddress?: string,
     logsBloom?: string,
-    kind?: int,
+    @as("type")
+    type_?: int,
     root?: string,
     status?: int,
     l1Fee?: bigint,
@@ -436,6 +460,22 @@ type streamConfig
 type queryResponse
 type queryResponseStream
 type eventStream
+
+@tag("type")
+type heightStreamEvent =
+  | Height({height: int})
+  | Connected
+  | Reconnecting({delayMillis: int, errorMsg: string})
+
+module HeightStream = {
+  type t = {
+    /** Close the height stream */
+    close: unit => promise<unit>,
+    /** Receive the next height stream event from the stream */
+    recv: unit => promise<heightStreamEvent>,
+  }
+}
+
 type t = {
   getHeight: unit => promise<int>,
   collect: (~query: query, ~config: streamConfig) => promise<queryResponse>,
@@ -445,23 +485,41 @@ type t = {
   getEvents: (~query: query) => promise<eventResponse>,
   stream: (~query: query, ~config: streamConfig) => promise<queryResponseStream>,
   streamEvents: (~query: query, ~config: streamConfig) => promise<eventStream>,
+  streamHeight: unit => promise<HeightStream.t>,
 }
 
-@module("@envio-dev/hypersync-client") @scope("HypersyncClient") external make: cfg => t = "new"
+@module("@envio-dev/hypersync-client") @scope("HypersyncClient")
+external makeWithAgent: (cfg, ~userAgent: string) => t = "newWithAgent"
+
 let make = (
   ~url,
   ~apiToken,
   ~httpReqTimeoutMillis,
   ~maxNumRetries,
   ~enableChecksumAddresses=true,
-) =>
-  make({
-    url,
-    enableChecksumAddresses,
-    bearerToken: apiToken,
-    httpReqTimeoutMillis,
-    maxNumRetries,
-  })
+  ~serializationFormat=?,
+  ~enableQueryCaching=?,
+  ~retryBaseMs=?,
+  ~retryBackoffMs=?,
+  ~retryCeilingMs=?,
+) => {
+  let envioVersion = Utils.EnvioPackage.json.version
+  makeWithAgent(
+    {
+      url,
+      enableChecksumAddresses,
+      apiToken,
+      httpReqTimeoutMillis,
+      maxNumRetries,
+      ?serializationFormat,
+      ?enableQueryCaching,
+      ?retryBaseMs,
+      ?retryBackoffMs,
+      ?retryCeilingMs,
+    },
+    ~userAgent=`hyperindex/${envioVersion}`,
+  )
+}
 
 module Decoder = {
   type rec decodedSolType<'a> = {val: 'a}
