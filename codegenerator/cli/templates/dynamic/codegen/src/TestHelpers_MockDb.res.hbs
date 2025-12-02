@@ -43,11 +43,6 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
   `)
 
 let config = Generated.configWithoutRegistrations
-EventRegister.startRegistration(
-  ~platform=config.platform,
-  ~multichain=config.multichain,
-  ~preloadHandlers=config.preloadHandlers,
-)
 
 /**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
@@ -323,11 +318,8 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   } else {
     let itemsWithContractRegister = []
 
-    let registrations = EventRegister.finishRegistration()
-    let registrations = if (
-      registrations.hasEvents || !(registrations.onBlockByChainId->Utils.Dict.isEmpty)
-    ) {
-      registrations
+    let registrations = if EventRegister.isPendingRegistration() {
+      EventRegister.finishRegistration()
     } else {
       await Generated.registerAllHandlers()
     }
@@ -343,13 +335,19 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let latestFetchedBlockNumber = ref(0)
     let newItems = events->Array.map(event => {
       let event = event->Internal.fromGenericEvent
-      let eventConfig = switch mockEventRegisters->Utils.WeakMap.get(event) {
+      let eventConfig: Internal.eventConfig = switch mockEventRegisters->Utils.WeakMap.get(event) {
       | Some(register) => register()
       | None =>
         Js.Exn.raiseError(
           "Events must be created using the mock API (e.g. createMockEvent) to be processed by mockDb.processEvents",
         )
       }
+
+      switch eventConfig {
+      | {handler: None, contractRegister: None} => Js.Exn.raiseError(`Event ${eventConfig.contractName}.${eventConfig.name} has no handler or contract register`)
+      | _ => ()
+      }
+
       let chainId = switch chainId {
       | Some(chainId) => chainId
       | None => event.chainId
