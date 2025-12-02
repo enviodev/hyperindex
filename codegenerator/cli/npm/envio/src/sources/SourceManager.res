@@ -222,11 +222,20 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
+  // Only include Live sources if we've actually synced some blocks
+  // (currentBlockHeight > 0 means we've fetched at least one batch)
+  // This prevents Live RPC from winning the initial height race and
+  // becoming activeSource, which would bypass HyperSync's smart block detection
+  let isInitialHeightFetch = currentBlockHeight === 0
+
   let syncSources = []
   let fallbackSources = []
   sources->Utils.Set.forEach(source => {
     if (
       source.sourceFor === Sync ||
+        // Include Live sources only after initial sync has started
+        // Live sources are optimized for real-time indexing with lower latency
+        (source.sourceFor === Live && !isInitialHeightFetch) ||
         // Even if the active source is a fallback, still include
         // it to the list. So we don't wait for a timeout again
         // if all main sync sources are still not valid
@@ -321,7 +330,9 @@ let getNextSyncSource = (
     } else if (
       switch source.sourceFor {
       | Sync => true
-      | Fallback => attemptFallbacks || source === initialSource
+      // Live sources should NOT be used for historical sync rotation
+      // They are only meant for real-time indexing once synced
+      | Live | Fallback => attemptFallbacks || source === initialSource
       }
     ) {
       (hasActive.contents ? after : before)->Array.push(source)

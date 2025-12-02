@@ -268,11 +268,14 @@ impl RescriptTypeExpr {
                         .map(|field| {
                             format!(
                                 "{}: s.field(\"{}\", {})",
-                                field.name,
+                                &field.name,
                                 // For raw events we keep the ReScript name,
                                 // if we need to serialize to the original name,
                                 // then it'll require a flag in the args
-                                field.name,
+                                field
+                                    .as_name
+                                    .as_ref()
+                                    .map_or(field.name.as_str(), |name| name.as_str()),
                                 field.type_ident.to_rescript_schema(mode)
                             )
                         })

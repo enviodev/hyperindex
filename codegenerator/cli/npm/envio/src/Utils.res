@@ -680,3 +680,12 @@ let prettifyExn = exn => {
   | exn => exn
   }
 }
+
+module EnvioPackage = {
+  type t = {version: string}
+
+  %%private(let getPackageJson = (): t => %raw(`require("../package.json")`))
+  let json: t = try getPackageJson() catch {
+  | _ => Js.Exn.raiseError("Failed to get package.json in envio package")
+  }
+}

@@ -1011,4 +1011,83 @@ describe("E2E tests", () => {
       ~message="Should only cache p2's successful result, not p1's failed call",
     )
   })
+
+  Async.it(
+    "Live source should not participate in initial height fetch but should after sync",
+    async () => {
+      // Create a Sync source (simulating HyperSync) and a Live source (simulating RPC for live)
+      let syncSource = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+        ~sourceFor=Source.Sync,
+      )
+      let liveSource = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+        ~sourceFor=Source.Live,
+      )
+
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sources: [syncSource.source, liveSource.source],
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // During initial height fetch (currentBlockHeight === 0),
+      // only the Sync source should be queried, not the Live source.
+      // This is important to allow HyperSync's smart block detection to work.
+      Assert.deepEqual(
+        syncSource.getHeightOrThrowCalls->Array.length,
+        1,
+        ~message="Sync source should be called for initial height",
+      )
+      Assert.deepEqual(
+        liveSource.getHeightOrThrowCalls->Array.length,
+        0,
+        ~message="Live source should NOT be called during initial height fetch",
+      )
+
+      // Resolve the initial height and let the indexer start syncing
+      syncSource.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Sync source fetches items (enters reorg threshold at block 100)
+      Assert.deepEqual(
+        syncSource.getItemsOrThrowCalls->Array.length,
+        1,
+        ~message="Sync source should fetch items",
+      )
+
+      // Resolve first batch (0-100) and continue until we reach the head
+      syncSource.resolveGetItemsOrThrow([])
+      await indexerMock.getBatchWritePromise()
+
+      // After entering reorg threshold, continue fetching until we reach head (300)
+      // The indexer will fetch in batches, we need to resolve each one
+      syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
+      await indexerMock.getBatchWritePromise()
+
+      syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+
+      // Now the indexer should be at the head and will wait for new blocks.
+      // At this point, currentBlockHeight > 0, so Live source should participate in racing.
+      // Both sources should race for the next height.
+      Assert.deepEqual(
+        syncSource.getHeightOrThrowCalls->Array.length,
+        2,
+        ~message="Sync source should be called again for next height",
+      )
+      Assert.deepEqual(
+        liveSource.getHeightOrThrowCalls->Array.length,
+        1,
+        ~message="Live source should now participate in height racing after initial sync",
+      )
+    },
+  )
 })

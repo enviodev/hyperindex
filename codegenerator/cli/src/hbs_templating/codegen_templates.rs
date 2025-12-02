@@ -417,15 +417,13 @@ impl EventMod {
                 ),
             };
 
-        let base_event_config_code = format!(
-            r#"id,
+        let base_event_config_code = r#"id,
   name,
   contractName,
   isWildcard: (handlerRegister->EventRegister.isWildcard),
   handler: handlerRegister->EventRegister.getHandler,
   contractRegister: handlerRegister->EventRegister.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#
-        );
+  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
 
         let non_event_mod_code = match fuel_event_kind_code {
             None => format!(
@@ -455,17 +453,14 @@ let register = (): Internal.fuelEventConfig => {{
         };
 
         let types_code = if self.preload_handlers {
-            format!(
-                r#"@genType
+            r#"@genType
 type handlerArgs = Internal.genericHandlerArgs<event, handlerContext, unit>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#
-            )
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string()
         } else {
-            format!(
-                r#"@genType
+            r#"@genType
 type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
@@ -474,8 +469,7 @@ type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerCont
 @genType
 type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
 @genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#
-            )
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string()
         };
 
         format!(
@@ -654,7 +648,7 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
-            preload_handlers: preload_handlers,
+            preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -681,7 +675,7 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
-            preload_handlers: preload_handlers,
+            preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -744,7 +738,7 @@ impl EventTemplate {
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
-                    preload_handlers: preload_handlers,
+                    preload_handlers,
                 };
 
                 Ok(EventTemplate {
@@ -772,7 +766,7 @@ impl EventTemplate {
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
-                            preload_handlers: preload_handlers,
+                            preload_handlers,
                         };
 
                         Ok(EventTemplate {
@@ -1107,6 +1101,7 @@ impl NetworkConfigTemplate {
                             match rpc.source_for {
                                 For::Sync => "Sync",
                                 For::Fallback => "Fallback",
+                                For::Live => "Live",
                             },
                             rpc_to_sync_config_options(rpc)
                         )
@@ -1163,10 +1158,12 @@ impl FieldSelection {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
         for field in options.block_fields.into_iter() {
+            let res_name = RescriptRecordField::to_valid_res_name(&field.name);
             let name: CaseOptions = field.name.into();
 
             block_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
+                res_name,
                 default_value_rescript: field.data_type.get_default_value_rescript(),
                 res_type: field.data_type.to_string(),
             });
@@ -1178,10 +1175,12 @@ impl FieldSelection {
         let mut transaction_field_templates = vec![];
         let mut all_transaction_fields = vec![];
         for field in options.transaction_fields.into_iter() {
+            let res_name = RescriptRecordField::to_valid_res_name(&field.name);
             let name: CaseOptions = field.name.into();
 
             transaction_field_templates.push(SelectedFieldTemplate {
                 name: name.clone(),
+                res_name,
                 default_value_rescript: field.data_type.get_default_value_rescript(),
                 res_type: field.data_type.to_string(),
             });
@@ -1253,6 +1252,7 @@ impl FieldSelection {
 #[derive(Serialize)]
 struct SelectedFieldTemplate {
     name: CaseOptions,
+    res_name: String,
     res_type: String,
     default_value_rescript: String,
 }
@@ -1483,12 +1483,8 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
-            sources_code: format!(
-                "[HyperFuelSource.make({{chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})]"
-            ),
-            deprecated_sync_source_code: format!(
-                "HyperFuel({{endpointUrl: \"https://fuel-testnet.hypersync.xyz\"}})"
-            ),
+            sources_code: "[HyperFuelSource.make({chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
+            deprecated_sync_source_code: "HyperFuel({endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1645,21 +1641,17 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![],
-            sources_code: format!(
-                "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
                  ~allEventSignatures=[]->Belt.Array.concatMany, \
-                 ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)"
-            ),
-            deprecated_sync_source_code: format!(
-                "HyperSync({{endpointUrl: \"https://myskar.com\"}})"
-            ),
+                 ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://myskar.com\"})".to_string(),
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![],
-            sources_code: format!("NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)"),
-            deprecated_sync_source_code: format!("HyperSync({{endpointUrl: \"https://137.hypersync.xyz\"}})"),
+            sources_code: "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://137.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
