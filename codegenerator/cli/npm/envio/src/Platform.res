@@ -133,9 +133,8 @@ let fromName = (name: name): t => {
 }
 
 // Create a block event object for block handlers based on platform
-let makeBlockEvent = (~blockNumber: int, ~chainId: int, platform: t): Internal.blockEvent => {
+let makeBlockEvent = (~blockNumber: int, platform: t): Internal.blockEvent => {
   let blockEvent = Js.Dict.empty()
-  blockEvent->Js.Dict.set("chainId", chainId->Utils.magic)
   blockEvent->Js.Dict.set(platform.blockNumberName, blockNumber->Utils.magic)
   blockEvent->Utils.magic
 }

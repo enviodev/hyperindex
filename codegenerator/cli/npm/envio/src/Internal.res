@@ -58,7 +58,7 @@ type chainInfo = {
   id: int,
   // true when the chain has completed initial sync and is processing live events
   // false during historical synchronization
-  isReady: bool,
+  isLive: bool,
 }
 
 type chains = dict<chainInfo>

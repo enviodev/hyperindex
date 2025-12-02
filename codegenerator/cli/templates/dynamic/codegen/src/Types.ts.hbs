@@ -29,24 +29,24 @@ export type {{#if preload_handlers}}HandlerContext{{else}}LoaderContext{{/if}} =
    * Per-chain state information accessible in event handlers and block handlers.
    * Each chain ID maps to an object containing chain-specific state:
    * - id: the chain ID
-   * - isReady: true when the chain has completed initial sync and is processing live events,
+   * - isLive: true when the chain has completed initial sync and is processing live events,
    *            false during historical synchronization
    */
   readonly chains: {
     [chainId in chain]: {
       readonly id: chain;
-      readonly isReady: boolean;
+      readonly isLive: boolean;
     };
   };
   /**
    * Chain state information for the current event's chain.
    * - id: the chain ID
-   * - isReady: true when the chain has completed initial sync and is processing live events,
+   * - isLive: true when the chain has completed initial sync and is processing live events,
    *            false during historical synchronization
    */
   readonly chain: {
     readonly id: chain;
-    readonly isReady: boolean;
+    readonly isLive: boolean;
   };
   {{#each entities as | entity |}}
   readonly {{entity.name.original}}: {
@@ -96,24 +96,24 @@ export type HandlerContext = {
    * Per-chain state information accessible in event handlers and block handlers.
    * Each chain ID maps to an object containing chain-specific state:
    * - id: the chain ID
-   * - isReady: true when the chain has completed initial sync and is processing live events,
+   * - isLive: true when the chain has completed initial sync and is processing live events,
    *            false during historical synchronization
    */
   readonly chains: {
     [chainId in chain]: {
       readonly id: chain;
-      readonly isReady: boolean;
+      readonly isLive: boolean;
     };
   };
   /**
    * Chain state information for the current event's chain.
    * - id: the chain ID
-   * - isReady: true when the chain has completed initial sync and is processing live events,
+   * - isLive: true when the chain has completed initial sync and is processing live events,
    *            false during historical synchronization
    */
   readonly chain: {
     readonly id: chain;
-    readonly isReady: boolean;
+    readonly isLive: boolean;
   };
   {{#each entities as | entity |}}
   readonly {{entity.name.original}}: {

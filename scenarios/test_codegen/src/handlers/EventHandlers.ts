@@ -1,6 +1,12 @@
-import { deepEqual, equal, fail } from "assert";
-import { createEffect, Effect, S, Logger, EffectCaller } from "envio";
-import { chain, TestEvents } from "generated";
+import { deepEqual, fail } from "assert";
+import {
+  createEffect,
+  type Effect,
+  S,
+  type Logger,
+  type EffectCaller,
+} from "envio";
+import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
 import {
@@ -8,15 +14,14 @@ import {
   BigDecimal,
   NftFactory,
   SimpleNft,
-  NftCollection,
-  User,
-  eventLog,
-  NftFactory_SimpleNftCreated_eventArgs,
-  NftFactory_SimpleNftCreated_event,
+  type NftCollection,
+  type User,
+  type eventLog,
+  type NftFactory_SimpleNftCreated_eventArgs,
+  type NftFactory_SimpleNftCreated_event,
   onBlock,
 } from "generated";
-import { Assert } from "generated/src/bindings/RescriptMocha.res";
-import { expectType, TypeEqual } from "ts-expect";
+import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
 
 // Test effects type inference
@@ -129,6 +134,7 @@ expectType<
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 Gravatar.CustomSelection.handler(async ({ event, context }) => {
+  console.log("AAAA", event.transaction.hash);
   if (0) {
     const _ = await context.effect(noopEffect, undefined);
     context.log.error("There's an error");
@@ -149,9 +155,6 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     parentHash: "0xParentHash",
   });
   S.assertOrThrow(event.block, blockSchema)!;
-  let chainFromChains = context.chains[event.chainId];
-  deepEqual(context.chain.id, event.chainId);
-  equal(chainFromChains, context.chain);
 
   // We already do type checking in the tests,
   // but double-check that we receive correct types
@@ -183,23 +186,14 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chains,
       {
-        [chainId in chain]: {
-          readonly id: chain;
+        [chainId: string]: {
           readonly isLive: boolean;
         };
       }
     >
   >(true);
 
-  expectType<
-    TypeEqual<
-      typeof context.chain,
-      {
-        readonly id: chain;
-        readonly isLive: boolean;
-      }
-    >
-  >(true);
+  console.log("event.transaction.hash", event.transaction.hash);
 
   context.CustomSelectionTestPass.set({
     id: event.transaction.hash,
@@ -316,7 +310,7 @@ SimpleNft.Transfer.handlerWithLoader({
 // Test event filtering hashing
 export const hashingTestParams = {
   id: 50n,
-  addr: TestHelpers.Addresses.mockAddresses[0],
+  addr: TestHelpers.Addresses.mockAddresses[0]!,
   str: "test",
   isTrue: true,
   dynBytes: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 9]),

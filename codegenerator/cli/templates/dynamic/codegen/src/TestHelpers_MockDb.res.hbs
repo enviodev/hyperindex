@@ -509,7 +509,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let chains = Js.Dict.empty()
     chains->Js.Dict.set(
       processingChainId->Int.toString,
-      {id: processingChainId, Internal.isReady: true},
+      {id: processingChainId, Internal.isLive: true},
     )
 
     try {

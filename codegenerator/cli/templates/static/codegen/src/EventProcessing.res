@@ -13,13 +13,13 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
   ->ChainMap.entries
   ->Array.forEach(((chain, chainFetcher)) => {
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isReady = chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+    let isLive = chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
 
     chains->Js.Dict.set(
       chainId,
       {
         Internal.id: chain->ChainMap.Chain.toChainId,
-        isReady: isReady,
+        isLive: isLive,
       },
     )
   })
@@ -173,7 +173,7 @@ let runHandlerOrThrow = async (
   ~chains: Internal.chains,
 ) => {
   switch item {
-  | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
+  | Block({onBlockConfig: {handler}, blockNumber}) =>
     try {
       let contextParams: UserContext.contextParams = {
         item,
@@ -189,7 +189,7 @@ let runHandlerOrThrow = async (
       await handler(
         (
           {
-            block: indexer.config.platform->Platform.makeBlockEvent(~blockNumber, ~chainId),
+            block: indexer.config.platform->Platform.makeBlockEvent(~blockNumber),
             context: UserContext.getHandlerContext(contextParams),
           }: Internal.onBlockArgs
         ),
@@ -282,11 +282,11 @@ let preloadBatchOrThrow = async (
           | _ => ()
           }
         }
-      | Block({onBlockConfig: {handler, chainId}, blockNumber}) =>
+      | Block({onBlockConfig: {handler}, blockNumber}) =>
         try {
           promises->Array.push(
             handler({
-              block: platform->Platform.makeBlockEvent(~blockNumber, ~chainId),
+              block: platform->Platform.makeBlockEvent(~blockNumber),
               context: UserContext.getHandlerContext({
                 item,
                 inMemoryStore,

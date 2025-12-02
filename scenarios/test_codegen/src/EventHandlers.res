@@ -148,14 +148,14 @@ let lastEmptyEventChains: ref<option<Internal.chains>> = ref(None)
 
 Handlers.Gravatar.EmptyEvent.handler(async ({context}) => {
   // This handler tests that chains state is accessible in the context
-  // Chains will have isReady: false during sync and isReady: true during live indexing
+  // Chains will have isLive: false during sync and isLive: true during live indexing
   lastEmptyEventChains := Some(context.chains)
 
   // Log chain states for verification
   context.chains
   ->Js.Dict.entries
   ->Belt.Array.forEach(((chainId, chainInfo)) => {
-    let status = chainInfo.isReady ? "ready (live)" : "syncing (historical)"
+    let status = chainInfo.isLive ? "ready (live)" : "syncing (historical)"
     context.log.debug(`Chain ${chainId} status: ${status}`)
   })
 })
