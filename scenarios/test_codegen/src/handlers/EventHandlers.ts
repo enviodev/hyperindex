@@ -6,7 +6,7 @@ import {
   type Logger,
   type EffectCaller,
 } from "envio";
-import { TestEvents } from "generated";
+import { chain, TestEvents } from "generated";
 import { TestHelpers } from "generated";
 import { EventFiltersTest } from "generated";
 import {
@@ -186,7 +186,8 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chains,
       {
-        [chainId: string]: {
+        [chainId in chain]: {
+          readonly id: chain;
           readonly isLive: boolean;
         };
       }
