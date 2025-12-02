@@ -6,7 +6,7 @@
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
-    "mocha": "NODE_OPTIONS='--experimental-specifier-resolution=node --no-warnings' mocha --loader=ts-node/esm test/**/*.{ts}",
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha test/**/*.{ts}",
     "codegen": "envio codegen",
     "dev": "envio dev",
     "test": "pnpm mocha",
@@ -17,7 +17,7 @@
     "@types/mocha": "10.0.6",
     "@types/node": "20.8.8",
     "typescript": "5.9.3",
-    "ts-node": "10.9.2",
+    "tsx": "4.21.0",
     "mocha": "10.2.0"
   },
   "dependencies": {

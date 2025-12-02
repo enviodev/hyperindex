@@ -10,7 +10,7 @@
     "res:clean": "rescript clean",
     "res:build": "rescript",
     "res:watch": "rescript -w",
-    "mocha": "NODE_OPTIONS='--experimental-specifier-resolution=node --no-warnings' mocha --loader=ts-node/esm test/**/*.{ts,res.mjs}",
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha test/**/*.{ts,res.mjs}",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- dev",
     "test": "rescript && pnpm mocha",
@@ -21,7 +21,7 @@
     "@types/mocha": "10.0.6",
     "@types/node": "20.8.8",
     "typescript": "5.9.3",
-    "ts-node": "10.9.2",
+    "tsx": "4.21.0",
     "mocha": "10.2.0"
   },
   "dependencies": {

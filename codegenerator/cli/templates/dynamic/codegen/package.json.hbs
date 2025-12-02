@@ -15,7 +15,7 @@
     "db-setup": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
     "print-benchmark-summary": "node -e 'import(\"./src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
     {{!-- We need this to always have cwd at the root of the project --}}
-    "start": "cd {{relative_path_to_root_from_generated}} &&  node --no-warnings --loader {{relative_path_to_generated_from_root}}/node_modules/ts-node/esm.mjs --experimental-specifier-resolution=node {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
+    "start": "cd {{relative_path_to_root_from_generated}} && tsc --noEmit &&node --no-warnings --import tsx {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
   },
   "keywords": [
     "ReScript"
@@ -34,7 +34,7 @@
     "@fuel-ts/utils": "0.96.1",
     "@fuel-ts/address": "0.96.1",
     {{/if}}
-    "ts-node": "10.9.1",
+    "tsx": "4.21.0",
     "@rescript/react": "0.14.0",
     "bignumber.js": "9.1.2",
     "date-fns": "3.3.1",

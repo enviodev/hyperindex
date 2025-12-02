@@ -6,7 +6,7 @@
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
-    "mocha": "NODE_OPTIONS='--experimental-specifier-resolution=node --no-warnings' mocha --loader=ts-node/esm test/**/*.{ts,res.mjs}",
+    "mocha": "mocha test/**/*.{ts,res.mjs}",
     "test": "pnpm build && pnpm mocha",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "pnpm build && envio dev",
@@ -16,7 +16,6 @@
     "envio": "file:../../codegenerator/cli/npm/envio",
     "ethers": "6.8.0",
     "helpers": "../helpers",
-    "ts-node": "10.9.2",
     "mocha": "10.2.0",
     "rescript": "11.1.3",
     "rescript-schema": "9.3.4"

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "mocha": "NODE_OPTIONS='--experimental-specifier-resolution=node --no-warnings' mocha --loader=ts-node/esm test/**/*.{ts{{#if is_rescript}},res.mjs{{/if}}}",
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha test/**/*.{ts{{#if is_rescript}},res.mjs{{/if}}}",
   {{#if is_typescript}}
     "clean": "tsc --clean",
     "build": "tsc --build",
@@ -31,7 +31,7 @@
     "typescript": "5.9.3",
     "chai": "4.3.10",
   {{/if}}
-    "ts-node": "10.9.2",
+    "tsx": "4.21.0",
     "mocha": "10.2.0"
   },
   "dependencies": {

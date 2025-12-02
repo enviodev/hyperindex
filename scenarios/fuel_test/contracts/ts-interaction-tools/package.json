@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "deploy-contract": "ts-node ./src/deploy.ts",
+    "deploy-contract": "tsc --noEmit && tsx ./src/deploy.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -12,6 +12,7 @@
   "license": "ISC",
   "devDependencies": {
     "@types/dotenv": "^8.2.0",
+    "tsx": "4.21.0",
     "typescript": "5.9.3"
   },
   "dependencies": {

@@ -1,10 +1,3 @@
-let displayImportError = exn => {
-  exn
-  ->Utils.prettifyExn
-  // We use inspect here, since if there's a ts-node error on import like (error TS2345),
-  // it's an object with empty prototype, which can't automatically convert to a string.
-  ->NodeJs.Util.inspect({depth: Int(5)})
-}
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
@@ -14,8 +7,9 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
       let _ = await Utils.importPath(handlerPath)
     } catch {
     | exn =>
+      Logging.errorWithExn(exn, `Failed to load handler file for contract ${contractName}: ${handlerPath}`)
       Js.Exn.raiseError(
-        `Failed to load handler file for contract ${contractName}: ${handlerPath} with error: ${exn->displayImportError}`,
+        `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
       )
     }
   }
@@ -32,7 +26,7 @@ let autoLoadFromSrcHandlers = async () => {
   } catch {
   | exn =>
     Js.Exn.raiseError(
-      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js 22.10.0 version. Error: ${exn
+      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js >=22 version. Error: ${exn
           ->Utils.prettifyExn
           ->Obj.magic}`,
     )
@@ -45,8 +39,9 @@ let autoLoadFromSrcHandlers = async () => {
     ->Js.Array2.map(file => {
       Utils.importPath("../{{relative_path_to_root_from_generated}}/" ++ file)
       ->Promise.catch(exn => {
+        Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
         Js.Exn.raiseError(
-          `Failed to auto-load handler file: ${file} with error: ${exn->displayImportError}`,
+          `Failed to auto-load handler file: ${file}`,
         )
       })
     })
