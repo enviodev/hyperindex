@@ -6,7 +6,7 @@
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha test/**/*.{ts}",
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.ts",
     "codegen": "envio codegen",
     "dev": "envio dev",
     "test": "pnpm mocha",

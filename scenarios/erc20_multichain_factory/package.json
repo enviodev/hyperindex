@@ -6,7 +6,7 @@
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
-    "mocha": "mocha test/**/*.{ts,res.mjs}",
+    "mocha": "mocha --exit test/**/*.{ts,res.mjs}",
     "test": "pnpm build && pnpm mocha",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "pnpm build && envio dev",
@@ -24,6 +24,6 @@
     "generated": "./generated"
   },
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   }
 }

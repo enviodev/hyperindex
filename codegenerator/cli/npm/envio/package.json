@@ -21,7 +21,7 @@
   },
   "homepage": "https://envio.dev",
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@clickhouse/client": "1.12.1",

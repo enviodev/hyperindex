@@ -19,6 +19,6 @@
     "envio": "file:../../codegenerator/cli/npm/envio"
   },
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   }
 }

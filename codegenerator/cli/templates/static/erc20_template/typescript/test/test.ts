@@ -9,8 +9,8 @@ describe("Transfers", () => {
     const mockDbEmpty = MockDb.createMockDb();
 
     //Get mock addresses from helpers
-    const userAddress1 = Addresses.mockAddresses[0];
-    const userAddress2 = Addresses.mockAddresses[1];
+    const userAddress1 = Addresses.mockAddresses[0]!;
+    const userAddress2 = Addresses.mockAddresses[1]!;
 
     //Make a mock entity to set the initial state of the mock db
     const mockAccountEntity: Account = {

@@ -15,13 +15,13 @@
     "db-setup": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
     "print-benchmark-summary": "node -e 'import(\"./src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
     {{!-- We need this to always have cwd at the root of the project --}}
-    "start": "cd {{relative_path_to_root_from_generated}} && tsc --noEmit &&node --no-warnings --import tsx {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
+    "start": "cd {{relative_path_to_root_from_generated}} && tsc --noEmit && node --no-warnings --import tsx {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
   },
   "keywords": [
     "ReScript"
   ],
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   },
   "author": "",
   "license": "MIT",

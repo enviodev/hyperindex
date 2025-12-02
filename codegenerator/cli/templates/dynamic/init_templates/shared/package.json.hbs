@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha test/**/*.{ts{{#if is_rescript}},res.mjs{{/if}}}",
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.{{#if is_rescript}}res.mjs{{else}}ts{{/if}}",
   {{#if is_typescript}}
     "clean": "tsc --clean",
     "build": "tsc --build",
@@ -41,6 +41,6 @@
     "generated": "{{relative_path_from_root_to_generated}}"
   },
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   }
 }
