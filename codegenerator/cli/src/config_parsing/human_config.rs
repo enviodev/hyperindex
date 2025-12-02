@@ -290,7 +290,7 @@ pub mod evm {
         AccessList,
         MaxFeePerBlobGas,
         BlobVersionedHashes,
-        Type,
+        Kind,
         L1Fee,
         L1GasPrice,
         L1GasUsed,

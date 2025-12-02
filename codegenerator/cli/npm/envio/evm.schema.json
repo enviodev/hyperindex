@@ -257,7 +257,7 @@
         "accessList",
         "maxFeePerBlobGas",
         "blobVersionedHashes",
-        "type",
+        "kind",
         "l1Fee",
         "l1GasPrice",
         "l1GasUsed",
