@@ -266,7 +266,7 @@ impl Contract {
 
         // Handler registrations
         for event in &self.imported_events {
-            content.push_str("\n");
+            content.push('\n');
             content.push_str(&format!(
                 "{}.{}.handler(async ({{ event, context }}) => {{\n",
                 self.name.capitalized, event.name
@@ -315,7 +315,7 @@ impl Contract {
 
         // Handler registrations
         for event in &self.imported_events {
-            content.push_str("\n");
+            content.push('\n');
             content.push_str(&format!(
                 "Handlers.{}.{}.handler(async ({{event, context}}) => {{\n",
                 self.name.capitalized, event.name
@@ -567,7 +567,7 @@ impl AutoSchemaHandlerTemplate {
         // Copy shared static content into the project root (not the generated folder)
         template_dirs
             .get_shared_static_dir()?
-            .extract(&project_root)
+            .extract(project_root)
             .context("Failed extracting shared static files")?;
 
         // Generate per-contract handler files in src/handlers/

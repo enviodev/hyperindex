@@ -155,6 +155,65 @@ type options = {
   clientMaxRetries: int,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
+  serializationFormat: HyperSyncClient.serializationFormat,
+  enableQueryCaching: bool,
+}
+
+module HeightState: {
+  type t
+  let make: (HyperSyncClient.t, ~chainId: int) => Promise.t<t>
+  let getHeight: t => Promise.t<int>
+} = {
+  open HyperSyncClient
+  type t = {
+    heightStream: HeightStream.t,
+    mutable currentHeight: int,
+    mutable errMessage: option<string>,
+  }
+
+  let makeInternal = async (client: HyperSyncClient.t) => {
+    currentHeight: 0,
+    heightStream: await client.streamHeight(),
+    errMessage: None,
+  }
+
+  let start = async (state: t, ~chainId) => {
+    while true {
+      let height = await state.heightStream.recv()
+      switch height {
+      | Height({height}) => state.currentHeight = height
+      | Connected =>
+        Logging.trace({"msg": "HyperSync height stream is connected", "chainId": chainId})
+        state.errMessage = None
+      | Reconnecting({delayMillis, errorMsg}) =>
+        Logging.trace({
+          "msg": "HyperSync height stream is reconnecting",
+          "err": errorMsg,
+          "delayMillis": delayMillis,
+          "chainId": chainId,
+        })
+        state.errMessage = Some(errorMsg)
+      }
+    }
+  }
+
+  let make = async (client: HyperSyncClient.t, ~chainId) => {
+    let state = await makeInternal(client)
+    let _async = state->start(~chainId)
+    state
+  }
+
+  let getHeight = async (state: t) => {
+    while state.currentHeight == 0 && state.errMessage->Belt.Option.isNone {
+      // Just poll internally until its no longer 0
+      await Utils.delay(200)
+    }
+
+    switch state.errMessage {
+    | Some(errMessage) => Js.Exn.raiseError(errMessage)
+    | None => state.currentHeight
+    }
+  }
 }
 
 let make = (
@@ -169,6 +228,8 @@ let make = (
     clientMaxRetries,
     clientTimeoutMillis,
     lowercaseAddresses,
+    serializationFormat,
+    enableQueryCaching,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -183,6 +244,8 @@ let make = (
     ~maxNumRetries=clientMaxRetries,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~enableChecksumAddresses=!lowercaseAddresses,
+    ~serializationFormat,
+    ~enableQueryCaching,
   )
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
@@ -545,28 +608,33 @@ let make = (
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 
-  let jsonApiClient = Rest.client(endpointUrl)
-
   let malformedTokenMessage = `Your token is malformed. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens.`
+
+  let heightStatePromise = HeightState.make(client, ~chainId=chain->ChainMap.Chain.toChainId)
 
   {
     name,
     sourceFor: Sync,
     chain,
-    pollingInterval: 100,
+    pollingInterval: 32, // purely internal state polling since we now stream the height to the state
     poweredByHyperSync: true,
     getBlockHashes,
-    getHeightOrThrow: async () =>
-      switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
-      | Value(height) => height
-      | ErrorMessage(m) if m === malformedTokenMessage =>
+    getHeightOrThrow: async () => {
+      let heightState = await heightStatePromise
+      try await heightState->HeightState.getHeight catch {
+      | Js.Exn.Error(exn)
+        if exn
+        ->Js.Exn.message
+        ->Option.getWithDefault("")
+        ->Js.String2.includes(malformedTokenMessage) =>
         Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
         // Don't want to retry if the token is malformed
         // So just block forever
         let _ = await Promise.make((_, _) => ())
         0
-      | ErrorMessage(m) => Js.Exn.raiseError(m)
-      },
+      | exn => raise(exn)
+      }
+    },
     getItemsOrThrow,
   }
 }

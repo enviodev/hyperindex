@@ -54,11 +54,11 @@ type entityHandlerContext<'entity> = {
   deleteUnsafe: string => unit,
 }
 
-@genType
 type chainInfo = {
+  id: int,
   // true when the chain has completed initial sync and is processing live events
   // false during historical synchronization
-  isReady: bool,
+  isLive: bool,
 }
 
 type chains = dict<chainInfo>
@@ -67,6 +67,7 @@ type loaderReturn
 type handlerContext = private {
   isPreload: bool,
   chains: chains,
+  chain: chainInfo,
 }
 type handlerArgs = {
   event: event,
@@ -208,6 +209,12 @@ external castUnsafeEventItem: item => eventItem = "%identity"
 external getItemBlockNumber: item => int = "blockNumber"
 @get
 external getItemLogIndex: item => int = "logIndex"
+
+let getItemChainId = item =>
+  switch item {
+  | Event({chain}) => chain->ChainMap.Chain.toChainId
+  | Block({onBlockConfig: {chainId}}) => chainId
+  }
 
 @get
 external getItemDcs: item => option<dcs> = "dcs"

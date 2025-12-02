@@ -17,7 +17,7 @@ module Evm = {
   @get external getNumber: Internal.eventBlock => int = "number"
   @get external getTimestamp: Internal.eventBlock => int = "timestamp"
   @get external getId: Internal.eventBlock => string = "hash"
-  
+
   let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
     delete fields.hash
     delete fields.number
@@ -82,7 +82,7 @@ let evm: t = {
     "chainId",
     "maxFeePerBlobGas",
     "blobVersionedHashes",
-    "kind",
+    "type",
     "l1Fee",
     "l1GasPrice",
     "l1GasUsed",
@@ -104,7 +104,7 @@ module Fuel = {
   @get external getNumber: Internal.eventBlock => int = "height"
   @get external getTimestamp: Internal.eventBlock => int = "time"
   @get external getId: Internal.eventBlock => string = "id"
-  
+
   let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
     delete fields.id
     delete fields.height
@@ -133,9 +133,8 @@ let fromName = (name: name): t => {
 }
 
 // Create a block event object for block handlers based on platform
-let makeBlockEvent = (~blockNumber: int, ~chainId: int, platform: t): Internal.blockEvent => {
+let makeBlockEvent = (~blockNumber: int, platform: t): Internal.blockEvent => {
   let blockEvent = Js.Dict.empty()
-  blockEvent->Js.Dict.set("chainId", chainId->Utils.magic)
   blockEvent->Js.Dict.set(platform.blockNumberName, blockNumber->Utils.magic)
   blockEvent->Utils.magic
 }
