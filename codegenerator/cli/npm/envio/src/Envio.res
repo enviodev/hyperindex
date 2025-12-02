@@ -6,7 +6,6 @@
 @genType
 type blockEvent = {
   number: int,
-  chainId: int,
 }
 
 // Fuel block event with 'height' field

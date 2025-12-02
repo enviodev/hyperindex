@@ -30,6 +30,7 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chains: Internal.chains,
+  chain: Internal.chainInfo,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
   {{/each}}
@@ -51,6 +52,7 @@ type loaderContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chains: Internal.chains,
+  chain: Internal.chainInfo,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
   {{/each}}
@@ -64,6 +66,7 @@ type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   chains: Internal.chains,
+  chain: Internal.chainInfo,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
