@@ -316,8 +316,8 @@ let initialize = async (
   ~enums as _: array<Table.enumConfig<Table.enum>>,
 ) => {
   try {
-    await client->exec({query: `DROP DATABASE IF EXISTS ${database}`})
-    await client->exec({query: `CREATE DATABASE ${database}`})
+    await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}`})
+    await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
     await client->exec({query: `USE ${database}`})
 
     await Promise.all(
