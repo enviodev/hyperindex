@@ -503,7 +503,7 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
 ) => {
-  let envioVersion = Utils.EnvioPackage.json.version
+  let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
     {
       url,

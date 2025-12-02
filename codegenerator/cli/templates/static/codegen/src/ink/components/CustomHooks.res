@@ -80,7 +80,7 @@ module InitApi = {
   })
 
   let getMessages = async (~config) => {
-    let envioVersion = Utils.EnvioPackage.json.version
+    let envioVersion = Utils.EnvioPackage.value.version
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
     switch await route->Rest.fetch(body, ~client) {

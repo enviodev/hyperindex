@@ -233,7 +233,7 @@ let main = async () => {
 
     let gsManagerRef = ref(None)
 
-    let envioVersion = Utils.EnvioPackage.json.version
+    let envioVersion = Utils.EnvioPackage.value.version
     Prometheus.Info.set(~version=envioVersion)
     Prometheus.RollbackEnabled.set(~enabled=indexer.config.shouldRollbackOnReorg)
 
