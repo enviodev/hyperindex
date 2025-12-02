@@ -856,8 +856,8 @@ let eventSignatures = [{}]
                     ))?;
 
                 format!(
-                    "let abi = Fuel.transpileAbi(%raw(`require`)(`../${{Path.\
-                     relativePathToRootFromGenerated}}/{}`))\n{}\n{}\n{chain_id_type_code}",
+                    "let abi = Fuel.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
+                     relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}\n{chain_id_type_code}",
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
                     abi.path_buf.to_string_lossy(),

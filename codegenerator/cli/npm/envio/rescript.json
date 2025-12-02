@@ -7,16 +7,17 @@
       "subdirs": true
     }
   ],
-  "suffix": ".res.js",
+  "suffix": ".res.mjs",
   "package-specs": {
-    "module": "commonjs",
+    "module": "esmodule",
     "in-source": true
   },
   "gentypeconfig": {
     "shims": {
       "Js": "Js"
     },
-    "generatedFileExtension": ".gen.ts"
+    "generatedFileExtension": ".gen.ts",
+    "moduleResolution": "node16"
   },
   "bs-dependencies": ["rescript-schema"],
   "bsc-flags": ["-open RescriptSchema"]

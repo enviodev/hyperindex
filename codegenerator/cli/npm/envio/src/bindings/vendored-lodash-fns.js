@@ -1,6 +1,6 @@
 /*
  Created by using esbuild command:
- `esbuild --bundle --platform=node --tree-shaking=true <FILE_PATH>`
+ `esbuild --bundle --platform=node --tree-shaking=true --format=esm <FILE_PATH>`
  on a js file with the following content:
  ```js
   import cloneDeep from "lodash-es/cloneDeep";
@@ -10,35 +10,6 @@
  This is simply a treeshaken vendoring of lodash-es/cloneDeep.js
 
   */
-"use strict";
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if ((from && typeof from === "object") || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, {
-          get: () => from[key],
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-        });
-  }
-  return to;
-};
-var __toCommonJS = (mod) =>
-  __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// src/bindings/vendored-lodash-fns-entry.js
-var vendored_lodash_fns_entry_exports = {};
-__export(vendored_lodash_fns_entry_exports, {
-  cloneDeep: () => cloneDeep_default,
-});
-module.exports = __toCommonJS(vendored_lodash_fns_entry_exports);
 
 // ../node_modules/.pnpm/lodash-es@4.17.21/node_modules/lodash-es/_listCacheClear.js
 function listCacheClear() {
@@ -1434,8 +1405,5 @@ function cloneDeep(value) {
   return baseClone_default(value, CLONE_DEEP_FLAG2 | CLONE_SYMBOLS_FLAG2);
 }
 var cloneDeep_default = cloneDeep;
-// Annotate the CommonJS export names for ESM import in node:
-0 &&
-  (module.exports = {
-    cloneDeep,
-  });
+
+export { cloneDeep_default as cloneDeep };

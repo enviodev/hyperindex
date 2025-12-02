@@ -1,4 +1,4 @@
-import { Greeter, User } from "generated";
+import { Greeter, type User } from "generated";
 
 /**
 Registers a handler that handles any values from the

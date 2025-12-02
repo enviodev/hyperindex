@@ -17,19 +17,20 @@
       "Js": "Js"
     },
     "generatedFileExtension": ".gen.ts",
+    "moduleResolution": "node16",
     "debug": {
       "all": false,
       "basic": false
     }
   },
   "package-specs": {
-    "module": "commonjs",
+    "module": "esmodule",
     "in-source": true
   },
   "jsx": {
     "version": 4
   },
-  "suffix": ".res.js",
+  "suffix": ".res.mjs",
   "bs-dependencies": ["generated", "rescript-schema", "helpers", "envio"],
   "bsc-flags": ["-open RescriptSchema"]
 }

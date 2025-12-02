@@ -1,6 +1,5 @@
 import assert from "assert";
-import { TestHelpers } from "generated";
-import type { User } from "generated";
+import { TestHelpers, type User } from "generated";
 
 const { MockDb, Greeter, Addresses } = TestHelpers;
 

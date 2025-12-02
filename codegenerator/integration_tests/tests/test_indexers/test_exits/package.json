@@ -1,19 +1,19 @@
 {
   "name": "test-exits",
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
     "codegen": "envio codegen",
-    "start": "ts-node generated/src/Index.res.js"
+    "start": "envio start"
   },
   "devDependencies": {
     "@types/node": "^18.16.1",
-    "typescript": "^5.0.4"
+    "typescript": "5.9.3"
   },
   "dependencies": {
-    "ts-node": "^10.9.1",
     "envio": "file:../../../../cli/npm/envio"
   },
   "optionalDependencies": {

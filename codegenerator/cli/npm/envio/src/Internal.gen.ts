@@ -7,7 +7,7 @@ import type {GenericContractRegister as $$genericContractRegister} from './Types
 
 import type {Invalid as $$noEventFilters} from './Types.ts';
 
-import type {t as Address_t} from './Address.gen';
+import type {t as Address_t} from './Address.gen.js';
 
 export type genericEvent<params,block,transaction> = {
   readonly params: params; 

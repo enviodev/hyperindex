@@ -67,7 +67,7 @@ module Transport = {
   external make: transportTarget => t = "transport"
 }
 
-@module external makeWithTransport: Transport.t => t = "pino"
+@module("pino") external makeWithTransport: Transport.t => t = "pino"
 
 type hooks = {logMethod: (array<string>, string, logLevel) => unit}
 
@@ -100,8 +100,8 @@ type options = {
   messageKey?: string,
 }
 
-@module external make: options => t = "pino"
-@module external makeWithOptionsAndTransport: (options, Transport.t) => t = "pino"
+@module("pino") external make: options => t = "pino"
+@module("pino") external makeWithOptionsAndTransport: (options, Transport.t) => t = "pino"
 
 type childParams
 let createChildParams: 'a => childParams = Utils.magic
@@ -123,7 +123,7 @@ module MultiStreamLogger = {
   type multiStreamRes
   @module("pino") external multistream: array<multiStream> => multiStreamRes = "multistream"
 
-  @module external makeWithMultiStream: (options, multiStreamRes) => t = "pino"
+  @module("pino") external makeWithMultiStream: (options, multiStreamRes) => t = "pino"
 
   type destinationOpts = {
     dest: string, //file path

@@ -10,12 +10,12 @@
       "subdirs": true
     }
   ],
-  "suffix": ".res.js",
+  "suffix": ".res.mjs",
   "jsx": {
     "version": 4
   },
   "package-specs": {
-    "module": "commonjs",
+    "module": "esmodule",
     "in-source": true
   },
   "bs-dependencies": ["generated", "envio", "rescript-schema"]

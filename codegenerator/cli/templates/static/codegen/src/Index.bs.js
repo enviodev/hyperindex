@@ -16,10 +16,10 @@
  * 2. Runs the new envio start command
  */
 
-const fs = require("fs");
-const path = require("path");
-const readline = require("readline");
-const { spawn } = require("child_process");
+import fs from "fs";
+import path from "path";
+import readline from "readline";
+import { spawn } from "child_process";
 
 // Function to update package.json
 function updatePackageJson() {

@@ -1,4 +1,16 @@
+@@directive("import packageJson from '../package.json' with { type: 'json' }")
+
 external magic: 'a => 'b = "%identity"
+
+@val external importPath: string => promise<unknown> = "import"
+
+@val
+external importPathWithJson: (
+  string,
+  @as(json`{with: {type: "json"}}`) _,
+) => promise<{
+  "default": Js.Json.t,
+}> = "import"
 
 let delay = milliseconds =>
   Js.Promise2.make((~resolve, ~reject as _) => {
@@ -674,8 +686,12 @@ let prettifyExn = exn => {
 module EnvioPackage = {
   type t = {version: string}
 
-  %%private(let getPackageJson = (): t => %raw(`require("../package.json")`))
-  let json: t = try getPackageJson() catch {
-  | _ => Js.Exn.raiseError("Failed to get package.json in envio package")
+  let value = try %raw(`packageJson`)->S.parseJsonOrThrow(
+    S.schema(s => {
+      version: s.matches(S.string),
+    }),
+  ) catch {
+  | S.Raised(error) =>
+    Js.Exn.raiseError(`Failed to get package.json in envio package: ${error->S.Error.message}`)
   }
 }

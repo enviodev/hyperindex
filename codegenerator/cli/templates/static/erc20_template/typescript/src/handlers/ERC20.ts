@@ -1,4 +1,4 @@
-import { ERC20, Account, Approval } from "generated";
+import { ERC20, type Account, type Approval } from "generated";
 
 ERC20.Approval.handler(async ({ event, context }) => {
   //  getting the owner Account entity
@@ -69,4 +69,3 @@ ERC20.Transfer.handler(async ({ event, context }) => {
     context.Account.set(accountObject);
   }
 });
-

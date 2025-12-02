@@ -86,8 +86,8 @@ type poolConfig = {
   fetchTypes?: bool, // Automatically fetches types on connect on initial connection. (default: true)
 }
 
-@module
-external makeSql: (~config: poolConfig) => sql = "postgres"
+@module("postgres")
+external makeSql: (~config: poolConfig) => sql = "default"
 
 @send external beginSql: (sql, sql => promise<'result>) => promise<'result> = "begin"
 

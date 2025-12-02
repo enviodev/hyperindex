@@ -2,18 +2,21 @@
 // Some parts like Sury reexport are impossible to implement
 // on the JS side, so we need to do it here
 
-const envioGen = require("./src/Envio.res.js");
-Object.assign(exports, envioGen);
+import * as Sury from "rescript-schema";
+import { schema as bigintSchema } from "./src/bindings/BigInt.res.mjs";
+import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 
-const Sury = require("rescript-schema");
+// Re-export everything from envioGen
+export * from "./src/Envio.res.mjs";
+
 // Important! Should match the index.d.ts file
-exports.S = {
+export const S = {
   string: Sury.string,
   jsonString: Sury.jsonString,
   boolean: Sury.boolean,
   int32: Sury.int32,
   number: Sury.number,
-  bigint: require("./src/bindings/BigInt.res.js").schema,
+  bigint: bigintSchema,
   never: Sury.never,
   union: Sury.union,
   object: Sury.object,
@@ -31,7 +34,7 @@ exports.S = {
   merge: Sury.merge,
   optional: Sury.optional,
   nullable: Sury.nullable,
-  bigDecimal: require("./src/bindings/BigDecimal.res.js").schema,
+  bigDecimal: bigDecimalSchema,
   // Nullish type will change in "sury@10"
   // nullish: Sury.nullish,
   assertOrThrow: Sury.assertOrThrow,

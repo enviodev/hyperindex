@@ -1,21 +1,27 @@
 {
+  /* For details: https://www.totaltypescript.com/tsconfig-cheat-sheet */
   "compilerOptions": {
-    "target": "es2020", //required for use with BigInt types
-    "lib": [
-      "es2020"
-    ],
-    "allowJs": true,
-    "checkJs": false,
-    "outDir": "build",
-    "strict": true,
-    "noImplicitAny": true,
+    /* Base Options: */
     "esModuleInterop": true,
-    "resolveJsonModule": true,
     "skipLibCheck": true,
-    "module": "CommonJS"
-  },
-  "include": [
-    "src",
-    "test"
-  ]
+    "target": "es2022",
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    /* For running Envio: */
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+
+    /* Code doesn't run in the DOM: */
+    "lib": ["es2022"]
+  }
 }

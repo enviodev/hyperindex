@@ -248,7 +248,7 @@ module BigText = {
     | @as("white") White
 
   type color = | ...chalkTheme | @as("system") System
-  @module @react.component
+  @module("ink-big-text") @react.component
   external make: (
     ~text: string,
     ~font: font=?, //default block
@@ -259,7 +259,7 @@ module BigText = {
     ~lineHeight: int=?, //default 1
     ~space: bool=?, //default true
     ~maxLength: int=?,
-  ) => React.element = "ink-big-text"
+  ) => React.element = "default"
 }
 
 module Spinner = {

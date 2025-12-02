@@ -57,7 +57,7 @@ let stateSchema = S.union([
 let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => {
   open Express
 
-  let app = makeCjs()
+  let app = make()
 
   let consoleCorsMiddleware = (req, res, next) => {
     switch req.headers->Js.Dict.get("origin") {
@@ -233,7 +233,7 @@ let main = async () => {
 
     let gsManagerRef = ref(None)
 
-    let envioVersion = Utils.EnvioPackage.json.version
+    let envioVersion = Utils.EnvioPackage.value.version
     Prometheus.Info.set(~version=envioVersion)
     Prometheus.RollbackEnabled.set(~enabled=indexer.config.shouldRollbackOnReorg)
 

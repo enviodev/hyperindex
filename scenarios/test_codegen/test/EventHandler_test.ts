@@ -1,6 +1,6 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers, User } from "generated";
+import { TestHelpers, type User } from "generated";
 
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 

@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     "target": "es2020", //required for use with BigInt types
-    "module": "commonjs",
+    "module": "Node16",
+    "moduleResolution": "Node16",
     "lib": ["es6"],
     "allowJs": true,
     "checkJs": false,

@@ -9,11 +9,9 @@ field_selection:
     - hash
 contracts:
   - name: Noop
-    handler: ./src/EventHandlers.res.js
     events:
       - event: "EmptyEvent()"
   - name: EventFiltersTest
-    handler: ./src/EventHandlers.res.js
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 amount)
       - event: WildcardWithAddress(address indexed from, address indexed to, uint256 amount)
@@ -37,7 +35,6 @@ networks:
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
-        handler: ./src/EventHandlers.res.js
         events:
           - event: "CustomSelection()"
             field_selection:
@@ -60,18 +57,15 @@ networks:
       - name: NftFactory
         abi_file_path: abis/NftFactory.json
         address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
-        handler: src/EventHandlers.ts
         events:
           - event: "SimpleNftCreated"
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
-        handler: src/EventHandlers.ts
         events:
           - event: "Erc20Transfer(address indexed from, address indexed to, uint256 amount)"
           - event: "Transfer"
       - name: TestEvents
         abi_file_path: ./contracts/artifacts/contracts/TestEvents.sol/TestEvents.json
-        handler: src/EventHandlers.ts
         events:
           - event: "IndexedUint"
           - event: "IndexedInt"

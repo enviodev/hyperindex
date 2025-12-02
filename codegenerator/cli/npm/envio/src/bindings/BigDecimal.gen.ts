@@ -3,9 +3,9 @@
 /* eslint-disable */
 /* tslint:disable */
 
-const BigDecimalJS = require('./BigDecimal.res.js');
+import * as BigDecimalJS from './BigDecimal.res.mjs';
 
-import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen';
+import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen.js';
 
 import type {default as $$t} from 'bignumber.js';
 

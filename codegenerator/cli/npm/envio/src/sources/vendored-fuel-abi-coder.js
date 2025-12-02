@@ -1,5 +1,3 @@
-"use strict";
-
 // Copyright (C) Fuel Labs <contact@fuel.sh> (https://fuel.network/)
 
 // This is a vendored compiled file from @fuel-ts/abi-coder@0.86.0 package
@@ -17,6 +15,7 @@
 // 2. Changed BigNumberCoder to return BigInt instead of BN.js
 // 3. Exposed AbiCoder and added getLogDecoder static method, to do all prep work once
 // 4. Added transpileAbi function to convert json abi to old fuel abi
+// 5. Converted from CommonJS to ESM
 
 // Here's the generated diff from pnpm patch
 
@@ -85,75 +84,70 @@
 //    ArrayCoder,
 //    B256Coder,
 
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __defNormalProp = (obj, key, value) =>
-  key in obj
-    ? __defProp(obj, key, {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-        value,
-      })
-    : (obj[key] = value);
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if ((from && typeof from === "object") || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, {
-          get: () => from[key],
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-        });
-  }
-  return to;
-};
-var __toCommonJS = (mod) =>
-  __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+// ESM imports for @fuel-ts packages
+import * as import_errors from "@fuel-ts/errors";
+import * as import_utils from "@fuel-ts/utils";
+import * as import_math from "@fuel-ts/math";
+import * as import_crypto from "@fuel-ts/crypto";
+import * as import_hasher from "@fuel-ts/hasher";
+
+// Alias imports for compatibility with inline references
+var import_errors2 = import_errors;
+var import_errors3 = import_errors;
+var import_errors4 = import_errors;
+var import_errors5 = import_errors;
+var import_errors6 = import_errors;
+var import_errors7 = import_errors;
+var import_errors8 = import_errors;
+var import_errors9 = import_errors;
+var import_errors10 = import_errors;
+var import_errors11 = import_errors;
+var import_errors12 = import_errors;
+var import_errors13 = import_errors;
+var import_errors14 = import_errors;
+var import_errors15 = import_errors;
+var import_errors16 = import_errors;
+var import_errors17 = import_errors;
+var import_errors18 = import_errors;
+var import_errors19 = import_errors;
+var import_errors20 = import_errors;
+var import_errors21 = import_errors;
+var import_utils2 = import_utils;
+var import_utils3 = import_utils;
+var import_utils4 = import_utils;
+var import_utils5 = import_utils;
+var import_utils6 = import_utils;
+var import_utils7 = import_utils;
+var import_utils8 = import_utils;
+var import_utils9 = import_utils;
+var import_utils10 = import_utils;
+var import_utils11 = import_utils;
+var import_utils12 = import_utils;
+var import_math2 = import_math;
+var import_math3 = import_math;
+var import_math4 = import_math;
+var import_math5 = import_math;
+var import_math6 = import_math;
+var import_math7 = import_math;
+var import_math8 = import_math;
+var import_math9 = import_math;
+var import_math10 = import_math;
+var import_math11 = import_math;
+var import_math12 = import_math;
+
 var __publicField = (obj, key, value) => {
-  __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+  const normalProp = (o, k, v) =>
+    k in o
+      ? Object.defineProperty(o, k, {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+          value: v,
+        })
+      : (o[k] = v);
+  normalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
   return value;
 };
-
-// src/index.ts
-var src_exports = {};
-__export(src_exports, {
-  ASSET_ID_LEN: () => ASSET_ID_LEN,
-  AbiCoder: () => AbiCoder,
-  transpileAbi: () => transpileAbi,
-  ArrayCoder: () => ArrayCoder,
-  B256Coder: () => B256Coder,
-  B512Coder: () => B512Coder,
-  BYTES_32: () => BYTES_32,
-  BigNumberCoder: () => BigNumberCoder,
-  BooleanCoder: () => BooleanCoder,
-  ByteCoder: () => ByteCoder,
-  CONTRACT_ID_LEN: () => CONTRACT_ID_LEN,
-  Coder: () => Coder,
-  ENCODING_V1: () => ENCODING_V1,
-  EnumCoder: () => EnumCoder,
-  INPUT_COIN_FIXED_SIZE: () => INPUT_COIN_FIXED_SIZE,
-  Interface: () => Interface,
-  NumberCoder: () => NumberCoder,
-  OptionCoder: () => OptionCoder,
-  RawSliceCoder: () => RawSliceCoder,
-  SCRIPT_FIXED_SIZE: () => SCRIPT_FIXED_SIZE,
-  StdStringCoder: () => StdStringCoder,
-  StrSliceCoder: () => StrSliceCoder,
-  StringCoder: () => StringCoder,
-  StructCoder: () => StructCoder,
-  TupleCoder: () => TupleCoder,
-  UTXO_ID_LEN: () => UTXO_ID_LEN,
-  VecCoder: () => VecCoder,
-  WORD_SIZE: () => WORD_SIZE,
-  calculateVmTxMemory: () => calculateVmTxMemory,
-});
-module.exports = __toCommonJS(src_exports);
 
 // src/encoding/coders/AbstractCoder.ts
 var Coder = class {
@@ -168,8 +162,6 @@ var Coder = class {
 };
 
 // src/encoding/coders/ArrayCoder.ts
-var import_errors = require("@fuel-ts/errors");
-var import_utils = require("@fuel-ts/utils");
 
 // src/utils/constants.ts
 var U8_CODER_TYPE = "u8";
@@ -319,9 +311,6 @@ var ArrayCoder = class extends Coder {
 };
 
 // src/encoding/coders/B256Coder.ts
-var import_errors2 = require("@fuel-ts/errors");
-var import_math = require("@fuel-ts/math");
-var import_utils2 = require("@fuel-ts/utils");
 var B256Coder = class extends Coder {
   constructor() {
     super("b256", "b256", WORD_SIZE * 4);
@@ -367,9 +356,6 @@ var B256Coder = class extends Coder {
 };
 
 // src/encoding/coders/B512Coder.ts
-var import_errors3 = require("@fuel-ts/errors");
-var import_math2 = require("@fuel-ts/math");
-var import_utils3 = require("@fuel-ts/utils");
 var B512Coder = class extends Coder {
   constructor() {
     super("b512", "struct B512", WORD_SIZE * 8);
@@ -418,8 +404,6 @@ var B512Coder = class extends Coder {
 };
 
 // src/encoding/coders/BigNumberCoder.ts
-var import_errors4 = require("@fuel-ts/errors");
-var import_math3 = require("@fuel-ts/math");
 var encodedLengths = {
   u64: WORD_SIZE,
   u256: WORD_SIZE * 4,
@@ -460,8 +444,6 @@ var BigNumberCoder = class extends Coder {
 };
 
 // src/encoding/coders/BooleanCoder.ts
-var import_errors5 = require("@fuel-ts/errors");
-var import_math4 = require("@fuel-ts/math");
 var BooleanCoder = class extends Coder {
   options;
   constructor(
@@ -507,8 +489,6 @@ var BooleanCoder = class extends Coder {
 };
 
 // src/encoding/coders/ByteCoder.ts
-var import_errors6 = require("@fuel-ts/errors");
-var import_math5 = require("@fuel-ts/math");
 var ByteCoder = class extends Coder {
   constructor() {
     super("struct", "struct Bytes", WORD_SIZE);
@@ -543,9 +523,6 @@ var ByteCoder = class extends Coder {
 __publicField(ByteCoder, "memorySize", 1);
 
 // src/encoding/coders/EnumCoder.ts
-var import_errors7 = require("@fuel-ts/errors");
-var import_math6 = require("@fuel-ts/math");
-var import_utils4 = require("@fuel-ts/utils");
 var EnumCoder = class extends Coder {
   name;
   coders;
@@ -660,8 +637,6 @@ var EnumCoder = class extends Coder {
 };
 
 // src/encoding/coders/NumberCoder.ts
-var import_errors8 = require("@fuel-ts/errors");
-var import_math7 = require("@fuel-ts/math");
 var getLength = (baseType) => {
   switch (baseType) {
     case "u8":
@@ -742,8 +717,6 @@ var OptionCoder = class extends EnumCoder {
 };
 
 // src/encoding/coders/RawSliceCoder.ts
-var import_errors9 = require("@fuel-ts/errors");
-var import_math8 = require("@fuel-ts/math");
 var RawSliceCoder = class extends Coder {
   constructor() {
     super("raw untyped slice", "raw untyped slice", WORD_SIZE);
@@ -786,9 +759,6 @@ var RawSliceCoder = class extends Coder {
 };
 
 // src/encoding/coders/StdStringCoder.ts
-var import_errors10 = require("@fuel-ts/errors");
-var import_math9 = require("@fuel-ts/math");
-var import_utils5 = require("@fuel-ts/utils");
 var StdStringCoder = class extends Coder {
   constructor() {
     super("struct", "struct String", WORD_SIZE);
@@ -826,9 +796,6 @@ var StdStringCoder = class extends Coder {
 __publicField(StdStringCoder, "memorySize", 1);
 
 // src/encoding/coders/StrSliceCoder.ts
-var import_errors11 = require("@fuel-ts/errors");
-var import_math10 = require("@fuel-ts/math");
-var import_utils6 = require("@fuel-ts/utils");
 var StrSliceCoder = class extends Coder {
   constructor() {
     super("strSlice", "str", WORD_SIZE);
@@ -863,8 +830,6 @@ var StrSliceCoder = class extends Coder {
 __publicField(StrSliceCoder, "memorySize", 1);
 
 // src/encoding/coders/StringCoder.ts
-var import_errors12 = require("@fuel-ts/errors");
-var import_utils7 = require("@fuel-ts/utils");
 var StringCoder = class extends Coder {
   constructor(length) {
     super("string", `str[${length}]`, length);
@@ -900,8 +865,6 @@ var StringCoder = class extends Coder {
 };
 
 // src/encoding/coders/StructCoder.ts
-var import_errors13 = require("@fuel-ts/errors");
-var import_utils8 = require("@fuel-ts/utils");
 var StructCoder = class extends Coder {
   name;
   coders;
@@ -951,8 +914,6 @@ var StructCoder = class extends Coder {
 };
 
 // src/encoding/coders/TupleCoder.ts
-var import_errors14 = require("@fuel-ts/errors");
-var import_utils9 = require("@fuel-ts/utils");
 var TupleCoder = class extends Coder {
   coders;
   #hasNestedOption;
@@ -998,9 +959,6 @@ var TupleCoder = class extends Coder {
 };
 
 // src/encoding/coders/VecCoder.ts
-var import_errors15 = require("@fuel-ts/errors");
-var import_math11 = require("@fuel-ts/math");
-var import_utils10 = require("@fuel-ts/utils");
 var VecCoder = class extends Coder {
   coder;
   #hasNestedOption;
@@ -1062,14 +1020,10 @@ var VecCoder = class extends Coder {
 };
 
 // src/Interface.ts
-var import_errors21 = require("@fuel-ts/errors");
-var import_utils12 = require("@fuel-ts/utils");
 
 // src/ResolvedAbiType.ts
-var import_errors17 = require("@fuel-ts/errors");
 
 // src/utils/json-abi.ts
-var import_errors16 = require("@fuel-ts/errors");
 var getEncodingVersion = (encoding) => {
   switch (encoding) {
     case void 0:
@@ -1274,10 +1228,8 @@ var ResolvedAbiType = class {
 };
 
 // src/encoding/strategies/getCoderForEncoding.ts
-var import_errors19 = require("@fuel-ts/errors");
 
 // src/encoding/strategies/getCoderV1.ts
-var import_errors18 = require("@fuel-ts/errors");
 
 // src/encoding/coders/VoidCoder.ts
 var VoidCoder = class extends Coder {
@@ -1441,11 +1393,6 @@ var AbiCoder = class {
 };
 
 // src/FunctionFragment.ts
-var import_crypto = require("@fuel-ts/crypto");
-var import_errors20 = require("@fuel-ts/errors");
-var import_hasher = require("@fuel-ts/hasher");
-var import_math12 = require("@fuel-ts/math");
-var import_utils11 = require("@fuel-ts/utils");
 
 // src/utils/getFunctionInputs.ts
 var getFunctionInputs = (params) => {
@@ -1811,37 +1758,35 @@ var Interface = class {
     });
   }
 };
-// Annotate the CommonJS export names for ESM import in node:
-0 &&
-  (module.exports = {
-    AbiCoder,
-    transpileAbi,
-    ASSET_ID_LEN,
-    ArrayCoder,
-    B256Coder,
-    B512Coder,
-    BYTES_32,
-    BigNumberCoder,
-    BooleanCoder,
-    ByteCoder,
-    CONTRACT_ID_LEN,
-    Coder,
-    ENCODING_V1,
-    EnumCoder,
-    INPUT_COIN_FIXED_SIZE,
-    Interface,
-    NumberCoder,
-    OptionCoder,
-    RawSliceCoder,
-    SCRIPT_FIXED_SIZE,
-    StdStringCoder,
-    StrSliceCoder,
-    StringCoder,
-    StructCoder,
-    TupleCoder,
-    UTXO_ID_LEN,
-    VecCoder,
-    WORD_SIZE,
-    calculateVmTxMemory,
-  });
-//# sourceMappingURL=index.js.map
+
+export {
+  AbiCoder,
+  transpileAbi,
+  ASSET_ID_LEN,
+  ArrayCoder,
+  B256Coder,
+  B512Coder,
+  BYTES_32,
+  BigNumberCoder,
+  BooleanCoder,
+  ByteCoder,
+  CONTRACT_ID_LEN,
+  Coder,
+  ENCODING_V1,
+  EnumCoder,
+  INPUT_COIN_FIXED_SIZE,
+  Interface,
+  NumberCoder,
+  OptionCoder,
+  RawSliceCoder,
+  SCRIPT_FIXED_SIZE,
+  StdStringCoder,
+  StrSliceCoder,
+  StringCoder,
+  StructCoder,
+  TupleCoder,
+  UTXO_ID_LEN,
+  VecCoder,
+  WORD_SIZE,
+  calculateVmTxMemory,
+};

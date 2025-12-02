@@ -131,7 +131,7 @@ describe("Hash", () => {
   })
 
   it("function", () => {
-    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`function() {}`)), `function () { }`)
+    Assert.deepEqual(Utils.Hash.makeOrThrow(%raw(`function() {}`)), `function() {}`)
   })
 
   it("undefined", () => {

@@ -8,6 +8,7 @@ let startRegistration: (
   ~multichain: Config.multichain,
   ~preloadHandlers: bool,
 ) => unit
+let isPendingRegistration: unit => bool
 let finishRegistration: unit => registrations
 
 type t

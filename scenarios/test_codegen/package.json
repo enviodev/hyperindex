@@ -1,9 +1,10 @@
 {
   "name": "gravatar",
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
     "ts:clean": "tsc --clean",
-    "ts:build": "hardhat compile && tsc --build",
+    "ts:build": "tsc --build",
     "ts:test": "tsc --noEmit",
     "ts:watch": "tsc --watch",
     "gen:clean": "(cd generated && rescript clean)",
@@ -11,8 +12,8 @@
     "gen:watch": "(cd generated && rescript -w)",
     "res:clean": "rescript clean",
     "res:build": "rescript",
-    "res:start": "node generated/src/Index.res.js",
     "res:watch": "rescript -w",
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit 'test/**/*.{ts,res.mjs}'",
     "test": "rescript && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
     "test:log": "DEBUG=true npm test",
@@ -20,7 +21,7 @@
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
-    "start": "ts-node ./generated/src/Index.res.js"
+    "start": "envio start"
   },
   "keywords": [
     "ReScript"
@@ -29,9 +30,6 @@
   "license": "MIT",
   "devDependencies": {
     "@glennsl/rescript-jest": "^0.9.2",
-    "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
-    "@typechain/ethers-v6": "^0.3.2",
-    "@typechain/hardhat": "^6.1.6",
     "@types/chai": "^4.3.5",
     "@types/chai-as-promised": "^7.1.5",
     "@types/mocha": "^10.0.1",
@@ -39,21 +37,19 @@
     "chai": "^4.3.7",
     "chai-as-promised": "^7.1.1",
     "ethers": "^6.4.0",
-    "hardhat": "2.22.5",
+    "tsx": "4.21.0",
     "mocha": "^10.2.0",
     "nyc": "^15.1.0",
     "rescript": "11.1.3",
-    "rescript-schema": "9.3.0",
-    "sinon": "^15.0.4",
-    "ts-node": "^10.9.1"
+    "rescript-schema": "9.3.4",
+    "sinon": "^15.0.4"
   },
   "dependencies": {
     "@rescript/react": "0.12.1",
     "bignumber.js": "^9.1.2",
-    "hardhat-abi-exporter": "^2.10.1",
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
-    "typescript": "^5.0.4",
+    "typescript": "5.9.3",
     "ts-expect": "1.3.0",
     "viem": "2.21.0",
     "envio": "file:../../codegenerator/cli/npm/envio"
@@ -62,6 +58,6 @@
     "generated": "./generated"
   },
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   }
 }

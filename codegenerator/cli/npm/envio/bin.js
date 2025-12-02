@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 //@ts-check
-"use strict";
 
-const { spawnSync } = require("child_process");
+import { spawnSync } from "child_process";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
 
 /**
  * Returns the executable path for envio located inside node_modules
@@ -15,7 +17,7 @@ const { spawnSync } = require("child_process");
 function getExePath() {
   const arch = process.arch;
   /**
-   * @type string
+   * @type {string}
    */
   let os = process.platform;
   let extension = "";

@@ -1,6 +1,7 @@
 {
   "name": "helpers",
   "version": "0.0.0",
+  "type": "module",
   "namespace": "Helpers",
   "scripts": {
     "build": "rescript",
@@ -14,10 +15,10 @@
   "license": "MIT",
   "dependencies": {
     "rescript": "11.1.3",
-    "rescript-schema": "9.3.0",
+    "rescript-schema": "9.3.4",
     "envio": "file:../../codegenerator/cli/npm/envio"
   },
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   }
 }

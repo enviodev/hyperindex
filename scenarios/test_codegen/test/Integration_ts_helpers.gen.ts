@@ -3,9 +3,9 @@
 /* eslint-disable */
 /* tslint:disable */
 
-const Integration_ts_helpersJS = require('./Integration_ts_helpers.res.js');
+import * as Integration_ts_helpersJS from './Integration_ts_helpers.res.mjs';
 
-import type {t as Address_t} from 'envio/src/Address.gen';
+import type {t as Address_t} from 'envio/src/Address.gen.js';
 
 export abstract class chainConfig { protected opaque!: any }; /* simulate opaque types */
 

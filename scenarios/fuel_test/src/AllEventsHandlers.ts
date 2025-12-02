@@ -3,7 +3,7 @@
  */
 import { S } from "envio";
 import { AllEvents } from "generated";
-import { expectType, TypeEqual } from "ts-expect";
+import { expectType, type TypeEqual } from "ts-expect";
 
 type RemoveReadonly<T> = T extends {}
   ? {

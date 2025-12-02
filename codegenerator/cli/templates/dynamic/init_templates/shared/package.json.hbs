@@ -1,23 +1,23 @@
 {
   "name": "{{project_name}}",
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.{{#if is_rescript}}res.mjs{{else}}ts{{/if}}",
   {{#if is_typescript}}
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
-    "mocha": "ts-mocha test/**/*.ts",
   {{/if}}
   {{#if is_rescript}}
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
-    "mocha": "pnpm build && mocha",
   {{/if}}
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
     "start": "{{#if is_rescript}}pnpm build && {{/if}}envio start",
-    "test": "pnpm mocha"
+    "test": "{{#if is_rescript}}pnpm build && {{/if}}pnpm mocha"
   },
   "devDependencies": {
   {{#if is_rescript}}
@@ -28,10 +28,10 @@
     "@types/chai": "^4.3.11",    
     "@types/mocha": "10.0.6",
     "@types/node": "20.8.8",
-    "ts-mocha": "^10.0.0",
-    "typescript": "5.2.2",
+    "typescript": "5.9.3",
     "chai": "4.3.10",
-  {{/if}}    
+  {{/if}}
+    "tsx": "4.21.0",
     "mocha": "10.2.0"
   },
   "dependencies": {
@@ -41,6 +41,6 @@
     "generated": "{{relative_path_from_root_to_generated}}"
   },
   "engines": {
-    "node": ">=22.0.0 <=22.10.0"
+    "node": ">=22.0.0"
   }
 }

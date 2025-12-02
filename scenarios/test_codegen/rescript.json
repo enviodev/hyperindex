@@ -11,15 +11,15 @@
       "subdirs": true
     }
   ],
-  "suffix": ".res.js",
+  "suffix": ".res.mjs",
   "package-specs": {
-    "module": "commonjs",
+    "module": "esmodule",
     "in-source": true
   },
   "gentypeconfig": {
     "language": "typescript",
     "generatedFileExtension": ".gen.ts",
-    "module": "commonjs",
+    "moduleResolution": "node16",
     "debug": {
       "all": false,
       "basic": false
