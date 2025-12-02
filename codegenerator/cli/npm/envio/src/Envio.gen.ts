@@ -11,7 +11,7 @@ import type {Logger as $$logger} from './Types.ts';
 
 import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen.js';
 
-export type blockEvent = { readonly number: number; readonly chainId: number };
+export type blockEvent = { readonly number: number };
 
 export type fuelBlockEvent = { readonly height: number; readonly chainId: number };
 

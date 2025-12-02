@@ -1,4 +1,4 @@
-import { deepEqual, fail } from "assert";
+import { deepEqual, equal, fail } from "assert";
 import {
   createEffect,
   type Effect,
@@ -19,6 +19,7 @@ import {
   type eventLog,
   type NftFactory_SimpleNftCreated_eventArgs,
   type NftFactory_SimpleNftCreated_event,
+  type chain,
   onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -155,6 +156,9 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     parentHash: "0xParentHash",
   });
   S.assertOrThrow(event.block, blockSchema)!;
+  let chainFromChains = context.chains[event.chainId];
+  deepEqual(context.chain.id, event.chainId);
+  equal(chainFromChains, context.chain);
 
   // We already do type checking in the tests,
   // but double-check that we receive correct types
@@ -186,14 +190,23 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chains,
       {
-        [chainId: string]: {
-          readonly isReady: boolean;
+        [chainId in chain]: {
+          readonly id: chain;
+          readonly isLive: boolean;
         };
       }
     >
   >(true);
 
-  console.log("event.transaction.hash", event.transaction.hash);
+  expectType<
+    TypeEqual<
+      typeof context.chain,
+      {
+        readonly id: chain;
+        readonly isLive: boolean;
+      }
+    >
+  >(true);
 
   context.CustomSelectionTestPass.set({
     id: event.transaction.hash,

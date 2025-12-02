@@ -505,7 +505,10 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
 
     // Create a mock chains state where the processing chain is ready (simulating "Live" mode)
     let chains = Js.Dict.empty()
-    chains->Js.Dict.set(processingChainId->Int.toString, {Internal.isReady: true})
+    chains->Js.Dict.set(
+      processingChainId->Int.toString,
+      {id: processingChainId, Internal.isLive: true},
+    )
 
     try {
       await batch->EventProcessing.preloadBatchOrThrow(
