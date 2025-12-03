@@ -232,7 +232,7 @@ let updateProgressedChains = (
         // Calculate and set latency metrics
         switch batch->Batch.findLastEventItem(~chainId=chain->ChainMap.Chain.toChainId) {
         | Some(eventItem) => {
-            let blockTimestamp = eventItem.event.block->indexer.config.platform.getTimestamp
+            let blockTimestamp = eventItem.event.block->indexer.config.ecosystem.getTimestamp
             let currentTimeMs = Js.Date.now()->Float.toInt
             let blockTimestampMs = blockTimestamp * 1000
             let latencyMs = currentTimeMs - blockTimestampMs

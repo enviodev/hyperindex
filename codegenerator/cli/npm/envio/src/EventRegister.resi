@@ -3,7 +3,7 @@ type registrations = {
   mutable hasEvents: bool,
 }
 
-let startRegistration: (~platform: Platform.t, ~multichain: Config.multichain) => unit
+let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Config.multichain) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: unit => registrations
 

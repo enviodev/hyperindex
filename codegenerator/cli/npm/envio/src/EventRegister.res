@@ -4,7 +4,7 @@ type registrations = {
 }
 
 type activeRegistration = {
-  platform: Platform.t,
+  ecosystem: Ecosystem.t,
   multichain: Config.multichain,
   registrations: registrations,
   mutable finished: bool,
@@ -35,9 +35,9 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-let startRegistration = (~platform, ~multichain) => {
+let startRegistration = (~ecosystem, ~multichain) => {
   let r = {
-    platform,
+    ecosystem,
     multichain,
     registrations: {
       onBlockByChainId: Js.Dict.empty(),

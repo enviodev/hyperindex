@@ -321,7 +321,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
       ) {
       | Some(contractName) => {
           let addFunction = (contractAddress: Address.t) => {
-            let validatedAddress = if params.config.platform.name === Evm {
+            let validatedAddress = if params.config.ecosystem.name === Evm {
               // The value is passed from the user-land,
               // so we need to validate and checksum/lowercase the address.
               if params.config.lowercaseAddresses {
