@@ -436,9 +436,8 @@ networks:
 - **Global contracts section** defines handlers and events
 - **Network sections** only define addresses for those contracts
 - **Never repeat** handler, events, or other contract configuration in network sections
-- **Use `unordered_multichain_mode: true`** for proper multichain support
 
-**✅ Step 3 Quality Check:**
+  **✅ Step 3 Quality Check:**
 
 #### **3.1: Review Migration Patterns and Quality Checks**
 

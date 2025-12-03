@@ -166,10 +166,11 @@ pub mod evm {
         pub chains: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should use a single queue for all \
-                           chains or a queue per chain (default: false)"
+            description = "Multichain mode: 'ordered' processes events across chains in order, \
+                           'unordered' processes chain events in order, but non-deterministically \
+                           relatively to other chains (default: unordered)"
         )]
-        pub unordered_multichain_mode: Option<bool>,
+        pub multichain: Option<Multichain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "The event decoder to use for the indexer (default: hypersync-client)"
@@ -221,6 +222,13 @@ pub mod evm {
     pub enum AddressFormat {
         Checksum,
         Lowercase,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Multichain {
+        Ordered,
+        Unordered,
     }
 
     impl Display for HumanConfig {

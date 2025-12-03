@@ -132,14 +132,15 @@ impl human_config::evm::Network {
         &self,
         human_config: &human_config::evm::HumanConfig,
     ) -> anyhow::Result<()> {
-        let is_unordered_multichain_mode = human_config.unordered_multichain_mode.unwrap_or(false);
+        let is_ordered_multichain_mode =
+            matches!(human_config.multichain, Some(human_config::evm::Multichain::Ordered));
         let is_multichain_indexer = human_config.chains.len() > 1;
-        if !is_unordered_multichain_mode && is_multichain_indexer {
+        if is_ordered_multichain_mode && is_multichain_indexer {
             let make_err = |finite_end_block: u64| {
                 Err(anyhow!(
-                    "Network {} has a finite end block of {}. Please set an end_block that is \
+                    "Chain {} has a finite end block of {}. Please set an end_block that is \
                      less than or equal to the finite end block in your config or set \
-                     \"unordered_multichain_mode\" to true. Your multichain indexer will \
+                     \"multichain\" to \"unordered\". Your multichain indexer will \
                      otherwise be stuck when it reaches the end of this chain.",
                     self.id,
                     finite_end_block

@@ -1362,7 +1362,10 @@ type chain = [{chain_id_type}]"#,
             gql_enums,
             chain_configs,
             persisted_state,
-            is_unordered_multichain_mode: cfg.unordered_multichain_mode,
+            is_unordered_multichain_mode: matches!(
+                cfg.multichain,
+                crate::config_parsing::human_config::evm::Multichain::Unordered
+            ),
             should_rollback_on_reorg: cfg.rollback_on_reorg,
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,

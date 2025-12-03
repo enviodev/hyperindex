@@ -21,10 +21,6 @@ chains:
     contracts:
       - name: Greeter #A reference to the global contract definition
         address: 0xdEe21B97AB77a16B4b236F952e586cf8408CF32A
-# Unordered multichain mode allows you to index events from multiple chains
-# in realtime but doesn't guarentee ordering between chains
-# https://docs.envio.dev/docs/HyperIndex/multichain-indexing#unordered-multichain-mode
-unordered_multichain_mode: true
 # Address format for Ethereum addresses: 'checksum' or 'lowercase'
 # using lowercase addresses is slightly faster
 address_format: lowercase

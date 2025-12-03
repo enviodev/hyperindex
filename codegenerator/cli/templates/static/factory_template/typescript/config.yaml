@@ -45,4 +45,3 @@ chains:
         address:
           - 0x33128a8fC17869897dcE68Ed026d694621f6FDfD
       - name: UniswapV3Pool
-unordered_multichain_mode: true

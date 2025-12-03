@@ -403,7 +403,7 @@ pub struct SystemConfig {
     pub parsed_project_paths: ParsedProjectPaths,
     pub chains: NetworkMap,
     pub contracts: ContractMap,
-    pub unordered_multichain_mode: bool,
+    pub multichain: human_config::evm::Multichain,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
     pub schema: Schema,
@@ -697,9 +697,10 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    unordered_multichain_mode: evm_config
-                        .unordered_multichain_mode
-                        .unwrap_or(false),
+                    multichain: evm_config
+                        .multichain
+                        .clone()
+                        .unwrap_or(human_config::evm::Multichain::Unordered),
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
                     schema,
@@ -846,7 +847,7 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    unordered_multichain_mode: false,
+                    multichain: human_config::evm::Multichain::Unordered,
                     rollback_on_reorg: false,
                     save_full_history: false,
                     schema,
@@ -2072,7 +2073,7 @@ mod test {
                 confirmed_block_threshold: None,
                 contracts: vec![],
             }],
-            unordered_multichain_mode: None,
+            multichain: None,
             event_decoder: None,
             rollback_on_reorg: None,
             save_full_history: None,
@@ -2119,7 +2120,7 @@ mod test {
                 confirmed_block_threshold: None,
                 contracts: vec![],
             }],
-            unordered_multichain_mode: None,
+            multichain: None,
             event_decoder: None,
             rollback_on_reorg: None,
             save_full_history: None,

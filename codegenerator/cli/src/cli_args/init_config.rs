@@ -164,7 +164,7 @@ pub mod evm {
                 output: None,
                 contracts,
                 chains: chains_map.into_values().sorted_by_key(|v| v.id).collect(),
-                unordered_multichain_mode: Some(true),
+                multichain: None, // Default is Unordered
                 event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,

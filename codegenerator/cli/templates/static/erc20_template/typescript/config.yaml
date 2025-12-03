@@ -10,10 +10,6 @@ chains:
         events:
           - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
           - event: "Transfer(address indexed from, address indexed to, uint256 value)"
-# Unordered multichain mode allows you to index events from multiple chains
-# in realtime but doesn't guarentee ordering between chains
-# https://docs.envio.dev/docs/HyperIndex/multichain-indexing#unordered-multichain-mode
-unordered_multichain_mode: true
 # Address format for Ethereum addresses: 'checksum' or 'lowercase'
 # using lowercase addresses is slightly faster
 address_format: lowercase
