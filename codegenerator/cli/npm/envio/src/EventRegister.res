@@ -6,7 +6,6 @@ type registrations = {
 type activeRegistration = {
   platform: Platform.t,
   multichain: Config.multichain,
-  preloadHandlers: bool,
   registrations: registrations,
   mutable finished: bool,
 }
@@ -36,11 +35,10 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-let startRegistration = (~platform, ~multichain, ~preloadHandlers) => {
+let startRegistration = (~platform, ~multichain) => {
   let r = {
     platform,
     multichain,
-    preloadHandlers,
     registrations: {
       onBlockByChainId: Js.Dict.empty(),
       hasEvents: false,

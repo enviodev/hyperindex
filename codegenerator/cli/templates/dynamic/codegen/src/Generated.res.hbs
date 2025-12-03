@@ -125,7 +125,6 @@ let registerAllHandlers = async () => {
   EventRegister.startRegistration(
     ~platform=configWithoutRegistrations.platform,
     ~multichain=configWithoutRegistrations.multichain,
-    ~preloadHandlers=configWithoutRegistrations.preloadHandlers,
   )
 
   // Auto-load all .js files from src/handlers directory
