@@ -165,7 +165,7 @@ type eventItem = private {
   event: event,
 }
 
-// Opaque type to support both EVM and Fuel platforms
+// Opaque type to support both EVM and other ecosystems
 type blockEvent
 
 type onBlockArgs = {

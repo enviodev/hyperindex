@@ -123,7 +123,7 @@ let configWithoutRegistrations = makeGeneratedConfig()
 
 let registerAllHandlers = async () => {
   EventRegister.startRegistration(
-    ~platform=configWithoutRegistrations.platform,
+    ~ecosystem=configWithoutRegistrations.ecosystem,
     ~multichain=configWithoutRegistrations.multichain,
   )
 
