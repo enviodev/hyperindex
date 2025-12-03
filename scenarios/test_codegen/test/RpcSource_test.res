@@ -41,7 +41,7 @@ describe("RpcSource - name", () => {
 describe("RpcSource - getHeightOrThrow", () => {
   Async.it("Returns the name of the source including sanitized rpc url", async () => {
     let source = RpcSource.make({
-      url: "https://eth.rpc.hypersync.xyz",
+      url: "https://eth.drpc.org",
       chain: MockConfig.chain1337,
       contracts: [],
       eventRouter: EventRouter.empty(),
