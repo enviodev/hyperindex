@@ -105,8 +105,6 @@ enum ApiTokenInput {
     Create,
     #[strum(serialize = "Add an existing API token")]
     AddExisting,
-    #[strum(serialize = "Skip for now, I'll add later")]
-    Skip,
 }
 pub async fn prompt_missing_init_args(
     init_args: InitArgs,
@@ -139,7 +137,7 @@ pub async fn prompt_missing_init_args(
 
     let language = match init_args.language {
         Some(args_language) => args_language,
-        None => Language::TypeScript
+        None => Language::TypeScript,
     };
 
     let ecosystem = prompt_ecosystem(init_args.init_commands)
@@ -169,13 +167,6 @@ pub async fn prompt_missing_init_args(
                 ApiTokenInput::AddExisting => Ok(token_prompt
                     .prompt_skippable()
                     .context("Prompting for add existing token")?),
-                ApiTokenInput::Skip => {
-                    println!(
-                        "You can always visit 'https://envio.dev/app/api-tokens' and add a token \
-                         later to your .env file."
-                    );
-                    Ok(None)
-                }
             }
         }
         None => Ok(None),
