@@ -337,7 +337,6 @@ pub struct EventMod {
     pub event_filter_type: String,
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
-    pub preload_handlers: bool,
 }
 
 impl Display for EventMod {
@@ -452,25 +451,13 @@ let register = (): Internal.fuelEventConfig => {{
             ),
         };
 
-        let types_code = if self.preload_handlers {
+        let types_code =
             r#"@genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext, unit>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string()
-        } else {
-            r#"@genType
-type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
-@genType
-type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
-@genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>
-@genType
-type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
-@genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string()
-        };
+type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string();
 
         format!(
             r#"
@@ -632,7 +619,6 @@ impl EventTemplate {
 
     pub fn from_fuel_supply_event(
         config_event: &system_config::Event,
-        preload_handlers: bool,
         fuel_event_kind: FuelEventKind,
     ) -> Self {
         let event_name = config_event.name.capitalize();
@@ -648,7 +634,6 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
-            preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -659,7 +644,7 @@ impl EventTemplate {
 
     pub fn from_fuel_transfer_event(
         config_event: &system_config::Event,
-        preload_handlers: bool,
+
         fuel_event_kind: FuelEventKind,
     ) -> Self {
         let event_name = config_event.name.capitalize();
@@ -675,7 +660,6 @@ impl EventTemplate {
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
             fuel_event_kind: Some(fuel_event_kind),
-            preload_handlers,
         };
         EventTemplate {
             name: event_name,
@@ -684,10 +668,7 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_config_event(
-        config_event: &system_config::Event,
-        preload_handlers: bool,
-    ) -> Result<Self> {
+    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
@@ -738,7 +719,6 @@ impl EventTemplate {
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
-                    preload_handlers,
                 };
 
                 Ok(EventTemplate {
@@ -766,7 +746,6 @@ impl EventTemplate {
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
                             fuel_event_kind: Some(fuel_event_kind),
-                            preload_handlers,
                         };
 
                         Ok(EventTemplate {
@@ -775,18 +754,12 @@ impl EventTemplate {
                             params: vec![],
                         })
                     }
-                    FuelEventKind::Mint | FuelEventKind::Burn => Ok(Self::from_fuel_supply_event(
-                        config_event,
-                        preload_handlers,
-                        fuel_event_kind,
-                    )),
-                    FuelEventKind::Call | FuelEventKind::Transfer => {
-                        Ok(Self::from_fuel_transfer_event(
-                            config_event,
-                            preload_handlers,
-                            fuel_event_kind,
-                        ))
+                    FuelEventKind::Mint | FuelEventKind::Burn => {
+                        Ok(Self::from_fuel_supply_event(config_event, fuel_event_kind))
                     }
+                    FuelEventKind::Call | FuelEventKind::Transfer => Ok(
+                        Self::from_fuel_transfer_event(config_event, fuel_event_kind),
+                    ),
                 }
             }
         }
@@ -811,7 +784,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, config.preload_handlers))
+            .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
 
         let chain_ids = contract.get_chain_ids(config);
@@ -1274,7 +1247,7 @@ pub struct ProjectTemplate {
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
-    preload_handlers: bool,
+
     envio_version: String,
     types_code: String,
     ts_types_code: String,
@@ -1398,7 +1371,6 @@ type chain = [{chain_id_type}]"#,
             aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
-            preload_handlers: cfg.preload_handlers,
             envio_version: get_envio_version()?,
             types_code,
             ts_types_code,
@@ -1731,7 +1703,7 @@ type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
 @genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>
+type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
 @genType
@@ -1826,7 +1798,7 @@ type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
 @genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>
+type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
 @genType
@@ -1927,7 +1899,7 @@ type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
 @genType
 type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
 @genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext, 'loaderReturn>
+type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
 @genType

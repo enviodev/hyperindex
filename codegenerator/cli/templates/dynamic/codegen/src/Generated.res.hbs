@@ -111,7 +111,6 @@ let makeGeneratedConfig = () => {
     ~chains,
     ~enableRawEvents={{enable_raw_events}},
     ~batchSize=?Env.batchSize,
-    ~preloadHandlers={{preload_handlers}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     {{#if is_fuel_ecosystem}}

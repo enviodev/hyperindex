@@ -37,10 +37,9 @@ type contractRegisterArgs = genericContractRegisterArgs<event, contractRegisterC
 type contractRegister = genericContractRegister<contractRegisterArgs>
 
 @genType
-type genericHandlerArgs<'event, 'context, 'loaderReturn> = {
+type genericHandlerArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
-  loaderReturn: 'loaderReturn,
 }
 @genType
 type genericHandler<'args> = 'args => promise<unit>

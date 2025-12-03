@@ -273,7 +273,6 @@ pub async fn generate_config_from_subgraph_id(
         save_full_history: None,
         field_selection: None,
         raw_events: None,
-        preload_handlers: Some(true),
         address_format: None,
         handlers: None,
     };

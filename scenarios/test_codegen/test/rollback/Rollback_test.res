@@ -588,7 +588,9 @@ describe("E2E rollback tests", () => {
     await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
     let calls = []
-    let handler: Types.HandlerTypes.loader<unit, unit> = async ({event}) => {
+    let handler = async (
+      {event}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+    ) => {
       calls->Array.push(event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString)
     }
 
@@ -857,7 +859,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
-    let handler: Types.HandlerTypes.loader<unit, unit> = async ({context}) => {
+    let handler = async (
+      {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+    ) => {
       context.simpleEntity.set({
         id: "1",
         value: `call-${getCallCount()->Int.toString}`,
@@ -1250,7 +1254,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
-      let handler: Types.HandlerTypes.loader<unit, unit> = async ({context}) => {
+      let handler = async (
+        {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      ) => {
         context.simpleEntity.set({
           id: "1",
           value: `call-${getCallCount()->Int.toString}`,
@@ -1650,7 +1656,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
-      let handler: Types.HandlerTypes.loader<unit, unit> = async ({context}) => {
+      let handler = async (
+        {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      ) => {
         context.simpleEntity.set({
           id: "1",
           value: `call-${getCallCount()->Int.toString}`,

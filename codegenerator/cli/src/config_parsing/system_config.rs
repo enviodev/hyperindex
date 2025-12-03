@@ -409,7 +409,6 @@ pub struct SystemConfig {
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
-    pub preload_handlers: bool,
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub should_use_hypersync_client_decoder: bool,
@@ -706,7 +705,6 @@ impl SystemConfig {
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
-                    preload_handlers: evm_config.preload_handlers.unwrap_or(false),
                     lowercase_addresses: matches!(
                         evm_config.address_format,
                         Some(super::human_config::evm::AddressFormat::Lowercase)
@@ -854,7 +852,6 @@ impl SystemConfig {
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
-                    preload_handlers: fuel_config.preload_handlers.unwrap_or(false),
                     lowercase_addresses: false,
                     should_use_hypersync_client_decoder: true,
                     handlers: fuel_config.handlers.clone(),
@@ -2081,7 +2078,6 @@ mod test {
             save_full_history: None,
             field_selection: None,
             raw_events: None,
-            preload_handlers: None,
             address_format: None,
             handlers: None,
         };
@@ -2129,7 +2125,6 @@ mod test {
             save_full_history: None,
             field_selection: None,
             raw_events: None,
-            preload_handlers: None,
             address_format: None,
             handlers: None,
         };

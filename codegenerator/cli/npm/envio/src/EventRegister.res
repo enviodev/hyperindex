@@ -95,15 +95,6 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
         "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature or enable unordered multichain mode with `unordered_multichain_mode: true` in your config.",
       )
     }
-    // So we encourage users to upgrade to preload optimization
-    // otherwise block handlers will be extremely slow
-    switch registration.preloadHandlers {
-    | true => ()
-    | false =>
-      Js.Exn.raiseError(
-        "Block Handlers require the Preload Optimization feature. Enable it by setting the `preload_handlers` option to `true` in your config.",
-      )
-    }
 
     let options = rawOptions->S.parseOrThrow(onBlockOptionsSchema)
     let chainId = switch options["chain"] {

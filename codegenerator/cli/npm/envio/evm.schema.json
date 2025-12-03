@@ -107,13 +107,6 @@
         "null"
       ]
     },
-    "preload_handlers": {
-      "description": "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)",
-      "type": [
-        "boolean",
-        "null"
-      ]
-    },
     "address_format": {
       "description": "Address format for Ethereum addresses: 'checksum' or 'lowercase' (default: checksum)",
       "anyOf": [

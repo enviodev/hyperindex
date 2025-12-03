@@ -15,9 +15,7 @@ type t
 let make: (~contractName: string, ~eventName: string) => t
 let setHandler: (
   t,
-  Internal.genericHandler<
-    Internal.genericHandlerArgs<'event, Internal.handlerContext, 'loaderReturn>,
-  >,
+  Internal.genericHandler<Internal.genericHandlerArgs<'event, Internal.handlerContext>>,
   ~eventOptions: option<Internal.eventOptions<'eventFilters>>,
   ~logger: Pino.t=?,
 ) => unit

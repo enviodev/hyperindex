@@ -13,7 +13,6 @@ type contractRegistrations = {
   {{/each}}
 }
 
-{{#if preload_handlers}}
 @genType
 type entityHandlerContext<'entity, 'indexedFieldOperations> = {
   get: id => promise<option<'entity>>,
@@ -35,43 +34,6 @@ type handlerContext = {
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
   {{/each}}
 }
-{{else}}
-@genType
-type entityLoaderContext<'entity, 'indexedFieldOperations> = {
-  get: id => promise<option<'entity>>,
-  getOrThrow: (id, ~message: string=?) => promise<'entity>,
-  getWhere: 'indexedFieldOperations,
-  getOrCreate: ('entity) => promise<'entity>,
-  set: 'entity => unit,
-  deleteUnsafe: id => unit,
-}
-
-@genType.import(("./Types.ts", "LoaderContext"))
-type loaderContext = {
-  log: Envio.logger,
-  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
-  isPreload: bool,
-  chains: Internal.chains,
-  chain: Internal.chainInfo,
-  {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
-  {{/each}}
-}
-
-@genType
-type entityHandlerContext<'entity> = Internal.entityHandlerContext<'entity>
-
-@genType.import(("./Types.ts", "HandlerContext"))
-type handlerContext = {
-  log: Envio.logger,
-  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
-  chains: Internal.chains,
-  chain: Internal.chainInfo,
-  {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t>,
-  {{/each}}
-}
-{{/if}}
 
 //Re-exporting types for backwards compatability
 {{#each entities as | entity |}}
@@ -160,27 +122,6 @@ module HandlerTypes = {
   @genType
   type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
 
-  {{#if preload_handlers}}
-  {{else}}
-  @genType
-  type loaderArgs<'eventArgs> = Internal.genericLoaderArgs<eventLog<'eventArgs>, loaderContext>
-  @genType
-  type loader<'eventArgs, 'loaderReturn> = Internal.genericLoader<loaderArgs<'eventArgs>, 'loaderReturn>
-  
-  @genType
-  type handlerArgs<'eventArgs, 'loaderReturn> = Internal.genericHandlerArgs<eventLog<'eventArgs>, handlerContext, 'loaderReturn>
-
-  @genType
-  type handler<'eventArgs, 'loaderReturn> = Internal.genericHandler<handlerArgs<'eventArgs, 'loaderReturn>>
-
-  @genType
-  type loaderHandler<'eventArgs, 'loaderReturn, 'eventFilters> = Internal.genericHandlerWithLoader<
-    loader<'eventArgs, 'loaderReturn>,
-    handler<'eventArgs, 'loaderReturn>,
-    'eventFilters
-  >
-  {{/if}}
-
   @genType
   type eventConfig<'eventFilters> = Internal.eventOptions<'eventFilters>
 }
@@ -196,18 +137,10 @@ module type Event = {
 @genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
 type fnWithEventConfig<'fn, 'eventConfig> = ('fn, ~eventConfig: 'eventConfig=?) => unit
 
-{{#if preload_handlers}}
 type handlerWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
   Internal.genericHandler<'eventArgs>,
   HandlerTypes.eventConfig<'eventFilters>,
 >
-{{else}}
-@genType
-type handlerWithOptions<'eventArgs, 'loaderReturn, 'eventFilters> = fnWithEventConfig<
-  HandlerTypes.handler<'eventArgs, 'loaderReturn>,
-  HandlerTypes.eventConfig<'eventFilters>,
->
-{{/if}}
 
 @genType
 type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
@@ -227,92 +160,21 @@ module MakeRegister = (Event: Event) => {
       ~eventOptions=eventConfig,
     )
 
-{{#if preload_handlers}}
   let handler: fnWithEventConfig<
-    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext, unit>>,
+    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext>>,
     HandlerTypes.eventConfig<Event.eventFilters>,
   > = (handler, ~eventConfig=?) => {
     Event.handlerRegister->EventRegister.setHandler(
       handler->(
         Utils.magic: Internal.genericHandler<
-          Internal.genericHandlerArgs<Event.event, handlerContext, unit>,
+          Internal.genericHandlerArgs<Event.event, handlerContext>,
         > => Internal.genericHandler<
-          Internal.genericHandlerArgs<Event.event, Internal.handlerContext, 'a>,
+          Internal.genericHandlerArgs<Event.event, Internal.handlerContext>,
         >
       ),
       ~eventOptions=eventConfig,
     )
   }
-{{else}}
-  let handler: fnWithEventConfig<
-    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext, unit>>,
-    HandlerTypes.eventConfig<Event.eventFilters>,
-  > = (handler, ~eventConfig=?) => {
-    Event.handlerRegister->EventRegister.setHandler(args => {
-      if args.context.isPreload {
-        Promise.resolve()
-      } else {
-        handler(
-          args->(
-            Utils.magic: Internal.genericHandlerArgs<
-              Event.event,
-              Internal.handlerContext,
-              'loaderReturn,
-            > => Internal.genericHandlerArgs<Event.event, handlerContext, unit>
-          ),
-        )
-      }
-    }, ~eventOptions=eventConfig)
-  }
-
-  let handlerWithLoader = (
-    eventConfig: Internal.genericHandlerWithLoader<
-      Internal.genericLoader<Internal.genericLoaderArgs<Event.event, loaderContext>, 'loaderReturn>,
-      Internal.genericHandler<
-        Internal.genericHandlerArgs<Event.event, handlerContext, 'loaderReturn>,
-      >,
-      Event.eventFilters,
-    >,
-  ) => {
-    Event.handlerRegister->EventRegister.setHandler(
-      args => {
-        let promise = eventConfig.loader(
-          args->(
-            Utils.magic: Internal.genericHandlerArgs<
-              Event.event,
-              Internal.handlerContext,
-              'loaderReturn,
-            > => Internal.genericLoaderArgs<Event.event, loaderContext>
-          ),
-        )
-        if args.context.isPreload {
-          promise->Promise.ignoreValue
-        } else {
-          promise->Promise.then(loaderReturn => {
-            (args->Obj.magic)["loaderReturn"] = loaderReturn
-            eventConfig.handler(
-              args->(
-                Utils.magic: Internal.genericHandlerArgs<
-                  Event.event,
-                  Internal.handlerContext,
-                  'loaderReturn,
-                > => Internal.genericHandlerArgs<Event.event, handlerContext, 'loaderReturn>
-              ),
-            )
-          })
-        }
-      },
-      ~eventOptions=switch eventConfig {
-      | {wildcard: ?None, eventFilters: ?None} => None
-      | _ =>
-        Some({
-          wildcard: ?eventConfig.wildcard,
-          eventFilters: ?eventConfig.eventFilters
-        })
-      },
-    )
-  }
-{{/if}}
 }
 
 {{#each codegen_contracts as | contract |}}

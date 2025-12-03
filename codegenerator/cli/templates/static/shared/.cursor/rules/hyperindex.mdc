@@ -63,9 +63,12 @@ if (stream) {
 
 ### External Calls
 
-Add `preload_handlers: true` to the `config.yaml` file to enable preload optimisations. With preload optimisations, handlers will run twice.
+HyperIndex uses Preload Optimisation together with the Effect API to make your indexer much faster by parallelizing external calls. It'll mean that the handler will run TWICE:
 
-So if there's an external call, you MUST use the Effect API to make it.
+1. In parallel for the whole batch.
+2. In sequential order of events.
+
+So ensure to use `context.effect` to make external call and prevent double execution. Or use `!context.isPreload` check, to prevent some logic to run during preload.
 
 ```ts
 // Import the Effect API from "envio"

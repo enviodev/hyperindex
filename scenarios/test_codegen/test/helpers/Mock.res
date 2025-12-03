@@ -469,7 +469,9 @@ module Source = {
   type itemMock = {
     blockNumber: int,
     logIndex: int,
-    handler?: Types.HandlerTypes.loader<unit, unit>,
+    handler?: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext> => promise<
+      unit,
+    >,
     contractRegister?: Types.HandlerTypes.contractRegister<unit>,
   }
 
@@ -649,9 +651,12 @@ module Source = {
                                   }
                                 }
                               )->(
-                                Utils.magic: Types.HandlerTypes.loader<unit, unit> => option<
-                                  Internal.handler,
-                                >
+                                Utils.magic: (
+                                  Internal.genericHandlerArgs<
+                                    Types.eventLog<unknown>,
+                                    Types.handlerContext,
+                                  > => promise<unit>
+                                ) => option<Internal.handler>
                               )
 
                             | None => None

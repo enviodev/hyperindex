@@ -57,13 +57,6 @@
         "null"
       ]
     },
-    "preload_handlers": {
-      "description": "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)",
-      "type": [
-        "boolean",
-        "null"
-      ]
-    },
     "handlers": {
       "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
       "type": [

@@ -26,11 +26,7 @@ export type genericContractRegisterArgs<event,context> = { readonly event: event
 
 export type genericContractRegister<args> = $$genericContractRegister<args>;
 
-export type genericHandlerArgs<event,context,loaderReturn> = {
-  readonly event: event; 
-  readonly context: context; 
-  readonly loaderReturn: loaderReturn
-};
+export type genericHandlerArgs<event,context> = { readonly event: event; readonly context: context };
 
 export type genericHandler<args> = (_1:args) => Promise<void>;
 
