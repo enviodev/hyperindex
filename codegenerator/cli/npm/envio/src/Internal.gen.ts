@@ -46,17 +46,10 @@ export type genericHandlerWithLoader<loader,handler,eventFilters> = {
   readonly loader: loader; 
   readonly handler: handler; 
   readonly wildcard?: boolean; 
-  readonly eventFilters?: eventFilters; 
-  /** @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration. */
-  readonly preRegisterDynamicContracts?: boolean
+  readonly eventFilters?: eventFilters
 };
 
-export type eventOptions<eventFilters> = {
-  readonly wildcard?: boolean; 
-  readonly eventFilters?: eventFilters; 
-  /** @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration. */
-  readonly preRegisterDynamicContracts?: boolean
-};
+export type eventOptions<eventFilters> = { readonly wildcard?: boolean; readonly eventFilters?: eventFilters };
 
 export type fuelSupplyParams = { readonly subId: string; readonly amount: bigint };
 
