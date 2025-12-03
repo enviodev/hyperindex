@@ -169,7 +169,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Queries transaction with a non-log field (with real Ethers.provider)", async () => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
-    let provider = Ethers.JsonRpcProvider.make(~rpcUrl="https://eth.rpc.hypersync.xyz", ~chainId=1)
+    let provider = Ethers.JsonRpcProvider.make(~rpcUrl="https://eth.drpc.org", ~chainId=1)
     let getTransactionFields = Ethers.JsonRpcProvider.makeGetTransactionFields(
       ~getTransactionByHash=transactionHash =>
         provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
