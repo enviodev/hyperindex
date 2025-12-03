@@ -210,7 +210,7 @@ mod interpolation {
         #[test]
         fn test_interpolate_config_variables_with_single_capture() {
             let config_string = r#"
-networks:
+chains:
   - id: ${ENVIO_NETWORK_ID}
     start_block: 0
 "#;
@@ -223,7 +223,7 @@ networks:
             assert_eq!(
                 interpolated_config_string,
                 r#"
-networks:
+chains:
   - id: 0
     start_block: 0
 "#
@@ -233,7 +233,7 @@ networks:
         #[test]
         fn test_interpolate_config_variables_with_multiple_captures() {
             let config_string = r#"
-networks:
+chains:
   - id: ${ENVIO_NETWORK_ID}
     rpc_config:
       url: ${ENVIO_ETH_RPC_URL}?api_key=${ENVIO_ETH_RPC_KEY}
@@ -249,7 +249,7 @@ networks:
             assert_eq!(
                 interpolated_config_string,
                 r#"
-networks:
+chains:
   - id: 0
     rpc_config:
       url: https://eth.com?api_key=foo
@@ -260,7 +260,7 @@ networks:
         #[test]
         fn test_interpolate_config_variables_with_no_captures() {
             let config_string = r#"
-networks:
+chains:
   - id: 0
     start_block: 0
 "#;
@@ -273,7 +273,7 @@ networks:
             assert_eq!(
                 interpolated_config_string,
                 r#"
-networks:
+chains:
   - id: 0
     start_block: 0
 "#
@@ -283,7 +283,7 @@ networks:
         #[test]
         fn test_interpolate_config_variables_with_missing_env() {
             let config_string = r#"
-networks:
+chains:
   - id: ${ENVIO_NETWORK_ID}
     rpc_config:
       url: https://eth.com?api_key=${ENVIO_ETH_API_KEY}
@@ -303,7 +303,7 @@ networks:
         #[test]
         fn test_interpolate_config_variables_with_invalid_captures_and_missing_env() {
             let config_string = r#"
-networks:
+chains:
   - id: ${ENVIO_NETWORK_ID}
     rpc_config:
       url: ${My RPC URL}?api_key=${}
@@ -401,7 +401,7 @@ pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
-    pub networks: NetworkMap,
+    pub chains: NetworkMap,
     pub contracts: ContractMap,
     pub unordered_multichain_mode: bool,
     pub rollback_on_reorg: bool,
@@ -480,10 +480,10 @@ impl SystemConfig {
         self.schema.enums.keys().cloned().collect()
     }
 
-    pub fn get_networks(&self) -> Vec<&Network> {
-        let mut networks: Vec<&Network> = self.networks.values().collect();
-        networks.sort_by_key(|n| n.id);
-        networks
+    pub fn get_chains(&self) -> Vec<&Network> {
+        let mut chains: Vec<&Network> = self.chains.values().collect();
+        chains.sort_by_key(|n| n.id);
+        chains
     }
 
     pub fn get_path_to_schema(&self) -> Result<PathBuf> {
@@ -514,7 +514,7 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
-        let mut networks: NetworkMap = HashMap::new();
+        let mut chains: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
         // Create a new ParsedProjectPaths that uses the output field from config if specified
@@ -560,7 +560,7 @@ impl SystemConfig {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
-                let has_rpc_sync_src = evm_config.networks.iter().any(|n| n.rpc_config.is_some());
+                let has_rpc_sync_src = evm_config.chains.iter().any(|n| n.rpc_config.is_some());
 
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
@@ -590,7 +590,7 @@ impl SystemConfig {
                     }
                 }
 
-                for network in &evm_config.networks {
+                for network in &evm_config.chains {
                     for contract in network.contracts.clone() {
                         //Add values for local contract
                         match contract.config {
@@ -674,8 +674,8 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut networks, network.id, network)
-                        .context("Failed inserting network at networks map")?;
+                    unique_hashmap::try_insert(&mut chains, network.id, network)
+                        .context("Failed inserting network at chains map")?;
                 }
 
                 let field_selection = FieldSelection::try_from_config_field_selection(
@@ -695,7 +695,7 @@ impl SystemConfig {
                         .schema
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
-                    networks,
+                    chains,
                     contracts,
                     unordered_multichain_mode: evm_config
                         .unordered_multichain_mode
@@ -746,7 +746,7 @@ impl SystemConfig {
                     }
                 }
 
-                for network in &fuel_config.networks {
+                for network in &fuel_config.chains {
                     for contract in network.contracts.clone() {
                         //Add values for local contract
                         match contract.config {
@@ -833,8 +833,8 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut networks, network.id, network)
-                        .context("Failed inserting network at networks map")?;
+                    unique_hashmap::try_insert(&mut chains, network.id, network)
+                        .context("Failed inserting network at chains map")?;
                 }
 
                 Ok(SystemConfig {
@@ -844,7 +844,7 @@ impl SystemConfig {
                         .schema
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
-                    networks,
+                    chains,
                     contracts,
                     unordered_multichain_mode: false,
                     rollback_on_reorg: false,
@@ -1201,7 +1201,7 @@ impl Contract {
 
     pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
         system_config
-            .get_networks()
+            .get_chains()
             .iter()
             .filter_map(|network| {
                 if network.contracts.iter().any(|c| c.name == self.name) {
@@ -1970,10 +1970,10 @@ mod test {
         let cfg: EvmConfig = serde_yaml::from_str(&file_str).unwrap();
 
         // Both hypersync and rpc config should be present
-        assert!(cfg.networks[0].rpc_config.is_some());
-        assert!(cfg.networks[0].hypersync_config.is_some());
+        assert!(cfg.chains[0].rpc_config.is_some());
+        assert!(cfg.chains[0].hypersync_config.is_some());
 
-        let error = DataSource::from_evm_network_config(cfg.networks[0].clone(), cfg.event_decoder)
+        let error = DataSource::from_evm_network_config(cfg.chains[0].clone(), cfg.event_decoder)
             .unwrap_err();
 
         assert_eq!(error.to_string(), "EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
@@ -2062,7 +2062,7 @@ mod test {
             schema: None,
             output: None,
             contracts: None,
-            networks: vec![EvmNetwork {
+            chains: vec![EvmNetwork {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
@@ -2109,7 +2109,7 @@ mod test {
             schema: None,
             output: Some("custom/output".to_string()),
             contracts: None,
-            networks: vec![EvmNetwork {
+            chains: vec![EvmNetwork {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,

@@ -1298,7 +1298,7 @@ impl ProjectTemplate {
             .context("Failed generating enum template types")?;
 
         let chain_configs: Vec<NetworkConfigTemplate> = cfg
-            .get_networks()
+            .get_chains()
             .iter()
             .map(|network| NetworkConfigTemplate::from_config_network(network, cfg))
             .collect::<Result<_>>()
@@ -1699,13 +1699,9 @@ type event = {{
 }}
 
 @genType
-type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
-type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
-@genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext>
-@genType
-type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
+type handler = Internal.genericHandler<handlerArgs>
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
@@ -1747,16 +1743,13 @@ let register = (): Internal.evmEventConfig => {{
 
     #[test]
     fn event_template_with_empty_params() {
-        let event_template = EventTemplate::from_config_event(
-            &system_config::Event {
-                name: "NewGravatar".to_string(),
-                kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
-                field_selection: None,
-            },
-            false,
-        )
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            kind: system_config::EventKind::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+            field_selection: None,
+        })
         .unwrap();
 
         assert_eq!(
@@ -1794,13 +1787,9 @@ type event = {
 }
 
 @genType
-type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
-type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
-@genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext>
-@genType
-type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
+type handler = Internal.genericHandler<handlerArgs>
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
@@ -1842,22 +1831,19 @@ let register = (): Internal.evmEventConfig => {
 
     #[test]
     fn event_template_with_custom_field_selection() {
-        let event_template = EventTemplate::from_config_event(
-            &system_config::Event {
-                name: "NewGravatar".to_string(),
-                kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
-                field_selection: Some(FieldSelection {
-                    block_fields: vec![],
-                    transaction_fields: vec![SelectedField {
-                        name: "from".to_string(),
-                        data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
-                    }],
-                }),
-            },
-            false,
-        )
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            kind: system_config::EventKind::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+            field_selection: Some(FieldSelection {
+                block_fields: vec![],
+                transaction_fields: vec![SelectedField {
+                    name: "from".to_string(),
+                    data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
+                }],
+            }),
+        })
         .unwrap();
 
         assert_eq!(
@@ -1895,13 +1881,9 @@ type event = {
 }
 
 @genType
-type loaderArgs = Internal.genericLoaderArgs<event, loaderContext>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
-type loader<'loaderReturn> = Internal.genericLoader<loaderArgs, 'loaderReturn>
-@genType
-type handlerArgs<'loaderReturn> = Internal.genericHandlerArgs<event, handlerContext>
-@genType
-type handler<'loaderReturn> = Internal.genericHandler<handlerArgs<'loaderReturn>>
+type handler = Internal.genericHandler<handlerArgs>
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 

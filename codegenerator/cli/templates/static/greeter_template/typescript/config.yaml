@@ -10,7 +10,7 @@ contracts:
     events:
       - event: NewGreeting
       - event: ClearGreeting
-networks:
+chains:
   - id: 137 # Polygon
     start_block: 45336336
     contracts:

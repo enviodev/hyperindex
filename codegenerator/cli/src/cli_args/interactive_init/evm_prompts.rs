@@ -411,7 +411,7 @@ impl LocalImportArgs {
 
 impl Contract for SelectedContract {
     fn get_network_name(&self) -> Result<String> {
-        self.get_last_network_name()
+        self.get_last_chain_name()
     }
 
     fn get_name(&self) -> String {
@@ -419,10 +419,10 @@ impl Contract for SelectedContract {
     }
 
     fn add_address(&mut self) -> Result<()> {
-        let network = self.get_last_network_mut()?;
-        let address = prompt_contract_address(Some(&network.addresses))
+        let chain = self.get_last_chain_mut()?;
+        let address = prompt_contract_address(Some(&chain.addresses))
             .context("Failed prompting user for new address")?;
-        network.addresses.push(address);
+        chain.addresses.push(address);
         Ok(())
     }
 
@@ -434,15 +434,15 @@ impl Contract for SelectedContract {
 
         //Select a new network (not from the list of existing network ids already added)
         let selected_network =
-            prompt_for_network_id(&NO_RPC_URL, &NO_START_BLOCK, self.get_network_ids())
+            prompt_for_network_id(&NO_RPC_URL, &NO_START_BLOCK, self.get_chain_ids())
                 .context("Failed selecting network")?;
 
         //Instantiate a network_selection without any  contract addresses
         let network_selection =
             ContractImportNetworkSelection::new_without_addresses(selected_network);
 
-        //Add the network to the contract selection
-        self.networks.push(network_selection);
+        //Add the chain to the contract selection
+        self.chains.push(network_selection);
 
         //Populate contract addresses with prompt
         self.add_address()?;

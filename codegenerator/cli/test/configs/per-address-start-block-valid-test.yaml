@@ -2,7 +2,7 @@
 name: per-address-start-block-valid-test
 schema: ../schemas/schema.graphql
 description: Test config for per-address start blocks (valid case)
-networks:
+chains:
   - id: 1
     start_block: 1000
     contracts:

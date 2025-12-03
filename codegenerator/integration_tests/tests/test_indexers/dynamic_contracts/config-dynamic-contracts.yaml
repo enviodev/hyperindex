@@ -4,7 +4,7 @@ field_selection:
   transaction_fields:
     - hash
     - transactionIndex
-networks:
+chains:
   - id: 10
     start_block: 4556306
     end_block: 6942099

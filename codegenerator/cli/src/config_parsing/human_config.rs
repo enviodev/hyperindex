@@ -161,10 +161,9 @@ pub mod evm {
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed \
-                           on."
+            description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub networks: Vec<Network>,
+        pub chains: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "A flag to indicate if the indexer should use a single queue for all \
@@ -584,10 +583,9 @@ pub mod fuel {
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed \
-                           on."
+            description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub networks: Vec<Network>,
+        pub chains: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "If true, the indexer will store the raw event data in the database. \
@@ -861,11 +859,11 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        println!("{:?}", cfg.networks[0].contracts[0]);
+        println!("{:?}", cfg.chains[0].contracts[0]);
 
-        assert!(cfg.networks[0].contracts[0].config.is_some());
-        assert!(cfg.networks[0].contracts[1].config.is_some());
-        assert_eq!(cfg.networks[0].contracts[1].address, None.into());
+        assert!(cfg.chains[0].contracts[0].config.is_some());
+        assert!(cfg.chains[0].contracts[1].config.is_some());
+        assert_eq!(cfg.chains[0].contracts[1].address, None.into());
     }
 
     #[test]
@@ -877,8 +875,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        assert!(cfg.networks[0].contracts[0].config.is_some());
-        assert!(cfg.networks[1].contracts[0].config.is_none());
+        assert!(cfg.chains[0].contracts[0].config.is_some());
+        assert!(cfg.chains[1].contracts[0].config.is_none());
     }
 
     #[test]
@@ -898,7 +896,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            networks: vec![fuel::Network {
+            chains: vec![fuel::Network {
                 id: 0,
                 start_block: 0,
                 end_block: None,
@@ -944,13 +942,13 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            networks: vec![],
+            chains: vec![],
             handlers: None,
         };
 
         assert_eq!(
             serde_yaml::to_string(&cfg).unwrap(),
-            "name: Fuel indexer\necosystem: fuel\nnetworks: []\n"
+            "name: Fuel indexer\necosystem: fuel\nchains: []\n"
         );
     }
 

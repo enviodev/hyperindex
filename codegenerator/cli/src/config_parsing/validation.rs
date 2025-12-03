@@ -133,7 +133,7 @@ impl human_config::evm::Network {
         human_config: &human_config::evm::HumanConfig,
     ) -> anyhow::Result<()> {
         let is_unordered_multichain_mode = human_config.unordered_multichain_mode.unwrap_or(false);
-        let is_multichain_indexer = human_config.networks.len() > 1;
+        let is_multichain_indexer = human_config.chains.len() > 1;
         if !is_unordered_multichain_mode && is_multichain_indexer {
             let make_err = |finite_end_block: u64| {
                 Err(anyhow!(
@@ -181,12 +181,12 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         }
     }
 
-    for network in &evm_config.networks {
+    for chain in &evm_config.chains {
         // validate endblock is a greater than the startblock
-        network.validate_endblock_lte_startblock()?;
-        network.validate_finite_endblock_networks(evm_config)?;
+        chain.validate_endblock_lte_startblock()?;
+        chain.validate_finite_endblock_networks(evm_config)?;
 
-        for contract in &network.contracts {
+        for contract in &chain.contracts {
             if contract.config.as_ref().is_some() {
                 contract_names.push(contract.name.clone());
             }

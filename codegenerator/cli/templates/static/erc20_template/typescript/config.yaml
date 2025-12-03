@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: erc20indexer
 description: ERC-20 indexer
-networks:
+chains:
   - id: 1 # Ethereum Mainnet
     start_block: 10861674
     contracts:

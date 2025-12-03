@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../../npm/envio/evm.schema.json
 name: config2
 description: Gravatar for Ethereum
-networks:
+chains:
   - id: 1
     rpc_config:
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network

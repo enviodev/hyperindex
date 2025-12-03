@@ -8,7 +8,7 @@ contracts:
     events:
       - event: "NewGravatar"
       - event: "UpdatedGravatar"
-networks:
+chains:
   - id: 1
     start_block: 0
     contracts:

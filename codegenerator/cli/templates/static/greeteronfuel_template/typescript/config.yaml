@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=./node_modules/envio/fuel.schema.json
 name: Fuel Greeter Indexer
 ecosystem: fuel
-networks:
+chains:
   - id: 0
     start_block: 0
     contracts:

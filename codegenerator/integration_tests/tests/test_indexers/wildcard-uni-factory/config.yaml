@@ -3,7 +3,7 @@ name: wildcard-uni-factory
 field_selection:
   transaction_fields:
     - hash
-networks:
+chains:
   - id: 1
     start_block: 0
     end_block: 20741509

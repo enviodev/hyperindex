@@ -9,7 +9,7 @@ contracts:
     events:
       - event: Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
 
-networks:
+chains:
   - id: 1 # Ethereum Mainnet
     start_block: 0
     contracts:

@@ -91,7 +91,7 @@ Initialize Evm indexer by importing config from a contract for a given chain
 ###### **Options:**
 
 * `-c`, `--contract-address <CONTRACT_ADDRESS>` — Contract address to generate the config from
-* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/networks
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/chains
 * `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
 
 
@@ -109,7 +109,7 @@ Initialize by pulling the contract ABI from a block explorer
   Possible values: `abstract`, `amoy`, `arbitrum-nova`, `arbitrum-one`, `arbitrum-sepolia`, `arbitrum-testnet`, `aurora`, `aurora-testnet`, `avalanche`, `b2-testnet`, `base`, `base-sepolia`, `berachain`, `blast`, `blast-sepolia`, `boba`, `bsc`, `bsc-testnet`, `celo`, `celo-alfajores`, `celo-baklava`, `citrea-testnet`, `crab`, `curtis`, `ethereum-mainnet`, `evmos`, `fantom`, `fantom-testnet`, `fhenix-helium`, `flare`, `fraxtal`, `fuji`, `galadriel-devnet`, `gnosis`, `gnosis-chiado`, `goerli`, `harmony`, `holesky`, `kroma`, `linea`, `linea-sepolia`, `lisk`, `lukso`, `lukso-testnet`, `manta`, `mantle`, `mantle-testnet`, `metis`, `mode`, `mode-sepolia`, `monad`, `monad-testnet`, `moonbase-alpha`, `moonbeam`, `moonriver`, `morph`, `morph-testnet`, `neon-evm`, `opbnb`, `optimism`, `optimism-sepolia`, `poa-core`, `poa-sokol`, `polygon`, `polygon-zkevm`, `polygon-zkevm-testnet`, `rsk`, `saakuru`, `scroll`, `scroll-sepolia`, `sepolia`, `shimmer-evm`, `sonic`, `sophon`, `sophon-testnet`, `swell`, `taiko`, `tangle`, `unichain`, `unichain-sepolia`, `worldchain`, `xdc`, `xdc-testnet`, `zeta`, `zksync-era`, `zora`, `zora-sepolia`
 
 * `--api-token <API_TOKEN>` — API token for the block explorer
-* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/networks
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/chains
 * `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
 
 
@@ -127,7 +127,7 @@ Initialize from a local json ABI file
 * `-b`, `--blockchain <BLOCKCHAIN>` — Name or ID of the contract network
 * `-r`, `--rpc-url <RPC_URL>` — The rpc url to use if the network id used is unsupported by our hypersync
 * `-s`, `--start-block <START_BLOCK>` — The start block to use on this network
-* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/networks
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/chains
 * `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
 
 
@@ -173,7 +173,7 @@ Initialize Fuel indexer by importing config from a contract for a given chain
 ###### **Options:**
 
 * `-c`, `--contract-address <CONTRACT_ADDRESS>` — Contract address to generate the config from
-* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/networks
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/chains
 * `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
 
 

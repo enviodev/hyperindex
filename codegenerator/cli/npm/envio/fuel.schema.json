@@ -43,8 +43,8 @@
         "$ref": "#/$defs/GlobalContract_for_ContractConfig"
       }
     },
-    "networks": {
-      "description": "Configuration of the blockchain networks that the project is deployed on.",
+    "chains": {
+      "description": "Configuration of the blockchain chains that the project is deployed on.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/Network"
@@ -69,7 +69,7 @@
   "required": [
     "name",
     "ecosystem",
-    "networks"
+    "chains"
   ],
   "$defs": {
     "EcosystemTag": {

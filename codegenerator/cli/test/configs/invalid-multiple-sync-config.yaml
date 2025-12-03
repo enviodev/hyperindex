@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../../npm/envio/evm.schema.json
 name: config
 description: Gravatar for Ethereum
-networks:
+chains:
   - id: 1
     hypersync_config:
       url: https://myskar.com # RPC URL that will be used to subscribe to blockchain data on this network
