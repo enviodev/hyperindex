@@ -189,7 +189,10 @@
         },
         "contracts": {
           "description": "All the contracts that should be indexed on the given chain",
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "$ref": "#/$defs/ChainContract_for_ContractConfig"
           }
@@ -198,8 +201,7 @@
       "additionalProperties": false,
       "required": [
         "id",
-        "start_block",
-        "contracts"
+        "start_block"
       ]
     },
     "HyperfuelConfig": {

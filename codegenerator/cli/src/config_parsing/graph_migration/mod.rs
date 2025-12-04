@@ -305,7 +305,7 @@ pub async fn generate_config_from_subgraph_id(
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: None,
-            contracts: vec![],
+            contracts: Some(vec![]),
         };
         // Iterate through contracts to get contract name, abi file path, address and event names
         for contract in contracts {
@@ -359,7 +359,7 @@ pub async fn generate_config_from_subgraph_id(
                     };
 
                     // Pushing contract to chain
-                    chain.contracts.push(contract.clone());
+                    chain.contracts.get_or_insert_with(Vec::new).push(contract.clone());
 
                     //Create the dir for all abis to be dropped in
                     let abi_dir_path = project_root_path.join("abis");

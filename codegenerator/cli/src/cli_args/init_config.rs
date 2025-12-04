@@ -132,7 +132,7 @@ pub mod evm {
                                 start_block: selected_chain.network.get_start_block(),
                                 end_block,
                                 confirmed_block_threshold: None,
-                                contracts: Vec::new(),
+                                contracts: Some(Vec::new()),
                             }
                         });
 
@@ -143,7 +143,7 @@ pub mod evm {
                         start_block: None,
                     };
 
-                    chain.contracts.push(contract);
+                    chain.contracts.get_or_insert_with(Vec::new).push(contract);
                 }
             }
 
@@ -272,7 +272,7 @@ pub mod fuel {
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
-                        contracts: contracts
+                        contracts: Some(contracts
                             .iter()
                             .map(|selected_contract| ChainContract {
                                 name: selected_contract.name.clone(),
@@ -289,7 +289,7 @@ pub mod fuel {
                                 }),
                                 start_block: None,
                             })
-                            .collect(),
+                            .collect()),
                     }),
                 }
             }

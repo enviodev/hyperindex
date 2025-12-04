@@ -4,12 +4,18 @@ module ContractType = {
   {{#each codegen_contracts as | contract |}}
     | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
   {{/each}}
+  {{#unless codegen_contracts}}
+    | @as("EMPTY_PLACEHOLDER") EmptyPlaceholder
+  {{/unless}}
 
   let name = "CONTRACT_TYPE"
   let variants = [
   {{#each codegen_contracts as | contract |}}
     {{contract.name.capitalized}},
   {{/each}}
+  {{#unless codegen_contracts}}
+    EmptyPlaceholder,
+  {{/unless}}
   ]
   let config = Table.makeEnumConfig(~name, ~variants)
 }

@@ -531,8 +531,9 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "All the contracts that should be indexed on the given chain")]
-        pub contracts: Vec<ChainContract<ContractConfig>>,
+        pub contracts: Option<Vec<ChainContract<ContractConfig>>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -678,8 +679,9 @@ pub mod fuel {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperFuel Config for additional fine-tuning")]
         pub hyperfuel_config: Option<HyperfuelConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "All the contracts that should be indexed on the given chain")]
-        pub contracts: Vec<ChainContract<ContractConfig>>,
+        pub contracts: Option<Vec<ChainContract<ContractConfig>>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -948,11 +950,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        println!("{:?}", cfg.chains[0].contracts[0]);
+        let contracts = cfg.chains[0].contracts.as_ref().unwrap();
+        println!("{:?}", contracts[0]);
 
-        assert!(cfg.chains[0].contracts[0].config.is_some());
-        assert!(cfg.chains[0].contracts[1].config.is_some());
-        assert_eq!(cfg.chains[0].contracts[1].address, None.into());
+        assert!(contracts[0].config.is_some());
+        assert!(contracts[1].config.is_some());
+        assert_eq!(contracts[1].address, None.into());
     }
 
     #[test]
@@ -964,8 +967,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        assert!(cfg.chains[0].contracts[0].config.is_some());
-        assert!(cfg.chains[1].contracts[0].config.is_none());
+        assert!(cfg.chains[0].contracts.as_ref().unwrap()[0]
+            .config
+            .is_some());
+        assert!(cfg.chains[1].contracts.as_ref().unwrap()[0]
+            .config
+            .is_none());
     }
 
     #[test]
@@ -990,7 +997,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 start_block: 0,
                 end_block: None,
                 hyperfuel_config: None,
-                contracts: vec![ChainContract {
+                contracts: Some(vec![ChainContract {
                     name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
                         .to_string()
@@ -1012,7 +1019,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                             },
                         ],
                     }),
-                }],
+                }]),
             }],
             handlers: None,
         };
@@ -1082,7 +1089,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 start_block: 2_000,
                 confirmed_block_threshold: None,
                 end_block: Some(2_000_000),
-                contracts: vec![]
+                contracts: Some(vec![])
             },
             de
         );

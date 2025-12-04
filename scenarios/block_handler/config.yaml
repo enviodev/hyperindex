@@ -1,0 +1,5 @@
+# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/evm.schema.json
+name: block_handler
+chains:
+  - id: 1
+    start_block: 0

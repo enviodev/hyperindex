@@ -594,7 +594,7 @@ impl SystemConfig {
                 }
 
                 for network in &evm_config.chains {
-                    for contract in network.contracts.clone() {
+                    for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
                             Some(l_contract) => {
@@ -657,6 +657,8 @@ impl SystemConfig {
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
+                        .as_ref()
+                        .unwrap_or(&vec![])
                         .iter()
                         .cloned()
                         .map(|c| NetworkContract {
@@ -751,7 +753,7 @@ impl SystemConfig {
                 }
 
                 for network in &fuel_config.chains {
-                    for contract in network.contracts.clone() {
+                    for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
                             Some(l_contract) => {
@@ -819,6 +821,8 @@ impl SystemConfig {
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
+                        .as_ref()
+                        .unwrap_or(&vec![])
                         .iter()
                         .cloned()
                         .map(|c| NetworkContract {
@@ -2033,7 +2037,7 @@ mod test {
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: None,
-            contracts: vec![],
+            contracts: None,
         };
 
         let sync_source = DataSource::from_evm_network_config(network, None).unwrap();
@@ -2110,7 +2114,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 confirmed_block_threshold: None,
-                contracts: vec![],
+                contracts: None,
             }],
             multichain: None,
             event_decoder: None,
@@ -2157,7 +2161,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 confirmed_block_threshold: None,
-                contracts: vec![],
+                contracts: None,
             }],
             multichain: None,
             event_decoder: None,
