@@ -58,6 +58,32 @@ impl JsonSchema for Addresses {
 
 type NetworkId = u64;
 
+/// Base configuration fields shared across all ecosystems
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+pub struct BaseConfig {
+    #[schemars(description = "Name of the project")]
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Description of the project")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Custom path to schema.graphql file")]
+    pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Path where the generated directory will be placed. By default it's \
+                       'generated' relative to the current working directory. If set, it'll \
+                       be a path relative to the config file location."
+    )]
+    pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Optional relative path to handlers directory for auto-loading. Defaults \
+                   to 'src/handlers' if not specified."
+    )]
+    pub handlers: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalContract<T> {
@@ -104,6 +130,7 @@ pub struct ConfigDiscriminant {
 pub enum HumanConfig {
     Evm(evm::HumanConfig),
     Fuel(fuel::HumanConfig),
+    Solana(solana::HumanConfig),
 }
 
 impl Display for HumanConfig {
@@ -114,6 +141,7 @@ impl Display for HumanConfig {
             match self {
                 HumanConfig::Evm(config) => config.to_string(),
                 HumanConfig::Fuel(config) => config.to_string(),
+                HumanConfig::Solana(config) => config.to_string(),
             }
         )
     }
@@ -702,6 +730,44 @@ pub mod fuel {
     }
 }
 
+pub mod solana {
+    use std::fmt::Display;
+
+    use super::BaseConfig;
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[schemars(
+        title = "Envio Solana Config Schema",
+        description = "Schema for a YAML config for an envio Solana indexer"
+    )]
+    #[serde(deny_unknown_fields)]
+    pub struct HumanConfig {
+        #[serde(flatten)]
+        pub base: BaseConfig,
+        #[schemars(description = "Ecosystem of the project.")]
+        pub ecosystem: EcosystemTag,
+    }
+
+    impl Display for HumanConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "# yaml-language-server: $schema=./node_modules/envio/solana.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
+            )
+        }
+    }
+
+    // Workaround for https://github.com/serde-rs/serde/issues/2231
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
+    pub enum EcosystemTag {
+        Solana,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -737,6 +803,21 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 
         let actual_schema = schema_for!(fuel::HumanConfig);
+
+        assert_eq!(
+            npm_schema, actual_schema,
+            "Please run 'make update-generated-docs'"
+        );
+    }
+
+    #[test]
+    fn test_solana_config_schema() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/solana.schema.json");
+        let npm_schema: Schema =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+
+        let actual_schema = schema_for!(super::solana::HumanConfig);
 
         assert_eq!(
             npm_schema, actual_schema,
