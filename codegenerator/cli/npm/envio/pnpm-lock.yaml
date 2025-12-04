@@ -15,11 +15,14 @@ importers:
         specifier: 1.2.2
         version: 1.2.2
       '@envio-dev/hypersync-client':
-        specifier: 0.7.0
-        version: 0.7.0
+        specifier: 0.7.0-hyperindex-v2-compatible
+        version: 0.7.0-hyperindex-v2-compatible
       bignumber.js:
         specifier: 9.1.2
         version: 9.1.2
+      eventsource:
+        specifier: 4.1.0
+        version: 4.1.0
       pino:
         specifier: 8.16.1
         version: 8.16.1
@@ -33,8 +36,8 @@ importers:
         specifier: 11.1.3
         version: 11.1.3
       rescript-schema:
-        specifier: 9.3.0
-        version: 9.3.0(rescript@11.1.3)
+        specifier: 9.3.4
+        version: 9.3.4(rescript@11.1.3)
       viem:
         specifier: 2.21.0
         version: 2.21.0
@@ -92,44 +95,50 @@ packages:
     resolution: {integrity: sha512-raKA6DshYSle0sAOHBV1OkSRFMN+Mkz8sFiMmS3k+m5nP6pP56E17CRRePBL5qmR6ZgSEvGOz/44QUiKNkK9Pg==}
     engines: {node: '>= 10'}
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.7.0':
-    resolution: {integrity: sha512-/CNHCekZdcMLGp8Q1uhmEhAzk/0YnRJNpHOdfQYJ81WiKuQbVtejD77liFBqG3zAGYRN6ZRMD/I1hOVnIz5ixw==}
+  '@envio-dev/hypersync-client-darwin-arm64@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-jE67vEbT0BrKlhhXOuPCz8ghF+3juC81AOXv3z6DAaVHY7+NNl2stWFOIMwcSbT5etxmC7zbdujr+GgA9K7M3w==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-darwin-x64@0.7.0':
-    resolution: {integrity: sha512-SqqBuVozL0hclIPS6L4VQC4TNr4gIC4kzQpOhrszwrho73pqEvlqSKyH10u615tJIDD9lvqxjjiRPLs/mdcVWg==}
+  '@envio-dev/hypersync-client-darwin-x64@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-e/GknuNBsMwiTLxGs6JbwKcRHojrF4wCmZvLAa3dPJSvrbOHqZx9mG/mgbk9EXpxawD/v/kXrENsNa/ypjrWrQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0':
-    resolution: {integrity: sha512-q09sfN4pDf82NPuh7xPZ+DZQZuO4vKG6qxbBCHPjK6KZkIw4sNfxIwSG08GG0iLKUxQdW/V3R6FIDM9+c5NTUg==}
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-6kQRvekJ3iJo5k8qotrU6jo0NAS9h8yxrQ+RM5kaNtVeaucB1gxphpWFwG9mutsgAX0PP41mldTZOzU7NpfkUw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
-    resolution: {integrity: sha512-Rpz3VSLqq2O9Qp3GiDXHmF3MPm7TcsTfRzSz2RkRVEfdchaKA7Ob86jQ2ueRyG1UEEu47V9JzL6mYmVs4gNa7w==}
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-FpriXd/Y2Vp+A+5ORJ6frd3upUs9d2O7Y48uGcE/Dcxjr/SXXUSNRjbeEUbEhTc4c3ZqglQBaJb5Qan83dSTEA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
-    resolution: {integrity: sha512-SZ8RHNaCEcPvubFGdA7gkbxJeJe4whhw0oaAvSyGEbUjL5byFI9nqMVzW8o8mPACqqjlOHIq77GYxbbUI+53vQ==}
+  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-V7dA9BIvua6CkMMe20iqDEfGf0I5Yg0O9s72aVkrj+WISMfFnnUcFgeh9yHhn/yo1VqFLkovd3QDg/OQNZVZmw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
-    resolution: {integrity: sha512-R7M1IBcWfqx1TyBcK5Mc/VJmayGeK9woWPzSPzjTgYsHFl65gE1e0hXb8B/gi+km8GQDZYNcaHyBh6xSVHkrzg==}
+  '@envio-dev/hypersync-client-win32-arm64-msvc@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-KbGy+iYscYL7tKRiYefezOhWgrDTXoUrmw9sykp396US4/0heXIz7xgpa+1rWKPKVU1wRJLczU2NqgCwY0Zxqw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-XAAaBE2iVUYIHiqAtRjQEpjD0lXS76kiGCSlMhybRITeGLZbNanfdSYkz3vTxQ1nkX7+u/xNfzU7Ih+5k3YxmA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@envio-dev/hypersync-client@0.7.0':
-    resolution: {integrity: sha512-YDFN8XIQTOBztBe5Xr4oFu7PKdR93+7QjGxg4/Xx6+406tPOX9Lrir3cKD+cJpS1ZY1k4/l8l4C6L6D0gqJReQ==}
+  '@envio-dev/hypersync-client@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-JHh0c5UGFORruCgWxHWxWmNf9hNgJP8C9pvzMeuQRG7dGXk6B9S7D1LznkshmsRt/d8w0de/uQlPiNxFwOldVA==}
     engines: {node: '>= 10'}
 
   '@noble/curves@1.4.0':
@@ -212,6 +221,14 @@ packages:
   events@3.3.0:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
+
+  eventsource-parser@3.0.6:
+    resolution: {integrity: sha512-Vo1ab+QXPzZ4tCa8SwIHJFaSzy4R6SHf7BY79rFBDf0idraZWAkYrDjDj8uWaSm3S2TK+hJ7/t1CEmZ7jXw+pg==}
+    engines: {node: '>=18.0.0'}
+
+  eventsource@4.1.0:
+    resolution: {integrity: sha512-2GuF51iuHX6A9xdTccMTsNb7VO0lHZihApxhvQzJB5A03DvHDd2FQepodbMaztPBmBcE/ox7o2gqaxGhYB9LhQ==}
+    engines: {node: '>=20.0.0'}
 
   fast-copy@3.0.2:
     resolution: {integrity: sha512-dl0O9Vhju8IrcLndv2eU4ldt1ftXMqqfgN4H1cpmGV7P6jeB9FwpN9a2c8DPGE1Ys88rNUJVYDHq73CGAGOPfQ==}
@@ -330,8 +347,8 @@ packages:
     resolution: {integrity: sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==}
     engines: {node: '>= 12.13.0'}
 
-  rescript-schema@9.3.0:
-    resolution: {integrity: sha512-NiHAjlhFKZCmNhx/Ij40YltCEJJgVNhBWTN/ZfagTg5hdWWuvCiUacxZv+Q/QQolrAhTnHnCrL7RDvZBogHl5A==}
+  rescript-schema@9.3.4:
+    resolution: {integrity: sha512-VPhkkHCSQSo2KienoMD4Adu/yS8WhckmsUFFrNhKrt5yqeiJt+pY6/V+puuRIFLlWSIqGyu5/pxqSNUg3VLyxA==}
     peerDependencies:
       rescript: 11.x
     peerDependenciesMeta:
@@ -451,32 +468,36 @@ snapshots:
       '@envio-dev/hyperfuel-client-linux-x64-musl': 1.2.2
       '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.2.2
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.7.0':
+  '@envio-dev/hypersync-client-darwin-arm64@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-darwin-x64@0.7.0':
+  '@envio-dev/hypersync-client-darwin-x64@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0':
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
+  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
+  '@envio-dev/hypersync-client-win32-arm64-msvc@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client@0.7.0':
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0-hyperindex-v2-compatible':
+    optional: true
+
+  '@envio-dev/hypersync-client@0.7.0-hyperindex-v2-compatible':
     optionalDependencies:
-      '@envio-dev/hypersync-client-darwin-arm64': 0.7.0
-      '@envio-dev/hypersync-client-darwin-x64': 0.7.0
-      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.7.0
-      '@envio-dev/hypersync-client-linux-x64-gnu': 0.7.0
-      '@envio-dev/hypersync-client-linux-x64-musl': 0.7.0
-      '@envio-dev/hypersync-client-win32-x64-msvc': 0.7.0
+      '@envio-dev/hypersync-client-darwin-arm64': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-darwin-x64': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-linux-x64-gnu': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-linux-x64-musl': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-win32-arm64-msvc': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-win32-x64-msvc': 0.7.0-hyperindex-v2-compatible
 
   '@noble/curves@1.4.0':
     dependencies:
@@ -544,6 +565,12 @@ snapshots:
   event-target-shim@5.0.1: {}
 
   events@3.3.0: {}
+
+  eventsource-parser@3.0.6: {}
+
+  eventsource@4.1.0:
+    dependencies:
+      eventsource-parser: 3.0.6
 
   fast-copy@3.0.2: {}
 
@@ -683,7 +710,7 @@ snapshots:
 
   real-require@0.2.0: {}
 
-  rescript-schema@9.3.0(rescript@11.1.3):
+  rescript-schema@9.3.4(rescript@11.1.3):
     optionalDependencies:
       rescript: 11.1.3
 
