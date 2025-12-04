@@ -65,7 +65,7 @@ let make = (~hyperSyncUrl, ~apiToken) => {
     | None => ()
     }
 
-    let userAgent = `hyperindex/${Utils.EnvioPackage.value.version}`
+    let userAgent = `hyperindex/${Utils.EnvioPackage.json.version}`
     let es = EventSource.create(
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
