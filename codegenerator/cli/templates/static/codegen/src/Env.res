@@ -201,9 +201,6 @@ module Hasura = {
 }
 
 module Configurable = {
-  let multichain =
-    envSafe->EnvSafe.get("ENVIO_MULTICHAIN", S.option(S.enum([Config.Ordered, Config.Unordered])))
-
   module SyncConfig = {
     let initialBlockInterval =
       envSafe->EnvSafe.get("ENVIO_RPC_INITIAL_BLOCK_INTERVAL", S.option(S.int))

@@ -97,13 +97,11 @@ let makeGeneratedConfig = () => {
   Config.make(
     ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
     ~shouldSaveFullHistory={{should_save_full_history}},
-    ~multichain=Env.Configurable.multichain->Belt.Option.getWithDefault(
-      if {{is_unordered_multichain_mode}} {
-        Unordered
-      } else {
-        Ordered
-      }
-    ),
+    ~multichain=if {{is_unordered_multichain_mode}} {
+      Unordered
+    } else {
+      Ordered
+    },
     ~chains,
     ~enableRawEvents={{enable_raw_events}},
     ~batchSize=?Env.batchSize,
