@@ -1,4 +1,7 @@
-Dotenv.initialize()
+
+// Loads the .env from the root working directory
+%%raw(`import 'dotenv/config'`)
+
 %%private(
   let envSafe = EnvSafe.make()
 

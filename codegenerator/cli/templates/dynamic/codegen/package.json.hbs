@@ -10,11 +10,12 @@
     "build": "rescript",
     "watch": "rescript -w",
     "format": "rescript format -all",
-    "db-up": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))'",
-    "db-down": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))'",
-    "db-setup": "node -e 'import(\"./src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
-    "print-benchmark-summary": "node -e 'import(\"./src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
     {{!-- We need this to always have cwd at the root of the project --}}
+    {{!-- For imports and dotenv to correctly resolve --}}
+    "db-up": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))'",
+    "db-down": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))'",
+    "db-setup": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
+    "print-benchmark-summary": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
     "start": "cd {{relative_path_to_root_from_generated}} && tsc --noEmit && node --no-warnings --import {{relative_path_to_generated_from_root}}/node_modules/tsx/dist/esm/index.mjs {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
   },
   "keywords": [
@@ -38,7 +39,6 @@
     "@rescript/react": "0.14.0",
     "bignumber.js": "9.1.2",
     "date-fns": "3.3.1",
-    "dotenv": "16.4.5",
     "ethers": "6.8.0",
     "express": "4.19.2",
     "ink": "6.5.1",
@@ -49,7 +49,6 @@
     "postgres": "3.4.1",
     "react": "19.2.0",
     "rescript": "11.1.3",
-    "rescript-envsafe": "5.0.0",
     "rescript-schema": "9.3.4",
     "envio": "{{envio_version}}",
     "viem": "2.21.0",
