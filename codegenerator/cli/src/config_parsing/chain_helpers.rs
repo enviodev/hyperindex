@@ -146,9 +146,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     Cyber = 7560,
 
-    #[subenum(HypersyncNetwork)]
-    Damon = 341,
-
     Darwinia = 46,
 
     #[subenum(
@@ -237,10 +234,10 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     MantleTestnet = 5001,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     MegaethTestnet = 6342,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     MegaethTestnet2 = 6343,
 
     #[subenum(HypersyncNetwork)]
@@ -490,7 +487,6 @@ impl Network {
             | Network::Clover
             | Network::Crab
             | Network::Cyber
-            | Network::Damon
             | Network::Darwinia
             | Network::Evmos
             | Network::EthereumMainnet
@@ -643,9 +639,7 @@ impl HypersyncNetwork {
             | Soneium | BaseSepolia | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet
             | Morph | Harmony | Saakuru | Cyber | Superseed | Worldchain | Sophon | Fantom
             | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam | Plume | Scroll
-            | AuroraTurbo | Damon | SentientTestnet | Ab | ArcTestnet | Sentient | SonicTestnet => {
-                Stone
-            }
+            | AuroraTurbo | SentientTestnet | Ab | ArcTestnet | Sentient | SonicTestnet => Stone,
         }
     }
 

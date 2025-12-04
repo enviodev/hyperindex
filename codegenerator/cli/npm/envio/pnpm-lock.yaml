@@ -27,7 +27,7 @@ importers:
         specifier: 16.4.5
         version: 16.4.5
       eventsource:
-        specifier: ^4.1.0
+        specifier: 4.1.0
         version: 4.1.0
       pino:
         specifier: 8.16.1
