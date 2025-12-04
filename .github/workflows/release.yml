@@ -6,10 +6,6 @@ on:
       - "v*.*.*"
     branches:
       - main
-      # The following two branch names can be used to force build a version for development and sharing a patch.
-      - "*force-npm-publish*"
-      - "v*.*.*-branch*"
-      - "release-*"
 
 env:
   CARGO_TERM_COLOR: always
