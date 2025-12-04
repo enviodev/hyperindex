@@ -2,8 +2,8 @@ use crate::{
     config_parsing::{
         chain_helpers::{self, GraphNetwork},
         human_config::{
-            evm::{ContractConfig, EventConfig, HumanConfig, Network},
-            NetworkContract,
+            evm::{Chain, ContractConfig, EventConfig, HumanConfig},
+            ChainContract,
         },
     },
     constants::project_paths::DEFAULT_SCHEMA_PATH,
@@ -276,7 +276,7 @@ pub async fn generate_config_from_subgraph_id(
         address_format: None,
         handlers: None,
     };
-    let mut chains: Vec<Network> = vec![];
+    let mut chains: Vec<Chain> = vec![];
 
     //Allow schema and abis to be fetched on different threads
     let mut join_set = JoinSet::new();
@@ -296,7 +296,7 @@ pub async fn generate_config_from_subgraph_id(
 
     for (graph_network, contracts) in &network_hashmap {
         // Create network object to be populated
-        let mut network = Network {
+        let mut chain = Chain {
             id: chain_helpers::Network::from(*graph_network).get_network_id(),
             hypersync_config: None,
             // TODO: update to the final rpc url
@@ -347,7 +347,7 @@ pub async fn generate_config_from_subgraph_id(
                         })
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    let contract = NetworkContract {
+                    let contract = ChainContract {
                         name: data_source.name.to_string(),
                         address: vec![data_source.source.address.to_string()].into(),
                         config: Some(ContractConfig {
@@ -358,8 +358,8 @@ pub async fn generate_config_from_subgraph_id(
                         start_block: None,
                     };
 
-                    // Pushing contract to network
-                    network.contracts.push(contract.clone());
+                    // Pushing contract to chain
+                    chain.contracts.push(contract.clone());
 
                     //Create the dir for all abis to be dropped in
                     let abi_dir_path = project_root_path.join("abis");
@@ -385,7 +385,7 @@ pub async fn generate_config_from_subgraph_id(
         }
 
         // Pushing chain to config
-        chains.push(network);
+        chains.push(chain);
     }
     config.chains = chains;
 

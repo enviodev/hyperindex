@@ -127,7 +127,7 @@ pub fn validate_names_valid_rescript(
     Ok(())
 }
 
-impl human_config::evm::Network {
+impl human_config::evm::Chain {
     pub fn validate_finite_endblock_networks(
         &self,
         human_config: &human_config::evm::HumanConfig,

@@ -4,8 +4,8 @@ use super::{
     human_config::{
         self,
         evm::{
-            EventConfig as EvmEventConfig, EventDecoder, For, HumanConfig as EvmConfig,
-            Network as EvmNetwork, NetworkRpc, Rpc,
+            Chain as EvmChain, EventConfig as EvmEventConfig, EventDecoder, For,
+            HumanConfig as EvmConfig, NetworkRpc, Rpc,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -996,7 +996,7 @@ fn parse_url(url: &str) -> Option<String> {
 
 impl DataSource {
     fn from_evm_network_config(
-        network: EvmNetwork,
+        network: EvmChain,
         event_decoder: Option<EventDecoder>,
     ) -> Result<Self> {
         let is_client_decoder = match event_decoder {
@@ -2021,9 +2021,9 @@ mod test {
 
     #[test]
     fn test_hypersync_url_trailing_slash_trimming() {
-        use crate::config_parsing::human_config::evm::{HypersyncConfig, Network as EvmNetwork};
+        use crate::config_parsing::human_config::evm::{HypersyncConfig, Chain as EvmChain};
 
-        let network = EvmNetwork {
+        let network = EvmChain {
             id: 1,
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
@@ -2089,7 +2089,7 @@ mod test {
     #[test]
     fn test_output_configuration() {
         use crate::config_parsing::human_config::{
-            evm::{HumanConfig as EvmConfig, Network as EvmNetwork},
+            evm::{HumanConfig as EvmConfig, Chain as EvmChain},
             HumanConfig,
         };
         use crate::project_paths::ParsedProjectPaths;
@@ -2102,7 +2102,7 @@ mod test {
             schema: None,
             output: None,
             contracts: None,
-            chains: vec![EvmNetwork {
+            chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
@@ -2149,7 +2149,7 @@ mod test {
             schema: None,
             output: Some("custom/output".to_string()),
             contracts: None,
-            chains: vec![EvmNetwork {
+            chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,

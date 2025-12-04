@@ -56,7 +56,7 @@ impl JsonSchema for Addresses {
     }
 }
 
-type NetworkId = u64;
+type ChainId = u64;
 
 /// Base configuration fields shared across all ecosystems
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -95,7 +95,7 @@ pub struct GlobalContract<T> {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct NetworkContract<T> {
+pub struct ChainContract<T> {
     #[schemars(
         description = "A unique project-wide name for this contract if events and handler are \
                        defined OR a reference to the name of contract defined globally at the top \
@@ -111,8 +111,8 @@ pub struct NetworkContract<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "The block at which the indexer should start ingesting data for this \
-                       specific contract. If not specified, uses the network start_block. Can be \
-                       greater than the network start_block for more specific indexing."
+                       specific contract. If not specified, uses the chain start_block. Can be \
+                       greater than the chain start_block for more specific indexing."
     )]
     pub start_block: Option<u64>,
     #[serde(flatten)]
@@ -148,7 +148,7 @@ impl Display for HumanConfig {
 }
 
 pub mod evm {
-    use super::{GlobalContract, NetworkContract, NetworkId};
+    use super::{ChainContract, ChainId, GlobalContract};
     use crate::utils::normalized_list::SingleOrList;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -191,7 +191,7 @@ pub mod evm {
         #[schemars(
             description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub chains: Vec<Network>,
+        pub chains: Vec<Chain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Multichain mode: 'ordered' processes events across chains in order, \
@@ -499,12 +499,12 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Network {
-        #[schemars(description = "The public blockchain network ID.")]
-        pub id: NetworkId,
+    pub struct Chain {
+        #[schemars(description = "The public blockchain chain ID.")]
+        pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "RPC configuration for utilizing as the network's data-source. \
+            description = "RPC configuration for utilizing as the chain's data-source. \
                            Typically optional for chains with HyperSync support, which is highly \
                            recommended. HyperSync dramatically enhances performance, providing up \
                            to a 1000x speed boost over traditional RPC."
@@ -512,7 +512,7 @@ pub mod evm {
         pub rpc_config: Option<RpcConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
-                                  otherwise, for networks supported by HyperSync, RPC serves as \
+                                  otherwise, for chains supported by HyperSync, RPC serves as \
                                   a fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
                                   improvements, up to a 1000x faster than traditional RPC.")]
@@ -531,8 +531,8 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
-        #[schemars(description = "All the contracts that should be indexed on the given network")]
-        pub contracts: Vec<NetworkContract<ContractConfig>>,
+        #[schemars(description = "All the contracts that should be indexed on the given chain")]
+        pub contracts: Vec<ChainContract<ContractConfig>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -582,7 +582,7 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use super::{GlobalContract, NetworkContract, NetworkId};
+    use super::{ChainContract, ChainId, GlobalContract};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use strum::Display;
@@ -621,7 +621,7 @@ pub mod fuel {
         #[schemars(
             description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub chains: Vec<Network>,
+        pub chains: Vec<Chain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "If true, the indexer will store the raw event data in the database. \
@@ -667,9 +667,9 @@ pub mod fuel {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Network {
-        #[schemars(description = "Public chain/network id")]
-        pub id: NetworkId,
+    pub struct Chain {
+        #[schemars(description = "Public chain id")]
+        pub id: ChainId,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -678,8 +678,8 @@ pub mod fuel {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperFuel Config for additional fine-tuning")]
         pub hyperfuel_config: Option<HyperfuelConfig>,
-        #[schemars(description = "All the contracts that should be indexed on the given network")]
-        pub contracts: Vec<NetworkContract<ContractConfig>>,
+        #[schemars(description = "All the contracts that should be indexed on the given chain")]
+        pub contracts: Vec<ChainContract<ContractConfig>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -771,8 +771,8 @@ pub mod solana {
 #[cfg(test)]
 mod tests {
     use super::{
-        evm::{ContractConfig, EventDecoder, HumanConfig, Network},
-        NetworkContract,
+        evm::{Chain, ContractConfig, EventDecoder, HumanConfig},
+        ChainContract,
     };
     use crate::{config_parsing::human_config::fuel, utils::normalized_list::NormalizedList};
     use pretty_assertions::assert_eq;
@@ -834,8 +834,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 events: []
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
@@ -859,8 +859,8 @@ handler: ./src/EventHandler.js
 events: []
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: vec![].into(),
             start_block: None,
@@ -883,8 +883,8 @@ address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
 events: []
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()].into(),
             start_block: None,
@@ -905,8 +905,8 @@ name: Contract1
 address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
@@ -985,12 +985,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            chains: vec![fuel::Network {
+            chains: vec![fuel::Chain {
                 id: 0,
                 start_block: 0,
                 end_block: None,
                 hyperfuel_config: None,
-                contracts: vec![NetworkContract {
+                contracts: vec![ChainContract {
                     name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
                         .to_string()
@@ -1069,12 +1069,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
-    fn deserialize_network_with_underscores_between_numbers() {
-        let network_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
-        let de: Network = serde_json::from_value(network_json).unwrap();
+    fn deserialize_chain_with_underscores_between_numbers() {
+        let chain_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
+        let de: Chain = serde_json::from_value(chain_json).unwrap();
 
         assert_eq!(
-            Network {
+            Chain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,

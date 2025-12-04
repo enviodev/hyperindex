@@ -47,7 +47,7 @@
       "description": "Configuration of the blockchain chains that the project is deployed on.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/Network"
+        "$ref": "#/$defs/Chain"
       }
     },
     "raw_events": {
@@ -152,11 +152,11 @@
         "call"
       ]
     },
-    "Network": {
+    "Chain": {
       "type": "object",
       "properties": {
         "id": {
-          "description": "Public chain/network id",
+          "description": "Public chain id",
           "type": "integer",
           "format": "uint64",
           "minimum": 0
@@ -188,10 +188,10 @@
           ]
         },
         "contracts": {
-          "description": "All the contracts that should be indexed on the given network",
+          "description": "All the contracts that should be indexed on the given chain",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/NetworkContract_for_ContractConfig"
+            "$ref": "#/$defs/ChainContract_for_ContractConfig"
           }
         }
       },
@@ -215,7 +215,7 @@
         "url"
       ]
     },
-    "NetworkContract_for_ContractConfig": {
+    "ChainContract_for_ContractConfig": {
       "type": "object",
       "properties": {
         "name": {
@@ -227,7 +227,7 @@
           "$ref": "#/$defs/Addresses"
         },
         "start_block": {
-          "description": "The block at which the indexer should start ingesting data for this specific contract. If not specified, uses the network start_block. Can be greater than the network start_block for more specific indexing.",
+          "description": "The block at which the indexer should start ingesting data for this specific contract. If not specified, uses the chain start_block. Can be greater than the chain start_block for more specific indexing.",
           "type": [
             "integer",
             "null"

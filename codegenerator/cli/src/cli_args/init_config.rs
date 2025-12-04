@@ -16,8 +16,8 @@ pub mod evm {
             chain_helpers,
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{ContractConfig, EventConfig, HumanConfig, Network, NetworkRpc},
-                GlobalContract, NetworkContract,
+                evm::{Chain, ContractConfig, EventConfig, HumanConfig, NetworkRpc},
+                ChainContract, GlobalContract,
             },
             system_config::EvmAbi,
         },
@@ -46,7 +46,7 @@ pub mod evm {
     type ContractName = String;
     impl ContractImportSelection {
         pub fn to_human_config(&self, init_config: &InitConfig) -> Result<HumanConfig> {
-            let mut chains_map: HashMap<u64, Network> = HashMap::new();
+            let mut chains_map: HashMap<u64, Chain> = HashMap::new();
             let mut global_contracts: HashMap<ContractName, GlobalContract<ContractConfig>> =
                 HashMap::new();
 
@@ -124,7 +124,7 @@ pub mod evm {
                                 }
                             };
 
-                            Network {
+                            Chain {
                                 id: selected_chain.network.get_network_id(),
                                 hypersync_config: None,
                                 rpc_config: None,
@@ -136,7 +136,7 @@ pub mod evm {
                             }
                         });
 
-                    let contract = NetworkContract {
+                    let contract = ChainContract {
                         name: selected_contract.name.clone(),
                         address,
                         config: config.clone(),
@@ -210,9 +210,9 @@ pub mod fuel {
     use crate::{
         config_parsing::human_config::{
             fuel::{
-                ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network as NetworkConfig,
+                Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig,
             },
-            NetworkContract,
+            ChainContract,
         },
         fuel::{abi::FuelAbi, address::Address},
     };
@@ -267,14 +267,14 @@ pub mod fuel {
             for network in Network::iter() {
                 match contracts_by_network.get(&network) {
                     None => (),
-                    Some(contracts) => network_configs.push(NetworkConfig {
+                    Some(contracts) => network_configs.push(ChainConfig {
                         id: network as u64,
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
                         contracts: contracts
                             .iter()
-                            .map(|selected_contract| NetworkContract {
+                            .map(|selected_contract| ChainContract {
                                 name: selected_contract.name.clone(),
                                 address: selected_contract
                                     .addresses

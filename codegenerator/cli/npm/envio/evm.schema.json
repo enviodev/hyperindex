@@ -54,7 +54,7 @@
       "description": "Configuration of the blockchain chains that the project is deployed on.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/Network"
+        "$ref": "#/$defs/Chain"
       }
     },
     "multichain": {
@@ -301,17 +301,17 @@
         "mixHash"
       ]
     },
-    "Network": {
+    "Chain": {
       "type": "object",
       "properties": {
         "id": {
-          "description": "The public blockchain network ID.",
+          "description": "The public blockchain chain ID.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0
         },
         "rpc_config": {
-          "description": "RPC configuration for utilizing as the network's data-source. Typically optional for chains with HyperSync support, which is highly recommended. HyperSync dramatically enhances performance, providing up to a 1000x speed boost over traditional RPC.",
+          "description": "RPC configuration for utilizing as the chain's data-source. Typically optional for chains with HyperSync support, which is highly recommended. HyperSync dramatically enhances performance, providing up to a 1000x speed boost over traditional RPC.",
           "anyOf": [
             {
               "$ref": "#/$defs/RpcConfig"
@@ -322,7 +322,7 @@
           ]
         },
         "rpc": {
-          "description": "RPC configuration for your indexer. If not specified otherwise, for networks supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
+          "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
           "anyOf": [
             {
               "$ref": "#/$defs/NetworkRpc"
@@ -367,10 +367,10 @@
           "minimum": 0
         },
         "contracts": {
-          "description": "All the contracts that should be indexed on the given network",
+          "description": "All the contracts that should be indexed on the given chain",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/NetworkContract_for_ContractConfig"
+            "$ref": "#/$defs/ChainContract_for_ContractConfig"
           }
         }
       },
@@ -594,7 +594,7 @@
         "url"
       ]
     },
-    "NetworkContract_for_ContractConfig": {
+    "ChainContract_for_ContractConfig": {
       "type": "object",
       "properties": {
         "name": {
@@ -606,7 +606,7 @@
           "$ref": "#/$defs/Addresses"
         },
         "start_block": {
-          "description": "The block at which the indexer should start ingesting data for this specific contract. If not specified, uses the network start_block. Can be greater than the network start_block for more specific indexing.",
+          "description": "The block at which the indexer should start ingesting data for this specific contract. If not specified, uses the chain start_block. Can be greater than the chain start_block for more specific indexing.",
           "type": [
             "integer",
             "null"
