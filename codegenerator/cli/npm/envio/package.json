@@ -29,7 +29,7 @@
     "@envio-dev/hyperfuel-client": "1.2.2",
     "@envio-dev/hypersync-client": "0.7.0",
     "bignumber.js": "9.1.2",
-    "eventsource": "^4.1.0",
+    "eventsource": "4.1.0",
     "pino": "8.16.1",
     "pino-pretty": "10.2.3",
     "prom-client": "15.0.0",
