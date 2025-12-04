@@ -19,6 +19,6 @@
     "generatedFileExtension": ".gen.ts",
     "moduleResolution": "node16"
   },
-  "bs-dependencies": ["rescript-schema"],
+  "bs-dependencies": ["rescript-schema", "rescript-envsafe"],
   "bsc-flags": ["-open RescriptSchema"]
 }

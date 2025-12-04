@@ -26,11 +26,6 @@
     "version": 4
   },
   "suffix": ".res.mjs",
-  "bs-dependencies": [
-    "rescript-envsafe",
-    "rescript-schema",
-    "@rescript/react",
-    "envio"
-  ],
+  "bs-dependencies": ["rescript-schema", "@rescript/react", "envio"],
   "bsc-flags": ["-open RescriptSchema"]
 }
