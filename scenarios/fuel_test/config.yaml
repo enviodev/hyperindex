@@ -2,7 +2,7 @@
 name: Fuel Greeter Indexer
 ecosystem: fuel
 # raw_events: true
-networks:
+chains:
   - id: 0
     start_block: 0
     contracts:

@@ -2,7 +2,7 @@
 name: gravatar-with-required-entities
 schema: ../schemas/gravatar-schema.graphql
 description: Gravatar for Ethereum
-networks:
+chains:
   - id: 1
     start_block: 0
     contracts:

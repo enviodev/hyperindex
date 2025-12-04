@@ -132,9 +132,9 @@ let fromName = (name: name): t => {
   }
 }
 
-// Create a block event object for block handlers based on platform
-let makeBlockEvent = (~blockNumber: int, platform: t): Internal.blockEvent => {
+// Create a block event object for block handlers based on ecosystem
+let makeBlockEvent = (~blockNumber: int, ecosystem: t): Internal.blockEvent => {
   let blockEvent = Js.Dict.empty()
-  blockEvent->Js.Dict.set(platform.blockNumberName, blockNumber->Utils.magic)
+  blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->Utils.magic)
   blockEvent->Utils.magic
 }

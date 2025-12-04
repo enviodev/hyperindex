@@ -52,7 +52,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       checkpointId: 0.,
       chains,
       isResolved: false,
-    })->(Utils.magic: Internal.handlerContext => Types.loaderContext)
+    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     let _ = handlerContext.entityWithBigDecimal.get(testEntity1.id)
     let _ = handlerContext.entityWithBigDecimal.get(testEntity2.id)

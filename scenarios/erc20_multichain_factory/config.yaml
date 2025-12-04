@@ -20,7 +20,7 @@ contracts:
     events:
       - event: "TokenCreated(address indexed token)"
       - event: "DeleteUser(address indexed user)"
-networks:
+chains:
   - id: 1 # Ethereum Mainnet
     start_block: 0
     contracts:

@@ -44,7 +44,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       checkpointId: 0.,
       chains,
       isResolved: false,
-    })->(Utils.magic: Internal.handlerContext => Types.loaderContext)
+    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
 
     let _ = handlerContext.entityWithTimestamp.get(testEntity.id)
 

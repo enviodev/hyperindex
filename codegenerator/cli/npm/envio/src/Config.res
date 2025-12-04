@@ -45,9 +45,8 @@ type t = {
   multichain: multichain,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
-  platform: Platform.t,
+  ecosystem: Ecosystem.t,
   enableRawEvents: bool,
-  preloadHandlers: bool,
   maxAddrInPartition: int,
   batchSize: int,
   lowercaseAddresses: bool,
@@ -59,8 +58,7 @@ let make = (
   ~shouldSaveFullHistory=false,
   ~chains: array<chain>=[],
   ~enableRawEvents=false,
-  ~preloadHandlers=false,
-  ~ecosystem: Platform.name=Platform.Evm,
+  ~ecosystem: Ecosystem.name=Ecosystem.Evm,
   ~batchSize=5000,
   ~lowercaseAddresses=false,
   ~multichain=Unordered,
@@ -90,7 +88,7 @@ let make = (
     })
   })
 
-  let platform = Platform.fromName(ecosystem)
+  let ecosystem = Ecosystem.fromName(ecosystem)
 
   {
     shouldRollbackOnReorg,
@@ -99,9 +97,8 @@ let make = (
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
-    platform,
+    ecosystem,
     maxAddrInPartition,
-    preloadHandlers,
     batchSize,
     lowercaseAddresses,
     addContractNameToContractNameMapping,

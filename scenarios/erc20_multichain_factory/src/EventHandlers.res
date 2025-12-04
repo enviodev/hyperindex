@@ -47,36 +47,31 @@ let createNewAccountWithZeroBalance = (
   accountToken
 }
 
-Handlers.ERC20.Approval.handlerWithLoader({
-  loader: async ({event, context}) => {
-    await context.account.get(event.params.owner->Address.toString)
-  },
-  handler: async ({event, context, loaderReturn}) => {
-    let ownerAccount = loaderReturn
+Handlers.ERC20.Approval.handler(async ({event, context}) => {
+  let ownerAccount = await context.account.get(event.params.owner->Address.toString)
 
-    let account_id = event.params.owner->Address.toString
-    let tokenAddress = event.srcAddress->Address.toString
-    if ownerAccount->Belt.Option.isNone {
-      createNewAccountWithZeroBalance(
-        ~account_id,
-        ~tokenAddress,
-        ~setAccount=context.account.set,
-        ~setAccountToken=context.accountToken.set,
-      )->ignore
-    }
-
-    let approvalEntity = makeApprivalEntity(
-      ~spender_id=event.params.spender->Address.toString,
-      ~owner_id=account_id,
+  let account_id = event.params.owner->Address.toString
+  let tokenAddress = event.srcAddress->Address.toString
+  if ownerAccount->Belt.Option.isNone {
+    createNewAccountWithZeroBalance(
+      ~account_id,
       ~tokenAddress,
-      ~amount=event.params.value,
-    )
+      ~setAccount=context.account.set,
+      ~setAccountToken=context.accountToken.set,
+    )->ignore
+  }
 
-    // this is the same for create or update as the amount is overwritten
-    context.approval.set(approvalEntity)
+  let approvalEntity = makeApprivalEntity(
+    ~spender_id=event.params.spender->Address.toString,
+    ~owner_id=account_id,
+    ~tokenAddress,
+    ~amount=event.params.value,
+  )
 
-    // context.account.load(event.params.owner->Address.toString)
-  },
+  // this is the same for create or update as the amount is overwritten
+  context.approval.set(approvalEntity)
+
+  // context.account.load(event.params.owner->Address.toString)
 })
 
 let manipulateAccountTokenBalance = (fn, accountToken: AccountToken.t, amount): AccountToken.t => {
@@ -103,49 +98,43 @@ let manipulateAccountBalance = (
   ->fn(value)
   ->setAccountToken
 
-Handlers.ERC20.Transfer.handlerWithLoader({
-  loader: async ({event, context}) => {
-    let fromAccount_id = event.params.from->Address.toString
-    let toAccount_id = event.params.to->Address.toString
-    let tokenAddress = event.srcAddress->Address.toString
-    let fromAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=fromAccount_id)
-    let toAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=toAccount_id)
+Handlers.ERC20.Transfer.handler(async ({event, context}) => {
+  let fromAccount_id = event.params.from->Address.toString
+  let toAccount_id = event.params.to->Address.toString
+  let tokenAddress = event.srcAddress->Address.toString
+  let fromAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=fromAccount_id)
+  let toAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=toAccount_id)
 
+  let (senderAccountToken, receiverAccountToken) =
     await (
       context.accountToken.get(fromAccountToken_id),
       context.accountToken.get(toAccountToken_id),
     )->Promise.all2
-  },
-  handler: async ({event, context, loaderReturn}) => {
-    let (senderAccountToken, receiverAccountToken) = loaderReturn
-    let {params: {from, to, value}, srcAddress} = event
-    let fromAccount_id = from->Address.toString
-    let toAccount_id = to->Address.toString
-    let tokenAddress = srcAddress->Address.toString
 
-    let manipulateAccountBalance =
-      manipulateAccountBalance(
-        ~value,
-        ~tokenAddress,
-        ~setAccountToken=context.accountToken.set,
-        ~setAccount=context.account.set,
-        ...
-      )
+  let {params: {from, to, value}, srcAddress} = event
+  let fromAccount_id = from->Address.toString
+  let toAccount_id = to->Address.toString
+  let tokenAddress = srcAddress->Address.toString
 
-    senderAccountToken->manipulateAccountBalance(subFromBalance, ~account_id=fromAccount_id)
-    receiverAccountToken->manipulateAccountBalance(addToBalance, ~account_id=toAccount_id)
-  },
+  let manipulateAccountBalance =
+    manipulateAccountBalance(
+      ~value,
+      ~tokenAddress,
+      ~setAccountToken=context.accountToken.set,
+      ~setAccount=context.account.set,
+      ...
+    )
+
+  senderAccountToken->manipulateAccountBalance(subFromBalance, ~account_id=fromAccount_id)
+  receiverAccountToken->manipulateAccountBalance(addToBalance, ~account_id=toAccount_id)
 })
 
-Handlers.ERC20Factory.DeleteUser.handlerWithLoader({
-  loader: ({event, context}) => {
-    let account_id = event.params.user->Address.toString
-    context.accountToken.getWhere.account_id.eq(account_id)
-  },
-  handler: async ({event, context, loaderReturn}) => {
-    context.account.deleteUnsafe(event.params.user->Address.toString)
-    loaderReturn->Belt.Array.forEach(accountToken => {
-      context.accountToken.deleteUnsafe(accountToken.id)
-    })
-  },
+Handlers.ERC20Factory.DeleteUser.handler(async ({event, context}) => {
+  let account_id = event.params.user->Address.toString
+  let accountTokens = await context.accountToken.getWhere.account_id.eq(account_id)
+
+  context.account.deleteUnsafe(event.params.user->Address.toString)
+  accountTokens->Belt.Array.forEach(accountToken => {
+    context.accountToken.deleteUnsafe(accountToken.id)
+  })
 })

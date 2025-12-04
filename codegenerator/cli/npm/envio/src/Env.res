@@ -204,17 +204,6 @@ module Hasura = {
 }
 
 module Configurable = {
-  /**
-    Used for backwards compatability
-  */
-  let unstable__temp_unordered_head_mode = envSafe->EnvSafe.get(
-    "UNSTABLE__TEMP_UNORDERED_HEAD_MODE",
-    S.option(S.bool),
-  )
-
-  let isUnorderedMultichainMode =
-    envSafe->EnvSafe.get("UNORDERED_MULTICHAIN_MODE", S.option(S.bool))
-
   module SyncConfig = {
     let initialBlockInterval =
       envSafe->EnvSafe.get("ENVIO_RPC_INITIAL_BLOCK_INTERVAL", S.option(S.int))

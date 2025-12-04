@@ -266,18 +266,17 @@ pub async fn generate_config_from_subgraph_id(
         schema: None,
         output: None,
         contracts: None,
-        networks: vec![],
-        unordered_multichain_mode: None,
+        chains: vec![],
+        multichain: None,
         event_decoder: None,
         rollback_on_reorg: None,
         save_full_history: None,
         field_selection: None,
         raw_events: None,
-        preload_handlers: Some(true),
         address_format: None,
         handlers: None,
     };
-    let mut networks: Vec<Network> = vec![];
+    let mut chains: Vec<Network> = vec![];
 
     //Allow schema and abis to be fetched on different threads
     let mut join_set = JoinSet::new();
@@ -385,10 +384,10 @@ pub async fn generate_config_from_subgraph_id(
             };
         }
 
-        // Pushing network to config
-        networks.push(network);
+        // Pushing chain to config
+        chains.push(network);
     }
-    config.networks = networks;
+    config.chains = chains;
 
     // Convert config to YAML file
     let yaml_string = serde_yaml::to_string(&config).unwrap();

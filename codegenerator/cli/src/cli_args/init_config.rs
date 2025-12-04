@@ -46,12 +46,12 @@ pub mod evm {
     type ContractName = String;
     impl ContractImportSelection {
         pub fn to_human_config(&self, init_config: &InitConfig) -> Result<HumanConfig> {
-            let mut networks_map: HashMap<u64, Network> = HashMap::new();
+            let mut chains_map: HashMap<u64, Network> = HashMap::new();
             let mut global_contracts: HashMap<ContractName, GlobalContract<ContractConfig>> =
                 HashMap::new();
 
             for selected_contract in self.selected_contracts.clone() {
-                let is_multi_chain_contract = selected_contract.networks.len() > 1;
+                let is_multi_chain_contract = selected_contract.chains.len() > 1;
 
                 let events: Vec<EventConfig> = selected_contract
                     .events
@@ -95,25 +95,25 @@ pub mod evm {
                     })
                 };
 
-                for selected_network in &selected_contract.networks {
-                    let address = selected_network
+                for selected_chain in &selected_contract.chains {
+                    let address = selected_chain
                         .addresses
                         .iter()
                         .map(|a| a.to_string())
                         .collect::<Vec<_>>()
                         .into();
 
-                    let network = networks_map
-                        .entry(selected_network.network.get_network_id())
+                    let chain = chains_map
+                        .entry(selected_chain.network.get_network_id())
                         .or_insert({
-                            let rpc = match &selected_network.network {
+                            let rpc = match &selected_chain.network {
                                 NetworkKind::Supported(_) => None,
                                 NetworkKind::Unsupported { rpc_url, .. } => {
                                     Some(NetworkRpc::Url(rpc_url.to_string()))
                                 }
                             };
 
-                            let end_block = match selected_network.network {
+                            let end_block = match selected_chain.network {
                                 NetworkKind::Supported(network) => {
                                     chain_helpers::Network::from(network).get_finite_end_block()
                                 }
@@ -125,11 +125,11 @@ pub mod evm {
                             };
 
                             Network {
-                                id: selected_network.network.get_network_id(),
+                                id: selected_chain.network.get_network_id(),
                                 hypersync_config: None,
                                 rpc_config: None,
                                 rpc,
-                                start_block: selected_network.network.get_start_block(),
+                                start_block: selected_chain.network.get_start_block(),
                                 end_block,
                                 confirmed_block_threshold: None,
                                 contracts: Vec::new(),
@@ -143,7 +143,7 @@ pub mod evm {
                         start_block: None,
                     };
 
-                    network.contracts.push(contract);
+                    chain.contracts.push(contract);
                 }
             }
 
@@ -163,14 +163,13 @@ pub mod evm {
                 schema: None,
                 output: None,
                 contracts,
-                networks: networks_map.into_values().sorted_by_key(|v| v.id).collect(),
-                unordered_multichain_mode: Some(true),
+                chains: chains_map.into_values().sorted_by_key(|v| v.id).collect(),
+                multichain: None, // Default is Unordered
                 event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,
                 field_selection: None,
                 raw_events: None,
-                preload_handlers: Some(true),
                 address_format: None,
                 handlers: None,
             })
@@ -179,7 +178,7 @@ pub mod evm {
         fn uses_hypersync(&self) -> bool {
             self.selected_contracts
                 .iter()
-                .any(|c| c.networks.iter().any(|n| n.uses_hypersync()))
+                .any(|c| c.chains.iter().any(|n| n.uses_hypersync()))
         }
     }
 
@@ -303,8 +302,7 @@ pub mod fuel {
                 output: None,
                 contracts: None,
                 raw_events: None,
-                preload_handlers: Some(true),
-                networks: network_configs,
+                chains: network_configs,
                 handlers: None,
             }
         }

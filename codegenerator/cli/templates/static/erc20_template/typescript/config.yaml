@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: erc20indexer
 description: ERC-20 indexer
-networks:
+chains:
   - id: 1 # Ethereum Mainnet
     start_block: 10861674
     contracts:
@@ -10,14 +10,6 @@ networks:
         events:
           - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
           - event: "Transfer(address indexed from, address indexed to, uint256 value)"
-# Unordered multichain mode allows you to index events from multiple chains
-# in realtime but doesn't guarentee ordering between chains
-# https://docs.envio.dev/docs/HyperIndex/multichain-indexing#unordered-multichain-mode
-unordered_multichain_mode: true
-# Preload optimisation makes your indexer much faster.
-# But be aware that your handlers will run twice,
-# so make sure to use Effect API for external calls.
-preload_handlers: true
 # Address format for Ethereum addresses: 'checksum' or 'lowercase'
 # using lowercase addresses is slightly faster
 address_format: lowercase

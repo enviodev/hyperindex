@@ -97,13 +97,7 @@ let makeGeneratedConfig = () => {
   Config.make(
     ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
     ~shouldSaveFullHistory={{should_save_full_history}},
-    ~multichain=if (
-      Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
-        Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
-          {{is_unordered_multichain_mode}},
-        ),
-      )
-    ) {
+    ~multichain=if {{is_unordered_multichain_mode}} {
       Unordered
     } else {
       Ordered
@@ -111,7 +105,6 @@ let makeGeneratedConfig = () => {
     ~chains,
     ~enableRawEvents={{enable_raw_events}},
     ~batchSize=?Env.batchSize,
-    ~preloadHandlers={{preload_handlers}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     {{#if is_fuel_ecosystem}}
@@ -124,9 +117,8 @@ let configWithoutRegistrations = makeGeneratedConfig()
 
 let registerAllHandlers = async () => {
   EventRegister.startRegistration(
-    ~platform=configWithoutRegistrations.platform,
+    ~ecosystem=configWithoutRegistrations.ecosystem,
     ~multichain=configWithoutRegistrations.multichain,
-    ~preloadHandlers=configWithoutRegistrations.preloadHandlers,
   )
 
   // Auto-load all .js files from src/handlers directory

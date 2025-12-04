@@ -436,9 +436,8 @@ networks:
 - **Global contracts section** defines handlers and events
 - **Network sections** only define addresses for those contracts
 - **Never repeat** handler, events, or other contract configuration in network sections
-- **Use `unordered_multichain_mode: true`** for proper multichain support
 
-**✅ Step 3 Quality Check:**
+  **✅ Step 3 Quality Check:**
 
 #### **3.1: Review Migration Patterns and Quality Checks**
 
@@ -1219,7 +1218,7 @@ const pair: Pair = {
 
 ## External Calls and Effect API
 
-**🚨 CRITICAL: ALL external calls MUST use the Effect API when `preload_handlers: true` is enabled in config.yaml.**
+**🚨 CRITICAL: ALL external calls MUST use the Effect API **
 
 ### Overview
 
@@ -1227,7 +1226,12 @@ When migrating from TheGraph to Envio, external calls (RPC calls, API calls, etc
 
 ### Effect API Pattern
 
-Add `preload_handlers: true` to the `config.yaml` file to enable preload optimisations. With preload optimisations, handlers will run twice.
+HyperIndex uses Preload Optimisation together with the Effect API to make your indexer much faster by parallelizing external calls. It'll mean that the handler will run TWICE:
+
+1. In parallel for the whole batch.
+2. In sequential order of events.
+
+So ensure to use `context.effect` to make external call and prevent double execution. Or use `!context.isPreload` check, to prevent some logic to run during preload.
 
 **So if there's an external call, you MUST use the Effect API to make it.**
 
@@ -1593,24 +1597,6 @@ Contract.EventName.handler(async ({ event, context }) => {
 ```
 
 ### 7. Configuration for Effect API
-
-**Add preload_handlers and field selection for events that need transaction data:**
-
-```yaml
-# config.yaml
-preload_handlers: true # Enable preload optimizations for Effect API
-
-contracts:
-  - name: ContractFactory
-    address:
-      - 0xContractFactoryAddress
-    handler: src/contractFactory.ts
-    events:
-      - event: ContractCreated(address indexed contract, address indexed token, address indexed poolManager)
-        field_selection:
-          transaction_fields:
-            - hash
-```
 
 **✅ Effect API Implementation Quality Check:**
 

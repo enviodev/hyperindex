@@ -6,7 +6,7 @@ import type { Logger, EffectCaller } from "envio";
 import type * as Entities from "./db/Entities.gen.ts";
 import type { chain } from "./Types.gen.ts";
 
-export type {{#if preload_handlers}}HandlerContext{{else}}LoaderContext{{/if}} = {
+export type HandlerContext = {
   /**
    * Access the logger instance with event as a context. The logs will be displayed in the console and Envio Hosted Service.
    */
@@ -79,71 +79,4 @@ export type {{#if preload_handlers}}HandlerContext{{else}}LoaderContext{{/if}} =
   }
   {{/each}}
 };
-
-{{#unless preload_handlers}}
-export type HandlerContext = {
-  /**
-   * Access the logger instance with event as a context. The logs will be displayed in the console and Envio Hosted Service.
-   */
-  readonly log: Logger;
-  /**
-   * Call the provided Effect with the given input.
-   * Effects are the best for external calls with automatic deduplication, error handling and caching.
-   * Define a new Effect using createEffect outside of the handler.
-   */
-  readonly effect: EffectCaller;
-  /**
-   * Per-chain state information accessible in event handlers and block handlers.
-   * Each chain ID maps to an object containing chain-specific state:
-   * - id: the chain ID
-   * - isLive: true when the chain has completed initial sync and is processing live events,
-   *            false during historical synchronization
-   */
-  readonly chains: {
-    [chainId in chain]: {
-      readonly id: chain;
-      readonly isLive: boolean;
-    };
-  };
-  /**
-   * Chain state information for the current event's chain.
-   * - id: the chain ID
-   * - isLive: true when the chain has completed initial sync and is processing live events,
-   *            false during historical synchronization
-   */
-  readonly chain: {
-    readonly id: chain;
-    readonly isLive: boolean;
-  };
-  {{#each entities as | entity |}}
-  readonly {{entity.name.original}}: {
-    /**
-     * Load the entity {{entity.name.original}} from the storage by ID.
-     * If the entity is not found, returns undefined.
-     */
-    readonly get: (id: string) => Promise<Entities.{{entity.name.capitalized}}_t | undefined>,
-    /**
-     * Load the entity {{entity.name.original}} from the storage by ID.
-     * If the entity is not found, throws an error.
-     */
-    readonly getOrThrow: (id: string, message?: string) => Promise<Entities.{{entity.name.capitalized}}_t>,
-    /**
-     * Returns the entity {{entity.name.original}} from the storage by ID.
-     * If the entity is not found, creates it using provided parameters and returns it.
-     */
-    readonly getOrCreate: (entity: Entities.{{entity.name.capitalized}}_t) => Promise<Entities.{{entity.name.capitalized}}_t>,
-    /**
-     * Set the entity {{entity.name.original}} in the storage.
-     */
-    readonly set: (entity: Entities.{{entity.name.capitalized}}_t) => void,
-    /**
-     * Delete the entity {{entity.name.original}} from the storage.
-     *
-     * The 'deleteUnsafe' method is experimental and unsafe. You should manually handle all entity references after deletion to maintain database consistency.
-     */
-    readonly deleteUnsafe: (id: string) => void,
-  }
-  {{/each}}
-};
-{{/unless}}
 {{ts_types_code}}

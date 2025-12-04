@@ -4,9 +4,8 @@ type registrations = {
 }
 
 type activeRegistration = {
-  platform: Platform.t,
+  ecosystem: Ecosystem.t,
   multichain: Config.multichain,
-  preloadHandlers: bool,
   registrations: registrations,
   mutable finished: bool,
 }
@@ -36,11 +35,10 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-let startRegistration = (~platform, ~multichain, ~preloadHandlers) => {
+let startRegistration = (~ecosystem, ~multichain) => {
   let r = {
-    platform,
+    ecosystem,
     multichain,
-    preloadHandlers,
     registrations: {
       onBlockByChainId: Js.Dict.empty(),
       hasEvents: false,
@@ -92,16 +90,7 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
     | Unordered => ()
     | Ordered =>
       Js.Exn.raiseError(
-        "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature or enable unordered multichain mode with `unordered_multichain_mode: true` in your config.",
-      )
-    }
-    // So we encourage users to upgrade to preload optimization
-    // otherwise block handlers will be extremely slow
-    switch registration.preloadHandlers {
-    | true => ()
-    | false =>
-      Js.Exn.raiseError(
-        "Block Handlers require the Preload Optimization feature. Enable it by setting the `preload_handlers` option to `true` in your config.",
+        "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature. Or enable unordered multichain mode by removing `multichain: ordered` from the config.yaml file.",
       )
     }
 

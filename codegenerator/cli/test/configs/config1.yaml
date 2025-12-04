@@ -2,7 +2,7 @@
 name: config1
 schema: ../schemas/schema.graphql
 description: Gravatar for Ethereum
-networks:
+chains:
   - id: 1
     rpc_config:
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network

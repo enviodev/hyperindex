@@ -2,7 +2,7 @@
 name: config3
 schema: ../schemas/schema.graphql
 description: Gravatar for Ethereum
-networks:
+chains:
   - id: 1
     start_block: 0
     rpc: https://fallback.eth.com//

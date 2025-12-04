@@ -50,18 +50,22 @@
         "$ref": "#/$defs/GlobalContract_for_ContractConfig"
       }
     },
-    "networks": {
-      "description": "Configuration of the blockchain networks that the project is deployed on.",
+    "chains": {
+      "description": "Configuration of the blockchain chains that the project is deployed on.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/Network"
       }
     },
-    "unordered_multichain_mode": {
-      "description": "A flag to indicate if the indexer should use a single queue for all chains or a queue per chain (default: false)",
-      "type": [
-        "boolean",
-        "null"
+    "multichain": {
+      "description": "Multichain mode: 'ordered' processes events across chains in order, 'unordered' processes chain events in order, but non-deterministically relatively to other chains (default: unordered)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Multichain"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "event_decoder": {
@@ -107,13 +111,6 @@
         "null"
       ]
     },
-    "preload_handlers": {
-      "description": "Makes handlers run twice to enable preload optimisations. Removes handlerWithLoader API, since it's not needed. (recommended, default: false)",
-      "type": [
-        "boolean",
-        "null"
-      ]
-    },
     "address_format": {
       "description": "Address format for Ethereum addresses: 'checksum' or 'lowercase' (default: checksum)",
       "anyOf": [
@@ -136,7 +133,7 @@
   "additionalProperties": false,
   "required": [
     "name",
-    "networks"
+    "chains"
   ],
   "$defs": {
     "EcosystemTag": {
@@ -673,6 +670,13 @@
             ]
           }
         }
+      ]
+    },
+    "Multichain": {
+      "type": "string",
+      "enum": [
+        "ordered",
+        "unordered"
       ]
     },
     "EventDecoder": {

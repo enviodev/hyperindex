@@ -26,11 +26,7 @@ export type genericContractRegisterArgs<event,context> = { readonly event: event
 
 export type genericContractRegister<args> = $$genericContractRegister<args>;
 
-export type genericHandlerArgs<event,context,loaderReturn> = {
-  readonly event: event; 
-  readonly context: context; 
-  readonly loaderReturn: loaderReturn
-};
+export type genericHandlerArgs<event,context> = { readonly event: event; readonly context: context };
 
 export type genericHandler<args> = (_1:args) => Promise<void>;
 
@@ -46,17 +42,10 @@ export type genericHandlerWithLoader<loader,handler,eventFilters> = {
   readonly loader: loader; 
   readonly handler: handler; 
   readonly wildcard?: boolean; 
-  readonly eventFilters?: eventFilters; 
-  /** @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration. */
-  readonly preRegisterDynamicContracts?: boolean
+  readonly eventFilters?: eventFilters
 };
 
-export type eventOptions<eventFilters> = {
-  readonly wildcard?: boolean; 
-  readonly eventFilters?: eventFilters; 
-  /** @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration. */
-  readonly preRegisterDynamicContracts?: boolean
-};
+export type eventOptions<eventFilters> = { readonly wildcard?: boolean; readonly eventFilters?: eventFilters };
 
 export type fuelSupplyParams = { readonly subId: string; readonly amount: bigint };
 

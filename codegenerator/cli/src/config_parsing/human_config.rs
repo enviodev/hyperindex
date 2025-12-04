@@ -161,16 +161,16 @@ pub mod evm {
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed \
-                           on."
+            description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub networks: Vec<Network>,
+        pub chains: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should use a single queue for all \
-                           chains or a queue per chain (default: false)"
+            description = "Multichain mode: 'ordered' processes events across chains in order, \
+                           'unordered' processes chain events in order, but non-deterministically \
+                           relatively to other chains (default: unordered)"
         )]
-        pub unordered_multichain_mode: Option<bool>,
+        pub multichain: Option<Multichain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "The event decoder to use for the indexer (default: hypersync-client)"
@@ -206,13 +206,6 @@ pub mod evm {
         )]
         pub raw_events: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Makes handlers run twice to enable preload optimisations. Removes \
-                           handlerWithLoader API, since it's not needed. (recommended, default: \
-                           false)"
-        )]
-        pub preload_handlers: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
@@ -229,6 +222,13 @@ pub mod evm {
     pub enum AddressFormat {
         Checksum,
         Lowercase,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Multichain {
+        Ordered,
+        Unordered,
     }
 
     impl Display for HumanConfig {
@@ -591,10 +591,9 @@ pub mod fuel {
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed \
-                           on."
+            description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub networks: Vec<Network>,
+        pub chains: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "If true, the indexer will store the raw event data in the database. \
@@ -603,13 +602,6 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Makes handlers run twice to enable preload optimisations. Removes \
-                           handlerWithLoader API, since it's not needed. (recommended, default: \
-                           false)"
-        )]
-        pub preload_handlers: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional relative path to handlers directory for auto-loading. Defaults \
@@ -875,11 +867,11 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        println!("{:?}", cfg.networks[0].contracts[0]);
+        println!("{:?}", cfg.chains[0].contracts[0]);
 
-        assert!(cfg.networks[0].contracts[0].config.is_some());
-        assert!(cfg.networks[0].contracts[1].config.is_some());
-        assert_eq!(cfg.networks[0].contracts[1].address, None.into());
+        assert!(cfg.chains[0].contracts[0].config.is_some());
+        assert!(cfg.chains[0].contracts[1].config.is_some());
+        assert_eq!(cfg.chains[0].contracts[1].address, None.into());
     }
 
     #[test]
@@ -891,8 +883,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        assert!(cfg.networks[0].contracts[0].config.is_some());
-        assert!(cfg.networks[1].contracts[0].config.is_none());
+        assert!(cfg.chains[0].contracts[0].config.is_some());
+        assert!(cfg.chains[1].contracts[0].config.is_none());
     }
 
     #[test]
@@ -912,8 +904,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            preload_handlers: None,
-            networks: vec![fuel::Network {
+            chains: vec![fuel::Network {
                 id: 0,
                 start_block: 0,
                 end_block: None,
@@ -959,14 +950,13 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            preload_handlers: None,
-            networks: vec![],
+            chains: vec![],
             handlers: None,
         };
 
         assert_eq!(
             serde_yaml::to_string(&cfg).unwrap(),
-            "name: Fuel indexer\necosystem: fuel\nnetworks: []\n"
+            "name: Fuel indexer\necosystem: fuel\nchains: []\n"
         );
     }
 

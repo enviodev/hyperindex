@@ -217,107 +217,88 @@ NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
   context.addSimpleNft(event.params.contractAddress);
 });
 
-NftFactory.SimpleNftCreated.handlerWithLoader({
-  loader: async (_) => undefined,
-  handler: async ({ event, context }) => {
-    const testType: NftFactory_SimpleNftCreated_event =
-      event satisfies eventLog<NftFactory_SimpleNftCreated_eventArgs>;
+NftFactory.SimpleNftCreated.handler(async ({ event, context }) => {
+  const testType: NftFactory_SimpleNftCreated_event =
+    event satisfies eventLog<NftFactory_SimpleNftCreated_eventArgs>;
 
-    let nftCollection: NftCollection = {
-      id: event.params.contractAddress,
-      contractAddress: event.params.contractAddress,
-      name: event.params.name,
-      symbol: event.params.symbol,
-      maxSupply: event.params.maxSupply,
-      currentSupply: 0,
-    };
-    context.NftCollection.set(nftCollection);
-    context.EntityWithBigDecimal.set({
-      id: "testingEntityWithBigDecimal",
-      bigDecimal: new BigDecimal(123.456),
-    });
-    context.EntityWithTimestamp.set({
-      id: "testingEntityWithTimestamp",
-      timestamp: new Date(1725265940437),
-    });
-  },
+  let nftCollection: NftCollection = {
+    id: event.params.contractAddress,
+    contractAddress: event.params.contractAddress,
+    name: event.params.name,
+    symbol: event.params.symbol,
+    maxSupply: event.params.maxSupply,
+    currentSupply: 0,
+  };
+  context.NftCollection.set(nftCollection);
+  context.EntityWithBigDecimal.set({
+    id: "testingEntityWithBigDecimal",
+    bigDecimal: new BigDecimal(123.456),
+  });
+  context.EntityWithTimestamp.set({
+    id: "testingEntityWithTimestamp",
+    timestamp: new Date(1725265940437),
+  });
 });
 
-SimpleNft.Transfer.handlerWithLoader({
-  loader: async ({ event, context }) => {
-    const [loadedUserFrom, loadedUserTo, nftCollectionUpdated, existingToken] =
-      await Promise.all([
-        context.User.get(event.params.from),
-        context.User.get(event.params.to),
-        context.NftCollection.get(event.srcAddress),
-        context.Token.get(
-          event.srcAddress.concat("-").concat(event.params.tokenId.toString())
-        ),
-      ]);
+SimpleNft.Transfer.handler(async ({ event, context }) => {
+  const [loadedUserFrom, loadedUserTo, nftCollectionUpdated, existingToken] =
+    await Promise.all([
+      context.User.get(event.params.from),
+      context.User.get(event.params.to),
+      context.NftCollection.get(event.srcAddress),
+      context.Token.get(
+        event.srcAddress.concat("-").concat(event.params.tokenId.toString())
+      ),
+    ]);
 
-    return {
-      loadedUserFrom,
-      loadedUserTo,
-      nftCollectionUpdated,
-      existingToken,
-    };
-  },
-  handler: async ({ event, context, loaderReturn }) => {
-    const {
-      loadedUserFrom,
-      loadedUserTo,
-      nftCollectionUpdated,
-      existingToken,
-    } = loaderReturn;
-    const token = {
-      id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
-      tokenId: event.params.tokenId,
-      collection_id: event.srcAddress,
-      owner_id: event.params.to,
-    };
-    if (nftCollectionUpdated) {
-      if (!existingToken) {
-        let currentSupply = Number(nftCollectionUpdated.currentSupply) + 1;
+  const token = {
+    id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
+    tokenId: event.params.tokenId,
+    collection_id: event.srcAddress,
+    owner_id: event.params.to,
+  };
+  if (nftCollectionUpdated) {
+    if (!existingToken) {
+      let currentSupply = Number(nftCollectionUpdated.currentSupply) + 1;
 
-        let nftCollection: NftCollection = {
-          ...nftCollectionUpdated,
-          currentSupply,
-        };
-        context.NftCollection.set(nftCollection);
-      }
-    } else {
-      console.log(
-        "Issue with events emitted, unregistered NFT collection transfer"
-      );
-      return;
-    }
-
-    if (event.params.from !== zeroAddress) {
-      const userFrom: User = {
-        id: event.params.from,
-        address: event.params.from,
-        updatesCountOnUserForTesting:
-          loadedUserFrom?.updatesCountOnUserForTesting || 0,
-        gravatar_id: undefined,
-        accountType: "USER",
+      let nftCollection: NftCollection = {
+        ...nftCollectionUpdated,
+        currentSupply,
       };
-      context.User.set(userFrom);
+      context.NftCollection.set(nftCollection);
     }
+  } else {
+    console.log(
+      "Issue with events emitted, unregistered NFT collection transfer"
+    );
+    return;
+  }
 
-    if (event.params.to !== zeroAddress) {
-      const userTo: User = {
-        id: event.params.to,
-        address: event.params.to,
-        updatesCountOnUserForTesting:
-          loadedUserTo?.updatesCountOnUserForTesting || 0,
-        gravatar_id: undefined,
-        accountType: "ADMIN",
-      };
-      context.User.set(userTo);
-    }
+  if (event.params.from !== zeroAddress) {
+    const userFrom: User = {
+      id: event.params.from,
+      address: event.params.from,
+      updatesCountOnUserForTesting:
+        loadedUserFrom?.updatesCountOnUserForTesting || 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    context.User.set(userFrom);
+  }
 
-    context.Token.set(token);
-  },
+  if (event.params.to !== zeroAddress) {
+    const userTo: User = {
+      id: event.params.to,
+      address: event.params.to,
+      updatesCountOnUserForTesting:
+        loadedUserTo?.updatesCountOnUserForTesting || 0,
+      gravatar_id: undefined,
+      accountType: "ADMIN",
+    };
+    context.User.set(userTo);
+  }
+
+  context.Token.set(token);
 });
 
 // Test event filtering hashing
@@ -535,240 +516,240 @@ const throwingEffect = createEffect(
 let getOrThrowInLoaderCount = 0;
 let loaderSetCount = 0;
 
-Gravatar.FactoryEvent.handlerWithLoader({
-  loader: async ({ event, context }) => {
-    switch (event.params.testCase) {
-      case "getOrThrow - ignores the first fail in loader": {
-        switch (getOrThrowInLoaderCount) {
-          case 0: {
-            getOrThrowInLoaderCount++;
-            await context.User.getOrThrow(
-              "0",
-              "This should fail, but silently ignored on the first loader run."
-            );
-            break;
-          }
-          case 1: {
-            await context.User.getOrThrow(
-              "0",
-              "Second loader failure should abort processing"
-            );
-            break;
-          }
+Gravatar.FactoryEvent.handler(async ({ event, context }) => {
+  switch (event.params.testCase) {
+    case "getOrThrow - ignores the first fail in loader": {
+      switch (getOrThrowInLoaderCount) {
+        case 0: {
+          getOrThrowInLoaderCount++;
+          await context.User.getOrThrow(
+            "0",
+            "This should fail, but silently ignored on the first loader run."
+          );
+          break;
         }
-        break;
-      }
-      case "loaderSetCount": {
-        const entity = await context.User.get("0");
-        const newEntity: User = {
-          id: "0",
-          address: "0x",
-          updatesCountOnUserForTesting: 0,
-          gravatar_id: undefined,
-          accountType: "USER",
-        };
-        context.User.set(newEntity);
-        switch (loaderSetCount) {
-          case 0:
-            deepEqual(entity, undefined);
-            deepEqual(await context.User.get("0"), undefined);
-            deepEqual(context.isPreload, true);
-            break;
-          case 1:
-            // It should only apply set only on the second loader run
-            deepEqual(entity, undefined);
-            deepEqual(await context.User.get("0"), newEntity);
-            deepEqual(context.isPreload, false);
-            break;
+        case 1: {
+          await context.User.getOrThrow(
+            "0",
+            "Second loader failure should abort processing"
+          );
+          break;
         }
-        loaderSetCount++;
-        break;
       }
+      break;
     }
-  },
-  handler: async ({ event, context }) => {
-    switch (event.params.testCase) {
-      case "entityWithAllTypesSet":
-        context.EntityWithAllTypes.set({
-          id: "1",
-          string: "string",
-          optString: "optString",
-          arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
-          int_: 1,
-          optInt: 2,
-          arrayOfInts: [3, 4],
-          float_: 1.1,
-          optFloat: 2.2,
-          arrayOfFloats: [3.3, 4.4],
-          bool: true,
-          optBool: false,
-          bigInt: 1n,
-          optBigInt: 2n,
-          arrayOfBigInts: [3n, 4n],
-          bigDecimal: new BigDecimal("1.1"),
-          bigDecimalWithConfig: new BigDecimal("1.1"),
-          optBigDecimal: new BigDecimal("2.2"),
-          arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
-          json: { foo: ["bar"] },
-          enumField: "ADMIN",
-          optEnumField: "ADMIN",
-          timestamp: new Date(1725265940437),
-          optTimestamp: new Date(1725265940438),
-        });
-        context.EntityWithAllTypes.set({
-          id: "2",
-          string: "string",
-          optString: "optString",
-          arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
-          int_: 1,
-          optInt: 2,
-          arrayOfInts: [3, 4],
-          float_: 1.1,
-          optFloat: 2.2,
-          arrayOfFloats: [3.3, 4.4],
-          bool: true,
-          optBool: false,
-          bigInt: 1n,
-          optBigInt: 2n,
-          arrayOfBigInts: [3n, 4n],
-          bigDecimal: new BigDecimal("1.1"),
-          bigDecimalWithConfig: new BigDecimal("1.1"),
-          optBigDecimal: new BigDecimal("2.2"),
-          arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
-          json: { foo: ["bar"] },
-          enumField: "ADMIN",
-          optEnumField: "ADMIN",
-          timestamp: new Date(1725265940437),
-          optTimestamp: new Date(1725265940438),
-        });
-        break;
-
-      case "getOrCreate - creates": {
-        const user = await context.User.getOrCreate({
-          id: "0",
-          address: "0x",
-          updatesCountOnUserForTesting: 0,
-          gravatar_id: undefined,
-          accountType: "USER",
-        });
-        expectType<TypeEqual<typeof user, User>>(true);
-        deepEqual(user, {
-          id: "0",
-          address: "0x",
-          updatesCountOnUserForTesting: 0,
-          gravatar_id: undefined,
-          accountType: "USER",
-        });
-        break;
+    case "loaderSetCount": {
+      const entity = await context.User.get("0");
+      const newEntity: User = {
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      };
+      context.User.set(newEntity);
+      switch (loaderSetCount) {
+        case 0:
+          deepEqual(entity, undefined);
+          deepEqual(await context.User.get("0"), undefined);
+          deepEqual(context.isPreload, true);
+          break;
+        case 1:
+          // It should only apply set only on the second loader run
+          deepEqual(entity, undefined);
+          deepEqual(await context.User.get("0"), newEntity);
+          deepEqual(context.isPreload, false);
+          break;
       }
+      loaderSetCount++;
+      break;
+    }
+  }
 
-      case "getOrCreate - loads": {
-        const user = await context.User.getOrCreate({
-          id: "0",
-          address: "0x",
-          updatesCountOnUserForTesting: 0,
-          gravatar_id: undefined,
-          accountType: "USER",
-        });
-        expectType<TypeEqual<typeof user, User>>(true);
-        deepEqual(
-          user,
-          {
-            id: "0",
-            address: "existing",
-            updatesCountOnUserForTesting: 0,
-            gravatar_id: undefined,
-            accountType: "USER",
-          },
-          "Note how address is 'existing' and not '0x'"
-        );
-        break;
-      }
+  if (context.isPreload) {
+    return;
+  }
 
-      case "getOrThrow": {
-        const user = await context.User.getOrThrow("0");
-        expectType<TypeEqual<typeof user, User>>(true);
-        deepEqual(user, {
+  switch (event.params.testCase) {
+    case "entityWithAllTypesSet":
+      context.EntityWithAllTypes.set({
+        id: "1",
+        string: "string",
+        optString: "optString",
+        arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
+        int_: 1,
+        optInt: 2,
+        arrayOfInts: [3, 4],
+        float_: 1.1,
+        optFloat: 2.2,
+        arrayOfFloats: [3.3, 4.4],
+        bool: true,
+        optBool: false,
+        bigInt: 1n,
+        optBigInt: 2n,
+        arrayOfBigInts: [3n, 4n],
+        bigDecimal: new BigDecimal("1.1"),
+        bigDecimalWithConfig: new BigDecimal("1.1"),
+        optBigDecimal: new BigDecimal("2.2"),
+        arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
+        json: { foo: ["bar"] },
+        enumField: "ADMIN",
+        optEnumField: "ADMIN",
+        timestamp: new Date(1725265940437),
+        optTimestamp: new Date(1725265940438),
+      });
+      context.EntityWithAllTypes.set({
+        id: "2",
+        string: "string",
+        optString: "optString",
+        arrayOfStrings: ["arrayOfStrings1", "arrayOfStrings2"],
+        int_: 1,
+        optInt: 2,
+        arrayOfInts: [3, 4],
+        float_: 1.1,
+        optFloat: 2.2,
+        arrayOfFloats: [3.3, 4.4],
+        bool: true,
+        optBool: false,
+        bigInt: 1n,
+        optBigInt: 2n,
+        arrayOfBigInts: [3n, 4n],
+        bigDecimal: new BigDecimal("1.1"),
+        bigDecimalWithConfig: new BigDecimal("1.1"),
+        optBigDecimal: new BigDecimal("2.2"),
+        arrayOfBigDecimals: [new BigDecimal("3.3"), new BigDecimal("4.4")],
+        json: { foo: ["bar"] },
+        enumField: "ADMIN",
+        optEnumField: "ADMIN",
+        timestamp: new Date(1725265940437),
+        optTimestamp: new Date(1725265940438),
+      });
+      break;
+
+    case "getOrCreate - creates": {
+      const user = await context.User.getOrCreate({
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      expectType<TypeEqual<typeof user, User>>(true);
+      deepEqual(user, {
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      break;
+    }
+
+    case "getOrCreate - loads": {
+      const user = await context.User.getOrCreate({
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      expectType<TypeEqual<typeof user, User>>(true);
+      deepEqual(
+        user,
+        {
           id: "0",
           address: "existing",
           updatesCountOnUserForTesting: 0,
           gravatar_id: undefined,
           accountType: "USER",
-        });
-        break;
-      }
-
-      case "getOrThrow - custom message": {
-        await context.User.getOrThrow("0", "User should always exist");
-        break;
-      }
-
-      case "processMultipleEvents - 1": {
-        context.D.set({
-          id: "1",
-          c: "1",
-        });
-        break;
-      }
-
-      case "handlerInHandler": {
-        Gravatar.FactoryEvent.handler(async ({ event, context }) => {});
-        break;
-      }
-
-      case "onBlockInHandler": {
-        onBlock({ name: "test", chain: 1 }, async () => {});
-        break;
-      }
-
-      case "processMultipleEvents - 2": {
-        context.D.set({
-          id: "2",
-          c: "2",
-        });
-        break;
-      }
-
-      case "testEffectWithCache": {
-        const result = await context.effect(testEffectWithCache, {
-          id: "1",
-        });
-        deepEqual(result, "test-1");
-        break;
-      }
-
-      case "testEffectWithCache2": {
-        const result = await context.effect(testEffectWithCache, {
-          id: "2",
-        });
-        deepEqual(result, "test-2");
-        break;
-      }
-
-      case "throwingEffect": {
-        await context.effect(throwingEffect, {
-          id: "1",
-        });
-        fail("Should have thrown");
-      }
+        },
+        "Note how address is 'existing' and not '0x'"
+      );
+      break;
     }
-  },
+
+    case "getOrThrow": {
+      const user = await context.User.getOrThrow("0");
+      expectType<TypeEqual<typeof user, User>>(true);
+      deepEqual(user, {
+        id: "0",
+        address: "existing",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      });
+      break;
+    }
+
+    case "getOrThrow - custom message": {
+      await context.User.getOrThrow("0", "User should always exist");
+      break;
+    }
+
+    case "processMultipleEvents - 1": {
+      context.D.set({
+        id: "1",
+        c: "1",
+      });
+      break;
+    }
+
+    case "handlerInHandler": {
+      Gravatar.FactoryEvent.handler(async ({ event, context }) => {});
+      break;
+    }
+
+    case "onBlockInHandler": {
+      onBlock({ name: "test", chain: 1 }, async () => {});
+      break;
+    }
+
+    case "processMultipleEvents - 2": {
+      context.D.set({
+        id: "2",
+        c: "2",
+      });
+      break;
+    }
+
+    case "testEffectWithCache": {
+      const result = await context.effect(testEffectWithCache, {
+        id: "1",
+      });
+      deepEqual(result, "test-1");
+      break;
+    }
+
+    case "testEffectWithCache2": {
+      const result = await context.effect(testEffectWithCache, {
+        id: "2",
+      });
+      deepEqual(result, "test-2");
+      break;
+    }
+
+    case "throwingEffect": {
+      await context.effect(throwingEffect, {
+        id: "1",
+      });
+      fail("Should have thrown");
+    }
+  }
 });
 
-EventFiltersTest.FilterTestEvent.handlerWithLoader({
-  loader: async (_) => undefined,
-  handler: async ({ event }) => {
+EventFiltersTest.FilterTestEvent.handler(
+  async ({ event }) => {
     if (event.params.addr === "0x000") {
       throw new Error("This should not be called");
     }
   },
-  eventFilters: {
-    addr: ["0x000"],
-  },
-});
+  {
+    eventFilters: {
+      addr: ["0x000"],
+    },
+  }
+);
 
-EventFiltersTest.WildcardHandlerWithLoader.handlerWithLoader({
-  loader: async (_) => undefined,
-  handler: async (_) => {},
+EventFiltersTest.WildcardHandlerWithLoader.handler(async (_) => {}, {
   wildcard: true,
 });

@@ -369,12 +369,12 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         event,
         chain,
         logIndex: event.logIndex,
-        timestamp: event.block->config.platform.getTimestamp,
-        blockNumber: event.block->config.platform.getNumber,
+        timestamp: event.block->config.ecosystem.getTimestamp,
+        blockNumber: event.block->config.ecosystem.getNumber,
       })
       latestFetchedBlockNumber.contents = Pervasives.max(
         latestFetchedBlockNumber.contents,
-        event.block->config.platform.getNumber,
+        event.block->config.ecosystem.getNumber,
       )
       if eventConfig.contractRegister->Option.isSome {
         itemsWithContractRegister->Js.Array2.push(item)->ignore
@@ -516,7 +516,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         ~persistence,
         ~inMemoryStore,
         ~chains,
-        ~platform=indexer.config.platform,
+        ~ecosystem=indexer.config.ecosystem,
       )
       await batch->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,

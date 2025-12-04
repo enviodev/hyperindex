@@ -1,6 +1,6 @@
 name: PerAddressStartBlockTest
 
-networks:
+chains:
   - id: 1
     start_block: 1000
     rpc_config:

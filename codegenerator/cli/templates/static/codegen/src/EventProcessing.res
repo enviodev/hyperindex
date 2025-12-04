@@ -66,7 +66,7 @@ let addItemToRawEvents = (
     ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
     ->convertFieldsToJson
 
-  blockFields->config.platform.cleanUpRawEventFieldsInPlace
+  blockFields->config.ecosystem.cleanUpRawEventFieldsInPlace
 
   // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
   let params =
@@ -90,7 +90,7 @@ let addItemToRawEvents = (
     blockNumber,
     logIndex,
     srcAddress,
-    blockHash: block->config.platform.getId,
+    blockHash: block->config.ecosystem.getId,
     blockTimestamp,
     blockFields,
     transactionFields,
@@ -189,7 +189,7 @@ let runHandlerOrThrow = async (
       await handler(
         (
           {
-            block: indexer.config.platform->Platform.makeBlockEvent(~blockNumber),
+            block: indexer.config.ecosystem->Ecosystem.makeBlockEvent(~blockNumber),
             context: UserContext.getHandlerContext(contextParams),
           }: Internal.onBlockArgs
         ),
@@ -236,7 +236,7 @@ let preloadBatchOrThrow = async (
   ~persistence,
   ~inMemoryStore,
   ~chains: Internal.chains,
-  ~platform: Platform.t,
+  ~ecosystem: Ecosystem.t,
 ) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
@@ -286,7 +286,7 @@ let preloadBatchOrThrow = async (
         try {
           promises->Array.push(
             handler({
-              block: platform->Platform.makeBlockEvent(~blockNumber),
+              block: ecosystem->Ecosystem.makeBlockEvent(~blockNumber),
               context: UserContext.getHandlerContext({
                 item,
                 inMemoryStore,
@@ -406,7 +406,7 @@ let processEventBatch = async (
         ~persistence=indexer.persistence,
         ~inMemoryStore,
         ~chains,
-        ~platform=indexer.config.platform,
+        ~ecosystem=indexer.config.ecosystem,
       )
     }
 

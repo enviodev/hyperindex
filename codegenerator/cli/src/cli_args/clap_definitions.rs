@@ -189,7 +189,7 @@ pub mod evm {
         #[arg(global = true, short, long)]
         pub contract_address: Option<evm::address::Address>,
 
-        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        ///If selected, prompt will not ask for additional contracts/addresses/chains
         #[arg(long, action)]
         pub single_contract: bool,
 
@@ -244,7 +244,7 @@ pub mod evm {
         #[arg(long)]
         pub api_token: Option<String>,
 
-        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        ///If selected, prompt will not ask for additional contracts/addresses/chains
         #[arg(long, action)]
         pub single_contract: bool,
 
@@ -305,7 +305,7 @@ pub mod evm {
         #[arg(short, long)]
         pub start_block: Option<u64>,
 
-        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        ///If selected, prompt will not ask for additional contracts/addresses/chains
         #[arg(long, action)]
         pub single_contract: bool,
 
@@ -341,7 +341,7 @@ pub mod fuel {
         #[arg(global = true, short, long)]
         pub contract_address: Option<fuel::address::Address>,
 
-        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        ///If selected, prompt will not ask for additional contracts/addresses/chains
         #[arg(long, action)]
         pub single_contract: bool,
 

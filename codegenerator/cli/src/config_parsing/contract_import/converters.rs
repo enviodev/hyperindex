@@ -5,11 +5,11 @@ use std::fmt::{self, Display};
 ///The hierarchy is based on how you would add items to
 ///your selection as you go. Ie. Once you have constructed
 ///the selection of a contract you can add more addresses or
-///networks
+///chains
 #[derive(Clone, Debug)]
 pub struct SelectedContract {
     pub name: String,
-    pub networks: Vec<ContractImportNetworkSelection>,
+    pub chains: Vec<ContractImportNetworkSelection>,
     pub events: Vec<ethers::abi::Event>,
 }
 
@@ -21,27 +21,27 @@ impl SelectedContract {
     ) -> Self {
         Self {
             name,
-            networks: vec![network_selection],
+            chains: vec![network_selection],
             events,
         }
     }
 
-    pub fn get_last_network_mut(&mut self) -> Result<&mut ContractImportNetworkSelection> {
-        self.networks
+    pub fn get_last_chain_mut(&mut self) -> Result<&mut ContractImportNetworkSelection> {
+        self.chains
             .last_mut()
-            .context("Failed to get the last select contract network")
+            .context("Failed to get the last select contract chain")
     }
 
-    pub fn get_last_network_name(&self) -> Result<String> {
+    pub fn get_last_chain_name(&self) -> Result<String> {
         let network_selection = self
-            .networks
+            .chains
             .last()
-            .context("Failed to get the last select contract network")?;
+            .context("Failed to get the last select contract chain")?;
         Ok(network_selection.network.to_string())
     }
 
-    pub fn get_network_ids(&self) -> Vec<u64> {
-        self.networks
+    pub fn get_chain_ids(&self) -> Vec<u64> {
+        self.chains
             .iter()
             .map(|n| n.network.get_network_id())
             .collect()

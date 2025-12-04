@@ -37,10 +37,9 @@ type contractRegisterArgs = genericContractRegisterArgs<event, contractRegisterC
 type contractRegister = genericContractRegister<contractRegisterArgs>
 
 @genType
-type genericHandlerArgs<'event, 'context, 'loaderReturn> = {
+type genericHandlerArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
-  loaderReturn: 'loaderReturn,
 }
 @genType
 type genericHandler<'args> = 'args => promise<unit>
@@ -81,10 +80,6 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
   handler: 'handler,
   wildcard?: bool,
   eventFilters?: 'eventFilters,
-  /**
-   @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration.
-   */
-  preRegisterDynamicContracts?: bool,
 }
 
 // This is private so it's not manually constructed internally
@@ -170,7 +165,7 @@ type eventItem = private {
   event: event,
 }
 
-// Opaque type to support both EVM and Fuel platforms
+// Opaque type to support both EVM and other ecosystems
 type blockEvent
 
 type onBlockArgs = {
@@ -225,10 +220,6 @@ external setItemDcs: (item, dcs) => unit = "dcs"
 type eventOptions<'eventFilters> = {
   wildcard?: bool,
   eventFilters?: 'eventFilters,
-  /**
-    @deprecated The option is removed starting from v2.19 since we made the default mode even faster than pre-registration.
-  */
-  preRegisterDynamicContracts?: bool,
 }
 
 @genType
