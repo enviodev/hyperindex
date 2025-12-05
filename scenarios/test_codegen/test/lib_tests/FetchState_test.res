@@ -1,6 +1,5 @@
 open Belt
 open RescriptMocha
-open Enums.ContractType
 
 let chainId = 0
 let targetBufferSize = 5000
@@ -45,11 +44,11 @@ let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
 let makeDynContractRegistration = (
   ~contractAddress,
   ~blockNumber,
-  ~contractType=Gravatar,
+  ~contractName="Gravatar",
 ): Internal.indexingContract => {
   {
     address: contractAddress,
-    contractName: (contractType :> string),
+    contractName,
     startBlock: blockNumber,
     registrationBlock: Some(blockNumber),
   }
@@ -126,7 +125,7 @@ let makeIndexingContractsWithDynamics = (dcs: array<Internal.indexingContract>, 
       address->Address.toString,
       {
         address,
-        contractName: (Gravatar :> string),
+        contractName: "Gravatar",
         startBlock: 0,
         registrationBlock: None,
       },
@@ -555,12 +554,12 @@ describe("FetchState.registerDynamicContracts", () => {
     let dc1FromAnotherContract = makeDynContractRegistration(
       ~blockNumber=2,
       ~contractAddress=mockAddress1,
-      ~contractType=NftFactory,
+      ~contractName="NftFactory",
     )
     let dc4FromAnotherContract = makeDynContractRegistration(
       ~blockNumber=2,
       ~contractAddress=mockAddress4,
-      ~contractType=NftFactory,
+      ~contractName="NftFactory",
     )
     let updatedFetchState =
       fetchState->FetchState.registerDynamicContracts([
@@ -638,22 +637,22 @@ describe("FetchState.registerDynamicContracts", () => {
       let dc1 = makeDynContractRegistration(
         ~blockNumber=3,
         ~contractAddress=mockAddress1,
-        ~contractType=Gravatar,
+        ~contractName="Gravatar",
       )
       let dc2 = makeDynContractRegistration(
         ~blockNumber=3,
         ~contractAddress=mockAddress2,
-        ~contractType=SimpleNft,
+        ~contractName="SimpleNft",
       )
       let dc3 = makeDynContractRegistration(
         ~blockNumber=3,
         ~contractAddress=mockAddress3,
-        ~contractType=SimpleNft,
+        ~contractName="SimpleNft",
       )
       let dc4 = makeDynContractRegistration(
         ~blockNumber=5,
         ~contractAddress=mockAddress4,
-        ~contractType=SimpleNft,
+        ~contractName="SimpleNft",
       )
       // Even though this has another contract than Gravatar,
       // and higher block number, it still should be in one partition
@@ -661,7 +660,7 @@ describe("FetchState.registerDynamicContracts", () => {
       let dc5 = makeDynContractRegistration(
         ~blockNumber=6,
         ~contractAddress=mockAddress5,
-        ~contractType=NftFactory,
+        ~contractName="NftFactory",
       )
 
       let updatedFetchState =
@@ -862,12 +861,12 @@ End remove the dc from the later one, so they are not duplicated in the db`,
           makeConfigContract("Gravatar", mockAddress2),
           makeConfigContract("Gravatar", mockAddress3),
           makeDynContractRegistration(
-            ~contractType=Gravatar,
+            ~contractName="Gravatar",
             ~blockNumber=0,
             ~contractAddress=mockAddress4,
           ),
           makeDynContractRegistration(
-            ~contractType=NftFactory,
+            ~contractName="NftFactory",
             ~blockNumber=0,
             ~contractAddress=mockAddress5,
           ),
@@ -976,7 +975,7 @@ describe("FetchState.getNextQuery & integration", () => {
         (
           mockAddress0->Address.toString,
           {
-            Internal.contractName: (Gravatar :> string),
+            Internal.contractName: "Gravatar",
             startBlock: 0,
             address: mockAddress0,
             registrationBlock: None,
@@ -2704,7 +2703,7 @@ describe("Dynamic contracts with start blocks", () => {
     let dynamicContract = makeDynContractRegistration(
       ~contractAddress=mockAddress1, // Use a different address from static contracts
       ~blockNumber=200, // This is the startBlock - when indexing should actually begin
-      ~contractType=Gravatar, // Use Gravatar which has event configs in makeInitial
+      ~contractName="Gravatar", // Use Gravatar which has event configs in makeInitial
     )
 
     // Register the contract at block 100 (before its startBlock)
@@ -2739,14 +2738,14 @@ describe("Dynamic contracts with start blocks", () => {
     let contract1 = makeDynContractRegistration(
       ~contractAddress=mockAddress1,
       ~blockNumber=150,
-      ~contractType=Gravatar,
+      ~contractName="Gravatar",
     )
 
     // Contract 2: startBlock=300
     let contract2 = makeDynContractRegistration(
       ~contractAddress=mockAddress2,
       ~blockNumber=300,
-      ~contractType=Gravatar,
+      ~contractName="Gravatar",
     )
 
     let updatedFetchState =

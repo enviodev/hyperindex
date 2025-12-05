@@ -299,7 +299,7 @@ let runContractRegistersOrThrow = async (
     let contractStartBlock = switch getContractStartBlock(
       config,
       ~chain,
-      ~contractName=(contractName: Enums.ContractType.t :> string),
+      ~contractName,
     ) {
     | Some(configuredStartBlock) => configuredStartBlock
     | None => blockNumber
@@ -307,7 +307,7 @@ let runContractRegistersOrThrow = async (
 
     let dc: Internal.indexingContract = {
       address: contractAddress,
-      contractName: (contractName: Enums.ContractType.t :> string),
+      contractName,
       startBlock: contractStartBlock,
       registrationBlock: Some(blockNumber),
     }

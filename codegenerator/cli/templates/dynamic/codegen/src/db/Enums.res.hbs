@@ -1,25 +1,3 @@
-module ContractType = {
-  @genType
-  type t = 
-  {{#each codegen_contracts as | contract |}}
-    | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
-  {{/each}}
-  {{#unless codegen_contracts}}
-    | @as("EMPTY_PLACEHOLDER") EmptyPlaceholder
-  {{/unless}}
-
-  let name = "CONTRACT_TYPE"
-  let variants = [
-  {{#each codegen_contracts as | contract |}}
-    {{contract.name.capitalized}},
-  {{/each}}
-  {{#unless codegen_contracts}}
-    EmptyPlaceholder,
-  {{/unless}}
-  ]
-  let config = Table.makeEnumConfig(~name, ~variants)
-}
-
 module EntityType = {
   @genType
   type t = 
@@ -57,7 +35,6 @@ module {{enum.name.capitalized}} = {
 {{/each}}
 
 let allEnums = ([
-  ContractType.config->Table.fromGenericEnumConfig,
   EntityType.config->Table.fromGenericEnumConfig,
 {{#each gql_enums as | enum |}} 
   {{enum.name.capitalized}}.config->Table.fromGenericEnumConfig,

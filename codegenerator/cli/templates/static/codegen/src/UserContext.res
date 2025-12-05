@@ -298,7 +298,7 @@ type contractRegisterParams = {
   onRegister: (
     ~item: Internal.item,
     ~contractAddress: Address.t,
-    ~contractName: Enums.ContractType.t,
+    ~contractName: string,
   ) => unit,
   config: Config.t,
   mutable isResolved: bool,
@@ -337,7 +337,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
             params.onRegister(
               ~item=params.item,
               ~contractAddress=validatedAddress,
-              ~contractName=contractName->(Utils.magic: string => Enums.ContractType.t),
+              ~contractName,
             )
           }
 
