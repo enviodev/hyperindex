@@ -92,7 +92,6 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
 let fetchNext = async (
   sourceManager: t,
   ~fetchState: FetchState.t,
-  ~knownHeight,
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
@@ -104,7 +103,6 @@ let fetchNext = async (
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
-    ~knownHeight,
     ~stateId,
   ) {
   | ReachedMaxConcurrency
@@ -116,7 +114,7 @@ let fetchNext = async (
     | None =>
       sourceManager->trackNewStatus(~newStatus=WaitingForNewBlock)
       sourceManager.waitingForNewBlockStateId = Some(stateId)
-      let knownHeight = await waitForNewBlock(~knownHeight)
+      let knownHeight = await waitForNewBlock(~knownHeight=fetchState.knownHeight)
       switch sourceManager.waitingForNewBlockStateId {
       | Some(waitingStateId) if waitingStateId === stateId => {
           sourceManager->trackNewStatus(~newStatus=Idle)

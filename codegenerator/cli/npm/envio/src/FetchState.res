@@ -59,6 +59,7 @@ type t = {
   // ready for processing
   targetBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
+  knownHeight: int,
 }
 
 let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition) => {
@@ -184,16 +185,27 @@ let updateInternal = (
   ~indexingContracts=fetchState.indexingContracts,
   ~mutItems=?,
   ~blockLag=fetchState.blockLag,
+  ~knownHeight=fetchState.knownHeight,
 ): t => {
-  let firstPartition = partitions->Js.Array2.unsafe_get(0)
-  let latestFullyFetchedBlock = ref(firstPartition.latestFetchedBlock)
-  for idx in 0 to partitions->Array.length - 1 {
-    let p = partitions->Js.Array2.unsafe_get(idx)
-    if latestFullyFetchedBlock.contents.blockNumber > p.latestFetchedBlock.blockNumber {
-      latestFullyFetchedBlock := p.latestFetchedBlock
+  let latestFullyFetchedBlock = if partitions->Utils.Array.notEmpty {
+    let firstPartition = partitions->Js.Array2.unsafe_get(0)
+    let latestFullyFetchedBlock = ref(firstPartition.latestFetchedBlock)
+    for idx in 0 to partitions->Array.length - 1 {
+      let p = partitions->Js.Array2.unsafe_get(idx)
+      if latestFullyFetchedBlock.contents.blockNumber > p.latestFetchedBlock.blockNumber {
+        latestFullyFetchedBlock := p.latestFetchedBlock
+      }
+    }
+    latestFullyFetchedBlock.contents
+  } else {
+    {
+      blockNumber: knownHeight,
+      // The case is only possible when using only block handlers
+      // so it's fine to have a zero timestamp
+      // since we don't support ordered multichain mode anyways
+      blockTimestamp: 0,
     }
   }
-  let latestFullyFetchedBlock = latestFullyFetchedBlock.contents
 
   let mutItemsRef = ref(mutItems)
 
@@ -282,6 +294,7 @@ let updateInternal = (
     latestFullyFetchedBlock,
     indexingContracts,
     blockLag,
+    knownHeight,
     buffer: switch mutItemsRef.contents {
     // Theoretically it could be faster to asume that
     // the items are sorted, but there are cases
@@ -752,9 +765,9 @@ let getNextQuery = (
     indexingContracts,
     blockLag,
     latestOnBlockBlockNumber,
+    knownHeight,
   }: t,
   ~concurrencyLimit,
-  ~knownHeight,
   ~stateId,
 ) => {
   let headBlockNumber = knownHeight - blockLag
@@ -972,6 +985,7 @@ let make = (
   ~maxAddrInPartition,
   ~chainId,
   ~targetBufferSize,
+  ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=[],
   ~blockLag=0,
@@ -1100,6 +1114,7 @@ let make = (
     blockLag,
     onBlockConfigs,
     targetBufferSize,
+    knownHeight,
     buffer: [],
   }
 }
@@ -1177,7 +1192,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
 
   {
     ...fetchState,
-    latestOnBlockBlockNumber: targetBlockNumber, // TODO: This is not tested. I assume there might be a possible issue of it skipping some blocks
+    latestOnBlockBlockNumber: targetBlockNumber, // FIXME: This is not tested. I assume there might be a possible issue of it skipping some blocks
   }->updateInternal(
     ~partitions,
     ~indexingContracts,
@@ -1208,10 +1223,7 @@ let isActivelyIndexing = ({endBlock} as fetchState: t) => {
   }
 }
 
-let isReadyToEnterReorgThreshold = (
-  {endBlock, blockLag, buffer} as fetchState: t,
-  ~knownHeight,
-) => {
+let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as fetchState: t) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   knownHeight !== 0 &&
   switch endBlock {
@@ -1264,5 +1276,14 @@ let getUnorderedMultichainProgressBlockNumberAt = ({buffer} as fetchState: t, ~i
   | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
     item->Internal.getItemBlockNumber - 1
   | _ => bufferBlockNumber
+  }
+}
+
+let updateKnownHeight = (fetchState: t, ~knownHeight) => {
+  if knownHeight > fetchState.knownHeight {
+    Prometheus.setKnownHeight(~blockNumber=knownHeight, ~chainId=fetchState.chainId)
+    fetchState->updateInternal(~knownHeight)
+  } else {
+    fetchState
   }
 }

@@ -3,6 +3,7 @@ open RescriptMocha
 
 let chainId = 0
 let targetBufferSize = 5000
+let knownHeight = 0
 
 // Keep for backward compatibility of tests
 type oldQueueItem =
@@ -109,6 +110,7 @@ let makeInitial = (
     ~maxAddrInPartition,
     ~targetBufferSize,
     ~chainId,
+    ~knownHeight,
     ~blockLag?,
   )
 }
@@ -174,6 +176,7 @@ describe("FetchState.make", () => {
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
         onBlockConfigs: [],
+        knownHeight,
       },
     )
   })
@@ -189,10 +192,11 @@ describe("FetchState.make", () => {
           ~maxAddrInPartition=2,
           ~targetBufferSize,
           ~chainId,
+          ~knownHeight,
         )
       },
       ~error={
-        "message": "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled.",
+        "message": "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
       },
       ~message=`Should panic if there's nothing to fetch`,
     )
@@ -210,6 +214,7 @@ describe("FetchState.make", () => {
         ~targetBufferSize,
         ~maxAddrInPartition=2,
         ~chainId,
+        ~knownHeight,
       )
 
       Assert.deepEqual(
@@ -246,6 +251,7 @@ describe("FetchState.make", () => {
           contractConfigs: fetchState.contractConfigs,
           blockLag: 0,
           onBlockConfigs: [],
+          knownHeight,
         },
         ~message=`Should create only one partition`,
       )
@@ -267,6 +273,7 @@ describe("FetchState.make", () => {
         ~maxAddrInPartition=1,
         ~targetBufferSize,
         ~chainId,
+        ~knownHeight,
       )
 
       Assert.deepEqual(
@@ -311,6 +318,7 @@ describe("FetchState.make", () => {
           contractConfigs: fetchState.contractConfigs,
           blockLag: 0,
           onBlockConfigs: [],
+          knownHeight,
         },
       )
 
@@ -344,6 +352,7 @@ describe("FetchState.make", () => {
         ~maxAddrInPartition=1,
         ~targetBufferSize,
         ~chainId,
+        ~knownHeight,
       )
 
       Assert.deepEqual(
@@ -408,6 +417,7 @@ describe("FetchState.make", () => {
           contractConfigs: fetchState.contractConfigs,
           blockLag: 0,
           onBlockConfigs: [],
+          knownHeight,
         },
       )
     },
@@ -623,6 +633,7 @@ describe("FetchState.registerDynamicContracts", () => {
         ~maxAddrInPartition=3,
         ~targetBufferSize,
         ~chainId,
+        ~knownHeight,
       )
 
       Assert.deepEqual(
@@ -716,8 +727,7 @@ describe("FetchState.registerDynamicContracts", () => {
       )
 
       let q1 =
-        {...updatedFetchState, targetBufferSize: 10}->FetchState.getNextQuery(
-          ~knownHeight=10,
+        {...updatedFetchState, knownHeight: 10, targetBufferSize: 10}->FetchState.getNextQuery(
           ~concurrencyLimit=10,
           ~stateId=0,
         )
@@ -876,6 +886,7 @@ End remove the dc from the later one, so they are not duplicated in the db`,
         ~maxAddrInPartition=1000,
         ~targetBufferSize,
         ~chainId,
+        ~knownHeight,
       )
 
       Assert.deepEqual(
@@ -930,6 +941,7 @@ End remove the dc from the later one, so they are not duplicated in the db`,
           contractConfigs: fetchState.contractConfigs,
           blockLag: 0,
           onBlockConfigs: [],
+          knownHeight,
         },
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
@@ -984,6 +996,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ]),
       contractConfigs: makeInitial().contractConfigs,
       onBlockConfigs: [],
+      knownHeight,
     }
   }
 
@@ -1031,6 +1044,7 @@ describe("FetchState.getNextQuery & integration", () => {
       contractConfigs: makeInitial().contractConfigs,
       blockLag: 0,
       onBlockConfigs: [],
+      knownHeight,
     }
   }
 
@@ -1044,9 +1058,9 @@ describe("FetchState.getNextQuery & integration", () => {
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
-      | Some(_) => {...fs, targetBufferSize, endBlock}
-      | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
+      | Some(_) => {...fs, targetBufferSize, endBlock, knownHeight}
+      | None => {...fs, targetBufferSize, knownHeight}
+      }->FetchState.getNextQuery(~concurrencyLimit, ~stateId=0)
 
     let fetchState = makeInitial()
 
@@ -1172,9 +1186,9 @@ describe("FetchState.getNextQuery & integration", () => {
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
-      | Some(_) => {...fs, targetBufferSize, endBlock}
-      | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
+      | Some(_) => {...fs, targetBufferSize, endBlock, knownHeight}
+      | None => {...fs, targetBufferSize, knownHeight}
+      }->FetchState.getNextQuery(~concurrencyLimit, ~stateId=0)
 
     let fetchState = makeInitial(~blockLag=2)
 
@@ -1257,9 +1271,9 @@ describe("FetchState.getNextQuery & integration", () => {
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
-      | Some(_) => {...fs, targetBufferSize, endBlock}
-      | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
+      | Some(_) => {...fs, targetBufferSize, endBlock, knownHeight}
+      | None => {...fs, targetBufferSize, knownHeight}
+      }->FetchState.getNextQuery(~concurrencyLimit, ~stateId=0)
 
     // Continue with the state from previous test
     let fetchState = makeAfterFirstStaticAddressesQuery()
@@ -1418,9 +1432,9 @@ describe("FetchState.getNextQuery & integration", () => {
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
-      | Some(_) => {...fs, targetBufferSize, endBlock}
-      | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
+      | Some(_) => {...fs, targetBufferSize, endBlock, knownHeight}
+      | None => {...fs, targetBufferSize, knownHeight}
+      }->FetchState.getNextQuery(~concurrencyLimit, ~stateId=0)
 
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 4
@@ -1659,6 +1673,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~maxAddrInPartition=2,
         ~targetBufferSize=10,
         ~chainId,
+        ~knownHeight,
       )->FetchState.registerDynamicContracts([
         makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
       ])
@@ -1666,7 +1681,7 @@ describe("FetchState.getNextQuery & integration", () => {
     Assert.deepEqual(fetchState.partitions->Array.length, 3)
 
     let nextQuery =
-      fetchState->FetchState.getNextQuery(~knownHeight=10, ~concurrencyLimit=10, ~stateId=0)
+      {...fetchState, knownHeight: 10}->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0)
 
     Assert.deepEqual(
       nextQuery,
@@ -1791,6 +1806,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~maxAddrInPartition=3,
         ~targetBufferSize=10,
         ~chainId,
+        ~knownHeight,
       )->FetchState.registerDynamicContracts([
         makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
       ])
@@ -2001,6 +2017,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~maxAddrInPartition=2,
       ~targetBufferSize,
       ~chainId,
+      ~knownHeight,
     )
     let fetchState =
       fetchState
@@ -2035,7 +2052,7 @@ describe("FetchState unit tests for specific cases", () => {
       ->Result.getExn
 
     Assert.deepEqual(
-      fetchState->FetchState.getNextQuery(~concurrencyLimit=10, ~knownHeight=2, ~stateId=0),
+      {...fetchState, knownHeight: 2}->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0),
       Ready([
         {
           partitionId: "0",
@@ -2056,7 +2073,8 @@ describe("FetchState unit tests for specific cases", () => {
       {
         ...fetchState,
         targetBufferSize: 2,
-      }->FetchState.getNextQuery(~concurrencyLimit=10, ~knownHeight=2, ~stateId=0),
+        knownHeight: 2,
+      }->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0),
       NothingToQuery,
       ~message=`Should wait until queue is processed, to continue fetching.
       Don't wait for new block, until all partitions reached the head`,
@@ -2132,6 +2150,7 @@ describe("FetchState unit tests for specific cases", () => {
       ~maxAddrInPartition=1,
       ~targetBufferSize,
       ~chainId,
+      ~knownHeight,
     )
 
     Assert.deepEqual(
@@ -2282,6 +2301,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~maxAddrInPartition=2,
         ~targetBufferSize,
         ~chainId,
+        ~knownHeight,
       )
       let fetchState =
         fetchState
@@ -2309,7 +2329,6 @@ describe("FetchState unit tests for specific cases", () => {
 
       let queryA = switch fetchStateWithDcA->FetchState.getNextQuery(
         ~concurrencyLimit=10,
-        ~knownHeight,
         ~stateId=0,
       ) {
       | Ready([q]) => {
@@ -2346,7 +2365,7 @@ describe("FetchState unit tests for specific cases", () => {
         ])
 
       Assert.deepEqual(
-        fetchStateWithDcB->FetchState.getNextQuery(~concurrencyLimit=10, ~knownHeight, ~stateId=0),
+        fetchStateWithDcB->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0),
         NothingToQuery,
         ~message=`The newly registered contract should be locked from querying, since we have an active merge query`,
       )
@@ -2364,7 +2383,6 @@ describe("FetchState unit tests for specific cases", () => {
       Assert.deepEqual(
         fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
           ~concurrencyLimit=10,
-          ~knownHeight,
           ~stateId=0,
         ),
         Ready([
@@ -2519,14 +2537,14 @@ describe("FetchState.sortForUnorderedBatch", () => {
 describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when we just started the indexer and it has knownHeight=0", () => {
     let fetchState = makeInitial()
-    Assert.equal(fetchState->FetchState.isReadyToEnterReorgThreshold(~knownHeight=0), false)
+    Assert.equal({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold, false)
   })
 
   it(
     "Returns false when we just started the indexer and it has knownHeight=0, while start block is more than 0 + reorg threshold",
     () => {
       let fetchState = makeInitial(~startBlock=6000)
-      Assert.equal(fetchState->FetchState.isReadyToEnterReorgThreshold(~knownHeight=0), false)
+      Assert.equal({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold, false)
     },
   )
 
@@ -2548,8 +2566,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~targetBufferSize,
       ~chainId,
       ~blockLag=0,
+      ~knownHeight=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=10), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
   })
 
   it("Returns false when endBlock not reached and below head - blockLag", () => {
@@ -2570,8 +2589,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~targetBufferSize,
       ~chainId,
       ~blockLag=10,
+      ~knownHeight=60,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=60), false)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, false)
   })
 
   it("Returns true when endBlock not reached but latest >= head - blockLag", () => {
@@ -2592,8 +2612,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~targetBufferSize,
       ~chainId,
       ~blockLag=10,
+      ~knownHeight=59,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=59), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
   })
 
   it("Returns true when no endBlock and latest >= head - blockLag (boundary)", () => {
@@ -2614,8 +2635,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~targetBufferSize,
       ~chainId,
       ~blockLag=10,
+      ~knownHeight=60,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=60), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
   })
 
   it("Returns false when no endBlock and latest < head - blockLag", () => {
@@ -2636,8 +2658,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~targetBufferSize,
       ~chainId,
       ~blockLag=10,
+      ~knownHeight=60,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=60), false)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, false)
   })
 
   it("Returns false when queue is not empty even if thresholds are met", () => {
@@ -2658,9 +2681,10 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~targetBufferSize,
       ~chainId,
       ~blockLag=0,
+      ~knownHeight=10,
     )
     let fsWithQueue = fs->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=6)])
-    Assert.equal(fsWithQueue->FetchState.isReadyToEnterReorgThreshold(~knownHeight=10), false)
+    Assert.equal(fsWithQueue->FetchState.isReadyToEnterReorgThreshold, false)
   })
 
   it("Returns true when the queue is empty and threshold is more than current block height", () => {
@@ -2680,8 +2704,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~targetBufferSize,
       ~chainId,
       ~blockLag=200,
+      ~knownHeight=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=10), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
   })
 })
 
@@ -2880,13 +2905,12 @@ describe("FetchState buffer overflow prevention", () => {
         ->Result.getExn
 
       // Test case 1: With endBlock set, should be limited by maxQueryBlockNumber
-      let fetchStateWithEndBlock = {...fetchStateWithLargeQueue, endBlock: Some(25)}
-      let query1 =
-        fetchStateWithEndBlock->FetchState.getNextQuery(
-          ~knownHeight=30,
-          ~concurrencyLimit=10,
-          ~stateId=0,
-        )
+      let fetchStateWithEndBlock = {
+        ...fetchStateWithLargeQueue,
+        endBlock: Some(25),
+        knownHeight: 30,
+      }
+      let query1 = fetchStateWithEndBlock->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0)
 
       switch query1 {
       | Ready([q]) =>
@@ -2904,13 +2928,8 @@ describe("FetchState buffer overflow prevention", () => {
       }
 
       // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
-      let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None}
-      let query2 =
-        fetchStateNoEndBlock->FetchState.getNextQuery(
-          ~knownHeight=30,
-          ~concurrencyLimit=10,
-          ~stateId=0,
-        )
+      let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
+      let query2 = fetchStateNoEndBlock->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0)
 
       switch query2 {
       | Ready([q]) =>
@@ -2943,13 +2962,9 @@ describe("FetchState buffer overflow prevention", () => {
           ~newItems=[mockEvent(~blockNumber=5)],
         )
         ->Result.getExn
+        ->FetchState.updateKnownHeight(~knownHeight=30)
 
-      let query3 =
-        fetchStateSmallQueue->FetchState.getNextQuery(
-          ~knownHeight=30,
-          ~concurrencyLimit=10,
-          ~stateId=0,
-        )
+      let query3 = fetchStateSmallQueue->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0)
 
       switch query3 {
       | Ready([q]) =>

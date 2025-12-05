@@ -50,6 +50,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
     ~targetBufferSize=5000,
     ~chainId,
     ~onBlockConfigs?,
+    ~knownHeight=0,
   )
 }
 

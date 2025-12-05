@@ -13,7 +13,6 @@ let getActiveSource: t => Source.t
 let fetchNext: (
   t,
   ~fetchState: FetchState.t,
-  ~knownHeight: int,
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
