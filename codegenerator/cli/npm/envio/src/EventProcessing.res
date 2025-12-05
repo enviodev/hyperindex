@@ -19,7 +19,7 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
       chainId,
       {
         Internal.id: chain->ChainMap.Chain.toChainId,
-        isLive: isLive,
+        isLive,
       },
     )
   })
@@ -114,6 +114,7 @@ let runEventHandlerOrThrow = async (
   ~shouldSaveHistory,
   ~shouldBenchmark,
   ~chains: Internal.chains,
+  ~config: Config.t,
 ) => {
   let eventItem = item->Internal.castUnsafeEventItem
 
@@ -130,6 +131,7 @@ let runEventHandlerOrThrow = async (
       shouldSaveHistory,
       isPreload: false,
       chains,
+      config,
       isResolved: false,
     }
     await handler(
@@ -184,6 +186,7 @@ let runHandlerOrThrow = async (
         checkpointId,
         isPreload: false,
         chains,
+        config: indexer.config,
         isResolved: false,
       }
       await handler(
@@ -217,6 +220,7 @@ let runHandlerOrThrow = async (
           ~shouldSaveHistory,
           ~shouldBenchmark,
           ~chains,
+          ~config=indexer.config,
         )
       | None => ()
       }
@@ -234,9 +238,9 @@ let preloadBatchOrThrow = async (
   batch: Batch.t,
   ~loadManager,
   ~persistence,
+  ~config: Config.t,
   ~inMemoryStore,
   ~chains: Internal.chains,
-  ~ecosystem: Ecosystem.t,
 ) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
@@ -272,6 +276,7 @@ let preloadBatchOrThrow = async (
                   shouldSaveHistory: false,
                   chains,
                   isResolved: false,
+                  config,
                 }),
               })->Promise.silentCatch,
               // Must have Promise.catch as well as normal catch,
@@ -286,7 +291,7 @@ let preloadBatchOrThrow = async (
         try {
           promises->Array.push(
             handler({
-              block: ecosystem->Ecosystem.makeBlockEvent(~blockNumber),
+              block: config.ecosystem->Ecosystem.makeBlockEvent(~blockNumber),
               context: UserContext.getHandlerContext({
                 item,
                 inMemoryStore,
@@ -297,6 +302,7 @@ let preloadBatchOrThrow = async (
                 shouldSaveHistory: false,
                 chains,
                 isResolved: false,
+                config,
               }),
             })->Promise.silentCatch,
           )
@@ -406,7 +412,7 @@ let processEventBatch = async (
         ~persistence=indexer.persistence,
         ~inMemoryStore,
         ~chains,
-        ~ecosystem=indexer.config.ecosystem,
+        ~config=indexer.config,
       )
     }
 

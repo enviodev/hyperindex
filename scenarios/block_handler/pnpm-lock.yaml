@@ -8,51 +8,16 @@ importers:
 
   .:
     dependencies:
-      '@clickhouse/client':
-        specifier: 1.12.1
-        version: 1.12.1
-      '@elastic/ecs-pino-format':
-        specifier: 1.4.0
-        version: 1.4.0
-      '@envio-dev/hyperfuel-client':
-        specifier: 1.2.2
-        version: 1.2.2
-      '@envio-dev/hypersync-client':
-        specifier: 0.7.0
-        version: 0.7.0
-      bignumber.js:
-        specifier: 9.1.2
-        version: 9.1.2
-      date-fns:
-        specifier: 3.3.1
-        version: 3.3.1
-      dotenv:
-        specifier: 16.4.5
-        version: 16.4.5
-      eventsource:
-        specifier: 4.1.0
-        version: 4.1.0
-      pino:
-        specifier: 8.16.1
-        version: 8.16.1
-      pino-pretty:
-        specifier: 10.2.3
-        version: 10.2.3
-      prom-client:
-        specifier: 15.0.0
-        version: 15.0.0
-      rescript:
-        specifier: 11.1.3
-        version: 11.1.3
-      rescript-envsafe:
-        specifier: 5.0.0
-        version: 5.0.0(rescript-schema@9.3.4(rescript@11.1.3))(rescript@11.1.3)
-      rescript-schema:
-        specifier: 9.3.4
-        version: 9.3.4(rescript@11.1.3)
-      viem:
-        specifier: 2.21.0
-        version: 2.21.0
+      envio:
+        specifier: file:../../codegenerator/cli/npm/envio
+        version: file:../../codegenerator/cli/npm/envio(typescript@5.9.3)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+    optionalDependencies:
+      generated:
+        specifier: ./generated
+        version: link:generated
 
 packages:
 
@@ -231,8 +196,13 @@ packages:
     resolution: {integrity: sha512-ZmdL2rui+eB2YwhsWzjInR8LldtZHGDoQ1ugH85ppHKwpUHL7j7rN0Ti9NCnGiQbhaZ11FpR+7ao1dNsmduNUg==}
     engines: {node: '>=12'}
 
-  end-of-stream@1.4.4:
-    resolution: {integrity: sha512-+uw1inIHVPQoaVuHzRyXd21icM+cnt4CzD5rW+NC1wjOUSTOs+Te7FOv7AhN7vS9x/oIyhLP5PR1H+phQAHu5Q==}
+  end-of-stream@1.4.5:
+    resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
+
+  envio@file:../../codegenerator/cli/npm/envio:
+    resolution: {directory: ../../codegenerator/cli/npm/envio, type: directory}
+    engines: {node: '>=22.0.0'}
+    hasBin: true
 
   event-target-shim@5.0.1:
     resolution: {integrity: sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==}
@@ -345,8 +315,8 @@ packages:
     resolution: {integrity: sha512-UocpgIrKyA2TKLVZDSfm8rGkL13C19YrQBAiG3xo3aDFWcHedxRxI3z+cIcucoxpSO0h5lff5iv/SXoxyeopeA==}
     engines: {node: ^16 || ^18 || >=20}
 
-  pump@3.0.2:
-    resolution: {integrity: sha512-tUPXtzlGM8FE3P0ZL6DVs/3P58k9nk8/jZeQCurTJylQA8qFYzHFfhBJkuqyE0FifOsQ0uKWekiZ5g8wtr28cw==}
+  pump@3.0.3:
+    resolution: {integrity: sha512-todwxLMY7/heScKmntwQG8CXVkWUOdYxIvY2s0VWAAMh/nd8SoYiRaKjlr7+iCs984f2P8zvrfWcDDYVb73NfA==}
 
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
@@ -422,6 +392,11 @@ packages:
 
   thread-stream@2.7.0:
     resolution: {integrity: sha512-qQiRWsU/wvNolI6tbbCKd9iKaTnCXsTwVxhhKM6nctPdujTyztjlbUkUTUymidWcMnZ5pWR0ej4a0tjsW021vw==}
+
+  typescript@5.9.3:
+    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
@@ -548,7 +523,9 @@ snapshots:
       '@noble/hashes': 1.4.0
       '@scure/base': 1.1.9
 
-  abitype@1.0.5: {}
+  abitype@1.0.5(typescript@5.9.3):
+    optionalDependencies:
+      typescript: 5.9.3
 
   abort-controller@3.0.0:
     dependencies:
@@ -590,9 +567,32 @@ snapshots:
 
   dotenv@16.4.5: {}
 
-  end-of-stream@1.4.4:
+  end-of-stream@1.4.5:
     dependencies:
       once: 1.4.0
+
+  envio@file:../../codegenerator/cli/npm/envio(typescript@5.9.3):
+    dependencies:
+      '@clickhouse/client': 1.12.1
+      '@elastic/ecs-pino-format': 1.4.0
+      '@envio-dev/hyperfuel-client': 1.2.2
+      '@envio-dev/hypersync-client': 0.7.0
+      bignumber.js: 9.1.2
+      date-fns: 3.3.1
+      dotenv: 16.4.5
+      eventsource: 4.1.0
+      pino: 8.16.1
+      pino-pretty: 10.2.3
+      prom-client: 15.0.0
+      rescript: 11.1.3
+      rescript-envsafe: 5.0.0(rescript-schema@9.3.4(rescript@11.1.3))(rescript@11.1.3)
+      rescript-schema: 9.3.4(rescript@11.1.3)
+      viem: 2.21.0(typescript@5.9.3)
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
+      - zod
 
   event-target-shim@5.0.1: {}
 
@@ -686,7 +686,7 @@ snapshots:
       minimist: 1.2.8
       on-exit-leak-free: 2.1.2
       pino-abstract-transport: 1.2.0
-      pump: 3.0.2
+      pump: 3.0.3
       readable-stream: 4.7.0
       secure-json-parse: 2.7.0
       sonic-boom: 3.8.1
@@ -717,9 +717,9 @@ snapshots:
       '@opentelemetry/api': 1.9.0
       tdigest: 0.1.2
 
-  pump@3.0.2:
+  pump@3.0.3:
     dependencies:
-      end-of-stream: 1.4.4
+      end-of-stream: 1.4.5
       once: 1.4.0
 
   punycode@2.3.1: {}
@@ -783,23 +783,27 @@ snapshots:
     dependencies:
       real-require: 0.2.0
 
+  typescript@5.9.3: {}
+
   uri-js@4.4.1:
     dependencies:
       punycode: 2.3.1
 
   util-deprecate@1.0.2: {}
 
-  viem@2.21.0:
+  viem@2.21.0(typescript@5.9.3):
     dependencies:
       '@adraffy/ens-normalize': 1.10.0
       '@noble/curves': 1.4.0
       '@noble/hashes': 1.4.0
       '@scure/bip32': 1.4.0
       '@scure/bip39': 1.3.0
-      abitype: 1.0.5
+      abitype: 1.0.5(typescript@5.9.3)
       isows: 1.0.4(ws@8.17.1)
       webauthn-p256: 0.0.5
       ws: 8.17.1
+    optionalDependencies:
+      typescript: 5.9.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate

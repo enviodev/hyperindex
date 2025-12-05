@@ -33,10 +33,7 @@ describe("Validate reorg detection functions", () => {
       mock(
         scannedHashesFixture,
         ~maxReorgDepth=200,
-      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-        ~blockNumber=501,
-        ~currentBlockHeight=500,
-      ),
+      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(~blockNumber=501, ~knownHeight=500),
       [300, 500],
       ~message="Both 300 and 500 should be included in the threshold and below 501",
     )
@@ -44,10 +41,7 @@ describe("Validate reorg detection functions", () => {
       mock(
         scannedHashesFixture,
         ~maxReorgDepth=200,
-      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-        ~blockNumber=501,
-        ~currentBlockHeight=501,
-      ),
+      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(~blockNumber=501, ~knownHeight=501),
       [500],
       ~message="If chain progresses one more block, 300 is not included in the threshold anymore",
     )
@@ -55,10 +49,7 @@ describe("Validate reorg detection functions", () => {
       mock(
         scannedHashesFixture,
         ~maxReorgDepth=200,
-      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-        ~blockNumber=500,
-        ~currentBlockHeight=499,
-      ),
+      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(~blockNumber=500, ~knownHeight=499),
       [300],
       ~message="Returns blocks below 500 that are in threshold",
     )
@@ -66,10 +57,7 @@ describe("Validate reorg detection functions", () => {
       mock(
         [(300, "0x789"), (50, "0x456"), (500, "0x5432"), (1, "0x123")],
         ~maxReorgDepth=200,
-      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-        ~blockNumber=501,
-        ~currentBlockHeight=500,
-      ),
+      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(~blockNumber=501, ~knownHeight=500),
       [300, 500],
       ~message="The order of blocks doesn't matter when we create reorg detection object",
     )
@@ -77,10 +65,7 @@ describe("Validate reorg detection functions", () => {
       mock(
         scannedHashesFixture,
         ~maxReorgDepth=199,
-      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-        ~blockNumber=501,
-        ~currentBlockHeight=500,
-      ),
+      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(~blockNumber=501, ~knownHeight=500),
       [500],
       ~message="Possible to shrink maxReorgDepth",
     )
@@ -88,17 +73,14 @@ describe("Validate reorg detection functions", () => {
       mock(
         scannedHashesFixture,
         ~maxReorgDepth=450,
-      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-        ~blockNumber=501,
-        ~currentBlockHeight=500,
-      ),
+      )->ReorgDetection.getThresholdBlockNumbersBelowBlock(~blockNumber=501, ~knownHeight=500),
       [50, 300, 500],
       ~message="Possible to increase maxReorgDepth",
     )
   })
 
   it("The registerReorgGuard should correctly add scanned data", () => {
-    let currentBlockHeight = 500
+    let knownHeight = 500
 
     let reorgDetection =
       mock([], ~maxReorgDepth=500)
@@ -110,7 +92,7 @@ describe("Validate reorg detection functions", () => {
           },
           prevRangeLastBlock: None,
         },
-        ~currentBlockHeight,
+        ~knownHeight,
       )
       ->pipeNoReorg
       ->ReorgDetection.registerReorgGuard(
@@ -124,7 +106,7 @@ describe("Validate reorg detection functions", () => {
             blockHash: "0x123",
           }),
         },
-        ~currentBlockHeight,
+        ~knownHeight,
       )
       ->pipeNoReorg
       ->ReorgDetection.registerReorgGuard(
@@ -138,7 +120,7 @@ describe("Validate reorg detection functions", () => {
             blockHash: "0x456",
           }),
         },
-        ~currentBlockHeight,
+        ~knownHeight,
       )
       ->pipeNoReorg
       ->ReorgDetection.registerReorgGuard(
@@ -152,7 +134,7 @@ describe("Validate reorg detection functions", () => {
             blockHash: "0x789",
           }),
         },
-        ~currentBlockHeight,
+        ~knownHeight,
       )
       ->pipeNoReorg
 
@@ -166,7 +148,7 @@ describe("Validate reorg detection functions", () => {
   it(
     "The prevRangeLastBlock in reorg guard should add a scanned block data to reorg detection",
     () => {
-      let currentBlockHeight = 500
+      let knownHeight = 500
       let reorgDetection =
         mock([], ~maxReorgDepth=200)
         ->ReorgDetection.registerReorgGuard(
@@ -180,7 +162,7 @@ describe("Validate reorg detection functions", () => {
               blockHash: "0x123",
             }),
           },
-          ~currentBlockHeight,
+          ~knownHeight,
         )
         ->pipeNoReorg
 
@@ -206,7 +188,7 @@ describe("Validate reorg detection functions", () => {
             blockHash: "0x3",
           }),
         },
-        ~currentBlockHeight=4,
+        ~knownHeight=4,
       )
       ->pipeNoReorg
 
@@ -231,7 +213,7 @@ describe("Validate reorg detection functions", () => {
             blockHash: "0x20-invalid",
           }),
         },
-        ~currentBlockHeight=500,
+        ~knownHeight=500,
       )
       ->pipeNoReorg
 
@@ -261,7 +243,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=true)->ReorgDetection.registerReorgGuard(
         ~reorgGuard,
-        ~currentBlockHeight=10,
+        ~knownHeight=10,
       ),
       (
         mock([(10, "0x10-invalid")]),
@@ -275,7 +257,7 @@ describe("Validate reorg detection functions", () => {
     Assert.deepEqual(
       mock([(10, "0x10-invalid")], ~shouldRollbackOnReorg=false)->ReorgDetection.registerReorgGuard(
         ~reorgGuard,
-        ~currentBlockHeight=10,
+        ~knownHeight=10,
       ),
       (
         mock([], ~shouldRollbackOnReorg=false),
@@ -304,7 +286,7 @@ describe("Validate reorg detection functions", () => {
     let hashes = mock([(10, "0x10-invalid")], ~maxReorgDepth=2)
 
     let reorgDetectionResult =
-      hashes->ReorgDetection.registerReorgGuard(~reorgGuard, ~currentBlockHeight=11)
+      hashes->ReorgDetection.registerReorgGuard(~reorgGuard, ~knownHeight=11)
 
     Assert.deepEqual(
       reorgDetectionResult,

@@ -77,13 +77,10 @@ let make = (
   }
 }
 
-let getDataByBlockNumberCopyInThreshold = (
-  {dataByBlockNumber, maxReorgDepth}: t,
-  ~currentBlockHeight,
-) => {
+let getDataByBlockNumberCopyInThreshold = ({dataByBlockNumber, maxReorgDepth}: t, ~knownHeight) => {
   // Js engine automatically orders numeric object keys
   let ascBlockNumberKeys = dataByBlockNumber->Js.Dict.keys
-  let thresholdBlockNumber = currentBlockHeight - maxReorgDepth
+  let thresholdBlockNumber = knownHeight - maxReorgDepth
 
   let copy = Js.Dict.empty()
 
@@ -105,10 +102,9 @@ let getDataByBlockNumberCopyInThreshold = (
 let registerReorgGuard = (
   {maxReorgDepth, shouldRollbackOnReorg} as self: t,
   ~reorgGuard: reorgGuard,
-  ~currentBlockHeight,
+  ~knownHeight,
 ) => {
-  let dataByBlockNumberCopyInThreshold =
-    self->getDataByBlockNumberCopyInThreshold(~currentBlockHeight)
+  let dataByBlockNumberCopyInThreshold = self->getDataByBlockNumberCopyInThreshold(~knownHeight)
 
   let {rangeLastBlock, prevRangeLastBlock} = reorgGuard
 
@@ -248,12 +244,12 @@ let rollbackToValidBlockNumber = (
   }
 }
 
-let getThresholdBlockNumbersBelowBlock = (self: t, ~blockNumber: int, ~currentBlockHeight) => {
+let getThresholdBlockNumbersBelowBlock = (self: t, ~blockNumber: int, ~knownHeight) => {
   let arr = []
 
   // Js engine automatically orders numeric object keys
   let ascBlockNumberKeys = self.dataByBlockNumber->Js.Dict.keys
-  let thresholdBlockNumber = currentBlockHeight - self.maxReorgDepth
+  let thresholdBlockNumber = knownHeight - self.maxReorgDepth
 
   for idx in 0 to ascBlockNumberKeys->Array.length - 1 {
     let blockNumberKey = ascBlockNumberKeys->Js.Array2.unsafe_get(idx)

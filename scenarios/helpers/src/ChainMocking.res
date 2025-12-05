@@ -250,7 +250,7 @@ module Make = () => {
       self
       ->getBlock(~blockNumber=fromBlock - 1)
       ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
-    let currentBlockHeight = self->getHeight
+    let knownHeight = self->getHeight
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
       let addresses = query.addressesByContractName->Js.Dict.get(c.name)->Option.getWithDefault([])
@@ -265,7 +265,7 @@ module Make = () => {
     let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
 
     {
-      currentBlockHeight,
+      knownHeight,
       reorgGuard: {
         rangeLastBlock: {
           blockHash: heighstBlock.blockHash,

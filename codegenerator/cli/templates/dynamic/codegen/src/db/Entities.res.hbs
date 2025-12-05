@@ -27,12 +27,6 @@ let isNullable = true
 let isArray = true
 let isIndex = true
 
-@genType
-type whereOperations<'entity, 'fieldType> = {
-  eq: 'fieldType => promise<array<'entity>>,
-  gt: 'fieldType => promise<array<'entity>>,
-  lt: 'fieldType => promise<array<'entity>>
-}
 {{#each entities as |entity|}}
 
 module {{entity.name.capitalized}} = {
@@ -56,7 +50,7 @@ module {{entity.name.capitalized}} = {
   @genType
   type indexedFieldOperations = {
     {{#each entity.params as | param |}}{{#if param.is_queryable_field}}
-      @as("{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}") {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: whereOperations<t, {{param.res_type}}>,
+      @as("{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}") {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: Envio.whereOperations<t, {{param.res_type}}>,
     {{/if}}{{/each}}
   }
 
@@ -112,10 +106,3 @@ let allEntities =
   userEntities->Js.Array2.concat(
     [module(InternalTable.DynamicContractRegistry)]->entityModsToInternal,
   )
-
-let byName =
-  allEntities
-  ->Js.Array2.map(entityConfig => {
-    (entityConfig.name, entityConfig)
-  })
-  ->Js.Dict.fromArray

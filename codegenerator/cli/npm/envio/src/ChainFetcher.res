@@ -12,8 +12,6 @@ type t = {
   fetchState: FetchState.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
-  //The latest known block of the chain
-  currentBlockHeight: int,
   isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
@@ -157,6 +155,7 @@ let make = (
     ~endBlock,
     ~eventConfigs,
     ~targetBufferSize,
+    ~knownHeight=0, // FIXME: Get it from db or fetch before creating FetchState
     ~chainId=chainConfig.id,
     // FIXME: Shouldn't set with full history
     ~blockLag=Pervasives.max(
@@ -191,7 +190,6 @@ let make = (
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
       ~chainReorgCheckpoints,
     ),
-    currentBlockHeight: 0,
     isProgressAtHead: false,
     fetchState,
     firstEventBlockNumber,
@@ -296,18 +294,14 @@ let runContractRegistersOrThrow = async (
     let {blockNumber} = eventItem
 
     // Use contract-specific start block if configured, otherwise fall back to registration block
-    let contractStartBlock = switch getContractStartBlock(
-      config,
-      ~chain,
-      ~contractName=(contractName: Enums.ContractType.t :> string),
-    ) {
+    let contractStartBlock = switch getContractStartBlock(config, ~chain, ~contractName) {
     | Some(configuredStartBlock) => configuredStartBlock
     | None => blockNumber
     }
 
     let dc: Internal.indexingContract = {
       address: contractAddress,
-      contractName: (contractName: Enums.ContractType.t :> string),
+      contractName,
       startBlock: contractStartBlock,
       registrationBlock: Some(blockNumber),
     }
@@ -380,6 +374,7 @@ let handleQueryResult = (
   ~newItems,
   ~newItemsWithDcs,
   ~latestFetchedBlock,
+  ~knownHeight,
 ) => {
   let fs = switch newItemsWithDcs {
   | [] => chainFetcher.fetchState
@@ -390,7 +385,7 @@ let handleQueryResult = (
   ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
   ->Result.map(fs => {
     ...chainFetcher,
-    fetchState: fs,
+    fetchState: fs->FetchState.updateKnownHeight(~knownHeight),
   })
 }
 
@@ -410,7 +405,7 @@ let hasNoMoreEventsToProcess = (self: t) => {
 }
 
 let getHighestBlockBelowThreshold = (cf: t): int => {
-  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.maxReorgDepth
+  let highestBlockBelowThreshold = cf.fetchState.knownHeight - cf.chainConfig.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
@@ -431,7 +426,7 @@ let getLastKnownValidBlock = async (
   let scannedBlockNumbers =
     chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbersBelowBlock(
       ~blockNumber=reorgBlockNumber,
-      ~currentBlockHeight=chainFetcher.currentBlockHeight,
+      ~knownHeight=chainFetcher.fetchState.knownHeight,
     )
 
   let getBlockHashes = blockNumbers => {

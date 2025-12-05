@@ -86,6 +86,7 @@ pub enum Script {
 pub enum JsonSchema {
     Evm,
     Fuel,
+    Solana,
 }
 
 #[derive(Debug, Args)]

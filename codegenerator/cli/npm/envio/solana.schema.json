@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envio Solana Config Schema",
+  "description": "Schema for a YAML config for an envio Solana indexer",
+  "type": "object",
+  "properties": {
+    "description": {
+      "description": "Description of the project",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
+    "schema": {
+      "description": "Custom path to schema.graphql file",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "output": {
+      "description": "Path where the generated directory will be placed. By default it's 'generated' relative to the current working directory. If set, it'll be a path relative to the config file location.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "handlers": {
+      "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ecosystem": {
+      "description": "Ecosystem of the project.",
+      "$ref": "#/$defs/EcosystemTag"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "ecosystem"
+  ],
+  "$defs": {
+    "EcosystemTag": {
+      "type": "string",
+      "enum": [
+        "solana"
+      ]
+    }
+  }
+}

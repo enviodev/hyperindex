@@ -3,13 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.{{#if is_rescript}}res.mjs{{else}}ts{{/if}}",
   {{#if is_typescript}}
-    "clean": "tsc --clean",
-    "build": "tsc --build",
-    "watch": "tsc --watch",
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.ts",
   {{/if}}
   {{#if is_rescript}}
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.res.mjs",
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",

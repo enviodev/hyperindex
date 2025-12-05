@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "clean": "tsc --clean",
-    "build": "tsc --build",
-    "watch": "tsc --watch",
     "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.ts",
     "codegen": "envio codegen",
     "dev": "envio dev",

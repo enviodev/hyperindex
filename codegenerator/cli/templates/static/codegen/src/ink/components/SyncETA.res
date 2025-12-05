@@ -11,10 +11,10 @@ let isIndexerFullySynced = (chains: array<ChainData.chainData>) => {
 }
 
 let getTotalRemainingBlocks = (chains: array<ChainData.chainData>) => {
-  chains->Array.reduce(0, (accum, {progress, currentBlockHeight, latestFetchedBlockNumber, endBlock}) => {
+  chains->Array.reduce(0, (accum, {progress, knownHeight, latestFetchedBlockNumber, endBlock}) => {
     let finalBlock = switch endBlock {
       | Some(endBlock) => endBlock
-      | None => currentBlockHeight
+      | None => knownHeight
     }
     switch progress {
     | Syncing({latestProcessedBlock})

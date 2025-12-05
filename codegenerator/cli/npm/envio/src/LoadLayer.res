@@ -400,7 +400,7 @@ let loadByField = (
             //Set the entity in the in memory store
             inMemTable->InMemoryTable.Entity.initValue(
               ~allowOverWriteEntity=false,
-              ~key=Entities.getEntityId(entity),
+              ~key=entity.id,
               ~entity=Some(entity),
             )
           })

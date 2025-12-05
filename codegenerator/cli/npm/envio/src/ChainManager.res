@@ -131,7 +131,7 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): B
       fetchState: cf.fetchState,
       progressBlockNumber: cf.committedProgressBlockNumber,
       totalEventsProcessed: cf.numEventsProcessed,
-      sourceBlockNumber: cf.currentBlockHeight,
+      sourceBlockNumber: cf.fetchState.knownHeight,
       reorgDetection: cf.reorgDetection,
     }),
     ~multichain=chainManager.multichain,
@@ -162,7 +162,7 @@ let getSafeCheckpointId = (chainManager: t) => {
     | Some(safeCheckpointTracking) => {
         let safeCheckpointId =
           safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
-            ~sourceBlockNumber=chainFetcher.currentBlockHeight,
+            ~sourceBlockNumber=chainFetcher.fetchState.knownHeight,
           )
         if safeCheckpointId < result.contents {
           result := safeCheckpointId
