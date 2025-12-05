@@ -33,7 +33,7 @@ let executeQueryMock = () => {
 }
 
 type waitForNewBlockMock = {
-  fn: (~currentBlockHeight: int) => Promise.t<int>,
+  fn: (~knownHeight: int) => Promise.t<int>,
   calls: array<int>,
   resolveAll: int => unit,
   resolveFns: array<int => unit>,
@@ -43,11 +43,11 @@ let waitForNewBlockMock = () => {
   let calls = []
   let resolveFns = []
   {
-    resolveAll: currentBlockHeight => {
-      resolveFns->Js.Array2.forEach(resolve => resolve(currentBlockHeight))
+    resolveAll: knownHeight => {
+      resolveFns->Js.Array2.forEach(resolve => resolve(knownHeight))
     },
-    fn: (~currentBlockHeight) => {
-      calls->Js.Array2.push(currentBlockHeight)->ignore
+    fn: (~knownHeight) => {
+      calls->Js.Array2.push(knownHeight)->ignore
       Promise.make((resolve, _reject) => {
         resolveFns->Js.Array2.push(resolve)->ignore
       })
@@ -58,7 +58,7 @@ let waitForNewBlockMock = () => {
 }
 
 type onNewBlockMock = {
-  fn: (~currentBlockHeight: int) => unit,
+  fn: (~knownHeight: int) => unit,
   calls: array<int>,
 }
 
@@ -66,8 +66,8 @@ let onNewBlockMock = () => {
   let calls = []
 
   {
-    fn: (~currentBlockHeight) => {
-      calls->Js.Array2.push(currentBlockHeight)->ignore
+    fn: (~knownHeight) => {
+      calls->Js.Array2.push(knownHeight)->ignore
     },
     calls,
   }
@@ -200,10 +200,10 @@ describe("SourceManager fetchNext", () => {
     }->FetchState.updateInternal
   }
 
-  let neverWaitForNewBlock = async (~currentBlockHeight as _) =>
+  let neverWaitForNewBlock = async (~knownHeight as _) =>
     Assert.fail("The waitForNewBlock shouldn't be called for the test")
 
-  let neverOnNewBlock = (~currentBlockHeight as _) =>
+  let neverOnNewBlock = (~knownHeight as _) =>
     Assert.fail("The onNewBlock shouldn't be called for the test")
 
   let neverExecutePartitionQuery = _ =>
@@ -227,7 +227,7 @@ describe("SourceManager fetchNext", () => {
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
           ~fetchState,
-          ~currentBlockHeight=10,
+          ~knownHeight=10,
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
@@ -292,7 +292,7 @@ describe("SourceManager fetchNext", () => {
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
           ~fetchState,
-          ~currentBlockHeight=10,
+          ~knownHeight=10,
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
@@ -348,7 +348,7 @@ describe("SourceManager fetchNext", () => {
       let fetchNextPromise =
         sourceManager->SourceManager.fetchNext(
           ~fetchState=mockFetchState([p0, p1, p2, p3], ~endBlock=Some(5)),
-          ~currentBlockHeight=4,
+          ~knownHeight=4,
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
@@ -380,7 +380,7 @@ describe("SourceManager fetchNext", () => {
         ~fetchState=mockFetchState([
           mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         ]),
-        ~currentBlockHeight=0,
+        ~knownHeight=0,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
@@ -400,7 +400,7 @@ describe("SourceManager fetchNext", () => {
         ~fetchState=mockFetchState([
           mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=20),
         ]),
-        ~currentBlockHeight=20,
+        ~knownHeight=20,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
@@ -415,37 +415,34 @@ describe("SourceManager fetchNext", () => {
     Assert.deepEqual(onNewBlockMock.calls, [20, 40])
   })
 
-  Async.it(
-    "Waits for new block with currentBlockHeight=0 even when all partitions are done",
-    async () => {
-      let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
+  Async.it("Waits for new block with knownHeight=0 even when all partitions are done", async () => {
+    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
-      let waitForNewBlockMock = waitForNewBlockMock()
-      let onNewBlockMock = onNewBlockMock()
+    let waitForNewBlockMock = waitForNewBlockMock()
+    let onNewBlockMock = onNewBlockMock()
 
-      let fetchNextPromise1 =
-        sourceManager->SourceManager.fetchNext(
-          ~fetchState=mockFetchState(
-            [mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)],
-            ~endBlock=Some(5),
-          ),
-          ~currentBlockHeight=0,
-          ~executeQuery=neverExecutePartitionQuery,
-          ~waitForNewBlock=waitForNewBlockMock.fn,
-          ~onNewBlock=onNewBlockMock.fn,
-          ~stateId=0,
-        )
+    let fetchNextPromise1 =
+      sourceManager->SourceManager.fetchNext(
+        ~fetchState=mockFetchState(
+          [mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)],
+          ~endBlock=Some(5),
+        ),
+        ~knownHeight=0,
+        ~executeQuery=neverExecutePartitionQuery,
+        ~waitForNewBlock=waitForNewBlockMock.fn,
+        ~onNewBlock=onNewBlockMock.fn,
+        ~stateId=0,
+      )
 
-      waitForNewBlockMock.resolveAll(20)
+    waitForNewBlockMock.resolveAll(20)
 
-      await fetchNextPromise1
+    await fetchNextPromise1
 
-      Assert.deepEqual(waitForNewBlockMock.calls, [0])
-      Assert.deepEqual(onNewBlockMock.calls, [20])
-    },
-  )
+    Assert.deepEqual(waitForNewBlockMock.calls, [0])
+    Assert.deepEqual(onNewBlockMock.calls, [20])
+  })
 
-  Async.it("Waits for new block when all partitions are at the currentBlockHeight", async () => {
+  Async.it("Waits for new block when all partitions are at the knownHeight", async () => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
@@ -457,7 +454,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1]),
-        ~currentBlockHeight=5,
+        ~knownHeight=5,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
@@ -469,7 +466,7 @@ describe("SourceManager fetchNext", () => {
     // Should do nothing on the second call with the same data
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1]),
-      ~currentBlockHeight=5,
+      ~knownHeight=5,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -499,7 +496,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0]),
-        ~currentBlockHeight=5,
+        ~knownHeight=5,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=neverOnNewBlock,
@@ -511,7 +508,7 @@ describe("SourceManager fetchNext", () => {
     // Should do nothing on the second call with the same data
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0]),
-      ~currentBlockHeight=5,
+      ~knownHeight=5,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -526,7 +523,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0]),
-        ~currentBlockHeight=5,
+        ~knownHeight=5,
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
@@ -564,7 +561,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise1 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1]),
-        ~currentBlockHeight=10,
+        ~knownHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
@@ -576,7 +573,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1, p2, p3]),
-        ~currentBlockHeight=10,
+        ~knownHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
@@ -594,7 +591,7 @@ describe("SourceManager fetchNext", () => {
     // The third call won't do anything, because the concurrency is reached
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1, p2, p3]),
-      ~currentBlockHeight=10,
+      ~knownHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -605,7 +602,7 @@ describe("SourceManager fetchNext", () => {
     // for running fetches from the prev state
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1, p2, p3]),
-      ~currentBlockHeight=10,
+      ~knownHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -618,7 +615,7 @@ describe("SourceManager fetchNext", () => {
     // After resolving one the call with prev stateId won't do anything
     await sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState([p0, p1, p2, p3]),
-      ~currentBlockHeight=10,
+      ~knownHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -629,7 +626,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise3 =
       sourceManager->SourceManager.fetchNext(
         ~fetchState=mockFetchState([p0, p1, p2, p3]),
-        ~currentBlockHeight=10,
+        ~knownHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
@@ -654,7 +651,7 @@ describe("SourceManager fetchNext", () => {
         p2,
         p3,
       ]),
-      ~currentBlockHeight=10,
+      ~knownHeight=10,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -696,7 +693,7 @@ describe("SourceManager fetchNext", () => {
           ],
           ~targetBufferSize=4,
         ),
-        ~currentBlockHeight=10,
+        ~knownHeight=10,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
@@ -731,7 +728,7 @@ describe("SourceManager fetchNext", () => {
         ],
         ~endBlock=Some(11),
       ),
-      ~currentBlockHeight=10,
+      ~knownHeight=10,
       ~executeQuery=executeQueryMock.fn,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -755,7 +752,7 @@ describe("SourceManager wait for new blocks", () => {
       ])
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=0)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=0)
 
       Assert.deepEqual(getHeightOrThrowCalls->Array.length, 1)
       resolveGetHeightOrThrow(1)
@@ -774,7 +771,7 @@ describe("SourceManager wait for new blocks", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=0)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=0)
 
       Assert.deepEqual(mock0.getHeightOrThrowCalls->Array.length, 1)
       Assert.deepEqual(mock1.getHeightOrThrowCalls->Array.length, 1)
@@ -813,7 +810,7 @@ describe("SourceManager wait for new blocks", () => {
       ~maxPartitionConcurrency=10,
     )
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
     let ((), ()) = await Promise.all2((
       (
@@ -909,7 +906,7 @@ describe("SourceManager wait for new blocks", () => {
       ),
     )
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
     let ((), ()) = await Promise.all2((
       (
@@ -1051,7 +1048,7 @@ describe("SourceManager wait for new blocks", () => {
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
       Assert.deepEqual(sync.getHeightOrThrowCalls->Array.length, 1)
       Assert.deepEqual(fallback.getHeightOrThrowCalls->Array.length, 0)
@@ -1134,7 +1131,7 @@ describe("SourceManager wait for new blocks", () => {
         ~message="Polling for fallback source should stop after successful response",
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=101)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
 
       Assert.deepEqual(
         sync.getHeightOrThrowCalls->Array.length,
@@ -1192,7 +1189,7 @@ describe("SourceManager wait for new blocks", () => {
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
       Assert.deepEqual(sync.getHeightOrThrowCalls->Array.length, 1)
       sync.resolveGetHeightOrThrow(100)
@@ -1252,7 +1249,7 @@ describe("SourceManager.executeQuery", () => {
       #getItemsOrThrow,
     ])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
-    let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
+    let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
     Assert.deepEqual(getItemsOrThrowCalls, [{"fromBlock": 0, "toBlock": None, "retry": 0}])
     resolveGetItemsOrThrow([])
     Assert.deepEqual((await p).parsedQueueItems, [])
@@ -1261,7 +1258,7 @@ describe("SourceManager.executeQuery", () => {
   Async.it("Rethrows unknown errors", async () => {
     let {source, rejectGetItemsOrThrow} = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
-    let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
+    let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
     let error = {
       "message": "Something went wrong",
     }
@@ -1285,7 +1282,7 @@ describe("SourceManager.executeQuery", () => {
       ],
       ~maxPartitionConcurrency=10,
     )
-    let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
+    let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
     rejectGetItemsOrThrow(
       Source.GetItemsError(
         FailedGettingItems({
@@ -1335,7 +1332,7 @@ describe("SourceManager.executeQuery", () => {
       {
         // Switch the initial active source to fallback,
         // to test that it's included to the rotation
-        let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+        let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
         await Utils.delay(newBlockFallbackStallTimeout)
         mock1.resolveGetHeightOrThrow(101)
         Assert.equal(await p, 101)
@@ -1346,7 +1343,7 @@ describe("SourceManager.executeQuery", () => {
         )
       }
 
-      let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~currentBlockHeight=100)
+      let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
 
       for idx in 0 to 2 {
         mock1.rejectGetItemsOrThrow(

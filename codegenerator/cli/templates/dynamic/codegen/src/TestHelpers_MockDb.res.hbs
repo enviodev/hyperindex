@@ -492,7 +492,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
               fetchState: updatedFetchState.contents,
               reorgDetection: chainFetcher.reorgDetection,
               progressBlockNumber: chainFetcher.committedProgressBlockNumber,
-              sourceBlockNumber: chainFetcher.currentBlockHeight,
+              sourceBlockNumber: chainFetcher.knownHeight,
               totalEventsProcessed: chainFetcher.numEventsProcessed,
             }: Batch.chainBeforeBatch
           ),

@@ -8,7 +8,7 @@ type chainData = {
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   numEventsProcessed: int,
   latestFetchedBlockNumber: int,
-  currentBlockHeight: int,
+  knownHeight: int,
   numBatchesFetched: int,
   endBlock: option<int>,
   numAddresses: int,
@@ -35,7 +35,7 @@ let chainDataSchema = S.schema((s): chainData => {
   timestampCaughtUpToHeadOrEndblock: s.matches(S.option(S.datetime(S.string))),
   numEventsProcessed: s.matches(S.int),
   latestFetchedBlockNumber: s.matches(S.int),
-  currentBlockHeight: s.matches(S.int),
+  knownHeight: s.matches(S.int),
   numBatchesFetched: s.matches(S.int),
   endBlock: s.matches(S.option(S.int)),
   numAddresses: s.matches(S.int),
@@ -136,10 +136,10 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
       let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
-      let currentBlockHeight =
+      let knownHeight =
         cf->ChainFetcher.hasProcessedToEndblock
-          ? cf.fetchState.endBlock->Option.getWithDefault(cf.currentBlockHeight)
-          : cf.currentBlockHeight
+          ? cf.fetchState.endBlock->Option.getWithDefault(cf.knownHeight)
+          : cf.knownHeight
 
       let progress: ChainData.progress = if hasProcessedToEndblock {
         // If the endblock has been reached then set the progress to synced.
@@ -191,7 +191,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       (
         {
           progress,
-          currentBlockHeight,
+          knownHeight,
           latestFetchedBlockNumber,
           numBatchesFetched,
           chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
@@ -254,7 +254,7 @@ let main = async () => {
                   chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
                   poweredByHyperSync: c.poweredByHyperSync,
                   latestFetchedBlockNumber: c.latestFetchedBlockNumber,
-                  currentBlockHeight: c.currentBlockHeight,
+                  knownHeight: c.knownHeight,
                   numBatchesFetched: c.numBatchesFetched,
                   endBlock: c.endBlock,
                   firstEventBlockNumber: switch c.progress {

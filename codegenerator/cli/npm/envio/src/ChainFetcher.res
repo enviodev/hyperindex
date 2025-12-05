@@ -13,7 +13,7 @@ type t = {
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   //The latest known block of the chain
-  currentBlockHeight: int,
+  knownHeight: int,
   isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
@@ -191,7 +191,7 @@ let make = (
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
       ~chainReorgCheckpoints,
     ),
-    currentBlockHeight: 0,
+    knownHeight: 0,
     isProgressAtHead: false,
     fetchState,
     firstEventBlockNumber,
@@ -296,11 +296,7 @@ let runContractRegistersOrThrow = async (
     let {blockNumber} = eventItem
 
     // Use contract-specific start block if configured, otherwise fall back to registration block
-    let contractStartBlock = switch getContractStartBlock(
-      config,
-      ~chain,
-      ~contractName,
-    ) {
+    let contractStartBlock = switch getContractStartBlock(config, ~chain, ~contractName) {
     | Some(configuredStartBlock) => configuredStartBlock
     | None => blockNumber
     }
@@ -410,7 +406,7 @@ let hasNoMoreEventsToProcess = (self: t) => {
 }
 
 let getHighestBlockBelowThreshold = (cf: t): int => {
-  let highestBlockBelowThreshold = cf.currentBlockHeight - cf.chainConfig.maxReorgDepth
+  let highestBlockBelowThreshold = cf.knownHeight - cf.chainConfig.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
@@ -431,7 +427,7 @@ let getLastKnownValidBlock = async (
   let scannedBlockNumbers =
     chainFetcher.reorgDetection->ReorgDetection.getThresholdBlockNumbersBelowBlock(
       ~blockNumber=reorgBlockNumber,
-      ~currentBlockHeight=chainFetcher.currentBlockHeight,
+      ~knownHeight=chainFetcher.knownHeight,
     )
 
   let getBlockHashes = blockNumbers => {

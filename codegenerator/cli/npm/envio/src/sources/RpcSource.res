@@ -601,7 +601,7 @@ let make = (
     ~toBlock,
     ~addressesByContractName,
     ~indexingContracts,
-    ~currentBlockHeight,
+    ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
     ~retry as _,
@@ -621,8 +621,8 @@ let make = (
 
     // Always have a toBlock for an RPC worker
     let toBlock = switch toBlock {
-    | Some(toBlock) => Pervasives.min(toBlock, currentBlockHeight)
-    | None => currentBlockHeight
+    | Some(toBlock) => Pervasives.min(toBlock, knownHeight)
+    | None => knownHeight
     }
 
     let suggestedToBlock = Pervasives.min(fromBlock + suggestedBlockInterval - 1, toBlock)
@@ -874,7 +874,7 @@ let make = (
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
-      currentBlockHeight,
+      knownHeight,
       reorgGuard,
       fromBlockQueried: fromBlock,
     }

@@ -717,7 +717,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       let q1 =
         {...updatedFetchState, targetBufferSize: 10}->FetchState.getNextQuery(
-          ~currentBlockHeight=10,
+          ~knownHeight=10,
           ~concurrencyLimit=10,
           ~stateId=0,
         )
@@ -1039,18 +1039,18 @@ describe("FetchState.getNextQuery & integration", () => {
     let getNextQuery = (
       fs,
       ~endBlock=None,
-      ~currentBlockHeight=10,
+      ~knownHeight=10,
       ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, targetBufferSize, endBlock}
       | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~stateId=0)
+      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
 
     let fetchState = makeInitial()
 
-    Assert.deepEqual(fetchState->getNextQuery(~currentBlockHeight=0), WaitingForNewBlock)
+    Assert.deepEqual(fetchState->getNextQuery(~knownHeight=0), WaitingForNewBlock)
 
     let nextQuery = fetchState->getNextQuery
 
@@ -1147,7 +1147,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Should wait for new block even if partitions have nothing to query`,
     )
     Assert.deepEqual(
-      updatedFetchState->getNextQuery(~targetBufferSize=2, ~currentBlockHeight=11),
+      updatedFetchState->getNextQuery(~targetBufferSize=2, ~knownHeight=11),
       NothingToQuery,
       ~message=`Should do nothing if the case above is not waiting for new block`,
     )
@@ -1158,7 +1158,7 @@ describe("FetchState.getNextQuery & integration", () => {
       NothingToQuery,
       ~message=`Test that even if all partitions reached the current block height,
       we won't wait for new block while even one partition is fetching.
-      It might return an updated currentBlockHeight in response and we won't need to poll for new block`,
+      It might return an updated knownHeight in response and we won't need to poll for new block`,
     )
   })
 
@@ -1167,26 +1167,26 @@ describe("FetchState.getNextQuery & integration", () => {
     let getNextQuery = (
       fs,
       ~endBlock=None,
-      ~currentBlockHeight=10,
+      ~knownHeight=10,
       ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, targetBufferSize, endBlock}
       | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~stateId=0)
+      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
 
     let fetchState = makeInitial(~blockLag=2)
 
-    Assert.deepEqual(fetchState->getNextQuery(~currentBlockHeight=0), WaitingForNewBlock)
+    Assert.deepEqual(fetchState->getNextQuery(~knownHeight=0), WaitingForNewBlock)
 
     Assert.deepEqual(
-      fetchState->getNextQuery(~currentBlockHeight=1),
+      fetchState->getNextQuery(~knownHeight=1),
       WaitingForNewBlock,
       ~message="Should wait for new block when current block height - block lag is less than 0",
     )
 
-    let nextQuery = fetchState->getNextQuery(~endBlock=Some(8), ~currentBlockHeight=10)
+    let nextQuery = fetchState->getNextQuery(~endBlock=Some(8), ~knownHeight=10)
     Assert.deepEqual(
       nextQuery,
       Ready([
@@ -1202,7 +1202,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message="No block lag when we are close to the end block",
     )
 
-    let nextQuery = fetchState->getNextQuery(~endBlock=Some(10), ~currentBlockHeight=10)
+    let nextQuery = fetchState->getNextQuery(~endBlock=Some(10), ~knownHeight=10)
     Assert.deepEqual(
       nextQuery,
       Ready([
@@ -1252,14 +1252,14 @@ describe("FetchState.getNextQuery & integration", () => {
     let getNextQuery = (
       fs,
       ~endBlock=None,
-      ~currentBlockHeight=11,
+      ~knownHeight=11,
       ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, targetBufferSize, endBlock}
       | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~stateId=0)
+      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
 
     // Continue with the state from previous test
     let fetchState = makeAfterFirstStaticAddressesQuery()
@@ -1391,7 +1391,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Should be the query with smaller fromBlock`,
     )
     Assert.deepEqual(
-      updatedFetchState->getNextQuery(~currentBlockHeight=10),
+      updatedFetchState->getNextQuery(~knownHeight=10),
       Ready([expectedPartition2Query]),
       ~message=`Even if a single partition reached block height,
       we finish fetching other partitions until waiting for the new block first`,
@@ -1413,14 +1413,14 @@ describe("FetchState.getNextQuery & integration", () => {
     let getNextQuery = (
       fs,
       ~endBlock=None,
-      ~currentBlockHeight=11,
+      ~knownHeight=11,
       ~targetBufferSize=10,
       ~concurrencyLimit=10,
     ) =>
       switch endBlock {
       | Some(_) => {...fs, targetBufferSize, endBlock}
       | None => {...fs, targetBufferSize}
-      }->FetchState.getNextQuery(~currentBlockHeight, ~concurrencyLimit, ~stateId=0)
+      }->FetchState.getNextQuery(~knownHeight, ~concurrencyLimit, ~stateId=0)
 
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 4
@@ -1666,7 +1666,7 @@ describe("FetchState.getNextQuery & integration", () => {
     Assert.deepEqual(fetchState.partitions->Array.length, 3)
 
     let nextQuery =
-      fetchState->FetchState.getNextQuery(~currentBlockHeight=10, ~concurrencyLimit=10, ~stateId=0)
+      fetchState->FetchState.getNextQuery(~knownHeight=10, ~concurrencyLimit=10, ~stateId=0)
 
     Assert.deepEqual(
       nextQuery,
@@ -2035,7 +2035,7 @@ describe("FetchState unit tests for specific cases", () => {
       ->Result.getExn
 
     Assert.deepEqual(
-      fetchState->FetchState.getNextQuery(~concurrencyLimit=10, ~currentBlockHeight=2, ~stateId=0),
+      fetchState->FetchState.getNextQuery(~concurrencyLimit=10, ~knownHeight=2, ~stateId=0),
       Ready([
         {
           partitionId: "0",
@@ -2056,7 +2056,7 @@ describe("FetchState unit tests for specific cases", () => {
       {
         ...fetchState,
         targetBufferSize: 2,
-      }->FetchState.getNextQuery(~concurrencyLimit=10, ~currentBlockHeight=2, ~stateId=0),
+      }->FetchState.getNextQuery(~concurrencyLimit=10, ~knownHeight=2, ~stateId=0),
       NothingToQuery,
       ~message=`Should wait until queue is processed, to continue fetching.
       Don't wait for new block, until all partitions reached the head`,
@@ -2272,7 +2272,7 @@ describe("FetchState unit tests for specific cases", () => {
   it(
     "Adding dynamic between two registers while query is mid flight does no result in early merged registers",
     () => {
-      let currentBlockHeight = 600
+      let knownHeight = 600
 
       let fetchState = FetchState.make(
         ~eventConfigs=[baseEventConfig],
@@ -2309,7 +2309,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       let queryA = switch fetchStateWithDcA->FetchState.getNextQuery(
         ~concurrencyLimit=10,
-        ~currentBlockHeight,
+        ~knownHeight,
         ~stateId=0,
       ) {
       | Ready([q]) => {
@@ -2346,11 +2346,7 @@ describe("FetchState unit tests for specific cases", () => {
         ])
 
       Assert.deepEqual(
-        fetchStateWithDcB->FetchState.getNextQuery(
-          ~concurrencyLimit=10,
-          ~currentBlockHeight,
-          ~stateId=0,
-        ),
+        fetchStateWithDcB->FetchState.getNextQuery(~concurrencyLimit=10, ~knownHeight, ~stateId=0),
         NothingToQuery,
         ~message=`The newly registered contract should be locked from querying, since we have an active merge query`,
       )
@@ -2368,7 +2364,7 @@ describe("FetchState unit tests for specific cases", () => {
       Assert.deepEqual(
         fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
           ~concurrencyLimit=10,
-          ~currentBlockHeight,
+          ~knownHeight,
           ~stateId=0,
         ),
         Ready([
@@ -2521,19 +2517,16 @@ describe("FetchState.sortForUnorderedBatch", () => {
 })
 
 describe("FetchState.isReadyToEnterReorgThreshold", () => {
-  it("Returns false when we just started the indexer and it has currentBlockHeight=0", () => {
+  it("Returns false when we just started the indexer and it has knownHeight=0", () => {
     let fetchState = makeInitial()
-    Assert.equal(fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=0), false)
+    Assert.equal(fetchState->FetchState.isReadyToEnterReorgThreshold(~knownHeight=0), false)
   })
 
   it(
-    "Returns false when we just started the indexer and it has currentBlockHeight=0, while start block is more than 0 + reorg threshold",
+    "Returns false when we just started the indexer and it has knownHeight=0, while start block is more than 0 + reorg threshold",
     () => {
       let fetchState = makeInitial(~startBlock=6000)
-      Assert.equal(
-        fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=0),
-        false,
-      )
+      Assert.equal(fetchState->FetchState.isReadyToEnterReorgThreshold(~knownHeight=0), false)
     },
   )
 
@@ -2556,7 +2549,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~chainId,
       ~blockLag=0,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=10), true)
   })
 
   it("Returns false when endBlock not reached and below head - blockLag", () => {
@@ -2578,7 +2571,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~chainId,
       ~blockLag=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=60), false)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=60), false)
   })
 
   it("Returns true when endBlock not reached but latest >= head - blockLag", () => {
@@ -2600,7 +2593,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~chainId,
       ~blockLag=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=59), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=59), true)
   })
 
   it("Returns true when no endBlock and latest >= head - blockLag (boundary)", () => {
@@ -2622,7 +2615,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~chainId,
       ~blockLag=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=60), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=60), true)
   })
 
   it("Returns false when no endBlock and latest < head - blockLag", () => {
@@ -2644,7 +2637,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~chainId,
       ~blockLag=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=60), false)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=60), false)
   })
 
   it("Returns false when queue is not empty even if thresholds are met", () => {
@@ -2667,10 +2660,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=0,
     )
     let fsWithQueue = fs->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=6)])
-    Assert.equal(
-      fsWithQueue->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10),
-      false,
-    )
+    Assert.equal(fsWithQueue->FetchState.isReadyToEnterReorgThreshold(~knownHeight=10), false)
   })
 
   it("Returns true when the queue is empty and threshold is more than current block height", () => {
@@ -2691,7 +2681,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~chainId,
       ~blockLag=200,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight=10), true)
+    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold(~knownHeight=10), true)
   })
 })
 
@@ -2841,7 +2831,7 @@ describe("FetchState progress tracking", () => {
 
 describe("FetchState buffer overflow prevention", () => {
   it(
-    "Should limit endBlock when maxQueryBlockNumber < currentBlockHeight to prevent buffer overflow",
+    "Should limit endBlock when maxQueryBlockNumber < knownHeight to prevent buffer overflow",
     () => {
       let fetchState = makeInitial(~maxAddrInPartition=1, ~targetBufferSize=10)
 
@@ -2893,7 +2883,7 @@ describe("FetchState buffer overflow prevention", () => {
       let fetchStateWithEndBlock = {...fetchStateWithLargeQueue, endBlock: Some(25)}
       let query1 =
         fetchStateWithEndBlock->FetchState.getNextQuery(
-          ~currentBlockHeight=30,
+          ~knownHeight=30,
           ~concurrencyLimit=10,
           ~stateId=0,
         )
@@ -2917,7 +2907,7 @@ describe("FetchState buffer overflow prevention", () => {
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None}
       let query2 =
         fetchStateNoEndBlock->FetchState.getNextQuery(
-          ~currentBlockHeight=30,
+          ~knownHeight=30,
           ~concurrencyLimit=10,
           ~stateId=0,
         )
@@ -2956,7 +2946,7 @@ describe("FetchState buffer overflow prevention", () => {
 
       let query3 =
         fetchStateSmallQueue->FetchState.getNextQuery(
-          ~currentBlockHeight=30,
+          ~knownHeight=30,
           ~concurrencyLimit=10,
           ~stateId=0,
         )

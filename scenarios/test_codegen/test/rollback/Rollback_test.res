@@ -372,11 +372,7 @@ describe("E2E rollback tests", () => {
       ~message="Should enter reorg threshold for the second time and request now to the latest block",
     )
 
-    sourceMock1337.resolveGetItemsOrThrow(
-      [],
-      ~latestFetchedBlockNumber=200,
-      ~currentBlockHeight=320,
-    )
+    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
 
     await indexerMock.getBatchWritePromise()
 
