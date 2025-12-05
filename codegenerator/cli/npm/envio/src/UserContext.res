@@ -9,6 +9,7 @@ type contextParams = {
   isPreload: bool,
   shouldSaveHistory: bool,
   chains: Internal.chains,
+  config: Config.t,
   mutable isResolved: bool,
 }
 
@@ -93,7 +94,7 @@ let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
         | DerivedFrom(_) => S.string->S.toUnknown
         }
         {
-          Entities.eq: fieldValue =>
+          Envio.eq: fieldValue =>
             LoadLayer.loadByField(
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
@@ -265,7 +266,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       let chainId = params.item->Internal.getItemChainId
       params.chains->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Utils.magic
     | _ =>
-      switch Entities.byName->Utils.Dict.dangerouslyGetNonOption(prop) {
+      switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
         {
           item: params.item,
@@ -277,6 +278,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           checkpointId: params.checkpointId,
           chains: params.chains,
           isResolved: params.isResolved,
+          config: params.config,
           entityConfig,
         }
         ->Utils.Proxy.make(entityTraps)
@@ -295,11 +297,7 @@ let getHandlerContext = (params: contextParams): Internal.handlerContext => {
 // Contract register context creation
 type contractRegisterParams = {
   item: Internal.item,
-  onRegister: (
-    ~item: Internal.item,
-    ~contractAddress: Address.t,
-    ~contractName: string,
-  ) => unit,
+  onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
   config: Config.t,
   mutable isResolved: bool,
 }
@@ -334,11 +332,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
               contractAddress
             }
 
-            params.onRegister(
-              ~item=params.item,
-              ~contractAddress=validatedAddress,
-              ~contractName,
-            )
+            params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
           }
 
           addFunction->Utils.magic

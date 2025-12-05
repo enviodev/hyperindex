@@ -182,6 +182,9 @@ packages:
   colorette@2.0.20:
     resolution: {integrity: sha512-IfEDxwoWIjkeXL1eXcDiow4UbKjhLdq6/EuSVR9GMN7KVH3r9gQ83e73hsz1Nd1T3ijd5xv1wcWRYO+D6kCI2w==}
 
+  date-fns@3.3.1:
+    resolution: {integrity: sha512-y8e109LYGgoQDveiEBD3DYXKba1jWf5BA8YU1FL5Tvm0BTdEfy54WLCwnuYWZNnzzvALy/QQ4Hov+Q9RVRv+Zw==}
+
   dateformat@4.6.3:
     resolution: {integrity: sha512-2P0p0pFGzHS5EMnhdxQi7aJN+iMheud0UhG4dlE1DLAlvL8JHjJJTX/CSm4JXwV0Ka5nGk3zC5mcb5bUQUxxMA==}
 
@@ -556,6 +559,8 @@ snapshots:
 
   colorette@2.0.20: {}
 
+  date-fns@3.3.1: {}
+
   dateformat@4.6.3: {}
 
   deepmerge@4.3.1: {}
@@ -573,6 +578,7 @@ snapshots:
       '@envio-dev/hyperfuel-client': 1.2.2
       '@envio-dev/hypersync-client': 0.7.0
       bignumber.js: 9.1.2
+      date-fns: 3.3.1
       dotenv: 16.4.5
       eventsource: 4.1.0
       pino: 8.16.1
