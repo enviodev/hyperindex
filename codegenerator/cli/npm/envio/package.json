@@ -37,7 +37,8 @@
     "rescript-schema": "9.3.4",
     "viem": "2.21.0",
     "rescript-envsafe": "5.0.0",
-    "dotenv": "16.4.5"
+    "dotenv": "16.4.5",
+    "date-fns": "3.3.1"
   },
   "files": [
     "local-bin.mjs",

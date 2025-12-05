@@ -25,6 +25,12 @@ export type onBlockOptions<chain> = {
   readonly endBlock?: number
 };
 
+export type whereOperations<entity,fieldType> = {
+  readonly eq: (_1:fieldType) => Promise<entity[]>; 
+  readonly gt: (_1:fieldType) => Promise<entity[]>; 
+  readonly lt: (_1:fieldType) => Promise<entity[]>
+};
+
 export type logger = $$logger;
 
 export type effect<input,output> = $$effect<input,output>;

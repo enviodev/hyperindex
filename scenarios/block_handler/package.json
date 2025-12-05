@@ -1,19 +1,20 @@
 {
-  "name": "test-exits",
+  "name": "block-handler",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "codegen": "envio codegen",
+    "dev": "envio dev",
     "start": "envio start"
   },
-  "devDependencies": {
-    "@types/node": "^18.16.1",
-    "typescript": "5.9.3"
-  },
   "dependencies": {
-    "envio": "file:../../../../cli/npm/envio"
+    "envio": "file:../../codegenerator/cli/npm/envio",
+    "typescript": "5.9.3"
   },
   "optionalDependencies": {
     "generated": "./generated"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }

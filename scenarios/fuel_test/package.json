@@ -3,10 +3,6 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "ts:clean": "tsc --clean",
-    "ts:build": "tsc --build",
-    "ts:watch": "tsc --watch",
-    "ts:test": "tsc --noEmit",
     "res:clean": "rescript clean",
     "res:build": "rescript",
     "res:watch": "rescript -w",

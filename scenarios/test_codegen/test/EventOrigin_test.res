@@ -57,6 +57,7 @@ describe("Chains State", () => {
           checkpointId: 0.,
           chains,
           isResolved: false,
+          config: Generated.configWithoutRegistrations,
         })
 
         // Verify we can access chains

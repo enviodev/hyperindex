@@ -1039,7 +1039,7 @@ describe("E2E tests", () => {
       )
       await Utils.delay(0)
 
-      // During initial height fetch (currentBlockHeight === 0),
+      // During initial height fetch (knownHeight === 0),
       // only the Sync source should be queried, not the Live source.
       // This is important to allow HyperSync's smart block detection to work.
       Assert.deepEqual(
@@ -1078,7 +1078,7 @@ describe("E2E tests", () => {
       await indexerMock.getBatchWritePromise()
 
       // Now the indexer should be at the head and will wait for new blocks.
-      // At this point, currentBlockHeight > 0, so Live source should participate in racing.
+      // At this point, knownHeight > 0, so Live source should participate in racing.
       // Both sources should race for the next height.
       Assert.deepEqual(
         syncSource.getHeightOrThrowCalls->Array.length,

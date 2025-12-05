@@ -4,8 +4,8 @@ use super::{
     human_config::{
         self,
         evm::{
-            EventConfig as EvmEventConfig, EventDecoder, For, HumanConfig as EvmConfig,
-            Network as EvmNetwork, NetworkRpc, Rpc,
+            Chain as EvmChain, EventConfig as EvmEventConfig, EventDecoder, For,
+            HumanConfig as EvmConfig, NetworkRpc, Rpc,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -46,6 +46,7 @@ pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 pub enum Ecosystem {
     Evm,
     Fuel,
+    Solana,
 }
 
 // Allows to get an env var with a lazy loading of .env file
@@ -427,6 +428,7 @@ impl SystemConfig {
         match &self.human_config {
             HumanConfig::Evm(_) => Ecosystem::Evm,
             HumanConfig::Fuel(_) => Ecosystem::Fuel,
+            HumanConfig::Solana(_) => Ecosystem::Solana,
         }
     }
 
@@ -522,6 +524,7 @@ impl SystemConfig {
             let output_path = match &human_config {
                 HumanConfig::Evm(evm_config) => evm_config.output.as_ref(),
                 HumanConfig::Fuel(fuel_config) => fuel_config.output.as_ref(),
+                HumanConfig::Solana(solana_config) => solana_config.base.output.as_ref(),
             };
 
             match output_path {
@@ -591,7 +594,7 @@ impl SystemConfig {
                 }
 
                 for network in &evm_config.chains {
-                    for contract in network.contracts.clone() {
+                    for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
                             Some(l_contract) => {
@@ -654,6 +657,8 @@ impl SystemConfig {
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
+                        .as_ref()
+                        .unwrap_or(&vec![])
                         .iter()
                         .cloned()
                         .map(|c| NetworkContract {
@@ -748,7 +753,7 @@ impl SystemConfig {
                 }
 
                 for network in &fuel_config.chains {
-                    for contract in network.contracts.clone() {
+                    for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
                             Some(l_contract) => {
@@ -816,6 +821,8 @@ impl SystemConfig {
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
+                        .as_ref()
+                        .unwrap_or(&vec![])
                         .iter()
                         .cloned()
                         .map(|c| NetworkContract {
@@ -859,6 +866,30 @@ impl SystemConfig {
                     human_config,
                 })
             }
+            HumanConfig::Solana(ref solana_config) => {
+                // Solana ecosystem returns empty chains/contracts for now
+                Ok(SystemConfig {
+                    name: solana_config.base.name.clone(),
+                    parsed_project_paths: final_project_paths,
+                    schema_path: solana_config
+                        .base
+                        .schema
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
+                    chains,
+                    contracts,
+                    multichain: human_config::evm::Multichain::Unordered,
+                    rollback_on_reorg: false,
+                    save_full_history: false,
+                    schema,
+                    field_selection: FieldSelection::empty(),
+                    enable_raw_events: false,
+                    lowercase_addresses: false,
+                    should_use_hypersync_client_decoder: false,
+                    handlers: solana_config.base.handlers.clone(),
+                    human_config,
+                })
+            }
         }
     }
 
@@ -886,6 +917,7 @@ impl SystemConfig {
         let ecosystem = match config_discriminant.ecosystem.as_deref() {
             Some("evm") => Ecosystem::Evm,
             Some("fuel") => Ecosystem::Fuel,
+            Some("solana") => Ecosystem::Solana,
             Some(ecosystem) => {
                 return Err(anyhow!(
                     "EE105: Failed to deserialize config. The ecosystem \"{}\" is not supported.",
@@ -917,6 +949,17 @@ impl SystemConfig {
                 let schema = Schema::parse_from_file(project_paths, &fuel_config.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Fuel(fuel_config), schema, project_paths)
+            }
+            Ecosystem::Solana => {
+                let solana_config: human_config::solana::HumanConfig =
+                    serde_yaml::from_str(&human_config_string).context(format!(
+                        "EE105: Failed to deserialize config. Visit the docs for more information \
+                         {}",
+                        links::DOC_CONFIGURATION_FILE
+                    ))?;
+                let schema = Schema::parse_from_file(project_paths, &solana_config.base.schema)
+                    .context("Parsing schema file for config")?;
+                Self::from_human_config(HumanConfig::Solana(solana_config), schema, project_paths)
             }
         }
     }
@@ -957,7 +1000,7 @@ fn parse_url(url: &str) -> Option<String> {
 
 impl DataSource {
     fn from_evm_network_config(
-        network: EvmNetwork,
+        network: EvmChain,
         event_decoder: Option<EventDecoder>,
     ) -> Result<Self> {
         let is_client_decoder = match event_decoder {
@@ -1982,9 +2025,9 @@ mod test {
 
     #[test]
     fn test_hypersync_url_trailing_slash_trimming() {
-        use crate::config_parsing::human_config::evm::{HypersyncConfig, Network as EvmNetwork};
+        use crate::config_parsing::human_config::evm::{HypersyncConfig, Chain as EvmChain};
 
-        let network = EvmNetwork {
+        let network = EvmChain {
             id: 1,
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
@@ -1994,7 +2037,7 @@ mod test {
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: None,
-            contracts: vec![],
+            contracts: None,
         };
 
         let sync_source = DataSource::from_evm_network_config(network, None).unwrap();
@@ -2050,7 +2093,7 @@ mod test {
     #[test]
     fn test_output_configuration() {
         use crate::config_parsing::human_config::{
-            evm::{HumanConfig as EvmConfig, Network as EvmNetwork},
+            evm::{HumanConfig as EvmConfig, Chain as EvmChain},
             HumanConfig,
         };
         use crate::project_paths::ParsedProjectPaths;
@@ -2063,7 +2106,7 @@ mod test {
             schema: None,
             output: None,
             contracts: None,
-            chains: vec![EvmNetwork {
+            chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
@@ -2071,7 +2114,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 confirmed_block_threshold: None,
-                contracts: vec![],
+                contracts: None,
             }],
             multichain: None,
             event_decoder: None,
@@ -2110,7 +2153,7 @@ mod test {
             schema: None,
             output: Some("custom/output".to_string()),
             contracts: None,
-            chains: vec![EvmNetwork {
+            chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
@@ -2118,7 +2161,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 confirmed_block_threshold: None,
-                contracts: vec![],
+                contracts: None,
             }],
             multichain: None,
             event_decoder: None,

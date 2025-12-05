@@ -34,12 +34,6 @@ let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
   "labelNames": [],
 })
 
-let sourceChainHeight = PromClient.Gauge.makeGauge({
-  "name": "chain_block_height",
-  "help": "Chain Height of Source Chain",
-  "labelNames": ["chainId"],
-})
-
 module Labels = {
   let rec schemaIsString = (schema: S.t<'a>) =>
     switch schema->S.classify {
@@ -233,8 +227,14 @@ let incrementStorageWriteCounter = () => {
   storageWriteCounter->PromClient.Counter.inc
 }
 
-let setSourceChainHeight = (~blockNumber, ~chainId) => {
-  sourceChainHeight
+let knownHeightGauge = PromClient.Gauge.makeGauge({
+  "name": "envio_indexing_known_height",
+  "help": "The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.",
+  "labelNames": ["chainId"],
+})
+
+let setKnownHeight = (~blockNumber, ~chainId) => {
+  knownHeightGauge
   ->PromClient.Gauge.labels({"chainId": chainId})
   ->PromClient.Gauge.set(blockNumber)
 }
