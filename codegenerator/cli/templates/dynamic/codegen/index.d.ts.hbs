@@ -5,6 +5,7 @@ export {
   onBlock
 } from "./src/Handlers.gen";
 export type * from "./src/Types.gen";
+export type * from "./src/Types.ts";
 import {
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},

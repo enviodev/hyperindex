@@ -1339,17 +1339,23 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        let types_code = format!(
-            r#"@genType
-type chainId = [{chain_id_polyvariants}]"#,
-            chain_id_polyvariants = chain_id_cases
+        let res_types_code = format!(
+            r#"type chainId = [{}]"#,
+            chain_id_cases
                 .iter()
                 .map(|chain_id_case| format!("#{}", chain_id_case))
                 .collect::<Vec<_>>()
                 .join(" | "),
         );
 
-        let ts_types_code = "".to_string();
+        let ts_types_code = format!(
+            r#"export type ChainId = {}"#,
+            chain_id_cases
+                .iter()
+                .map(|chain_id_case| chain_id_case.to_string())
+                .collect::<Vec<_>>()
+                .join(" | "),
+        );
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1372,7 +1378,7 @@ type chainId = [{chain_id_polyvariants}]"#,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_solana_ecosystem: cfg.get_ecosystem() == Ecosystem::Solana,
             envio_version: get_envio_version()?,
-            types_code,
+            types_code: res_types_code,
             ts_types_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,

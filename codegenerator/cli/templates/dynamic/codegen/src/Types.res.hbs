@@ -23,7 +23,6 @@ type entityHandlerContext<'entity, 'indexedFieldOperations> = {
   deleteUnsafe: id => unit,
 }
 
-@genType.import(("./Types.ts", "HandlerContext"))
 type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,

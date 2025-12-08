@@ -4,7 +4,6 @@
 
 import type { Logger, EffectCaller } from "envio";
 import type * as Entities from "./db/Entities.gen.ts";
-import type { chain } from "./Types.gen.ts";
 
 export type HandlerContext = {
   /**
@@ -33,8 +32,8 @@ export type HandlerContext = {
    *            false during historical synchronization
    */
   readonly chains: {
-    [chainId in chain]: {
-      readonly id: chain;
+    [chainId in ChainId]: {
+      readonly id: ChainId;
       readonly isLive: boolean;
     };
   };
@@ -45,7 +44,7 @@ export type HandlerContext = {
    *            false during historical synchronization
    */
   readonly chain: {
-    readonly id: chain;
+    readonly id: ChainId;
     readonly isLive: boolean;
   };
   {{#each entities as | entity |}}
