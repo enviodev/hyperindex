@@ -58,7 +58,7 @@ let publicConfig = ChainMap.fromArrayUnsafe([
     (
       chain,
       {
-        confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+        confirmedBlockThreshold: {{chain_config.network_config.max_reorg_depth}},
         syncSource: {{chain_config.deprecated_sync_source_code}},
         startBlock: {{chain_config.network_config.start_block}},
         contracts,

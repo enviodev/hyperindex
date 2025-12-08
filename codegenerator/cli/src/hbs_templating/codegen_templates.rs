@@ -902,7 +902,7 @@ type EthAddress = String;
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {
     pub id: u64,
-    confirmed_block_threshold: i32,
+    max_reorg_depth: i32,
     start_block: u64,
     end_block: Option<u64>,
 }
@@ -911,7 +911,7 @@ impl NetworkTemplate {
     fn from_config_network(network: &system_config::Network) -> Self {
         NetworkTemplate {
             id: network.id,
-            confirmed_block_threshold: network.confirmed_block_threshold,
+            max_reorg_depth: network.max_reorg_depth,
             start_block: network.start_block,
             end_block: network.end_block,
         }
@@ -1449,7 +1449,7 @@ mod test {
         fn default() -> Self {
             Self {
                 id: 0,
-                confirmed_block_threshold: 200,
+                max_reorg_depth: 200,
                 start_block: 0,
                 end_block: None,
             }
@@ -1463,7 +1463,7 @@ mod test {
 
         let network1 = NetworkTemplate {
             id: 0,
-            confirmed_block_threshold: 0,
+            max_reorg_depth: 0,
             ..NetworkTemplate::default()
         };
 

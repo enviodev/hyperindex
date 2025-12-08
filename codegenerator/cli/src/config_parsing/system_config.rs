@@ -1,5 +1,5 @@
 use super::{
-    chain_helpers::get_confirmed_block_threshold_from_id,
+    chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{
         self,
@@ -670,9 +670,9 @@ impl SystemConfig {
 
                     let network = Network {
                         id: network.id,
-                        confirmed_block_threshold: network
-                            .confirmed_block_threshold
-                            .unwrap_or(get_confirmed_block_threshold_from_id(network.id)),
+                        max_reorg_depth: network
+                            .max_reorg_depth
+                            .unwrap_or(get_max_reorg_depth_from_id(network.id)),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         sync_source,
@@ -836,7 +836,7 @@ impl SystemConfig {
                         id: network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
-                        confirmed_block_threshold: 0,
+                        max_reorg_depth: 0,
                         sync_source,
                         contracts,
                     };
@@ -1097,7 +1097,7 @@ pub struct Network {
     pub sync_source: DataSource,
     pub start_block: u64,
     pub end_block: Option<u64>,
-    pub confirmed_block_threshold: i32,
+    pub max_reorg_depth: i32,
     pub contracts: Vec<NetworkContract>,
 }
 
@@ -2036,7 +2036,7 @@ mod test {
             rpc: None,
             start_block: 0,
             end_block: None,
-            confirmed_block_threshold: None,
+            max_reorg_depth: None,
             contracts: None,
         };
 
@@ -2113,7 +2113,7 @@ mod test {
                 rpc: None,
                 start_block: 0,
                 end_block: None,
-                confirmed_block_threshold: None,
+                max_reorg_depth: None,
                 contracts: None,
             }],
             multichain: None,
@@ -2160,7 +2160,7 @@ mod test {
                 rpc: None,
                 start_block: 0,
                 end_block: None,
-                confirmed_block_threshold: None,
+                max_reorg_depth: None,
                 contracts: None,
             }],
             multichain: None,

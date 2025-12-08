@@ -525,7 +525,7 @@ pub mod evm {
             description = "The number of blocks from the head that the indexer should account for \
                            in case of reorgs."
         )]
-        pub confirmed_block_threshold: Option<i32>,
+        pub max_reorg_depth: Option<i32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1104,7 +1104,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 rpc_config: None,
                 rpc: None,
                 start_block: 2_000,
-                confirmed_block_threshold: None,
+                max_reorg_depth: None,
                 end_block: Some(2_000_000),
                 contracts: Some(vec![])
             },
