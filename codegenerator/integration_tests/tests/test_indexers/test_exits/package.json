@@ -7,7 +7,7 @@
     "start": "envio start"
   },
   "devDependencies": {
-    "@types/node": "^18.16.1",
+    "@types/node": "^24.10.1",
     "typescript": "5.9.3"
   },
   "dependencies": {

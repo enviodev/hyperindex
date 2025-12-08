@@ -751,11 +751,11 @@ pub mod solana {
         )]
         pub rpc: String,
         #[schemars(
-            description = "The block height at which the indexer should start ingesting data"
+            description = "The slot number at which the indexer should start ingesting data"
         )]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "The block height at which the indexer should terminate.")]
+        #[schemars(description = "The slot number at which the indexer should terminate.")]
         pub end_block: Option<u64>,
     }
 

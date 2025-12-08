@@ -28,7 +28,7 @@ module GetFinalizedSlot = {
       s.tag(0, {"commitment": "finalized"})
       ()
     }),
-    S.float,
+    S.int,
   )
 }
 
@@ -43,10 +43,7 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
     pollingInterval: 10_000,
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
       Js.Exn.raiseError("Solana does not support getting block hashes"),
-    getHeightOrThrow: () =>
-      GetFinalizedSlot.route
-      ->Rest.fetch((), ~client)
-      ->(Utils.magic: promise<float> => promise<int>),
+    getHeightOrThrow: () => GetFinalizedSlot.route->Rest.fetch((), ~client),
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,

@@ -190,11 +190,10 @@ let runHandlerOrThrow = async (
         isResolved: false,
       }
       await handler(
-        (
-          {
-            block: indexer.config.ecosystem->Ecosystem.makeBlockEvent(~blockNumber),
-            context: UserContext.getHandlerContext(contextParams),
-          }: Internal.onBlockArgs
+        Ecosystem.makeOnBlockArgs(
+          ~blockNumber,
+          ~ecosystem=indexer.config.ecosystem,
+          ~context=UserContext.getHandlerContext(contextParams),
         ),
       )
       contextParams.isResolved = true
@@ -291,19 +290,22 @@ let preloadBatchOrThrow = async (
         try {
           promises->Array.push(
             handler({
-              block: config.ecosystem->Ecosystem.makeBlockEvent(~blockNumber),
-              context: UserContext.getHandlerContext({
-                item,
-                inMemoryStore,
-                loadManager,
-                persistence,
-                checkpointId,
-                isPreload: true,
-                shouldSaveHistory: false,
-                chains,
-                isResolved: false,
-                config,
-              }),
+              Ecosystem.makeOnBlockArgs(
+                ~blockNumber,
+                ~ecosystem=config.ecosystem,
+                ~context=UserContext.getHandlerContext({
+                  item,
+                  inMemoryStore,
+                  loadManager,
+                  persistence,
+                  checkpointId,
+                  isPreload: true,
+                  shouldSaveHistory: false,
+                  chains,
+                  isResolved: false,
+                  config,
+                }),
+              )
             })->Promise.silentCatch,
           )
         } catch {

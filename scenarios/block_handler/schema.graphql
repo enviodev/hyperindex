@@ -1,4 +1,6 @@
 type BlockInfo {
   id: ID!
-  height: Int!
+  hash: String!
+  height: Int
+  time: Timestamp
 }

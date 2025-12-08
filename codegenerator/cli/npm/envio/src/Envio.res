@@ -9,7 +9,7 @@ type blockEvent = {number: int}
 type fuelBlockEvent = {height: int}
 
 @genType
-type solanaBlockEvent = {height: int, slot: int}
+type solanaOnBlockArgs<'context> = {slot: int, context: 'context}
 
 @genType
 type onBlockArgs<'block, 'context> = {

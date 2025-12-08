@@ -13,10 +13,13 @@ type t = {
   cleanUpRawEventFieldsInPlace: Js.Json.t => unit,
 }
 
-// Create a block event object for block handlers based on ecosystem
-let makeBlockEvent = (~blockNumber: int, ecosystem: t): Internal.blockEvent => {
-  let blockEvent = Js.Dict.empty()
-  blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->Utils.magic)
-  blockEvent->Js.Dict.set("slot", blockNumber->Utils.magic) // FIXME:
-  blockEvent->Utils.magic
+let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
+  switch ecosystem.name {
+  | Solana => {slot: blockNumber, context}
+  | _ => {
+      let blockEvent = Js.Dict.empty()
+      blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->Utils.magic)
+      {block: blockEvent->Utils.magic, context}
+    }
+  }
 }
