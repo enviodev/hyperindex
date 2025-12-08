@@ -923,8 +923,6 @@ pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
     sources_code: String,
-    // This is only used to prevent ConfigYAML free from breaking changes
-    deprecated_sync_source_code: String,
     // event_decoder: Option<String>,
 }
 
@@ -973,15 +971,12 @@ impl NetworkConfigTemplate {
             .collect::<Vec<String>>()
             .join(", ");
 
-        let (sources_code, deprecated_sync_source_code) = match &network.sync_source {
+        let sources_code = match &network.sync_source {
             system_config::DataSource::Fuel {
                 hypersync_endpoint_url,
-            } => (
-                format!(
-                    "[HyperFuelSource.make({{chain: chain, endpointUrl: \
+            } => format!(
+                "[HyperFuelSource.make({{chain: chain, endpointUrl: \
                      \"{hypersync_endpoint_url}\"}})]",
-                ),
-                format!("HyperFuel({{endpointUrl: \"{hypersync_endpoint_url}\"}})"),
             ),
             system_config::DataSource::Evm {
                 main,
@@ -1054,20 +1049,6 @@ impl NetworkConfigTemplate {
                     }
                 };
 
-                let deprecated_sync_source_code = match main {
-                    MainEvmDataSource::HyperSync {
-                        hypersync_endpoint_url,
-                    } => {
-                        format!("HyperSync({{endpointUrl: \"{hypersync_endpoint_url}\"}})")
-                    }
-                    MainEvmDataSource::Rpc(rpc) => {
-                        format!(
-                            "Rpc({{syncConfig: NetworkSources.getSyncConfig({})}})",
-                            rpc_to_sync_config_options(rpc)
-                        )
-                    }
-                };
-
                 let rpcs = rpcs
                     .iter()
                     .map(|rpc| {
@@ -1085,20 +1066,17 @@ impl NetworkConfigTemplate {
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                (
-                    format!(
-                        "NetworkSources.evm(~chain, ~contracts=[{contracts_code}], \
+                format!(
+                    "NetworkSources.evm(~chain, ~contracts=[{contracts_code}], \
                          ~hyperSync={hyper_sync_code}, \
                          ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
                          ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{rpcs}], \
                          ~lowercaseAddresses={})",
-                        if config.lowercase_addresses {
-                            "true"
-                        } else {
-                            "false"
-                        }
-                    ),
-                    deprecated_sync_source_code,
+                    if config.lowercase_addresses {
+                        "true"
+                    } else {
+                        "false"
+                    }
                 )
             }
         };
@@ -1107,7 +1085,6 @@ impl NetworkConfigTemplate {
             network_config,
             codegen_contracts,
             sources_code,
-            deprecated_sync_source_code,
         })
     }
 }
@@ -1479,7 +1456,6 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             sources_code: "[HyperFuelSource.make({chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
-            deprecated_sync_source_code: "HyperFuel({endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1519,7 +1495,6 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-            deprecated_sync_source_code: "Rpc({syncConfig: NetworkSources.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1573,13 +1548,11 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-            deprecated_sync_source_code: "Rpc({syncConfig: NetworkSources.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![contract2],
             sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-            deprecated_sync_source_code: "Rpc({syncConfig: NetworkSources.getSyncConfig({accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,})})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -1611,7 +1584,6 @@ mod test {
             network_config: network1,
             codegen_contracts: vec![contract1],
             sources_code: "NetworkSources.evm(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}], ~lowercaseAddresses=false)".to_string(),
-            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://1.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1639,14 +1611,12 @@ mod test {
             sources_code: "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
                  ~allEventSignatures=[]->Belt.Array.concatMany, \
                  ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
-            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://myskar.com\"})".to_string(),
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
             codegen_contracts: vec![],
             sources_code: "NetworkSources.evm(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
-            deprecated_sync_source_code: "HyperSync({endpointUrl: \"https://137.hypersync.xyz\"})".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
