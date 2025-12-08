@@ -1,5 +1,6 @@
-# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/evm.schema.json
+# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/solana.schema.json
 name: block_handler
+ecosystem: solana
 chains:
-  - id: 1
-    start_block: 0
+  - id: 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d
+    rpc: ${ENVIO_MAINNET_RPC_URL}

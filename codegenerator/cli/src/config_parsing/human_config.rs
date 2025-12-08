@@ -491,7 +491,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
-    pub enum NetworkRpc {
+    pub enum RpcSelection {
         Url(String),
         Single(Rpc),
         List(Vec<Rpc>),
@@ -516,7 +516,7 @@ pub mod evm {
                                   a fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
                                   improvements, up to a 1000x faster than traditional RPC.")]
-        pub rpc: Option<NetworkRpc>,
+        pub rpc: Option<RpcSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
         pub hypersync_config: Option<HypersyncConfig>,
@@ -739,6 +739,19 @@ pub mod solana {
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Chain {
+        #[schemars(
+            description = "The cluster's genesis hash used to identify the Solana blockchain."
+        )]
+        pub id: String,
+        #[schemars(
+            description = "RPC endpoint URL for connecting to the Solana cluster to fetch blockchain data."
+        )]
+        pub rpc: String,
+    }
+
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
         title = "Envio Solana Config Schema",
@@ -750,6 +763,10 @@ pub mod solana {
         pub base: BaseConfig,
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
+        #[schemars(
+            description = "Configuration of the blockchain chains that the project is deployed on."
+        )]
+        pub chains: Vec<Chain>,
     }
 
     impl Display for HumanConfig {

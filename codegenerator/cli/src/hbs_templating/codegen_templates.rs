@@ -11,7 +11,10 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
         field_types,
-        human_config::evm::{For, Rpc, RpcSyncConfig},
+        human_config::{
+            evm::{For, Rpc, RpcSyncConfig},
+            HumanConfig,
+        },
         system_config::{
             self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource,
             SelectedField, SystemConfig,
@@ -1341,15 +1344,30 @@ impl ProjectTemplate {
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
         let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
+        let chain_id_cases = match &cfg.human_config {
+            HumanConfig::Solana(hcfg) => hcfg
+                .chains
+                .iter()
+                .map(|chain| format!("\"{}\"", chain.id))
+                .collect::<Vec<_>>(),
+            HumanConfig::Fuel(hcfg) => hcfg
+                .chains
+                .iter()
+                .map(|chain| chain.id.to_string())
+                .collect::<Vec<_>>(),
+            HumanConfig::Evm(hcfg) => hcfg
+                .chains
+                .iter()
+                .map(|chain| chain.id.to_string())
+                .collect::<Vec<_>>(),
+        };
+
         let types_code = format!(
             r#"@genType
-type chainId = int
-
-@genType
-type chain = [{chain_id_type}]"#,
-            chain_id_type = chain_configs
+type chainId = [{chain_id_polyvariants}]"#,
+            chain_id_polyvariants = chain_id_cases
                 .iter()
-                .map(|chain_config| format!("#{}", chain_config.network_config.id))
+                .map(|chain_id_case| format!("#{}", chain_id_case))
                 .collect::<Vec<_>>()
                 .join(" | "),
         );

@@ -39,18 +39,44 @@
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "$ref": "#/$defs/EcosystemTag"
+    },
+    "chains": {
+      "description": "Configuration of the blockchain chains that the project is deployed on.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Chain"
+      }
     }
   },
   "additionalProperties": false,
   "required": [
     "name",
-    "ecosystem"
+    "ecosystem",
+    "chains"
   ],
   "$defs": {
     "EcosystemTag": {
       "type": "string",
       "enum": [
         "solana"
+      ]
+    },
+    "Chain": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The cluster's genesis hash used to identify the Solana blockchain.",
+          "type": "string"
+        },
+        "rpc": {
+          "description": "RPC endpoint URL for connecting to the Solana cluster to fetch blockchain data.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "rpc"
       ]
     }
   }

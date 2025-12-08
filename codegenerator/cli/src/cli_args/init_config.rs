@@ -16,7 +16,7 @@ pub mod evm {
             chain_helpers,
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{Chain, ContractConfig, EventConfig, HumanConfig, NetworkRpc},
+                evm::{Chain, ContractConfig, EventConfig, HumanConfig, RpcSelection},
                 ChainContract, GlobalContract,
             },
             system_config::EvmAbi,
@@ -109,7 +109,7 @@ pub mod evm {
                             let rpc = match &selected_chain.network {
                                 NetworkKind::Supported(_) => None,
                                 NetworkKind::Unsupported { rpc_url, .. } => {
-                                    Some(NetworkRpc::Url(rpc_url.to_string()))
+                                    Some(RpcSelection::Url(rpc_url.to_string()))
                                 }
                             };
 
@@ -209,9 +209,7 @@ pub mod fuel {
 
     use crate::{
         config_parsing::human_config::{
-            fuel::{
-                Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig,
-            },
+            fuel::{Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig},
             ChainContract,
         },
         fuel::{abi::FuelAbi, address::Address},
@@ -272,24 +270,27 @@ pub mod fuel {
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
-                        contracts: Some(contracts
-                            .iter()
-                            .map(|selected_contract| ChainContract {
-                                name: selected_contract.name.clone(),
-                                address: selected_contract
-                                    .addresses
-                                    .iter()
-                                    .map(|a| a.to_string())
-                                    .collect::<Vec<String>>()
-                                    .into(),
-                                config: Some(ContractConfig {
-                                    abi_file_path: selected_contract.get_vendored_abi_file_path(),
-                                    handler: None,
-                                    events: selected_contract.selected_events.clone(),
-                                }),
-                                start_block: None,
-                            })
-                            .collect()),
+                        contracts: Some(
+                            contracts
+                                .iter()
+                                .map(|selected_contract| ChainContract {
+                                    name: selected_contract.name.clone(),
+                                    address: selected_contract
+                                        .addresses
+                                        .iter()
+                                        .map(|a| a.to_string())
+                                        .collect::<Vec<String>>()
+                                        .into(),
+                                    config: Some(ContractConfig {
+                                        abi_file_path: selected_contract
+                                            .get_vendored_abi_file_path(),
+                                        handler: None,
+                                        events: selected_contract.selected_events.clone(),
+                                    }),
+                                    start_block: None,
+                                })
+                                .collect(),
+                        ),
                     }),
                 }
             }

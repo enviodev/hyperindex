@@ -5,7 +5,7 @@ use super::{
         self,
         evm::{
             Chain as EvmChain, EventConfig as EvmEventConfig, EventDecoder, For,
-            HumanConfig as EvmConfig, NetworkRpc, Rpc,
+            HumanConfig as EvmConfig, Rpc, RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -1013,7 +1013,7 @@ impl DataSource {
         };
         let raw_rpcs = match (network.rpc_config, network.rpc) {
             (Some(_), Some(_)) => Err(anyhow!("EE106: Cannot define both rpc and deprecated rpc_config for the same network, please only use the rpc option. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
-            (None, Some(NetworkRpc::Url(url))) => vec![Rpc {
+            (None, Some(RpcSelection::Url(url))) => vec![Rpc {
                 url: url.to_string(),
                 source_for: match hypersync_endpoint_url {
                   Some(_) => For::Fallback,
@@ -1021,8 +1021,8 @@ impl DataSource {
                 },
                 sync_config: None,
             }],
-            (None, Some(NetworkRpc::Single(rpc))) => vec![rpc],
-            (None, Some(NetworkRpc::List(list))) => list,
+            (None, Some(RpcSelection::Single(rpc))) => vec![rpc],
+            (None, Some(RpcSelection::List(list))) => list,
             (Some(rpc_config), None) => {
               let urls: Vec<String> = rpc_config.url.into();
               urls
@@ -2025,7 +2025,7 @@ mod test {
 
     #[test]
     fn test_hypersync_url_trailing_slash_trimming() {
-        use crate::config_parsing::human_config::evm::{HypersyncConfig, Chain as EvmChain};
+        use crate::config_parsing::human_config::evm::{Chain as EvmChain, HypersyncConfig};
 
         let network = EvmChain {
             id: 1,
@@ -2093,7 +2093,7 @@ mod test {
     #[test]
     fn test_output_configuration() {
         use crate::config_parsing::human_config::{
-            evm::{HumanConfig as EvmConfig, Chain as EvmChain},
+            evm::{Chain as EvmChain, HumanConfig as EvmConfig},
             HumanConfig,
         };
         use crate::project_paths::ParsedProjectPaths;

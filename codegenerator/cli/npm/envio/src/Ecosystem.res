@@ -1,4 +1,4 @@
-type name = | @as("evm") Evm | @as("fuel") Fuel
+type name = | @as("evm") Evm | @as("fuel") Fuel | @as("solana") Solana
 
 type t = {
   name: name,
@@ -125,10 +125,36 @@ let fuel: t = {
   cleanUpRawEventFieldsInPlace: Fuel.cleanUpRawEventFieldsInPlace,
 }
 
+module Solana = {
+  @get external getNumber: Internal.eventBlock => int = "height"
+  @get external getTimestamp: Internal.eventBlock => int = "time"
+  @get external getId: Internal.eventBlock => string = "hash"
+
+  let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
+    delete fields.hash
+    delete fields.height
+    delete fields.time
+  }`)
+}
+
+let solana: t = {
+  name: Solana,
+  blockFields: ["slot"],
+  transactionFields: [],
+  blockNumberName: "height",
+  blockTimestampName: "time",
+  blockHashName: "hash",
+  getNumber: Solana.getNumber,
+  getTimestamp: Solana.getTimestamp,
+  getId: Solana.getId,
+  cleanUpRawEventFieldsInPlace: Solana.cleanUpRawEventFieldsInPlace,
+}
+
 let fromName = (name: name): t => {
   switch name {
   | Evm => evm
   | Fuel => fuel
+  | Solana => solana
   }
 }
 

@@ -9,7 +9,7 @@ module {{contract.name.capitalized}} = {
 {{/each}}  
 @genType /** Register a Block Handler. It'll be called for every block by default. */
 let onBlock: (
-  Envio.onBlockOptions<Types.chain>,
+  Envio.onBlockOptions<Types.chainId>,
   {{#if is_evm_ecosystem}}
   Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>,
   {{else}}

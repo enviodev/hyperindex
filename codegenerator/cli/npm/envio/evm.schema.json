@@ -325,7 +325,7 @@
           "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
           "anyOf": [
             {
-              "$ref": "#/$defs/NetworkRpc"
+              "$ref": "#/$defs/RpcSelection"
             },
             {
               "type": "null"
@@ -468,7 +468,7 @@
         "url"
       ]
     },
-    "NetworkRpc": {
+    "RpcSelection": {
       "anyOf": [
         {
           "type": "string"

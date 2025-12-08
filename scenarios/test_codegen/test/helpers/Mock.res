@@ -245,7 +245,7 @@ module Indexer = {
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
-  type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
+  type chainConfig = {chain: Types.chainId, sources: array<Source.t>, startBlock?: int}
 
   let rec make = async (
     ~chains: array<chainConfig>,
@@ -495,7 +495,7 @@ module Source = {
     resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
   }
 
-  let make = (methods, ~chain=#1: Types.chain, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
+  let make = (methods, ~chain=#1: Types.chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
     let implement = (method: method, fn) => {
       if methods->Js.Array2.includes(method) {
         fn
