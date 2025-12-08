@@ -2977,3 +2977,106 @@ describe("FetchState buffer overflow prevention", () => {
     },
   )
 })
+
+describe("FetchState with onBlockConfig only (no events)", () => {
+  let makeOnBlockConfig = (
+    ~name="testOnBlock",
+    ~index=0,
+    ~startBlock=None,
+    ~endBlock=None,
+    ~interval=1,
+  ): Internal.onBlockConfig => {
+    index,
+    name,
+    chainId,
+    startBlock,
+    endBlock,
+    interval,
+    handler: Utils.magic("mock handler"),
+  }
+
+  it_only(
+    "Creates FetchState with no event configs, triggers WaitingForNewBlock, then fills buffer on updateKnownHeight",
+    () => {
+      let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(0))
+
+      // Create FetchState with no event configs but with onBlockConfig
+      let fetchState = FetchState.make(
+        ~eventConfigs=[],
+        ~contracts=[],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~targetBufferSize=10,
+        ~chainId,
+        ~knownHeight=0,
+        ~onBlockConfigs=[onBlockConfig],
+      )
+
+      // Verify initial state
+      Assert.deepEqual(
+        fetchState.partitions,
+        [],
+        ~message="Partitions should be empty when there are no event configs",
+      )
+      Assert.deepEqual(fetchState.buffer, [], ~message="Buffer should be empty initially")
+      Assert.equal(fetchState.knownHeight, 0, ~message="knownHeight should be 0 initially")
+      Assert.deepEqual(
+        fetchState.onBlockConfigs,
+        [onBlockConfig],
+        ~message="onBlockConfigs should be set",
+      )
+
+      // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
+      let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0)
+      Assert.deepEqual(
+        nextQuery,
+        WaitingForNewBlock,
+        ~message="Should return WaitingForNewBlock when knownHeight is 0",
+      )
+
+      // Update known height to 20
+      let updatedFetchState = fetchState->FetchState.updateKnownHeight(~knownHeight=20)
+
+      // Verify buffer is now filled with block items
+      Assert.equal(
+        updatedFetchState.knownHeight,
+        20,
+        ~message="knownHeight should be updated to 20",
+      )
+
+      // Buffer should contain block items for blocks 0-9 (interval=1, startBlock=0, up to targetBufferSize limit)
+      // Since latestFullyFetchedBlock is initially -1 and there are no partitions,
+      // the latestFullyFetchedBlock becomes knownHeight (20)
+      Assert.equal(
+        updatedFetchState.latestFullyFetchedBlock.blockNumber,
+        20,
+        ~message="latestFullyFetchedBlock should be 20 since there are no partitions",
+      )
+      Assert.equal(
+        updatedFetchState.latestOnBlockBlockNumber,
+        10,
+        ~message="latestOnBlockBlockNumber should be 10 since the onBlock config is interval=1 and startBlock=0",
+      )
+
+      // Block items should be created from block 0 up to min(latestFullyFetchedBlock, targetBufferSize item)
+      // With interval=1, startBlock=0, we expect blocks 0,1,2,3,4,5,6,7,8,9,10
+      let blockNumbers =
+        updatedFetchState.buffer->Array.map(item => item->Internal.getItemBlockNumber)
+
+      Assert.deepEqual(
+        blockNumbers,
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        ~message="Buffer should contain block items for blocks 0-10",
+      )
+
+      // Test that getNextQuery returns NothingToQuery (no partitions to query)
+      let nextQuery2 = updatedFetchState->FetchState.getNextQuery(~concurrencyLimit=10, ~stateId=0)
+      Assert.deepEqual(
+        nextQuery2,
+        NothingToQuery,
+        ~message="Should return NothingToQuery when there are no partitions to query",
+      )
+    },
+  )
+})
