@@ -1,3 +1,4 @@
 type BlockInfo {
   id: ID!
+  height: Int!
 }

@@ -15,7 +15,7 @@ type selectionConfig = {
   eventRouter: EventRouter.t<Internal.fuelEventConfig>,
 }
 
-let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
+let logDataReceiptTypeSelection: array<FuelSDK.receiptType> = [LogData]
 
 // only transactions with status 1 (success)
 let txStatusSelection = [1]
@@ -114,10 +114,10 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let nonLogDataReceiptTypesByContract = Js.Dict.empty()
   let nonLogDataWildcardReceiptTypes = []
 
-  let addNonLogDataWildcardReceiptTypes = (receiptType: Fuel.receiptType) => {
+  let addNonLogDataWildcardReceiptTypes = (receiptType: FuelSDK.receiptType) => {
     nonLogDataWildcardReceiptTypes->Array.push(receiptType)->ignore
   }
-  let addNonLogDataReceiptType = (contractName, receiptType: Fuel.receiptType) => {
+  let addNonLogDataReceiptType = (contractName, receiptType: FuelSDK.receiptType) => {
     switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
     | None => nonLogDataReceiptTypesByContract->Js.Dict.set(contractName, [receiptType])
     | Some(receiptTypes) => receiptTypes->Array.push(receiptType)->ignore // Duplication prevented by EventRouter

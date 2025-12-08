@@ -106,7 +106,7 @@ module QueryTypes = {
     rootContractId?: array<Address.t>,
     toAddress?: array<string>,
     assetId?: array<string>,
-    receiptType?: array<Fuel.receiptType>,
+    receiptType?: array<FuelSDK.receiptType>,
     sender?: array<string>,
     recipient?: array<string>,
     contractId?: array<Address.t>,
@@ -290,7 +290,7 @@ module FuelTypes = {
     /** The length of the receipt. */
     len?: bigint,
     /** The type of receipt. */
-    receiptType: Fuel.receiptType,
+    receiptType: FuelSDK.receiptType,
     /** 0 if script exited successfully, any otherwise. */
     result?: int,
     /** The amount of gas consumed by the script. */

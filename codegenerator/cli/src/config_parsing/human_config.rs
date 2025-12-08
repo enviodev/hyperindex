@@ -742,14 +742,21 @@ pub mod solana {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Chain {
-        #[schemars(
-            description = "The cluster's genesis hash used to identify the Solana blockchain."
-        )]
-        pub id: String,
+        // #[schemars(
+        //     description = "The cluster's genesis hash used to identify the Solana blockchain."
+        // )]
+        // pub id: String,
         #[schemars(
             description = "RPC endpoint URL for connecting to the Solana cluster to fetch blockchain data."
         )]
         pub rpc: String,
+        #[schemars(
+            description = "The block height at which the indexer should start ingesting data"
+        )]
+        pub start_block: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "The block height at which the indexer should terminate.")]
+        pub end_block: Option<u64>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]

@@ -2,16 +2,14 @@
 // Should be an entry point after we get rid of the generated project.
 // Don't forget to keep index.d.ts in sync with this file.
 
-// EVM block event with 'number' field for backward compatibility
 @genType
 type blockEvent = {number: int}
 
-// Fuel block event with 'height' field
 @genType
-type fuelBlockEvent = {
-  height: int,
-  chainId: int,
-}
+type fuelBlockEvent = {height: int}
+
+@genType
+type solanaBlockEvent = {height: int, slot: int}
 
 @genType
 type onBlockArgs<'block, 'context> = {

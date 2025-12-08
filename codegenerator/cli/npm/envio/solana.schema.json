@@ -64,19 +64,30 @@
     "Chain": {
       "type": "object",
       "properties": {
-        "id": {
-          "description": "The cluster's genesis hash used to identify the Solana blockchain.",
-          "type": "string"
-        },
         "rpc": {
           "description": "RPC endpoint URL for connecting to the Solana cluster to fetch blockchain data.",
           "type": "string"
+        },
+        "start_block": {
+          "description": "The block height at which the indexer should start ingesting data",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "end_block": {
+          "description": "The block height at which the indexer should terminate.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
         }
       },
       "additionalProperties": false,
       "required": [
-        "id",
-        "rpc"
+        "rpc",
+        "start_block"
       ]
     }
   }

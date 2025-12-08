@@ -867,7 +867,24 @@ impl SystemConfig {
                 })
             }
             HumanConfig::Solana(ref solana_config) => {
-                // Solana ecosystem returns empty chains/contracts for now
+                for network in &solana_config.chains {
+                    let sync_source = DataSource::Solana {
+                        rpc: network.rpc.clone(),
+                    };
+
+                    let network = Network {
+                        id: 0, //network.id,
+                        start_block: network.start_block,
+                        end_block: network.end_block,
+                        max_reorg_depth: 0,
+                        sync_source,
+                        contracts: vec![],
+                    };
+
+                    unique_hashmap::try_insert(&mut chains, network.id, network)
+                        .context("Failed inserting network at chains map")?;
+                }
+
                 Ok(SystemConfig {
                     name: solana_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -882,11 +899,11 @@ impl SystemConfig {
                     rollback_on_reorg: false,
                     save_full_history: false,
                     schema,
-                    field_selection: FieldSelection::empty(),
+                    field_selection: FieldSelection::fuel(),
                     enable_raw_events: false,
                     lowercase_addresses: false,
                     should_use_hypersync_client_decoder: false,
-                    handlers: solana_config.base.handlers.clone(),
+                    handlers: None,
                     human_config,
                 })
             }
@@ -984,6 +1001,9 @@ pub enum DataSource {
     },
     Fuel {
         hypersync_endpoint_url: ServerUrl,
+    },
+    Solana {
+        rpc: ServerUrl,
     },
 }
 

@@ -1,10 +1,11 @@
 import { onBlock } from "generated";
 
 onBlock(
-  { chain: 1, name: "BlockTracker", interval: 10 },
+  { chain: 0, name: "BlockTracker", interval: 1 },
   async ({ block, context }) => {
     context.BlockInfo.set({
-      id: block.number.toString(),
+      id: block.slot.toString(),
+      height: block.height,
     });
   }
 );
