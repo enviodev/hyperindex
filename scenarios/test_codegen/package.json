@@ -10,7 +10,7 @@
     "res:build": "rescript",
     "res:watch": "rescript -w",
     "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit 'test/**/*.{ts,res.mjs}'",
-    "test": "rescript && pnpm mocha",
+    "test": "rescript && tsc --noEmit && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
     "test:log": "DEBUG=true npm test",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",

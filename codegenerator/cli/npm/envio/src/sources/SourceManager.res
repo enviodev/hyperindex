@@ -99,12 +99,14 @@ let fetchNext = async (
 ) => {
   let {maxPartitionConcurrency} = sourceManager
 
-  switch fetchState->FetchState.getNextQuery(
+  let nextQuery = fetchState->FetchState.getNextQuery(
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
     ~stateId,
-  ) {
+  )
+
+  switch nextQuery {
   | ReachedMaxConcurrency
   | NothingToQuery => ()
   | WaitingForNewBlock =>
@@ -340,6 +342,9 @@ let getNextSyncSource = (
 }
 
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight) => {
+  Js.log(query)
+  Js.log("QUERY")
+  Js.Console.trace()
   let toBlockRef = ref(
     switch query.target {
     | Head => None

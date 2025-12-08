@@ -623,10 +623,11 @@ let actionReducer = (state: t, action: action) => {
         },
       }
 
+      // Attempt ProcessEventBatch in case if we have block handlers to run
       if shouldEnterReorgThreshold {
-        (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains)])
+        (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains), ProcessEventBatch])
       } else {
-        (state, [NextQuery(Chain(chain))])
+        (state, [NextQuery(Chain(chain)), ProcessEventBatch])
       }
     }
   | ValidatePartitionQueryResponse(partitionQueryResponse) =>
