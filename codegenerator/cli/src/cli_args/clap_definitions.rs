@@ -161,6 +161,11 @@ pub enum InitFlow {
     #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]
     SubgraphMigration(evm::SubgraphMigrationArgs),
+    ///Initialization option for creating Solana indexer
+    Solana {
+        #[command(subcommand)]
+        init_flow: Option<solana::InitFlow>,
+    },
     ///Initialization option for creating Fuel indexer
     Fuel {
         #[command(subcommand)]
@@ -379,6 +384,27 @@ pub mod fuel {
         #[arg(short, long)]
         #[clap(value_enum)]
         pub template: Option<init_config::fuel::Template>,
+    }
+}
+
+pub mod solana {
+    use clap::{Args, Subcommand};
+    use strum::{Display, EnumIter, EnumString};
+
+    use crate::init_config;
+
+    #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
+    pub enum InitFlow {
+        ///Initialize Solana indexer from an example template
+        Template(TemplateArgs),
+    }
+
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct TemplateArgs {
+        ///Name of the template to be used in initialization
+        #[arg(short, long)]
+        #[clap(value_enum)]
+        pub template: Option<init_config::solana::Template>,
     }
 }
 

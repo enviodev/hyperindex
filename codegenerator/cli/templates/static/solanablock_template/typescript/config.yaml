@@ -1,0 +1,6 @@
+# yaml-language-server: $schema=./node_modules/envio/solana.schema.json
+name: solana-block-handler
+ecosystem: solana
+chains:
+  - rpc: ${ENVIO_MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}
+    start_block: 385453000

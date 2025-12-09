@@ -25,7 +25,7 @@ In the case of **Uniswap V3 Factory**, the handler looks like this:
 ```ts
 // src/handlers/UniswapV3Factory.ts
 UniswapV3Factory.PoolCreated.contractRegister(({ event, context }) => {
-    context.addUniswapV3Pool(event.params.pool);
+  context.addUniswapV3Pool(event.params.pool);
 });
 ```
 
@@ -33,9 +33,9 @@ UniswapV3Factory.PoolCreated.contractRegister(({ event, context }) => {
 
 Before running the indexer locally, make sure you have the following installed:
 
--   **[Node.js 18+](https://nodejs.org/en/download/)**
--   **[pnpm](https://pnpm.io/installation)**
--   **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**
+- **[Node.js 22+](https://nodejs.org/en/download/)**
+- **[pnpm](https://pnpm.io/installation)**
+- **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**
 
 ## Running the Indexer
 

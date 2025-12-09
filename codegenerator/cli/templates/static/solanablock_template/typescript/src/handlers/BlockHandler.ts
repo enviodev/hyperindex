@@ -1,3 +1,6 @@
+/*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
+ */
 import { onBlock } from "generated";
 import { createEffect, S } from "envio";
 
@@ -57,7 +60,7 @@ const getBlockEffect = createEffect(
 );
 
 onBlock(
-  { chain: 0, name: "BlockTracker", interval: 1, startBlock: 385334776 },
+  { chain: 0, name: "BlockTracker" },
   async ({ slot, context }) => {
     const block = await context.effect(getBlockEffect, { slot });
     if (!block) {

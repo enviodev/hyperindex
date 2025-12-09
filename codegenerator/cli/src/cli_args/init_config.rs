@@ -316,9 +316,27 @@ pub mod fuel {
     }
 }
 
+pub mod solana {
+    use clap::ValueEnum;
+    use serde::{Deserialize, Serialize};
+    use strum::{Display, EnumIter, EnumString};
+
+    #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+    pub enum Template {
+        #[strum(serialize = "Feature: Solana Block Handler")]
+        FeatureSolanaBlockHandler,
+    }
+
+    #[derive(Clone, Debug, Display)]
+    pub enum InitFlow {
+        Template(Template),
+    }
+}
+
 #[derive(Clone, Debug, Display)]
 pub enum Ecosystem {
     Evm { init_flow: evm::InitFlow },
+    Solana { init_flow: solana::InitFlow },
     Fuel { init_flow: fuel::InitFlow },
 }
 
@@ -326,6 +344,7 @@ impl Ecosystem {
     pub fn uses_hypersync(&self) -> bool {
         match self {
             Self::Evm { init_flow } => init_flow.uses_hypersync(),
+            Self::Solana { .. } => false,
             Self::Fuel { .. } => true,
         }
     }
