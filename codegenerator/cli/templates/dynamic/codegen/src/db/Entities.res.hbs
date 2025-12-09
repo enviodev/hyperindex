@@ -33,17 +33,9 @@ module {{entity.name.capitalized}} = {
   let name = ({{entity.name.capitalized}} :> string)
   let index = {{@index}}
   @genType
-  type t = {
-    {{#each entity.params as | param |}}
-    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.res_type}},{{/unless}}
-    {{/each}}
-  }
+  type t = {{{entity.type_code}}}
 
-  let schema = S.object((s): t => {
-    {{#each entity.params as | param |}}
-    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.res_schema_code}}),{{/unless}}
-    {{/each}}
-  })
+  let schema = {{{entity.schema_code}}}
 
   let rowsSchema = S.array(schema)
 

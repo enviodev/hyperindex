@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     fmt::{Display, Write},
     path::PathBuf,
     vec,
@@ -8,7 +8,7 @@ use std::{
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     config_parsing::{
-        entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
+        entity_parsing::{Entity, Field, GraphQLEnum},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
         field_types,
         human_config::{
@@ -68,103 +68,14 @@ impl GraphQlEnumTypeTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum RelationshipTypeTemplate {
-    Object,
-    Array,
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EntityRelationalTypesTemplate {
-    pub relational_key: CapitalizedOptions,
-    pub mapped_entity: CapitalizedOptions,
-    pub relationship_type: RelationshipTypeTemplate,
-    pub object_name: CapitalizedOptions,
-    pub is_array: bool,
-    pub is_optional: bool,
-    pub is_derived_from: bool,
-}
-
-impl EntityRelationalTypesTemplate {
-    fn from_config_entity(field: &Field, entity: &Entity, schema: &Schema) -> anyhow::Result<Self> {
-        let is_array = field.field_type.is_array();
-
-        let relationship_type = if is_array {
-            RelationshipTypeTemplate::Array
-        } else {
-            RelationshipTypeTemplate::Object
-        };
-
-        Ok(EntityRelationalTypesTemplate {
-            relational_key: field
-                .get_relational_key(schema)
-                .context(format!(
-                    "Failed getting relational key of field {} on entity {}",
-                    field.name, entity.name
-                ))?
-                .to_capitalized_options(),
-            object_name: field.name.to_capitalized_options(),
-            mapped_entity: entity.name.to_capitalized_options(),
-            relationship_type,
-            is_optional: field.field_type.is_optional(),
-            is_array,
-            is_derived_from: field.field_type.is_derived_from(),
-        })
-    }
-}
-
-pub trait HasIsDerivedFrom {
-    fn get_is_derived_from(&self) -> bool;
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct FilteredTemplateLists<T: HasIsDerivedFrom> {
-    pub all: Vec<T>,
-    pub filtered_not_derived_from: Vec<T>,
-    pub filtered_is_derived_from: Vec<T>,
-}
-
-impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
-    pub fn new(unfiltered: Vec<T>) -> Self {
-        let filtered_not_derived_from = unfiltered
-            .iter()
-            .filter(|item| !item.get_is_derived_from())
-            .cloned()
-            .collect::<Vec<T>>();
-
-        let filtered_is_derived_from = unfiltered
-            .iter()
-            .filter(|item| item.get_is_derived_from())
-            .cloned()
-            .collect::<Vec<T>>();
-
-        FilteredTemplateLists {
-            all: unfiltered,
-            filtered_not_derived_from,
-            filtered_is_derived_from,
-        }
-    }
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
     pub res_type: RescriptTypeIdent,
-    pub res_schema_code: String,
     pub is_entity_field: bool,
-    ///Used in template to tell whether it is a field looked up from another table or a value in
-    ///the table
-    pub is_derived_from: bool,
     pub is_indexed_field: bool,
     ///Used to determine if you can run a where
     ///query on this field.
     pub is_queryable_field: bool,
-}
-
-impl HasIsDerivedFrom for EntityParamTypeTemplate {
-    fn get_is_derived_from(&self) -> bool {
-        self.is_derived_from
-    }
 }
 
 impl EntityParamTypeTemplate {
@@ -176,8 +87,6 @@ impl EntityParamTypeTemplate {
 
         let schema = &config.schema;
 
-        let is_derived_from = field.field_type.is_derived_from();
-
         let is_entity_field = field.field_type.is_entity_field(schema)?;
         let is_indexed_field = field.is_indexed_field(entity);
         let is_derived_lookup_field = field.is_derived_lookup_field(entity, schema);
@@ -187,25 +96,12 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            res_schema_code: res_type.to_rescript_schema(&RescriptSchemaMode::ForDb),
             res_type,
-            is_derived_from,
             is_entity_field,
             is_indexed_field,
             is_queryable_field,
         })
     }
-}
-
-impl HasIsDerivedFrom for EntityRelationalTypesTemplate {
-    fn get_is_derived_from(&self) -> bool {
-        self.is_derived_from
-    }
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EntityIndexParamGroup {
-    params: Vec<EntityParamTypeTemplate>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -218,13 +114,12 @@ pub struct DerivedFieldTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
+    pub type_code: String,
+    pub schema_code: String,
     pub postgres_fields: Vec<field_types::Field>,
     pub composite_indices: Vec<Vec<String>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
-    pub index_groups: Vec<EntityIndexParamGroup>,
-    pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
-    pub filtered_params: FilteredTemplateLists<EntityParamTypeTemplate>,
 }
 
 impl EntityRecordTypeTemplate {
@@ -240,63 +135,31 @@ impl EntityRecordTypeTemplate {
                 entity.name
             ))?;
 
-        let mut params_lookup: HashMap<String, EntityParamTypeTemplate> = HashMap::new();
-
-        entity.get_fields().iter().for_each(|field| {
-            let entity_param_template =
-                EntityParamTypeTemplate::from_entity_field(field, entity, config)
-                    .with_context(|| {
-                        format!(
-                            "Failed templating field '{}' of entity '{}'",
-                            field.name, entity.name
-                        )
-                    })
-                    .unwrap();
-
-            params_lookup.insert(field.name.clone(), entity_param_template);
-        });
-
-        // Collect relational type templates
-        let entity_relational_types_templates = entity
-            .get_related_entities(&config.schema)
-            .context(format!(
-                "Failed getting relational fields of entity: {}",
-                entity.name
-            ))?
+        // Build record fields for type/schema generation
+        let record_fields: Vec<RescriptRecordField> = entity
+            .get_fields()
             .iter()
-            .map(|(field, related_entity)| {
-                EntityRelationalTypesTemplate::from_config_entity(
-                    field,
-                    related_entity,
-                    &config.schema,
-                )
+            .filter(|f| !f.field_type.is_derived_from())
+            .map(|field| {
+                let is_entity = field.field_type.is_entity_field(&config.schema)?;
+                let field_name = if is_entity {
+                    format!("{}_id", field.name.uncapitalize())
+                } else {
+                    field.name.uncapitalize()
+                };
+                let res_type = field.field_type.to_rescript_type(&config.schema)?;
+                Ok(RescriptRecordField::new(field_name, res_type))
             })
-            .collect::<Result<Vec<_>>>()
+            .collect::<Result<_>>()
             .context(format!(
-                "Failed constructing relational params of entity {}",
+                "Failed building record fields for entity: {}",
                 entity.name
             ))?;
 
-        let relational_params = FilteredTemplateLists::new(entity_relational_types_templates);
-        let filtered_params = FilteredTemplateLists::new(params.clone());
-
-        let index_groups: Vec<EntityIndexParamGroup> = entity
-            .multi_field_indexes
-            .iter()
-            .filter_map(MultiFieldIndex::get_multi_field_index)
-            .map(|multi_field_index| EntityIndexParamGroup {
-                params: multi_field_index
-                    .get_field_names()
-                    .iter()
-                    .map(|param_name| {
-                        params_lookup
-                            .get(param_name)
-                            .cloned()
-                            .expect("param name should be in lookup")
-                    })
-                    .collect(),
-            })
-            .collect();
+        let type_expr = RescriptTypeExpr::Record(record_fields);
+        let type_code = type_expr.to_string();
+        let schema_code =
+            type_expr.to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForDb);
 
         let postgres_fields = entity
             .get_fields()
@@ -318,12 +181,11 @@ impl EntityRecordTypeTemplate {
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
+            type_code,
+            schema_code,
             derived_fields,
             composite_indices,
             params,
-            index_groups,
-            relational_params,
-            filtered_params,
         })
     }
 }
