@@ -2995,7 +2995,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
     handler: Utils.magic("mock handler"),
   }
 
-  it_only(
+  it(
     "Creates FetchState with no event configs, triggers WaitingForNewBlock, then fills buffer on updateKnownHeight",
     () => {
       let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(0))
