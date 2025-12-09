@@ -1474,7 +1474,7 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
             codegen_contracts: vec![contract1],
-            sources_code: "[HyperFuelSource.make({chain: chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
+            sources_code: "[HyperFuelSource.make({chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
         };
 
         let expected_chain_configs = vec![chain_config_1];
