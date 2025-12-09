@@ -380,7 +380,7 @@ impl EventMod {
             Some(FuelEventKind::LogData(_)) => Some(
                 r#"LogData({
   logId: sighash,
-  decode: Fuel.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
+  decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
 })"#
                 .to_string(),
             ),
