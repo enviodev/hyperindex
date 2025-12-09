@@ -3,7 +3,7 @@ use crate::{
         chain_helpers::{self, GraphNetwork},
         human_config::{
             evm::{Chain, ContractConfig, EventConfig, HumanConfig},
-            ChainContract,
+            BaseConfig, ChainContract,
         },
     },
     constants::project_paths::DEFAULT_SCHEMA_PATH,
@@ -260,11 +260,15 @@ pub async fn generate_config_from_subgraph_id(
 
     // Create config object to be populated
     let mut config = HumanConfig {
-        name: manifest.data_sources[0].name.clone(),
-        description: manifest.description,
+        base: BaseConfig {
+            name: manifest.data_sources[0].name.clone(),
+            description: manifest.description,
+            schema: None,
+            output: None,
+            handlers: None,
+            full_batch_size: None,
+        },
         ecosystem: None,
-        schema: None,
-        output: None,
         contracts: None,
         chains: vec![],
         multichain: None,
@@ -274,7 +278,6 @@ pub async fn generate_config_from_subgraph_id(
         field_selection: None,
         raw_events: None,
         address_format: None,
-        handlers: None,
     };
     let mut chains: Vec<Chain> = vec![];
 

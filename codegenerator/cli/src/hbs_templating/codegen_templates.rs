@@ -1227,6 +1227,7 @@ pub struct ProjectTemplate {
     should_save_full_history: bool,
     enable_raw_events: bool,
     has_multiple_events: bool,
+    full_batch_size_code: String,
     field_selection: FieldSelection,
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
@@ -1363,6 +1364,11 @@ type chainId = [{}]"#,
                 .join(" | "),
         );
 
+        let full_batch_size_code = match cfg.human_config.get_base_config().full_batch_size {
+            None => "None".to_string(),
+            Some(v) => format!("Some({v})"),
+        };
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
@@ -1377,6 +1383,7 @@ type chainId = [{}]"#,
             should_rollback_on_reorg: cfg.rollback_on_reorg,
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,
+            full_batch_size_code,
             has_multiple_events,
             field_selection: global_field_selection,
             aggregated_field_selection,

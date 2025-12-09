@@ -82,6 +82,11 @@ pub struct BaseConfig {
                    to 'src/handlers' if not specified."
     )]
     pub handlers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
+    )]
+    pub full_batch_size: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -133,6 +138,16 @@ pub enum HumanConfig {
     Solana(solana::HumanConfig),
 }
 
+impl HumanConfig {
+    pub fn get_base_config(&self) -> &BaseConfig {
+        match &self {
+            HumanConfig::Evm(human_config) => &human_config.base,
+            HumanConfig::Fuel(human_config) => &human_config.base,
+            HumanConfig::Solana(human_config) => &human_config.base,
+        }
+    }
+}
+
 impl Display for HumanConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -149,7 +164,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract};
-    use crate::utils::normalized_list::SingleOrList;
+    use crate::{config_parsing::human_config::BaseConfig, utils::normalized_list::SingleOrList};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -163,24 +178,11 @@ pub mod evm {
     )]
     #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
-        #[schemars(description = "Name of the project")]
-        pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Description of the project")]
-        pub description: Option<String>,
+        #[serde(flatten)]
+        pub base: BaseConfig,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: Option<EcosystemTag>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to schema.graphql file")]
-        pub schema: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Path where the generated directory will be placed. By default it's \
-                           'generated' relative to the current working directory. If set, it'll \
-                           be a path relative to the config file location."
-        )]
-        pub output: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Global contract definitions that must contain all definitions except \
@@ -237,12 +239,6 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to handlers directory for auto-loading. Defaults \
-                       to 'src/handlers' if not specified."
-        )]
-        pub handlers: Option<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -583,6 +579,8 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
+    use crate::config_parsing::human_config::BaseConfig;
+
     use super::{ChainContract, ChainId, GlobalContract};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -595,23 +593,10 @@ pub mod fuel {
     )]
     #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
-        #[schemars(description = "Name of the project")]
-        pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Description of the project")]
-        pub description: Option<String>,
+        #[serde(flatten)]
+        pub base: BaseConfig,
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to schema.graphql file")]
-        pub schema: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Path where the generated directory will be placed. By default it's \
-                           'generated' relative to the current working directory. If set, it'll \
-                           be a path relative to the config file location."
-        )]
-        pub output: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Global contract definitions that must contain all definitions except \
@@ -631,12 +616,6 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to handlers directory for auto-loading. Defaults \
-                           to 'src/handlers' if not specified."
-        )]
-        pub handlers: Option<String>,
     }
 
     impl Display for HumanConfig {
@@ -800,7 +779,10 @@ mod tests {
         evm::{Chain, ContractConfig, EventDecoder, HumanConfig},
         ChainContract,
     };
-    use crate::{config_parsing::human_config::fuel, utils::normalized_list::NormalizedList};
+    use crate::{
+        config_parsing::human_config::{fuel, BaseConfig},
+        utils::normalized_list::NormalizedList,
+    };
     use pretty_assertions::assert_eq;
     use schemars::{schema_for, Schema};
     use serde_json::json;
@@ -1009,10 +991,14 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         let cfg: fuel::HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
         let expected_cfg = fuel::HumanConfig {
-            name: "Fuel indexer".to_string(),
-            description: None,
-            schema: None,
-            output: None,
+            base: BaseConfig {
+                name: "Fuel indexer".to_string(),
+                description: None,
+                schema: None,
+                output: None,
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
@@ -1045,7 +1031,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                     }),
                 }]),
             }],
-            handlers: None,
         };
 
         // deserializes fuel config
@@ -1055,15 +1040,18 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     #[test]
     fn serializes_fuel_config() {
         let cfg = fuel::HumanConfig {
-            name: "Fuel indexer".to_string(),
-            description: None,
-            schema: None,
-            output: None,
+            base: BaseConfig {
+                name: "Fuel indexer".to_string(),
+                description: None,
+                schema: None,
+                output: None,
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
             chains: vec![],
-            handlers: None,
         };
 
         assert_eq!(

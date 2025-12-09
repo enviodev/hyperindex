@@ -59,19 +59,16 @@ const getBlockEffect = createEffect(
   }
 );
 
-onBlock(
-  { chain: 0, name: "BlockTracker" },
-  async ({ slot, context }) => {
-    const block = await context.effect(getBlockEffect, { slot });
-    if (!block) {
-      context.log.info(`Slot without a block`, { slot });
-      return;
-    }
-    context.BlockInfo.set({
-      id: slot.toString(),
-      hash: block.blockhash,
-      height: block.blockHeight,
-      time: block.blockTime ? new Date(block.blockTime * 1000) : undefined,
-    });
+onBlock({ chain: 0, name: "BlockTracker" }, async ({ slot, context }) => {
+  const block = await context.effect(getBlockEffect, { slot });
+  if (!block) {
+    context.log.info(`Slot without a block`, { slot });
+    return;
   }
-);
+  context.BlockInfo.set({
+    id: slot.toString(),
+    hash: block.blockhash,
+    height: block.blockHeight,
+    time: block.blockTime ? new Date(block.blockTime * 1000) : undefined,
+  });
+});

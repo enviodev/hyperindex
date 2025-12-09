@@ -17,7 +17,7 @@ pub mod evm {
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
                 evm::{Chain, ContractConfig, EventConfig, HumanConfig, RpcSelection},
-                ChainContract, GlobalContract,
+                BaseConfig, ChainContract, GlobalContract,
             },
             system_config::EvmAbi,
         },
@@ -157,11 +157,15 @@ pub mod evm {
             };
 
             Ok(HumanConfig {
-                name: init_config.name.clone(),
-                description: None,
+                base: BaseConfig {
+                    name: init_config.name.clone(),
+                    description: None,
+                    schema: None,
+                    output: None,
+                    handlers: None,
+                    full_batch_size: None,
+                },
                 ecosystem: None,
-                schema: None,
-                output: None,
                 contracts,
                 chains: chains_map.into_values().sorted_by_key(|v| v.id).collect(),
                 multichain: None, // Default is Unordered
@@ -171,7 +175,6 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 address_format: None,
-                handlers: None,
             })
         }
 
@@ -210,7 +213,7 @@ pub mod fuel {
     use crate::{
         config_parsing::human_config::{
             fuel::{Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig},
-            ChainContract,
+            BaseConfig, ChainContract,
         },
         fuel::{abi::FuelAbi, address::Address},
     };
@@ -296,15 +299,18 @@ pub mod fuel {
             }
 
             HumanConfig {
-                name: init_config.name.clone(),
-                description: None,
+                base: BaseConfig {
+                    name: init_config.name.clone(),
+                    description: None,
+                    schema: None,
+                    output: None,
+                    handlers: None,
+                    full_batch_size: None,
+                },
                 ecosystem: EcosystemTag::Fuel,
-                schema: None,
-                output: None,
                 contracts: None,
                 raw_events: None,
                 chains: network_configs,
-                handlers: None,
             }
         }
     }
@@ -323,8 +329,8 @@ pub mod solana {
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
-        #[strum(serialize = "Feature: Solana Block Handler")]
-        FeatureSolanaBlockHandler,
+        #[strum(serialize = "Feature: Block Handler")]
+        FeatureBlockHandler,
     }
 
     #[derive(Clone, Debug, Display)]

@@ -519,15 +519,11 @@ impl SystemConfig {
         let mut chains: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
+        let base_config = human_config.get_base_config();
+
         // Create a new ParsedProjectPaths that uses the output field from config if specified
         let final_project_paths = {
-            let output_path = match &human_config {
-                HumanConfig::Evm(evm_config) => evm_config.output.as_ref(),
-                HumanConfig::Fuel(fuel_config) => fuel_config.output.as_ref(),
-                HumanConfig::Solana(solana_config) => solana_config.base.output.as_ref(),
-            };
-
-            match output_path {
+            match base_config.output.as_ref() {
                 Some(output) => {
                     // If output is specified, create a new ParsedProjectPaths with the custom output path
                     // The output path is relative to the config file location
@@ -694,9 +690,9 @@ impl SystemConfig {
                 )?;
 
                 Ok(SystemConfig {
-                    name: evm_config.name.clone(),
+                    name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: evm_config
+                    schema_path: base_config
                         .schema
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
@@ -721,7 +717,7 @@ impl SystemConfig {
                             true
                         }
                     },
-                    handlers: evm_config.handlers.clone(),
+                    handlers: base_config.handlers.clone(),
                     human_config,
                 })
             }
@@ -846,9 +842,9 @@ impl SystemConfig {
                 }
 
                 Ok(SystemConfig {
-                    name: fuel_config.name.clone(),
+                    name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: fuel_config
+                    schema_path: base_config
                         .schema
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
@@ -862,7 +858,7 @@ impl SystemConfig {
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
                     lowercase_addresses: false,
                     should_use_hypersync_client_decoder: true,
-                    handlers: fuel_config.handlers.clone(),
+                    handlers: base_config.handlers.clone(),
                     human_config,
                 })
             }
@@ -952,7 +948,7 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &evm_config.schema)
+                let schema = Schema::parse_from_file(project_paths, &evm_config.base.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Evm(evm_config), schema, project_paths)
             }
@@ -963,7 +959,7 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &fuel_config.schema)
+                let schema = Schema::parse_from_file(project_paths, &fuel_config.base.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Fuel(fuel_config), schema, project_paths)
             }
@@ -1740,7 +1736,7 @@ mod test {
     use super::SystemConfig;
     use crate::{
         config_parsing::{
-            human_config::evm::HumanConfig as EvmConfig,
+            human_config::{evm::HumanConfig as EvmConfig, BaseConfig},
             system_config::{DataSource, Event, MainEvmDataSource},
         },
         project_paths::ParsedProjectPaths,
@@ -2120,11 +2116,15 @@ mod test {
 
         // Test with default output (no output field specified)
         let evm_config = EvmConfig {
-            name: "Test Project".to_string(),
-            description: None,
+            base: BaseConfig {
+                name: "Test Project".to_string(),
+                description: None,
+                schema: None,
+                output: None,
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: None,
-            schema: None,
-            output: None,
             contracts: None,
             chains: vec![EvmChain {
                 id: 1,
@@ -2143,7 +2143,6 @@ mod test {
             field_selection: None,
             raw_events: None,
             address_format: None,
-            handlers: None,
         };
 
         let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
@@ -2167,11 +2166,15 @@ mod test {
 
         // Test with custom output path
         let evm_config_with_output = EvmConfig {
-            name: "Test Project".to_string(),
-            description: None,
+            base: BaseConfig {
+                name: "Test Project".to_string(),
+                description: None,
+                schema: None,
+                output: Some("custom/output".to_string()),
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: None,
-            schema: None,
-            output: Some("custom/output".to_string()),
             contracts: None,
             chains: vec![EvmChain {
                 id: 1,
@@ -2190,7 +2193,6 @@ mod test {
             field_selection: None,
             raw_events: None,
             address_format: None,
-            handlers: None,
         };
 
         let system_config_with_output = SystemConfig::from_human_config(

@@ -15,17 +15,6 @@
       "description": "Name of the project",
       "type": "string"
     },
-    "ecosystem": {
-      "description": "Ecosystem of the project.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/EcosystemTag"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "schema": {
       "description": "Custom path to schema.graphql file",
       "type": [
@@ -38,6 +27,33 @@
       "type": [
         "string",
         "null"
+      ]
+    },
+    "handlers": {
+      "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "full_batch_size": {
+      "description": "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ecosystem": {
+      "description": "Ecosystem of the project.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EcosystemTag"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "contracts": {
@@ -120,13 +136,6 @@
         {
           "type": "null"
         }
-      ]
-    },
-    "handlers": {
-      "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
-      "type": [
-        "string",
-        "null"
       ]
     }
   },

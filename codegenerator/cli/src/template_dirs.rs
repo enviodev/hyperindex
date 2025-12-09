@@ -35,7 +35,7 @@ impl Template for fuel::Template {
 impl Template for solana::Template {
     fn to_dir_name(&self) -> String {
         match self {
-            solana::Template::FeatureSolanaBlockHandler => "solanablock",
+            solana::Template::FeatureBlockHandler => "solanablock",
         }
         .to_string()
     }

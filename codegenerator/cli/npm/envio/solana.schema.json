@@ -36,6 +36,15 @@
         "null"
       ]
     },
+    "full_batch_size": {
+      "description": "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "$ref": "#/$defs/EcosystemTag"
