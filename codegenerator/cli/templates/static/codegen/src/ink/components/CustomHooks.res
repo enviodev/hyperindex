@@ -1,6 +1,6 @@
 open Belt
 module InitApi = {
-  type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
+  type ecosystem = | @as("evm") Evm | @as("fuel") Fuel | @as("solana") Solana
   type body = {
     envioVersion: string,
     envioApiToken: option<string>,
@@ -12,7 +12,7 @@ module InitApi = {
   let bodySchema = S.object(s => {
     envioVersion: s.field("envioVersion", S.string),
     envioApiToken: s.field("envioApiToken", S.option(S.string)),
-    ecosystem: s.field("ecosystem", S.enum([Evm, Fuel])),
+    ecosystem: s.field("ecosystem", S.enum([Evm, Fuel, Solana])),
     hyperSyncNetworks: s.field("hyperSyncNetworks", S.array(S.int)),
     rpcNetworks: s.field("rpcNetworks", S.array(S.int)),
   })

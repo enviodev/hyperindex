@@ -1,4 +1,4 @@
-use crate::cli_args::init_config::{evm, fuel, Language};
+use crate::cli_args::init_config::{evm, fuel, solana, Language};
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir, DirEntry};
 use pathdiff::diff_paths;
@@ -27,6 +27,15 @@ impl Template for fuel::Template {
     fn to_dir_name(&self) -> String {
         match self {
             fuel::Template::Greeter => "greeteronfuel",
+        }
+        .to_string()
+    }
+}
+
+impl Template for solana::Template {
+    fn to_dir_name(&self) -> String {
+        match self {
+            solana::Template::FeatureBlockHandler => "solanablock",
         }
         .to_string()
     }
@@ -350,11 +359,6 @@ impl<'a> TemplateDirs<'a> {
             template, lang
         ))?;
 
-        let shared_files = self.get_template_shared_dir(template).context(format!(
-            "Failed getting shared static files for template {}",
-            template
-        ))?;
-
         // Copy shared static content into the project root (not the generated folder)
         self.get_shared_static_dir()?
             .extract(project_root)
@@ -365,10 +369,13 @@ impl<'a> TemplateDirs<'a> {
             template, lang
         ))?;
 
-        shared_files.extract(project_root).context(format!(
-            "Failed extracting shared static files for template {}",
-            template
-        ))?;
+        // Extract template-specific shared files if they exist
+        if let Ok(shared_files) = self.get_template_shared_dir(template) {
+            shared_files.extract(project_root).context(format!(
+                "Failed extracting shared static files for template {}",
+                template
+            ))?;
+        }
 
         Ok(())
     }
@@ -403,7 +410,7 @@ impl<'a> TemplateDirs<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::cli_args::init_config::{evm, fuel};
+    use crate::cli_args::init_config::{evm, fuel, solana};
 
     use super::*;
     use strum::IntoEnumIterator;
@@ -453,6 +460,13 @@ mod test {
                     .get_template_shared_dir(&template)
                     .expect("static templte shared");
             }
+            for template in solana::Template::iter() {
+                template_dirs
+                    .get_template_lang_dir(&template, lang)
+                    .expect("static lang");
+
+                // Solana templates don't require a shared folder
+            }
         }
 
         template_dirs
@@ -475,6 +489,11 @@ mod test {
                     .expect("static lang");
             }
             for template in fuel::Template::iter() {
+                template_dirs
+                    .get_and_extract_template(&template, lang, &(PathBuf::from(temp_dir.path())))
+                    .expect("static lang");
+            }
+            for template in solana::Template::iter() {
                 template_dirs
                     .get_and_extract_template(&template, lang, &(PathBuf::from(temp_dir.path())))
                     .expect("static lang");

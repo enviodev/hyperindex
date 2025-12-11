@@ -10,6 +10,8 @@ This document contains the help content for the `envio` command-line program.
 * [`envio init contract-import explorer`↴](#envio-init-contract-import-explorer)
 * [`envio init contract-import local`↴](#envio-init-contract-import-local)
 * [`envio init template`↴](#envio-init-template)
+* [`envio init solana`↴](#envio-init-solana)
+* [`envio init solana template`↴](#envio-init-solana-template)
 * [`envio init fuel`↴](#envio-init-fuel)
 * [`envio init fuel contract-import`↴](#envio-init-fuel-contract-import)
 * [`envio init fuel contract-import local`↴](#envio-init-fuel-contract-import-local)
@@ -64,6 +66,7 @@ Initialize an indexer with one of the initialization options
 
 * `contract-import` — Initialize Evm indexer by importing config from a contract for a given chain
 * `template` — Initialize Evm indexer from an example template
+* `solana` — Initialization option for creating Solana indexer
 * `fuel` — Initialization option for creating Fuel indexer
 
 ###### **Options:**
@@ -143,6 +146,33 @@ Initialize Evm indexer from an example template
 * `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
   Possible values: `greeter`, `erc20`, `feature-factory`
+
+
+
+
+## `envio init solana`
+
+Initialization option for creating Solana indexer
+
+**Usage:** `envio init solana [COMMAND]`
+
+###### **Subcommands:**
+
+* `template` — Initialize Solana indexer from an example template
+
+
+
+## `envio init solana template`
+
+Initialize Solana indexer from an example template
+
+**Usage:** `envio init solana template [OPTIONS]`
+
+###### **Options:**
+
+* `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
+
+  Possible values: `feature-block-handler`
 
 
 

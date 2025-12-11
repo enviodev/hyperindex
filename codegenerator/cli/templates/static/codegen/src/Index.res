@@ -8,7 +8,9 @@ type chainData = {
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   numEventsProcessed: int,
   latestFetchedBlockNumber: int,
-  currentBlockHeight: int,
+  // Need this for API backwards compatibility
+  @as("currentBlockHeight")
+  knownHeight: int,
   numBatchesFetched: int,
   endBlock: option<int>,
   numAddresses: int,
@@ -35,7 +37,7 @@ let chainDataSchema = S.schema((s): chainData => {
   timestampCaughtUpToHeadOrEndblock: s.matches(S.option(S.datetime(S.string))),
   numEventsProcessed: s.matches(S.int),
   latestFetchedBlockNumber: s.matches(S.int),
-  currentBlockHeight: s.matches(S.int),
+  knownHeight: s.matches(S.int),
   numBatchesFetched: s.matches(S.int),
   endBlock: s.matches(S.option(S.int)),
   numAddresses: s.matches(S.int),
@@ -67,10 +69,7 @@ let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => 
     }
 
     res->setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    res->setHeader(
-      "Access-Control-Allow-Headers",
-      "Origin, X-Requested-With, Content-Type, Accept",
-    )
+    res->setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept")
 
     if req.method === Options {
       res->sendStatus(200)
@@ -136,10 +135,10 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
       let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
-      let currentBlockHeight =
+      let knownHeight =
         cf->ChainFetcher.hasProcessedToEndblock
-          ? cf.fetchState.endBlock->Option.getWithDefault(cf.currentBlockHeight)
-          : cf.currentBlockHeight
+          ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+          : cf.fetchState.knownHeight
 
       let progress: ChainData.progress = if hasProcessedToEndblock {
         // If the endblock has been reached then set the progress to synced.
@@ -191,7 +190,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       (
         {
           progress,
-          currentBlockHeight,
+          knownHeight,
           latestFetchedBlockNumber,
           numBatchesFetched,
           chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
@@ -237,61 +236,58 @@ let main = async () => {
     Prometheus.Info.set(~version=envioVersion)
     Prometheus.RollbackEnabled.set(~enabled=indexer.config.shouldRollbackOnReorg)
 
-    startServer(
-      ~indexer,
-      ~isDevelopmentMode,
-      ~getState=() =>
-        switch gsManagerRef.contents {
-        | None => Initializing({})
-        | Some(gsManager) => {
-            let state = gsManager->GlobalStateManager.getState
-            let appState = state->makeAppState
-            Active({
-              envioVersion,
-              chains: appState.chains->Js.Array2.map(c => {
-                let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
-                {
-                  chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
-                  poweredByHyperSync: c.poweredByHyperSync,
-                  latestFetchedBlockNumber: c.latestFetchedBlockNumber,
-                  currentBlockHeight: c.currentBlockHeight,
-                  numBatchesFetched: c.numBatchesFetched,
-                  endBlock: c.endBlock,
-                  firstEventBlockNumber: switch c.progress {
-                  | SearchingForEvents => None
-                  | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
-                    Some(firstEventBlockNumber)
-                  },
-                  latestProcessedBlock: switch c.progress {
-                  | SearchingForEvents => None
-                  | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
-                    Some(latestProcessedBlock)
-                  },
-                  timestampCaughtUpToHeadOrEndblock: switch c.progress {
-                  | SearchingForEvents
-                  | Syncing(_) =>
-                    None
-                  | Synced({timestampCaughtUpToHeadOrEndblock}) =>
-                    Some(timestampCaughtUpToHeadOrEndblock)
-                  },
-                  numEventsProcessed: switch c.progress {
-                  | SearchingForEvents => 0
-                  | Syncing({numEventsProcessed})
-                  | Synced({numEventsProcessed}) => numEventsProcessed
-                  },
-                  numAddresses: cf.fetchState->FetchState.numAddresses,
-                }
-              }),
-              indexerStartTime: appState.indexerStartTime,
-              isPreRegisteringDynamicContracts: false,
-              rollbackOnReorg: indexer.config.shouldRollbackOnReorg,
-              isUnorderedMultichainMode: switch indexer.config.multichain {
-              | Unordered => true
-              | Ordered => false
-              },
-            })
-          }
-        },
+    startServer(~indexer, ~isDevelopmentMode, ~getState=() =>
+      switch gsManagerRef.contents {
+      | None => Initializing({})
+      | Some(gsManager) => {
+          let state = gsManager->GlobalStateManager.getState
+          let appState = state->makeAppState
+          Active({
+            envioVersion,
+            chains: appState.chains->Js.Array2.map(c => {
+              let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
+              {
+                chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
+                poweredByHyperSync: c.poweredByHyperSync,
+                latestFetchedBlockNumber: c.latestFetchedBlockNumber,
+                knownHeight: c.knownHeight,
+                numBatchesFetched: c.numBatchesFetched,
+                endBlock: c.endBlock,
+                firstEventBlockNumber: switch c.progress {
+                | SearchingForEvents => None
+                | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
+                  Some(firstEventBlockNumber)
+                },
+                latestProcessedBlock: switch c.progress {
+                | SearchingForEvents => None
+                | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
+                  Some(latestProcessedBlock)
+                },
+                timestampCaughtUpToHeadOrEndblock: switch c.progress {
+                | SearchingForEvents
+                | Syncing(_) =>
+                  None
+                | Synced({timestampCaughtUpToHeadOrEndblock}) =>
+                  Some(timestampCaughtUpToHeadOrEndblock)
+                },
+                numEventsProcessed: switch c.progress {
+                | SearchingForEvents => 0
+                | Syncing({numEventsProcessed})
+                | Synced({numEventsProcessed}) => numEventsProcessed
+                },
+                numAddresses: cf.fetchState->FetchState.numAddresses,
+              }
+            }),
+            indexerStartTime: appState.indexerStartTime,
+            isPreRegisteringDynamicContracts: false,
+            rollbackOnReorg: indexer.config.shouldRollbackOnReorg,
+            isUnorderedMultichainMode: switch indexer.config.multichain {
+            | Unordered => true
+            | Ordered => false
+            },
+          })
+        }
+      }
     )
 
     await indexer.persistence->Persistence.init(

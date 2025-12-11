@@ -16,8 +16,8 @@ pub mod evm {
             chain_helpers,
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{ContractConfig, EventConfig, HumanConfig, Network, NetworkRpc},
-                GlobalContract, NetworkContract,
+                evm::{Chain, ContractConfig, EventConfig, HumanConfig, RpcSelection},
+                BaseConfig, ChainContract, GlobalContract,
             },
             system_config::EvmAbi,
         },
@@ -46,7 +46,7 @@ pub mod evm {
     type ContractName = String;
     impl ContractImportSelection {
         pub fn to_human_config(&self, init_config: &InitConfig) -> Result<HumanConfig> {
-            let mut chains_map: HashMap<u64, Network> = HashMap::new();
+            let mut chains_map: HashMap<u64, Chain> = HashMap::new();
             let mut global_contracts: HashMap<ContractName, GlobalContract<ContractConfig>> =
                 HashMap::new();
 
@@ -109,7 +109,7 @@ pub mod evm {
                             let rpc = match &selected_chain.network {
                                 NetworkKind::Supported(_) => None,
                                 NetworkKind::Unsupported { rpc_url, .. } => {
-                                    Some(NetworkRpc::Url(rpc_url.to_string()))
+                                    Some(RpcSelection::Url(rpc_url.to_string()))
                                 }
                             };
 
@@ -124,26 +124,26 @@ pub mod evm {
                                 }
                             };
 
-                            Network {
+                            Chain {
                                 id: selected_chain.network.get_network_id(),
                                 hypersync_config: None,
                                 rpc_config: None,
                                 rpc,
                                 start_block: selected_chain.network.get_start_block(),
                                 end_block,
-                                confirmed_block_threshold: None,
-                                contracts: Vec::new(),
+                                max_reorg_depth: None,
+                                contracts: Some(Vec::new()),
                             }
                         });
 
-                    let contract = NetworkContract {
+                    let contract = ChainContract {
                         name: selected_contract.name.clone(),
                         address,
                         config: config.clone(),
                         start_block: None,
                     };
 
-                    chain.contracts.push(contract);
+                    chain.contracts.get_or_insert_with(Vec::new).push(contract);
                 }
             }
 
@@ -157,11 +157,15 @@ pub mod evm {
             };
 
             Ok(HumanConfig {
-                name: init_config.name.clone(),
-                description: None,
+                base: BaseConfig {
+                    name: init_config.name.clone(),
+                    description: None,
+                    schema: None,
+                    output: None,
+                    handlers: None,
+                    full_batch_size: None,
+                },
                 ecosystem: None,
-                schema: None,
-                output: None,
                 contracts,
                 chains: chains_map.into_values().sorted_by_key(|v| v.id).collect(),
                 multichain: None, // Default is Unordered
@@ -171,7 +175,6 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 address_format: None,
-                handlers: None,
             })
         }
 
@@ -209,10 +212,8 @@ pub mod fuel {
 
     use crate::{
         config_parsing::human_config::{
-            fuel::{
-                ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network as NetworkConfig,
-            },
-            NetworkContract,
+            fuel::{Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig},
+            BaseConfig, ChainContract,
         },
         fuel::{abi::FuelAbi, address::Address},
     };
@@ -267,43 +268,49 @@ pub mod fuel {
             for network in Network::iter() {
                 match contracts_by_network.get(&network) {
                     None => (),
-                    Some(contracts) => network_configs.push(NetworkConfig {
+                    Some(contracts) => network_configs.push(ChainConfig {
                         id: network as u64,
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
-                        contracts: contracts
-                            .iter()
-                            .map(|selected_contract| NetworkContract {
-                                name: selected_contract.name.clone(),
-                                address: selected_contract
-                                    .addresses
-                                    .iter()
-                                    .map(|a| a.to_string())
-                                    .collect::<Vec<String>>()
-                                    .into(),
-                                config: Some(ContractConfig {
-                                    abi_file_path: selected_contract.get_vendored_abi_file_path(),
-                                    handler: None,
-                                    events: selected_contract.selected_events.clone(),
-                                }),
-                                start_block: None,
-                            })
-                            .collect(),
+                        contracts: Some(
+                            contracts
+                                .iter()
+                                .map(|selected_contract| ChainContract {
+                                    name: selected_contract.name.clone(),
+                                    address: selected_contract
+                                        .addresses
+                                        .iter()
+                                        .map(|a| a.to_string())
+                                        .collect::<Vec<String>>()
+                                        .into(),
+                                    config: Some(ContractConfig {
+                                        abi_file_path: selected_contract
+                                            .get_vendored_abi_file_path(),
+                                        handler: None,
+                                        events: selected_contract.selected_events.clone(),
+                                    }),
+                                    start_block: None,
+                                })
+                                .collect(),
+                        ),
                     }),
                 }
             }
 
             HumanConfig {
-                name: init_config.name.clone(),
-                description: None,
+                base: BaseConfig {
+                    name: init_config.name.clone(),
+                    description: None,
+                    schema: None,
+                    output: None,
+                    handlers: None,
+                    full_batch_size: None,
+                },
                 ecosystem: EcosystemTag::Fuel,
-                schema: None,
-                output: None,
                 contracts: None,
                 raw_events: None,
                 chains: network_configs,
-                handlers: None,
             }
         }
     }
@@ -315,9 +322,27 @@ pub mod fuel {
     }
 }
 
+pub mod solana {
+    use clap::ValueEnum;
+    use serde::{Deserialize, Serialize};
+    use strum::{Display, EnumIter, EnumString};
+
+    #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+    pub enum Template {
+        #[strum(serialize = "Feature: Block Handler")]
+        FeatureBlockHandler,
+    }
+
+    #[derive(Clone, Debug, Display)]
+    pub enum InitFlow {
+        Template(Template),
+    }
+}
+
 #[derive(Clone, Debug, Display)]
 pub enum Ecosystem {
     Evm { init_flow: evm::InitFlow },
+    Solana { init_flow: solana::InitFlow },
     Fuel { init_flow: fuel::InitFlow },
 }
 
@@ -325,6 +350,7 @@ impl Ecosystem {
     pub fn uses_hypersync(&self) -> bool {
         match self {
             Self::Evm { init_flow } => init_flow.uses_hypersync(),
+            Self::Solana { .. } => false,
             Self::Fuel { .. } => true,
         }
     }

@@ -445,7 +445,7 @@ impl Network {
     }
 
     //TODO: research a sufficient threshold for all chain (some should be 0)
-    pub fn get_confirmed_block_threshold(&self) -> i32 {
+    pub fn get_max_reorg_depth(&self) -> i32 {
         match self {
             //Reorgs do not happen on these networks
             Network::ArbitrumTestnet
@@ -677,9 +677,9 @@ impl fmt::Display for NetworkWithExplorer {
     }
 }
 
-pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
+pub fn get_max_reorg_depth_from_id(id: u64) -> i32 {
     Network::from_network_id(id).map_or(DEFAULT_CONFIRMED_BLOCK_THRESHOLD, |n| {
-        n.get_confirmed_block_threshold()
+        n.get_max_reorg_depth()
     })
 }
 

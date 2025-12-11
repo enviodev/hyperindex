@@ -169,7 +169,8 @@ type eventItem = private {
 type blockEvent
 
 type onBlockArgs = {
-  block: blockEvent,
+  slot?: int,
+  block?: blockEvent,
   context: handlerContext,
 }
 

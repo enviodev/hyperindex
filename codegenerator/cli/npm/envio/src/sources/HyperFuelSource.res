@@ -15,7 +15,7 @@ type selectionConfig = {
   eventRouter: EventRouter.t<Internal.fuelEventConfig>,
 }
 
-let logDataReceiptTypeSelection: array<Fuel.receiptType> = [LogData]
+let logDataReceiptTypeSelection: array<FuelSDK.receiptType> = [LogData]
 
 // only transactions with status 1 (success)
 let txStatusSelection = [1]
@@ -114,10 +114,10 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let nonLogDataReceiptTypesByContract = Js.Dict.empty()
   let nonLogDataWildcardReceiptTypes = []
 
-  let addNonLogDataWildcardReceiptTypes = (receiptType: Fuel.receiptType) => {
+  let addNonLogDataWildcardReceiptTypes = (receiptType: FuelSDK.receiptType) => {
     nonLogDataWildcardReceiptTypes->Array.push(receiptType)->ignore
   }
-  let addNonLogDataReceiptType = (contractName, receiptType: Fuel.receiptType) => {
+  let addNonLogDataReceiptType = (contractName, receiptType: FuelSDK.receiptType) => {
     switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
     | None => nonLogDataReceiptTypesByContract->Js.Dict.set(contractName, [receiptType])
     | Some(receiptTypes) => receiptTypes->Array.push(receiptType)->ignore // Duplication prevented by EventRouter
@@ -220,7 +220,7 @@ let make = ({chain, endpointUrl}: options): t => {
     ~toBlock,
     ~addressesByContractName,
     ~indexingContracts,
-    ~currentBlockHeight,
+    ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
     ~retry,
@@ -246,7 +246,7 @@ let make = ({chain, endpointUrl}: options): t => {
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
             retry: switch error {
             | WrongInstance =>
               let backoffMillis = switch retry {
@@ -272,7 +272,7 @@ let make = ({chain, endpointUrl}: options): t => {
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
             retry: WithBackoff({
               message: `Unexpected issue while fetching events from HyperFuel client. Attempt a retry.`,
               backoffMillis: switch retry {
@@ -289,7 +289,7 @@ let make = ({chain, endpointUrl}: options): t => {
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     //set height and next from block
-    let currentBlockHeight = pageUnsafe.archiveHeight
+    let knownHeight = pageUnsafe.archiveHeight
 
     //The heighest (biggest) blocknumber that was accounted for in
     //Our query. Not necessarily the blocknumber of the last log returned
@@ -478,7 +478,7 @@ let make = ({chain, endpointUrl}: options): t => {
       parsedQueueItems,
       latestFetchedBlockNumber: rangeLastBlock.blockNumber,
       stats,
-      currentBlockHeight,
+      knownHeight,
       reorgGuard,
       fromBlockQueried: fromBlock,
     }

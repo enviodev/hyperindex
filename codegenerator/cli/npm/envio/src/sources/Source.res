@@ -11,7 +11,7 @@ type blockRangeFetchStats = {
 Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
-  currentBlockHeight: int,
+  knownHeight: int,
   reorgGuard: ReorgDetection.reorgGuard,
   parsedQueueItems: array<Internal.item>,
   fromBlockQueried: int,
@@ -50,7 +50,7 @@ type t = {
     ~toBlock: option<int>,
     ~addressesByContractName: dict<array<Address.t>>,
     ~indexingContracts: dict<Internal.indexingContract>,
-    ~currentBlockHeight: int,
+    ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
     ~retry: int,

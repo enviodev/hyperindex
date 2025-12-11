@@ -1,11 +1,11 @@
 use super::{
-    chain_helpers::get_confirmed_block_threshold_from_id,
+    chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{
         self,
         evm::{
-            EventConfig as EvmEventConfig, EventDecoder, For, HumanConfig as EvmConfig,
-            Network as EvmNetwork, NetworkRpc, Rpc,
+            Chain as EvmChain, EventConfig as EvmEventConfig, EventDecoder, For,
+            HumanConfig as EvmConfig, Rpc, RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -46,6 +46,7 @@ pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 pub enum Ecosystem {
     Evm,
     Fuel,
+    Solana,
 }
 
 // Allows to get an env var with a lazy loading of .env file
@@ -427,6 +428,7 @@ impl SystemConfig {
         match &self.human_config {
             HumanConfig::Evm(_) => Ecosystem::Evm,
             HumanConfig::Fuel(_) => Ecosystem::Fuel,
+            HumanConfig::Solana(_) => Ecosystem::Solana,
         }
     }
 
@@ -517,14 +519,11 @@ impl SystemConfig {
         let mut chains: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
+        let base_config = human_config.get_base_config();
+
         // Create a new ParsedProjectPaths that uses the output field from config if specified
         let final_project_paths = {
-            let output_path = match &human_config {
-                HumanConfig::Evm(evm_config) => evm_config.output.as_ref(),
-                HumanConfig::Fuel(fuel_config) => fuel_config.output.as_ref(),
-            };
-
-            match output_path {
+            match base_config.output.as_ref() {
                 Some(output) => {
                     // If output is specified, create a new ParsedProjectPaths with the custom output path
                     // The output path is relative to the config file location
@@ -591,7 +590,7 @@ impl SystemConfig {
                 }
 
                 for network in &evm_config.chains {
-                    for contract in network.contracts.clone() {
+                    for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
                             Some(l_contract) => {
@@ -654,6 +653,8 @@ impl SystemConfig {
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
+                        .as_ref()
+                        .unwrap_or(&vec![])
                         .iter()
                         .cloned()
                         .map(|c| NetworkContract {
@@ -665,9 +666,9 @@ impl SystemConfig {
 
                     let network = Network {
                         id: network.id,
-                        confirmed_block_threshold: network
-                            .confirmed_block_threshold
-                            .unwrap_or(get_confirmed_block_threshold_from_id(network.id)),
+                        max_reorg_depth: network
+                            .max_reorg_depth
+                            .unwrap_or(get_max_reorg_depth_from_id(network.id)),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         sync_source,
@@ -689,9 +690,9 @@ impl SystemConfig {
                 )?;
 
                 Ok(SystemConfig {
-                    name: evm_config.name.clone(),
+                    name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: evm_config
+                    schema_path: base_config
                         .schema
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
@@ -716,7 +717,7 @@ impl SystemConfig {
                             true
                         }
                     },
-                    handlers: evm_config.handlers.clone(),
+                    handlers: base_config.handlers.clone(),
                     human_config,
                 })
             }
@@ -748,7 +749,7 @@ impl SystemConfig {
                 }
 
                 for network in &fuel_config.chains {
-                    for contract in network.contracts.clone() {
+                    for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
                             Some(l_contract) => {
@@ -816,6 +817,8 @@ impl SystemConfig {
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
+                        .as_ref()
+                        .unwrap_or(&vec![])
                         .iter()
                         .cloned()
                         .map(|c| NetworkContract {
@@ -829,7 +832,7 @@ impl SystemConfig {
                         id: network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
-                        confirmed_block_threshold: 0,
+                        max_reorg_depth: 0,
                         sync_source,
                         contracts,
                     };
@@ -839,9 +842,9 @@ impl SystemConfig {
                 }
 
                 Ok(SystemConfig {
-                    name: fuel_config.name.clone(),
+                    name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: fuel_config
+                    schema_path: base_config
                         .schema
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
@@ -855,7 +858,48 @@ impl SystemConfig {
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
                     lowercase_addresses: false,
                     should_use_hypersync_client_decoder: true,
-                    handlers: fuel_config.handlers.clone(),
+                    handlers: base_config.handlers.clone(),
+                    human_config,
+                })
+            }
+            HumanConfig::Solana(ref solana_config) => {
+                for network in &solana_config.chains {
+                    let sync_source = DataSource::Solana {
+                        rpc: network.rpc.clone(),
+                    };
+
+                    let network = Network {
+                        id: 0, //network.id,
+                        start_block: network.start_block,
+                        end_block: network.end_block,
+                        max_reorg_depth: 0,
+                        sync_source,
+                        contracts: vec![],
+                    };
+
+                    unique_hashmap::try_insert(&mut chains, network.id, network)
+                        .context("Failed inserting network at chains map")?;
+                }
+
+                Ok(SystemConfig {
+                    name: solana_config.base.name.clone(),
+                    parsed_project_paths: final_project_paths,
+                    schema_path: solana_config
+                        .base
+                        .schema
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
+                    chains,
+                    contracts,
+                    multichain: human_config::evm::Multichain::Unordered,
+                    rollback_on_reorg: false,
+                    save_full_history: false,
+                    schema,
+                    field_selection: FieldSelection::fuel(),
+                    enable_raw_events: false,
+                    lowercase_addresses: false,
+                    should_use_hypersync_client_decoder: false,
+                    handlers: None,
                     human_config,
                 })
             }
@@ -886,6 +930,7 @@ impl SystemConfig {
         let ecosystem = match config_discriminant.ecosystem.as_deref() {
             Some("evm") => Ecosystem::Evm,
             Some("fuel") => Ecosystem::Fuel,
+            Some("solana") => Ecosystem::Solana,
             Some(ecosystem) => {
                 return Err(anyhow!(
                     "EE105: Failed to deserialize config. The ecosystem \"{}\" is not supported.",
@@ -903,7 +948,7 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &evm_config.schema)
+                let schema = Schema::parse_from_file(project_paths, &evm_config.base.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Evm(evm_config), schema, project_paths)
             }
@@ -914,9 +959,20 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &fuel_config.schema)
+                let schema = Schema::parse_from_file(project_paths, &fuel_config.base.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Fuel(fuel_config), schema, project_paths)
+            }
+            Ecosystem::Solana => {
+                let solana_config: human_config::solana::HumanConfig =
+                    serde_yaml::from_str(&human_config_string).context(format!(
+                        "EE105: Failed to deserialize config. Visit the docs for more information \
+                         {}",
+                        links::DOC_CONFIGURATION_FILE
+                    ))?;
+                let schema = Schema::parse_from_file(project_paths, &solana_config.base.schema)
+                    .context("Parsing schema file for config")?;
+                Self::from_human_config(HumanConfig::Solana(solana_config), schema, project_paths)
             }
         }
     }
@@ -942,6 +998,9 @@ pub enum DataSource {
     Fuel {
         hypersync_endpoint_url: ServerUrl,
     },
+    Solana {
+        rpc: ServerUrl,
+    },
 }
 
 // Check if the given URL is valid in terms of formatting
@@ -957,7 +1016,7 @@ fn parse_url(url: &str) -> Option<String> {
 
 impl DataSource {
     fn from_evm_network_config(
-        network: EvmNetwork,
+        network: EvmChain,
         event_decoder: Option<EventDecoder>,
     ) -> Result<Self> {
         let is_client_decoder = match event_decoder {
@@ -970,7 +1029,7 @@ impl DataSource {
         };
         let raw_rpcs = match (network.rpc_config, network.rpc) {
             (Some(_), Some(_)) => Err(anyhow!("EE106: Cannot define both rpc and deprecated rpc_config for the same network, please only use the rpc option. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
-            (None, Some(NetworkRpc::Url(url))) => vec![Rpc {
+            (None, Some(RpcSelection::Url(url))) => vec![Rpc {
                 url: url.to_string(),
                 source_for: match hypersync_endpoint_url {
                   Some(_) => For::Fallback,
@@ -978,8 +1037,8 @@ impl DataSource {
                 },
                 sync_config: None,
             }],
-            (None, Some(NetworkRpc::Single(rpc))) => vec![rpc],
-            (None, Some(NetworkRpc::List(list))) => list,
+            (None, Some(RpcSelection::Single(rpc))) => vec![rpc],
+            (None, Some(RpcSelection::List(list))) => list,
             (Some(rpc_config), None) => {
               let urls: Vec<String> = rpc_config.url.into();
               urls
@@ -1054,7 +1113,7 @@ pub struct Network {
     pub sync_source: DataSource,
     pub start_block: u64,
     pub end_block: Option<u64>,
-    pub confirmed_block_threshold: i32,
+    pub max_reorg_depth: i32,
     pub contracts: Vec<NetworkContract>,
 }
 
@@ -1677,7 +1736,7 @@ mod test {
     use super::SystemConfig;
     use crate::{
         config_parsing::{
-            human_config::evm::HumanConfig as EvmConfig,
+            human_config::{evm::HumanConfig as EvmConfig, BaseConfig},
             system_config::{DataSource, Event, MainEvmDataSource},
         },
         project_paths::ParsedProjectPaths,
@@ -1982,9 +2041,9 @@ mod test {
 
     #[test]
     fn test_hypersync_url_trailing_slash_trimming() {
-        use crate::config_parsing::human_config::evm::{HypersyncConfig, Network as EvmNetwork};
+        use crate::config_parsing::human_config::evm::{Chain as EvmChain, HypersyncConfig};
 
-        let network = EvmNetwork {
+        let network = EvmChain {
             id: 1,
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
@@ -1993,8 +2052,8 @@ mod test {
             rpc: None,
             start_block: 0,
             end_block: None,
-            confirmed_block_threshold: None,
-            contracts: vec![],
+            max_reorg_depth: None,
+            contracts: None,
         };
 
         let sync_source = DataSource::from_evm_network_config(network, None).unwrap();
@@ -2050,28 +2109,32 @@ mod test {
     #[test]
     fn test_output_configuration() {
         use crate::config_parsing::human_config::{
-            evm::{HumanConfig as EvmConfig, Network as EvmNetwork},
+            evm::{Chain as EvmChain, HumanConfig as EvmConfig},
             HumanConfig,
         };
         use crate::project_paths::ParsedProjectPaths;
 
         // Test with default output (no output field specified)
         let evm_config = EvmConfig {
-            name: "Test Project".to_string(),
-            description: None,
+            base: BaseConfig {
+                name: "Test Project".to_string(),
+                description: None,
+                schema: None,
+                output: None,
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: None,
-            schema: None,
-            output: None,
             contracts: None,
-            chains: vec![EvmNetwork {
+            chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,
                 start_block: 0,
                 end_block: None,
-                confirmed_block_threshold: None,
-                contracts: vec![],
+                max_reorg_depth: None,
+                contracts: None,
             }],
             multichain: None,
             event_decoder: None,
@@ -2080,7 +2143,6 @@ mod test {
             field_selection: None,
             raw_events: None,
             address_format: None,
-            handlers: None,
         };
 
         let project_paths = ParsedProjectPaths::new(".", "generated", "config.yaml").unwrap();
@@ -2104,21 +2166,25 @@ mod test {
 
         // Test with custom output path
         let evm_config_with_output = EvmConfig {
-            name: "Test Project".to_string(),
-            description: None,
+            base: BaseConfig {
+                name: "Test Project".to_string(),
+                description: None,
+                schema: None,
+                output: Some("custom/output".to_string()),
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: None,
-            schema: None,
-            output: Some("custom/output".to_string()),
             contracts: None,
-            chains: vec![EvmNetwork {
+            chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,
                 start_block: 0,
                 end_block: None,
-                confirmed_block_threshold: None,
-                contracts: vec![],
+                max_reorg_depth: None,
+                contracts: None,
             }],
             multichain: None,
             event_decoder: None,
@@ -2127,7 +2193,6 @@ mod test {
             field_selection: None,
             raw_events: None,
             address_format: None,
-            handlers: None,
         };
 
         let system_config_with_output = SystemConfig::from_human_config(

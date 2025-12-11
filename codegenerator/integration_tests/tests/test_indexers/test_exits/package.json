@@ -3,14 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "clean": "tsc --clean",
-    "build": "tsc --build",
-    "watch": "tsc --watch",
     "codegen": "envio codegen",
     "start": "envio start"
   },
   "devDependencies": {
-    "@types/node": "^18.16.1",
+    "@types/node": "^24.10.1",
     "typescript": "5.9.3"
   },
   "dependencies": {

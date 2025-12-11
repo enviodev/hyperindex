@@ -112,12 +112,12 @@ type action =
   | SubmitPartitionQueryResponse({
       newItems: array<Internal.item>,
       newItemsWithDcs: array<Internal.item>,
-      currentBlockHeight: int,
+      knownHeight: int,
       latestFetchedBlock: FetchState.blockNumberAndTimestamp,
       query: FetchState.query,
       chain: chain,
     })
-  | FinishWaitingForNewBlock({chain: chain, currentBlockHeight: int})
+  | FinishWaitingForNewBlock({chain: chain, knownHeight: int})
   | EventBatchProcessed({batch: Batch.t})
   | StartProcessingBatch
   | StartFindingReorgDepth
@@ -146,22 +146,6 @@ type task =
   | Rollback
   | PruneStaleEntityHistory
 
-let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~currentBlockHeight) => {
-  if currentBlockHeight > chainFetcher.currentBlockHeight {
-    Prometheus.setSourceChainHeight(
-      ~blockNumber=currentBlockHeight,
-      ~chainId=chainFetcher.chainConfig.id,
-    )
-
-    {
-      ...chainFetcher,
-      currentBlockHeight,
-    }
-  } else {
-    chainFetcher
-  }
-}
-
 let updateChainMetadataTable = (
   cm: ChainManager.t,
   ~persistence: Persistence.t,
@@ -175,7 +159,7 @@ let updateChainMetadataTable = (
     chainsData->Js.Dict.set(
       cf.chainConfig.id->Belt.Int.toString,
       {
-        blockHeight: cf.currentBlockHeight,
+        blockHeight: cf.fetchState.knownHeight,
         firstEventBlockNumber: cf.firstEventBlockNumber->Js.Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
@@ -257,7 +241,7 @@ let updateProgressedChains = (
           | Some(safeCheckpointTracking) =>
             Some(
               safeCheckpointTracking->SafeCheckpointTracking.updateOnNewBatch(
-                ~sourceBlockNumber=cf.currentBlockHeight,
+                ~sourceBlockNumber=cf.fetchState.knownHeight,
                 ~chainId=chain->ChainMap.Chain.toChainId,
                 ~batchCheckpointIds=batch.checkpointIds,
                 ~batchCheckpointBlockNumbers=batch.checkpointBlockNumbers,
@@ -360,16 +344,16 @@ let validatePartitionQueryResponse = (
     parsedQueueItems,
     latestFetchedBlockNumber,
     stats,
-    currentBlockHeight,
+    knownHeight,
     reorgGuard,
     fromBlockQueried,
   } = response
 
-  if currentBlockHeight > chainFetcher.currentBlockHeight {
+  if knownHeight > chainFetcher.fetchState.knownHeight {
     Prometheus.SourceHeight.set(
-      ~blockNumber=currentBlockHeight,
+      ~blockNumber=knownHeight,
       ~chainId=chainFetcher.chainConfig.id,
-      // The currentBlockHeight from response won't necessarily
+      // The knownHeight from response won't necessarily
       // belong to the currently active source.
       // But for simplicity, assume it does.
       ~sourceName=(chainFetcher.sourceManager->SourceManager.getActiveSource).name,
@@ -395,7 +379,7 @@ let validatePartitionQueryResponse = (
   }
 
   let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
-    chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~reorgGuard, ~currentBlockHeight)
+    chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~reorgGuard, ~knownHeight)
 
   let updatedChainFetcher = {
     ...chainFetcher,
@@ -473,7 +457,7 @@ let submitPartitionQueryResponse = (
   state,
   ~newItems,
   ~newItemsWithDcs,
-  ~currentBlockHeight,
+  ~knownHeight,
   ~latestFetchedBlock,
   ~query,
   ~chain,
@@ -482,9 +466,14 @@ let submitPartitionQueryResponse = (
 
   let updatedChainFetcher =
     chainFetcher
-    ->ChainFetcher.handleQueryResult(~query, ~latestFetchedBlock, ~newItems, ~newItemsWithDcs)
+    ->ChainFetcher.handleQueryResult(
+      ~query,
+      ~latestFetchedBlock,
+      ~newItems,
+      ~newItemsWithDcs,
+      ~knownHeight,
+    )
     ->Utils.unwrapResultExn
-    ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
   let updatedChainFetcher = {
     ...updatedChainFetcher,
@@ -517,7 +506,7 @@ let processPartitionQueryResponse = async (
   let {
     parsedQueueItems,
     latestFetchedBlockNumber,
-    currentBlockHeight,
+    knownHeight,
     latestFetchedBlockTimestamp,
   } = response
 
@@ -550,7 +539,7 @@ let processPartitionQueryResponse = async (
     SubmitPartitionQueryResponse({
       newItems,
       newItemsWithDcs,
-      currentBlockHeight,
+      knownHeight,
       latestFetchedBlock: {
         blockNumber: latestFetchedBlockNumber,
         blockTimestamp: latestFetchedBlockTimestamp,
@@ -599,31 +588,46 @@ let onEnterReorgThreshold = (~state: t) => {
 
 let actionReducer = (state: t, action: action) => {
   switch action {
-  | FinishWaitingForNewBlock({chain, currentBlockHeight}) => {
+  | FinishWaitingForNewBlock({chain, knownHeight}) => {
+      let updatedChainFetchers = state.chainManager.chainFetchers->ChainMap.update(
+        chain,
+        chainFetcher => {
+          let updatedFetchState =
+            chainFetcher.fetchState->FetchState.updateKnownHeight(~knownHeight)
+          if updatedFetchState !== chainFetcher.fetchState {
+            {
+              ...chainFetcher,
+              fetchState: updatedFetchState,
+            }
+          } else {
+            chainFetcher
+          }
+        },
+      )
+
       let isBelowReorgThreshold =
         !state.chainManager.isInReorgThreshold && state.indexer.config.shouldRollbackOnReorg
       let shouldEnterReorgThreshold =
         isBelowReorgThreshold &&
-        state.chainManager.chainFetchers
+        updatedChainFetchers
         ->ChainMap.values
         ->Array.every(chainFetcher => {
-          chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold(~currentBlockHeight)
+          chainFetcher.fetchState->FetchState.isReadyToEnterReorgThreshold
         })
 
       let state = {
         ...state,
         chainManager: {
           ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
-            chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
-          }),
+          chainFetchers: updatedChainFetchers,
         },
       }
 
+      // Attempt ProcessEventBatch in case if we have block handlers to run
       if shouldEnterReorgThreshold {
-        (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains)])
+        (onEnterReorgThreshold(~state), [NextQuery(CheckAllChains), ProcessEventBatch])
       } else {
-        (state, [NextQuery(Chain(chain))])
+        (state, [NextQuery(Chain(chain)), ProcessEventBatch])
       }
     }
   | ValidatePartitionQueryResponse(partitionQueryResponse) =>
@@ -631,7 +635,7 @@ let actionReducer = (state: t, action: action) => {
   | SubmitPartitionQueryResponse({
       newItems,
       newItemsWithDcs,
-      currentBlockHeight,
+      knownHeight,
       latestFetchedBlock,
       query,
       chain,
@@ -639,7 +643,7 @@ let actionReducer = (state: t, action: action) => {
     state->submitPartitionQueryResponse(
       ~newItems,
       ~newItemsWithDcs,
-      ~currentBlockHeight,
+      ~knownHeight,
       ~latestFetchedBlock,
       ~query,
       ~chain,
@@ -781,18 +785,19 @@ let checkAndFetchForChain = (
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isPreparingRollback(state) {
-    let {currentBlockHeight, fetchState} = chainFetcher
+    let {fetchState} = chainFetcher
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
-      ~waitForNewBlock=(~currentBlockHeight) =>
-        chainFetcher.sourceManager->waitForNewBlock(~currentBlockHeight),
-      ~onNewBlock=(~currentBlockHeight) =>
-        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
-      ~currentBlockHeight,
+      ~waitForNewBlock=(~knownHeight) => chainFetcher.sourceManager->waitForNewBlock(~knownHeight),
+      ~onNewBlock=(~knownHeight) => dispatchAction(FinishWaitingForNewBlock({chain, knownHeight})),
       ~executeQuery=async query => {
         try {
-          let response = await chainFetcher.sourceManager->executeQuery(~query, ~currentBlockHeight)
+          let response =
+            await chainFetcher.sourceManager->executeQuery(
+              ~query,
+              ~knownHeight=fetchState.knownHeight,
+            )
           dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
         } catch {
         | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
@@ -824,13 +829,13 @@ let injectedTaskReducer = (
       | Some(safeCheckpointId) =>
         await state.indexer.persistence.storage.pruneStaleCheckpoints(~safeCheckpointId)
 
-        for idx in 0 to Entities.allEntities->Array.length - 1 {
+        for idx in 0 to state.indexer.persistence.allEntities->Array.length - 1 {
           if idx !== 0 {
             // Add some delay between entities
             // To unblock the pg client if it's needed for something else
             await Utils.delay(1000)
           }
-          let entityConfig = Entities.allEntities->Array.getUnsafe(idx)
+          let entityConfig = state.indexer.persistence.allEntities->Array.getUnsafe(idx)
           let timeRef = Hrtime.makeTimer()
           try {
             let () = await state.indexer.persistence.storage.pruneStaleEntityHistory(
@@ -929,9 +934,7 @@ let injectedTaskReducer = (
           | Some(chainAfterBatch) => chainAfterBatch.fetchState
           | None => chainFetcher.fetchState
           }
-          fetchState->FetchState.isReadyToEnterReorgThreshold(
-            ~currentBlockHeight=chainFetcher.currentBlockHeight,
-          )
+          fetchState->FetchState.isReadyToEnterReorgThreshold
         })
 
       if shouldEnterReorgThreshold {
@@ -955,7 +958,7 @@ let injectedTaskReducer = (
 
         let inMemoryStore =
           rollbackInMemStore->Option.getWithDefault(
-            InMemoryStore.make(~entities=Entities.allEntities),
+            InMemoryStore.make(~entities=state.indexer.persistence.allEntities),
           )
 
         inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)

@@ -364,6 +364,16 @@ describe("E2E rollback tests", () => {
 
     Assert.deepEqual(
       sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+      None,
+      ~message="Shouldn't immediately enter reorg threshold, since we need to wait for another chain",
+    )
+
+    sourceMock100.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
       Some({
         "fromBlock": 111,
         "toBlock": None,
@@ -372,11 +382,7 @@ describe("E2E rollback tests", () => {
       ~message="Should enter reorg threshold for the second time and request now to the latest block",
     )
 
-    sourceMock1337.resolveGetItemsOrThrow(
-      [],
-      ~latestFetchedBlockNumber=200,
-      ~currentBlockHeight=320,
-    )
+    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
 
     await indexerMock.getBatchWritePromise()
 
@@ -387,7 +393,7 @@ describe("E2E rollback tests", () => {
         "toBlock": None,
         "retry": 0,
       }),
-      ~message="Should enter reorg threshold for the second time and request now to the latest block",
+      ~message="Continue normally inside of the reorg threshold",
     )
 
     Assert.deepEqual(

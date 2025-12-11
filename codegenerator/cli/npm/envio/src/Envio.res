@@ -2,18 +2,14 @@
 // Should be an entry point after we get rid of the generated project.
 // Don't forget to keep index.d.ts in sync with this file.
 
-// EVM block event with 'number' field for backward compatibility
 @genType
-type blockEvent = {
-  number: int,
-}
+type blockEvent = {number: int}
 
-// Fuel block event with 'height' field
 @genType
-type fuelBlockEvent = {
-  height: int,
-  chainId: int,
-}
+type fuelBlockEvent = {height: int}
+
+@genType
+type solanaOnBlockArgs<'context> = {slot: int, context: 'context}
 
 @genType
 type onBlockArgs<'block, 'context> = {
@@ -28,6 +24,13 @@ type onBlockOptions<'chain> = {
   interval?: int,
   startBlock?: int,
   endBlock?: int,
+}
+
+@genType
+type whereOperations<'entity, 'fieldType> = {
+  eq: 'fieldType => promise<array<'entity>>,
+  gt: 'fieldType => promise<array<'entity>>,
+  lt: 'fieldType => promise<array<'entity>>,
 }
 
 @genType.import(("./Types.ts", "Logger"))

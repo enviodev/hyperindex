@@ -127,7 +127,7 @@ pub fn validate_names_valid_rescript(
     Ok(())
 }
 
-impl human_config::evm::Network {
+impl human_config::evm::Chain {
     pub fn validate_finite_endblock_networks(
         &self,
         human_config: &human_config::evm::HumanConfig,
@@ -187,7 +187,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         chain.validate_endblock_lte_startblock()?;
         chain.validate_finite_endblock_networks(evm_config)?;
 
-        for contract in &chain.contracts {
+        for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
             if contract.config.as_ref().is_some() {
                 contract_names.push(contract.name.clone());
             }

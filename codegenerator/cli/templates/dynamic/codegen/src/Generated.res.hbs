@@ -81,7 +81,7 @@ let makeGeneratedConfig = () => {
       ]
       let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
       {
-        Config.maxReorgDepth: {{chain_config.network_config.confirmed_block_threshold}},
+        Config.maxReorgDepth: {{chain_config.network_config.max_reorg_depth}},
         startBlock: {{chain_config.network_config.start_block}},
         {{#if chain_config.network_config.end_block}}
         endBlock: {{chain_config.network_config.end_block}},
@@ -104,12 +104,16 @@ let makeGeneratedConfig = () => {
     },
     ~chains,
     ~enableRawEvents={{enable_raw_events}},
-    ~batchSize=?Env.batchSize,
+    ~batchSize=?{{full_batch_size_code}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     {{#if is_fuel_ecosystem}}
     ~ecosystem=Fuel,
     {{/if}}
+    {{#if is_solana_ecosystem}}
+    ~ecosystem=Solana,
+    {{/if}}
+    ~userEntities=Entities.userEntities,
   )
 }
 

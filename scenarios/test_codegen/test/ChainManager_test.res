@@ -32,6 +32,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~startBlock=0,
       ~targetBufferSize=5000,
       ~chainId=1,
+      ~knownHeight=0,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -115,7 +116,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ),
       safeCheckpointTracking: None,
       isProgressAtHead: false,
-      currentBlockHeight: 0,
     }
 
     mockChainFetcher

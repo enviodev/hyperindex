@@ -13,19 +13,18 @@ let getActiveSource: t => Source.t
 let fetchNext: (
   t,
   ~fetchState: FetchState.t,
-  ~currentBlockHeight: int,
   ~executeQuery: FetchState.query => promise<unit>,
-  ~waitForNewBlock: (~currentBlockHeight: int) => promise<int>,
-  ~onNewBlock: (~currentBlockHeight: int) => unit,
+  ~waitForNewBlock: (~knownHeight: int) => promise<int>,
+  ~onNewBlock: (~knownHeight: int) => unit,
   ~stateId: int,
 ) => promise<unit>
 
-let waitForNewBlock: (t, ~currentBlockHeight: int) => promise<int>
+let waitForNewBlock: (t, ~knownHeight: int) => promise<int>
 
 let executeQuery: (
   t,
   ~query: FetchState.query,
-  ~currentBlockHeight: int,
+  ~knownHeight: int,
 ) => promise<Source.blockRangeFetchResponse>
 
 let makeGetHeightRetryInterval: (

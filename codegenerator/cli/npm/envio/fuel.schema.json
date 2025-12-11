@@ -15,10 +15,6 @@
       "description": "Name of the project",
       "type": "string"
     },
-    "ecosystem": {
-      "description": "Ecosystem of the project.",
-      "$ref": "#/$defs/EcosystemTag"
-    },
     "schema": {
       "description": "Custom path to schema.graphql file",
       "type": [
@@ -32,6 +28,26 @@
         "string",
         "null"
       ]
+    },
+    "handlers": {
+      "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "full_batch_size": {
+      "description": "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ecosystem": {
+      "description": "Ecosystem of the project.",
+      "$ref": "#/$defs/EcosystemTag"
     },
     "contracts": {
       "description": "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains.",
@@ -47,20 +63,13 @@
       "description": "Configuration of the blockchain chains that the project is deployed on.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/Network"
+        "$ref": "#/$defs/Chain"
       }
     },
     "raw_events": {
       "description": "If true, the indexer will store the raw event data in the database. This is useful for debugging, but will increase the size of the database and the amount of time it takes to process events (default: false)",
       "type": [
         "boolean",
-        "null"
-      ]
-    },
-    "handlers": {
-      "description": "Optional relative path to handlers directory for auto-loading. Defaults to 'src/handlers' if not specified.",
-      "type": [
-        "string",
         "null"
       ]
     }
@@ -152,11 +161,11 @@
         "call"
       ]
     },
-    "Network": {
+    "Chain": {
       "type": "object",
       "properties": {
         "id": {
-          "description": "Public chain/network id",
+          "description": "Public chain id",
           "type": "integer",
           "format": "uint64",
           "minimum": 0
@@ -188,18 +197,20 @@
           ]
         },
         "contracts": {
-          "description": "All the contracts that should be indexed on the given network",
-          "type": "array",
+          "description": "All the contracts that should be indexed on the given chain",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
-            "$ref": "#/$defs/NetworkContract_for_ContractConfig"
+            "$ref": "#/$defs/ChainContract_for_ContractConfig"
           }
         }
       },
       "additionalProperties": false,
       "required": [
         "id",
-        "start_block",
-        "contracts"
+        "start_block"
       ]
     },
     "HyperfuelConfig": {
@@ -215,7 +226,7 @@
         "url"
       ]
     },
-    "NetworkContract_for_ContractConfig": {
+    "ChainContract_for_ContractConfig": {
       "type": "object",
       "properties": {
         "name": {
@@ -227,7 +238,7 @@
           "$ref": "#/$defs/Addresses"
         },
         "start_block": {
-          "description": "The block at which the indexer should start ingesting data for this specific contract. If not specified, uses the network start_block. Can be greater than the network start_block for more specific indexing.",
+          "description": "The block at which the indexer should start ingesting data for this specific contract. If not specified, uses the chain start_block. Can be greater than the chain start_block for more specific indexing.",
           "type": [
             "integer",
             "null"

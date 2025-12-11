@@ -245,7 +245,7 @@ module Indexer = {
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
-  type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
+  type chainConfig = {chain: Types.chainId, sources: array<Source.t>, startBlock?: int}
 
   let rec make = async (
     ~chains: array<chainConfig>,
@@ -487,7 +487,7 @@ module Source = {
       array<itemMock>,
       ~latestFetchedBlockNumber: int=?,
       ~latestFetchedBlockHash: string=?,
-      ~currentBlockHeight: int=?,
+      ~knownHeight: int=?,
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
     rejectGetItemsOrThrow: 'exn. 'exn => unit,
@@ -495,7 +495,7 @@ module Source = {
     resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
   }
 
-  let make = (methods, ~chain=#1: Types.chain, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
+  let make = (methods, ~chain=#1: Types.chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
     let implement = (method: method, fn) => {
       if methods->Js.Array2.includes(method) {
         fn
@@ -529,7 +529,7 @@ module Source = {
         items,
         ~latestFetchedBlockNumber=?,
         ~latestFetchedBlockHash=?,
-        ~currentBlockHeight=?,
+        ~knownHeight=?,
         ~prevRangeLastBlock=?,
       ) => {
         if getItemsOrThrowResolveFns->Utils.Array.isEmpty {
@@ -541,7 +541,7 @@ module Source = {
             "latestFetchedBlockNumber": latestFetchedBlockNumber,
             "latestFetchedBlockHash": latestFetchedBlockHash,
             "prevRangeLastBlock": prevRangeLastBlock,
-            "currentBlockHeight": currentBlockHeight,
+            "knownHeight": knownHeight,
           })
         )
         getItemsOrThrowResolveFns->Utils.Array.clearInPlace
@@ -582,7 +582,7 @@ module Source = {
             ~toBlock,
             ~addressesByContractName as _,
             ~indexingContracts as _,
-            ~currentBlockHeight,
+            ~knownHeight,
             ~partitionId as _,
             ~selection as _,
             ~retry,
@@ -605,9 +605,7 @@ module Source = {
                     )
 
                   resolve({
-                    Source.currentBlockHeight: data["currentBlockHeight"]->Option.getWithDefault(
-                      currentBlockHeight,
-                    ),
+                    Source.knownHeight: data["knownHeight"]->Option.getWithDefault(knownHeight),
                     reorgGuard: {
                       rangeLastBlock: {
                         blockNumber: latestFetchedBlockNumber,

@@ -51,6 +51,7 @@ type t = {
   batchSize: int,
   lowercaseAddresses: bool,
   addContractNameToContractNameMapping: dict<string>,
+  userEntitiesByName: dict<Internal.entityConfig>,
 }
 
 let make = (
@@ -64,6 +65,7 @@ let make = (
   ~multichain=Unordered,
   ~shouldUseHypersyncClientDecoder=true,
   ~maxAddrInPartition=5000,
+  ~userEntities: array<Internal.entityConfig>=[],
 ) => {
   // Validate that lowercase addresses is not used with viem decoder
   if lowercaseAddresses && !shouldUseHypersyncClientDecoder {
@@ -88,7 +90,18 @@ let make = (
     })
   })
 
-  let ecosystem = Ecosystem.fromName(ecosystem)
+  let ecosystem = switch ecosystem {
+  | Ecosystem.Evm => Evm.ecosystem
+  | Ecosystem.Fuel => Fuel.ecosystem
+  | Ecosystem.Solana => Solana.ecosystem
+  }
+
+  let userEntitiesByName =
+    userEntities
+    ->Js.Array2.map(entityConfig => {
+      (entityConfig.name, entityConfig)
+    })
+    ->Js.Dict.fromArray
 
   {
     shouldRollbackOnReorg,
@@ -102,6 +115,7 @@ let make = (
     batchSize,
     lowercaseAddresses,
     addContractNameToContractNameMapping,
+    userEntitiesByName,
   }
 }
 

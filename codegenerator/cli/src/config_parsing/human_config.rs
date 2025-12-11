@@ -56,7 +56,38 @@ impl JsonSchema for Addresses {
     }
 }
 
-type NetworkId = u64;
+type ChainId = u64;
+
+/// Base configuration fields shared across all ecosystems
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+pub struct BaseConfig {
+    #[schemars(description = "Name of the project")]
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Description of the project")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Custom path to schema.graphql file")]
+    pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Path where the generated directory will be placed. By default it's \
+                       'generated' relative to the current working directory. If set, it'll \
+                       be a path relative to the config file location."
+    )]
+    pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Optional relative path to handlers directory for auto-loading. Defaults \
+                   to 'src/handlers' if not specified."
+    )]
+    pub handlers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
+    )]
+    pub full_batch_size: Option<u64>,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -69,7 +100,7 @@ pub struct GlobalContract<T> {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct NetworkContract<T> {
+pub struct ChainContract<T> {
     #[schemars(
         description = "A unique project-wide name for this contract if events and handler are \
                        defined OR a reference to the name of contract defined globally at the top \
@@ -85,8 +116,8 @@ pub struct NetworkContract<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "The block at which the indexer should start ingesting data for this \
-                       specific contract. If not specified, uses the network start_block. Can be \
-                       greater than the network start_block for more specific indexing."
+                       specific contract. If not specified, uses the chain start_block. Can be \
+                       greater than the chain start_block for more specific indexing."
     )]
     pub start_block: Option<u64>,
     #[serde(flatten)]
@@ -104,6 +135,17 @@ pub struct ConfigDiscriminant {
 pub enum HumanConfig {
     Evm(evm::HumanConfig),
     Fuel(fuel::HumanConfig),
+    Solana(solana::HumanConfig),
+}
+
+impl HumanConfig {
+    pub fn get_base_config(&self) -> &BaseConfig {
+        match &self {
+            HumanConfig::Evm(human_config) => &human_config.base,
+            HumanConfig::Fuel(human_config) => &human_config.base,
+            HumanConfig::Solana(human_config) => &human_config.base,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -114,14 +156,15 @@ impl Display for HumanConfig {
             match self {
                 HumanConfig::Evm(config) => config.to_string(),
                 HumanConfig::Fuel(config) => config.to_string(),
+                HumanConfig::Solana(config) => config.to_string(),
             }
         )
     }
 }
 
 pub mod evm {
-    use super::{GlobalContract, NetworkContract, NetworkId};
-    use crate::utils::normalized_list::SingleOrList;
+    use super::{ChainContract, ChainId, GlobalContract};
+    use crate::{config_parsing::human_config::BaseConfig, utils::normalized_list::SingleOrList};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -135,24 +178,11 @@ pub mod evm {
     )]
     #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
-        #[schemars(description = "Name of the project")]
-        pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Description of the project")]
-        pub description: Option<String>,
+        #[serde(flatten)]
+        pub base: BaseConfig,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: Option<EcosystemTag>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to schema.graphql file")]
-        pub schema: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Path where the generated directory will be placed. By default it's \
-                           'generated' relative to the current working directory. If set, it'll \
-                           be a path relative to the config file location."
-        )]
-        pub output: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Global contract definitions that must contain all definitions except \
@@ -163,7 +193,7 @@ pub mod evm {
         #[schemars(
             description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub chains: Vec<Network>,
+        pub chains: Vec<Chain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Multichain mode: 'ordered' processes events across chains in order, \
@@ -209,12 +239,6 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to handlers directory for auto-loading. Defaults \
-                       to 'src/handlers' if not specified."
-        )]
-        pub handlers: Option<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -463,7 +487,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
-    pub enum NetworkRpc {
+    pub enum RpcSelection {
         Url(String),
         Single(Rpc),
         List(Vec<Rpc>),
@@ -471,12 +495,12 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Network {
-        #[schemars(description = "The public blockchain network ID.")]
-        pub id: NetworkId,
+    pub struct Chain {
+        #[schemars(description = "The public blockchain chain ID.")]
+        pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "RPC configuration for utilizing as the network's data-source. \
+            description = "RPC configuration for utilizing as the chain's data-source. \
                            Typically optional for chains with HyperSync support, which is highly \
                            recommended. HyperSync dramatically enhances performance, providing up \
                            to a 1000x speed boost over traditional RPC."
@@ -484,11 +508,11 @@ pub mod evm {
         pub rpc_config: Option<RpcConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
-                                  otherwise, for networks supported by HyperSync, RPC serves as \
+                                  otherwise, for chains supported by HyperSync, RPC serves as \
                                   a fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
                                   improvements, up to a 1000x faster than traditional RPC.")]
-        pub rpc: Option<NetworkRpc>,
+        pub rpc: Option<RpcSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
         pub hypersync_config: Option<HypersyncConfig>,
@@ -497,14 +521,15 @@ pub mod evm {
             description = "The number of blocks from the head that the indexer should account for \
                            in case of reorgs."
         )]
-        pub confirmed_block_threshold: Option<i32>,
+        pub max_reorg_depth: Option<i32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
-        #[schemars(description = "All the contracts that should be indexed on the given network")]
-        pub contracts: Vec<NetworkContract<ContractConfig>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "All the contracts that should be indexed on the given chain")]
+        pub contracts: Option<Vec<ChainContract<ContractConfig>>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -554,7 +579,9 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use super::{GlobalContract, NetworkContract, NetworkId};
+    use crate::config_parsing::human_config::BaseConfig;
+
+    use super::{ChainContract, ChainId, GlobalContract};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use strum::Display;
@@ -566,23 +593,10 @@ pub mod fuel {
     )]
     #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
-        #[schemars(description = "Name of the project")]
-        pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Description of the project")]
-        pub description: Option<String>,
+        #[serde(flatten)]
+        pub base: BaseConfig,
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to schema.graphql file")]
-        pub schema: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Path where the generated directory will be placed. By default it's \
-                           'generated' relative to the current working directory. If set, it'll \
-                           be a path relative to the config file location."
-        )]
-        pub output: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Global contract definitions that must contain all definitions except \
@@ -593,7 +607,7 @@ pub mod fuel {
         #[schemars(
             description = "Configuration of the blockchain chains that the project is deployed on."
         )]
-        pub chains: Vec<Network>,
+        pub chains: Vec<Chain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "If true, the indexer will store the raw event data in the database. \
@@ -602,12 +616,6 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to handlers directory for auto-loading. Defaults \
-                           to 'src/handlers' if not specified."
-        )]
-        pub handlers: Option<String>,
     }
 
     impl Display for HumanConfig {
@@ -639,9 +647,9 @@ pub mod fuel {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Network {
-        #[schemars(description = "Public chain/network id")]
-        pub id: NetworkId,
+    pub struct Chain {
+        #[schemars(description = "Public chain id")]
+        pub id: ChainId,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -650,8 +658,9 @@ pub mod fuel {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperFuel Config for additional fine-tuning")]
         pub hyperfuel_config: Option<HyperfuelConfig>,
-        #[schemars(description = "All the contracts that should be indexed on the given network")]
-        pub contracts: Vec<NetworkContract<ContractConfig>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "All the contracts that should be indexed on the given chain")]
+        pub contracts: Option<Vec<ChainContract<ContractConfig>>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -702,13 +711,78 @@ pub mod fuel {
     }
 }
 
+pub mod solana {
+    use std::fmt::Display;
+
+    use super::BaseConfig;
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Chain {
+        // #[schemars(
+        //     description = "The cluster's genesis hash used to identify the Solana blockchain."
+        // )]
+        // pub id: String,
+        #[schemars(
+            description = "RPC endpoint URL for connecting to the Solana cluster to fetch blockchain data."
+        )]
+        pub rpc: String,
+        #[schemars(
+            description = "The slot number at which the indexer should start ingesting data"
+        )]
+        pub start_block: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "The slot number at which the indexer should terminate.")]
+        pub end_block: Option<u64>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[schemars(
+        title = "Envio Solana Config Schema",
+        description = "Schema for a YAML config for an envio Solana indexer"
+    )]
+    #[serde(deny_unknown_fields)]
+    pub struct HumanConfig {
+        #[serde(flatten)]
+        pub base: BaseConfig,
+        #[schemars(description = "Ecosystem of the project.")]
+        pub ecosystem: EcosystemTag,
+        #[schemars(
+            description = "Configuration of the blockchain chains that the project is deployed on."
+        )]
+        pub chains: Vec<Chain>,
+    }
+
+    impl Display for HumanConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "# yaml-language-server: $schema=./node_modules/envio/solana.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
+            )
+        }
+    }
+
+    // Workaround for https://github.com/serde-rs/serde/issues/2231
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
+    pub enum EcosystemTag {
+        Solana,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        evm::{ContractConfig, EventDecoder, HumanConfig, Network},
-        NetworkContract,
+        evm::{Chain, ContractConfig, EventDecoder, HumanConfig},
+        ChainContract,
     };
-    use crate::{config_parsing::human_config::fuel, utils::normalized_list::NormalizedList};
+    use crate::{
+        config_parsing::human_config::{fuel, BaseConfig},
+        utils::normalized_list::NormalizedList,
+    };
     use pretty_assertions::assert_eq;
     use schemars::{schema_for, Schema};
     use serde_json::json;
@@ -745,6 +819,21 @@ mod tests {
     }
 
     #[test]
+    fn test_solana_config_schema() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/solana.schema.json");
+        let npm_schema: Schema =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+
+        let actual_schema = schema_for!(super::solana::HumanConfig);
+
+        assert_eq!(
+            npm_schema, actual_schema,
+            "Please run 'make update-generated-docs'"
+        );
+    }
+
+    #[test]
     fn test_flatten_deserialize_local_contract() {
         let yaml = r#"
 name: Contract1
@@ -753,8 +842,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 events: []
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
@@ -778,8 +867,8 @@ handler: ./src/EventHandler.js
 events: []
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: vec![].into(),
             start_block: None,
@@ -802,8 +891,8 @@ address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
 events: []
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()].into(),
             start_block: None,
@@ -824,8 +913,8 @@ name: Contract1
 address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     "#;
 
-        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContract {
+        let deserialized: ChainContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
+        let expected = ChainContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
@@ -867,11 +956,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        println!("{:?}", cfg.chains[0].contracts[0]);
+        let contracts = cfg.chains[0].contracts.as_ref().unwrap();
+        println!("{:?}", contracts[0]);
 
-        assert!(cfg.chains[0].contracts[0].config.is_some());
-        assert!(cfg.chains[0].contracts[1].config.is_some());
-        assert_eq!(cfg.chains[0].contracts[1].address, None.into());
+        assert!(contracts[0].config.is_some());
+        assert!(contracts[1].config.is_some());
+        assert_eq!(contracts[1].address, None.into());
     }
 
     #[test]
@@ -883,8 +973,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        assert!(cfg.chains[0].contracts[0].config.is_some());
-        assert!(cfg.chains[1].contracts[0].config.is_none());
+        assert!(cfg.chains[0].contracts.as_ref().unwrap()[0]
+            .config
+            .is_some());
+        assert!(cfg.chains[1].contracts.as_ref().unwrap()[0]
+            .config
+            .is_none());
     }
 
     #[test]
@@ -897,19 +991,23 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         let cfg: fuel::HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
         let expected_cfg = fuel::HumanConfig {
-            name: "Fuel indexer".to_string(),
-            description: None,
-            schema: None,
-            output: None,
+            base: BaseConfig {
+                name: "Fuel indexer".to_string(),
+                description: None,
+                schema: None,
+                output: None,
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            chains: vec![fuel::Network {
+            chains: vec![fuel::Chain {
                 id: 0,
                 start_block: 0,
                 end_block: None,
                 hyperfuel_config: None,
-                contracts: vec![NetworkContract {
+                contracts: Some(vec![ChainContract {
                     name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
                         .to_string()
@@ -931,9 +1029,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                             },
                         ],
                     }),
-                }],
+                }]),
             }],
-            handlers: None,
         };
 
         // deserializes fuel config
@@ -943,15 +1040,18 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     #[test]
     fn serializes_fuel_config() {
         let cfg = fuel::HumanConfig {
-            name: "Fuel indexer".to_string(),
-            description: None,
-            schema: None,
-            output: None,
+            base: BaseConfig {
+                name: "Fuel indexer".to_string(),
+                description: None,
+                schema: None,
+                output: None,
+                handlers: None,
+                full_batch_size: None,
+            },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
             chains: vec![],
-            handlers: None,
         };
 
         assert_eq!(
@@ -988,20 +1088,20 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
-    fn deserialize_network_with_underscores_between_numbers() {
-        let network_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
-        let de: Network = serde_json::from_value(network_json).unwrap();
+    fn deserialize_chain_with_underscores_between_numbers() {
+        let chain_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
+        let de: Chain = serde_json::from_value(chain_json).unwrap();
 
         assert_eq!(
-            Network {
+            Chain {
                 id: 1,
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,
                 start_block: 2_000,
-                confirmed_block_threshold: None,
+                max_reorg_depth: None,
                 end_block: Some(2_000_000),
-                contracts: vec![]
+                contracts: Some(vec![])
             },
             de
         );

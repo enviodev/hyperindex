@@ -148,7 +148,6 @@ jobs:
         if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/test_codegen
         run: |
-          pnpm ts:test
           pnpm test
 
       - name: erc20_multichain_factory build
@@ -175,5 +174,4 @@ jobs:
         if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/fuel_test
         run: |
-          pnpm ts:test
           pnpm test

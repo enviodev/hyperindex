@@ -19,7 +19,7 @@ import {
   type eventLog,
   type NftFactory_SimpleNftCreated_eventArgs,
   type NftFactory_SimpleNftCreated_event,
-  type chain,
+  type ChainId,
   onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -190,8 +190,8 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chains,
       {
-        [chainId in chain]: {
-          readonly id: chain;
+        [chainId in ChainId]: {
+          readonly id: ChainId;
           readonly isLive: boolean;
         };
       }
@@ -202,7 +202,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chain,
       {
-        readonly id: chain;
+        readonly id: ChainId;
         readonly isLive: boolean;
       }
     >

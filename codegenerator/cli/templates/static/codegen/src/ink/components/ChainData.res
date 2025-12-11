@@ -24,7 +24,7 @@ type chainData = {
   poweredByHyperSync: bool,
   progress: progress,
   latestFetchedBlockNumber: int,
-  currentBlockHeight: int,
+  knownHeight: int,
   numBatchesFetched: int,
   endBlock: option<int>,
 }
@@ -43,7 +43,7 @@ let formatLocaleString = n => n->number->toLocaleString
 
 module BlocksDisplay = {
   @react.component
-  let make = (~latestProcessedBlock, ~currentBlockHeight) => {
+  let make = (~latestProcessedBlock, ~knownHeight) => {
     <Box flexDirection={Row}>
       <Text> {"blocks: "->React.string} </Text>
       <Box flexDirection={Column} alignItems={FlexEnd}>
@@ -52,7 +52,7 @@ module BlocksDisplay = {
         </Box>
         <Box>
           <Text> {"/"->React.string} </Text>
-          <Text> {currentBlockHeight->formatLocaleString->React.string} </Text>
+          <Text> {knownHeight->formatLocaleString->React.string} </Text>
         </Box>
       </Box>
     </Box>
@@ -93,19 +93,19 @@ let make = (~chainData: chainData) => {
     progress,
     poweredByHyperSync,
     latestFetchedBlockNumber,
-    currentBlockHeight,
+    knownHeight,
     endBlock,
   } = chainData
   let chainId = chain->ChainMap.Chain.toChainId
 
-  let toBlock = minOfOption(currentBlockHeight, endBlock)
+  let toBlock = minOfOption(knownHeight, endBlock)
 
   switch progress {
   | SearchingForEvents =>
     <Box flexDirection={Column}>
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Text> {"Searching for events..."->React.string} </Text>
-        <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber currentBlockHeight=toBlock />
+        <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber knownHeight=toBlock />
       </Box>
       <SyncBar
         chainId
@@ -126,7 +126,7 @@ let make = (~chainData: chainData) => {
           </Text>
           <Text bold=true> {numEventsProcessed->formatLocaleString->React.string} </Text>
         </Box>
-        <BlocksDisplay latestProcessedBlock currentBlockHeight=toBlock />
+        <BlocksDisplay latestProcessedBlock knownHeight=toBlock />
       </Box>
       <SyncBar
         chainId
@@ -145,7 +145,7 @@ let make = (~chainData: chainData) => {
           <Text> {"Events Processed: "->React.string} </Text>
           <Text bold=true> {numEventsProcessed->React.int} </Text>
         </Box>
-        <BlocksDisplay latestProcessedBlock currentBlockHeight=toBlock />
+        <BlocksDisplay latestProcessedBlock knownHeight=toBlock />
       </Box>
       <SyncBar
         chainId

@@ -492,7 +492,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
               fetchState: updatedFetchState.contents,
               reorgDetection: chainFetcher.reorgDetection,
               progressBlockNumber: chainFetcher.committedProgressBlockNumber,
-              sourceBlockNumber: chainFetcher.currentBlockHeight,
+              sourceBlockNumber: chainFetcher.fetchState.knownHeight,
               totalEventsProcessed: chainFetcher.numEventsProcessed,
             }: Batch.chainBeforeBatch
           ),
@@ -516,7 +516,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         ~persistence,
         ~inMemoryStore,
         ~chains,
-        ~ecosystem=indexer.config.ecosystem,
+        ~config=indexer.config,
       )
       await batch->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,

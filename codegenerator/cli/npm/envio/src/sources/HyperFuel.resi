@@ -13,7 +13,7 @@ type block = {
 type item = {
   transactionId: string,
   contractId: Address.t,
-  receipt: Fuel.Receipt.t,
+  receipt: FuelSDK.Receipt.t,
   receiptIndex: int,
   block: block,
 }

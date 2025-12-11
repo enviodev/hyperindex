@@ -249,7 +249,7 @@ let make = (
     ~toBlock,
     ~addressesByContractName,
     ~indexingContracts,
-    ~currentBlockHeight,
+    ~knownHeight,
     ~partitionId as _,
     ~selection,
     ~retry,
@@ -282,7 +282,7 @@ let make = (
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
             retry: switch error {
             | WrongInstance =>
               let backoffMillis = switch retry {
@@ -308,7 +308,7 @@ let make = (
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
-            attemptedToBlock: toBlock->Option.getWithDefault(currentBlockHeight),
+            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
             retry: WithBackoff({
               message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
               backoffMillis: switch retry {
@@ -325,7 +325,7 @@ let make = (
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     //set height and next from block
-    let currentBlockHeight = pageUnsafe.archiveHeight
+    let knownHeight = pageUnsafe.archiveHeight
 
     //The heighest (biggest) blocknumber that was accounted for in
     //Our query. Not necessarily the blocknumber of the last log returned
@@ -537,7 +537,7 @@ let make = (
       parsedQueueItems,
       latestFetchedBlockNumber: rangeLastBlock.blockNumber,
       stats,
-      currentBlockHeight,
+      knownHeight,
       reorgGuard,
       fromBlockQueried: fromBlock,
     }

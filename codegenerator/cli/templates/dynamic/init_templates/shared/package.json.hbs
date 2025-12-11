@@ -3,13 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.{{#if is_rescript}}res.mjs{{else}}ts{{/if}}",
   {{#if is_typescript}}
-    "clean": "tsc --clean",
-    "build": "tsc --build",
-    "watch": "tsc --watch",
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.ts",
   {{/if}}
   {{#if is_rescript}}
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.res.mjs",
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
@@ -27,7 +25,7 @@
   {{#if is_typescript}}
     "@types/chai": "^4.3.11",    
     "@types/mocha": "10.0.6",
-    "@types/node": "20.8.8",
+    "@types/node": "^24.10.1",
     "typescript": "5.9.3",
     "chai": "4.3.10",
   {{/if}}

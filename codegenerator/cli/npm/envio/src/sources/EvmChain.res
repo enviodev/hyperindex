@@ -42,7 +42,7 @@ let getSyncConfig = (
   }
 }
 
-let evm = (
+let makeSources = (
   ~chain,
   ~contracts: array<Internal.evmContractConfig>,
   ~hyperSync,

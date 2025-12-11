@@ -13,7 +13,9 @@ import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen
 
 export type blockEvent = { readonly number: number };
 
-export type fuelBlockEvent = { readonly height: number; readonly chainId: number };
+export type fuelBlockEvent = { readonly height: number };
+
+export type solanaOnBlockArgs<context> = { readonly slot: number; readonly context: context };
 
 export type onBlockArgs<block,context> = { readonly block: block; readonly context: context };
 
@@ -23,6 +25,12 @@ export type onBlockOptions<chain> = {
   readonly interval?: number; 
   readonly startBlock?: number; 
   readonly endBlock?: number
+};
+
+export type whereOperations<entity,fieldType> = {
+  readonly eq: (_1:fieldType) => Promise<entity[]>; 
+  readonly gt: (_1:fieldType) => Promise<entity[]>; 
+  readonly lt: (_1:fieldType) => Promise<entity[]>
 };
 
 export type logger = $$logger;

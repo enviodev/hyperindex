@@ -48,7 +48,7 @@ let mockChainConfig: Config.chain = {
       chain: chain1337,
       contracts: evmContracts,
       sourceFor: Sync,
-      syncConfig: NetworkSources.getSyncConfig({
+      syncConfig: EvmChain.getSyncConfig({
         initialBlockInterval: 10000,
         backoffMultiplicative: 10000.0,
         accelerationAdditive: 10000,

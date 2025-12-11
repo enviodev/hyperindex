@@ -4,6 +4,8 @@ update-schemas:
 	cargo run -- script print-config-json-schema evm > ./npm/envio/evm.schema.json
 	@echo "Updating schemas json schemas for fuel human config..."
 	cargo run -- script print-config-json-schema fuel > ./npm/envio/fuel.schema.json
+	@echo "Updating schemas json schemas for solana human config..."
+	cargo run -- script print-config-json-schema solana > ./npm/envio/solana.schema.json
 
 # Target to update help
 update-help:

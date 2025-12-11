@@ -92,7 +92,6 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
 let fetchNext = async (
   sourceManager: t,
   ~fetchState: FetchState.t,
-  ~currentBlockHeight,
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
@@ -100,13 +99,14 @@ let fetchNext = async (
 ) => {
   let {maxPartitionConcurrency} = sourceManager
 
-  switch fetchState->FetchState.getNextQuery(
+  let nextQuery = fetchState->FetchState.getNextQuery(
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
-    ~currentBlockHeight,
     ~stateId,
-  ) {
+  )
+
+  switch nextQuery {
   | ReachedMaxConcurrency
   | NothingToQuery => ()
   | WaitingForNewBlock =>
@@ -116,12 +116,12 @@ let fetchNext = async (
     | None =>
       sourceManager->trackNewStatus(~newStatus=WaitingForNewBlock)
       sourceManager.waitingForNewBlockStateId = Some(stateId)
-      let currentBlockHeight = await waitForNewBlock(~currentBlockHeight)
+      let knownHeight = await waitForNewBlock(~knownHeight=fetchState.knownHeight)
       switch sourceManager.waitingForNewBlockStateId {
       | Some(waitingStateId) if waitingStateId === stateId => {
           sourceManager->trackNewStatus(~newStatus=Idle)
           sourceManager.waitingForNewBlockStateId = None
-          onNewBlock(~currentBlockHeight)
+          onNewBlock(~knownHeight)
         }
       | Some(_) // Don't reset it if we are waiting for another state
       | None => ()
@@ -162,14 +162,14 @@ type status = Active | Stalled | Done
 let getSourceNewHeight = async (
   sourceManager,
   ~source: Source.t,
-  ~currentBlockHeight,
+  ~knownHeight,
   ~status: ref<status>,
   ~logger,
 ) => {
   let newHeight = ref(0)
   let retry = ref(0)
 
-  while newHeight.contents <= currentBlockHeight && status.contents !== Done {
+  while newHeight.contents <= knownHeight && status.contents !== Done {
     try {
       // Use to detect if the source is taking too long to respond
       let endTimer = Prometheus.SourceGetHeightDuration.startTimer({
@@ -180,7 +180,7 @@ let getSourceNewHeight = async (
       endTimer()
 
       newHeight := height
-      if height <= currentBlockHeight {
+      if height <= knownHeight {
         retry := 0
         // Slowdown polling when the chain isn't progressing
         let pollingInterval = if status.contents === Stalled {
@@ -211,35 +211,35 @@ let getSourceNewHeight = async (
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
-let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
+let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
   let {sources} = sourceManager
 
   let logger = Logging.createChild(
     ~params={
       "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-      "currentBlockHeight": currentBlockHeight,
+      "knownHeight": knownHeight,
     },
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
   // Only include Live sources if we've actually synced some blocks
-  // (currentBlockHeight > 0 means we've fetched at least one batch)
+  // (knownHeight > 0 means we've fetched at least one batch)
   // This prevents Live RPC from winning the initial height race and
   // becoming activeSource, which would bypass HyperSync's smart block detection
-  let isInitialHeightFetch = currentBlockHeight === 0
+  let isInitialHeightFetch = knownHeight === 0
 
   let syncSources = []
   let fallbackSources = []
   sources->Utils.Set.forEach(source => {
     if (
       source.sourceFor === Sync ||
-        // Include Live sources only after initial sync has started
-        // Live sources are optimized for real-time indexing with lower latency
-        (source.sourceFor === Live && !isInitialHeightFetch) ||
-        // Even if the active source is a fallback, still include
-        // it to the list. So we don't wait for a timeout again
-        // if all main sync sources are still not valid
-        source === sourceManager.activeSource
+      // Include Live sources only after initial sync has started
+      // Live sources are optimized for real-time indexing with lower latency
+      source.sourceFor === Live && !isInitialHeightFetch ||
+      // Even if the active source is a fallback, still include
+      // it to the list. So we don't wait for a timeout again
+      // if all main sync sources are still not valid
+      source === sourceManager.activeSource
     ) {
       syncSources->Array.push(source)
     } else {
@@ -252,10 +252,7 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
   let (source, newBlockHeight) = await Promise.race(
     syncSources
     ->Array.map(async source => {
-      (
-        source,
-        await sourceManager->getSourceNewHeight(~source, ~currentBlockHeight, ~status, ~logger),
-      )
+      (source, await sourceManager->getSourceNewHeight(~source, ~knownHeight, ~status, ~logger))
     })
     ->Array.concat([
       Utils.delay(sourceManager.newBlockFallbackStallTimeout)->Promise.then(() => {
@@ -281,12 +278,7 @@ let waitForNewBlock = async (sourceManager: t, ~currentBlockHeight) => {
           fallbackSources->Array.map(async source => {
             (
               source,
-              await sourceManager->getSourceNewHeight(
-                ~source,
-                ~currentBlockHeight,
-                ~status,
-                ~logger,
-              ),
+              await sourceManager->getSourceNewHeight(~source, ~knownHeight, ~status, ~logger),
             )
           }),
         )
@@ -349,7 +341,7 @@ let getNextSyncSource = (
   }
 }
 
-let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBlockHeight) => {
+let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight) => {
   let toBlockRef = ref(
     switch query.target {
     | Head => None
@@ -389,7 +381,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~currentBl
         ~addressesByContractName=query.addressesByContractName,
         ~indexingContracts=query.indexingContracts,
         ~partitionId=query.partitionId,
-        ~currentBlockHeight,
+        ~knownHeight,
         ~selection=query.selection,
         ~retry,
         ~logger,
