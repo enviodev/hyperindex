@@ -132,6 +132,11 @@ type EntityWith63LenghtName______________________________________two {
   id: ID!
 }
 
+type EntityWithRestrictedReScriptField {
+  id: ID!
+  type: String!
+}
+
 # We are using insert unnest for the case
 # So test it as well
 type EntityWithAllNonArrayTypes {

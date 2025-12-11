@@ -172,5 +172,5 @@ pub mod reserved_keywords {
         "with",
     ];
 
-    pub const ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES: &[&str] = &["EVENT_TYPE", "CONTRACT_TYPE"];
+    pub const ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES: &[&str] = &[];
 }

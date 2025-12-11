@@ -18,7 +18,6 @@ use graphql_parser::schema::{
     Definition, Directive, Document, EnumType, Field as ObjField, ObjectType, Type as ObjType,
     TypeDefinition, Value,
 };
-use itertools::Itertools;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
@@ -137,13 +136,6 @@ impl Schema {
     fn get_all_entity_type_names(&self) -> Vec<String> {
         self.entities.keys().cloned().collect()
     }
-    fn get_all_entity_field_names(&self) -> Vec<String> {
-        self.entities
-            .values()
-            .flat_map(|v| v.fields.values())
-            .map(|v| v.name.clone())
-            .collect()
-    }
 
     fn check_enum_type_defs(self) -> anyhow::Result<Self> {
         match check_enums_for_internal_reserved_words(self.get_all_enum_type_names()) {
@@ -160,10 +152,11 @@ impl Schema {
             self.get_all_enum_type_names(),
             self.get_all_enum_values(),
             self.get_all_entity_type_names(),
-            self.get_all_entity_field_names(),
         ]
         .concat();
 
+        // TODO: It'd be nice to check field names not having __proto__ name
+        // I don't think any other field names should be restricted
         match check_names_from_schema_for_reserved_words(all_names) {
             reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
             reserved_enum_types_used => Err(anyhow!(
@@ -221,7 +214,7 @@ impl Schema {
                                  derivedFrom is intended to be used with Entity type definitions"
                             ))?,
                             TypeDef::Entity(derived_entity) => {
-                                match derived_entity.fields.get(derived_from_field) {
+                                match derived_entity.get_field(derived_from_field) {
                                     None => Err(anyhow!(
                                         "Derived field {derived_from_field} does not exist on \
                                          entity {name}."
@@ -328,7 +321,7 @@ impl GraphQLEnum {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entity {
     pub name: String,
-    pub fields: HashMap<String, Field>,
+    pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
 }
 
@@ -338,12 +331,16 @@ impl Entity {
         fields: Vec<Field>,
         multi_field_indexes: Vec<MultiFieldIndex>,
     ) -> anyhow::Result<Self> {
-        let fields = unique_hashmap::from_vec_no_duplicates(
-            fields.into_iter().map(|f| (f.name.clone(), f)).collect(),
-        )
-        .context(format!(
-            "Found fields with duplicate names on Entity {name}"
-        ))?;
+        // Check for duplicate field names
+        let mut field_names_set = HashSet::new();
+        for field in &fields {
+            if !field_names_set.insert(&field.name) {
+                return Err(anyhow!(
+                    "Found fields with duplicate names on Entity {name}: '{}'",
+                    field.name
+                ));
+            }
+        }
 
         let multi_field_indexes = multi_field_indexes
             .into_iter()
@@ -448,9 +445,14 @@ impl Entity {
         Ok(entity)
     }
 
-    /// Returns the fields of this [`Entity`] sorted by field name.
+    /// Returns the fields of this [`Entity`] in schema-defined order.
     pub fn get_fields(&self) -> Vec<&Field> {
-        self.fields.values().sorted_by_key(|v| &v.name).collect()
+        self.fields.iter().collect()
+    }
+
+    /// Returns a field by name, if it exists.
+    pub fn get_field(&self, name: &str) -> Option<&Field> {
+        self.fields.iter().find(|f| f.name == name)
     }
 
     pub fn get_relationships(&self) -> Vec<Relationship> {
@@ -758,8 +760,7 @@ impl Field {
                     .entities
                     .get(entity_name)
                     .ok_or_else(|| anyhow!("Unexpected, entity {entity_name} does not exist"))?
-                    .fields
-                    .get(derived_from_field)
+                    .get_field(derived_from_field)
                     .ok_or_else(|| {
                         anyhow!(
                             "Unexpected, field {derived_from_field} does not exist on entity \
@@ -895,11 +896,12 @@ impl MultiFieldIndex {
 
     fn validate_field_name_exists_or_is_allowed(
         self,
-        fields: &HashMap<String, Field>,
+        fields: &[Field],
         allowed_names: &[String],
     ) -> anyhow::Result<Self> {
         for field_name in &self.0 {
-            if !fields.contains_key(field_name) && !allowed_names.contains(field_name) {
+            let field_exists = fields.iter().any(|f| &f.name == field_name);
+            if !field_exists && !allowed_names.contains(field_name) {
                 return Err(anyhow!(
                     "Index error: Field '{}' does not exist in entity, please remove it from the \
                      `@index` directive.",
@@ -910,7 +912,7 @@ impl MultiFieldIndex {
         Ok(self)
     }
 
-    fn validate_no_duplicates(self, fields: &HashMap<String, Field>) -> anyhow::Result<Self> {
+    fn validate_no_duplicates(self, fields: &[Field]) -> anyhow::Result<Self> {
         let mut field_names_set = HashSet::new();
         for field_name in &self.0 {
             //Check for duplicate fields inside multi field index
@@ -924,7 +926,7 @@ impl MultiFieldIndex {
 
         //Check for @index directives on the defined field
         if let Some(single_field_index) = self.get_single_field_index() {
-            if let Some(field) = fields.get(&single_field_index) {
+            if let Some(field) = fields.iter().find(|f| f.name == single_field_index) {
                 if field.field_type.has_indexed_directive() {
                     return Err(anyhow!(
                         "EE202: The field '{}' is marked as an index. Please either remove the \
@@ -939,12 +941,9 @@ impl MultiFieldIndex {
         Ok(self)
     }
 
-    fn validate_no_index_on_derived_field(
-        self,
-        fields: &HashMap<String, Field>,
-    ) -> anyhow::Result<Self> {
+    fn validate_no_index_on_derived_field(self, fields: &[Field]) -> anyhow::Result<Self> {
         for field_name in &self.0 {
-            if let Some(field) = fields.get(field_name) {
+            if let Some(field) = fields.iter().find(|f| &f.name == field_name) {
                 if field.field_type.is_derived_from() {
                     return Err(anyhow!(
                         "Index error: Field '{}' is a @derivedFrom field and cannot be indexed, \
@@ -1807,8 +1806,7 @@ type TestEntity {
             .entities
             .get("TestEntity")
             .expect("No test entity in schema")
-            .fields
-            .get("test_field")
+            .get_field("test_field")
             .expect("No field test_field on entity")
             .clone();
 
@@ -1926,7 +1924,7 @@ type TestEntity {
         let gql_doc = setup_document(schema_str).unwrap();
         let schema = Schema::from_document(gql_doc).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
-        let field = entity.fields.get("name").unwrap();
+        let field = entity.get_field("name").unwrap();
         let pg_field = field
             .get_postgres_field(&schema, entity)
             .expect("Failed to get postgres field")
@@ -1955,14 +1953,17 @@ type RelatedEntity {
         let gql_doc = setup_document(schema_str).unwrap();
         let schema = Schema::from_document(gql_doc).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
-        let field = entity.fields.get("relatedEntity").unwrap();
+        let field = entity.get_field("relatedEntity").unwrap();
         let pg_field = field
             .get_postgres_field(&schema, entity)
             .expect("Failed to get postgres field")
             .unwrap();
 
         assert_eq!(pg_field.field_name, "relatedEntity");
-        assert_eq!(pg_field.field_type, PGPrimitive::Entity("RelatedEntity".to_string()));
+        assert_eq!(
+            pg_field.field_type,
+            PGPrimitive::Entity("RelatedEntity".to_string())
+        );
         assert!(!pg_field.is_index);
         assert!(!pg_field.is_array);
         assert!(!pg_field.is_nullable);
@@ -1980,7 +1981,7 @@ type TestEntity {
         let gql_doc = setup_document(schema_str).unwrap();
         let schema = Schema::from_document(gql_doc).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
-        let field = entity.fields.get("tags").unwrap();
+        let field = entity.get_field("tags").unwrap();
         let pg_field = field
             .get_postgres_field(&schema, entity)
             .expect("Failed to get postgres field")
@@ -2010,7 +2011,7 @@ type TestEntity {
         let gql_doc = setup_document(schema_str).unwrap();
         let schema = Schema::from_document(gql_doc).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
-        let field = entity.fields.get("status").unwrap();
+        let field = entity.get_field("status").unwrap();
         let pg_field = field
             .get_postgres_field(&schema, entity)
             .expect("Failed to get postgres field")
@@ -2147,7 +2148,7 @@ type TestEntity {
 
         // BigInt fields
         check_field_type(
-            entity.fields.get("exampleBigInt").expect("Field not found"),
+            entity.get_field("exampleBigInt").expect("Field not found"),
             "BigInt",
             Some(76),
             None,
@@ -2157,8 +2158,7 @@ type TestEntity {
 
         check_field_type(
             entity
-                .fields
-                .get("exampleBigIntRequired")
+                .get_field("exampleBigIntRequired")
                 .expect("Field not found"),
             "BigInt",
             Some(77),
@@ -2169,8 +2169,7 @@ type TestEntity {
 
         check_field_type(
             entity
-                .fields
-                .get("exampleBigIntArray")
+                .get_field("exampleBigIntArray")
                 .expect("Field not found"),
             "BigInt",
             Some(78),
@@ -2181,8 +2180,7 @@ type TestEntity {
 
         check_field_type(
             entity
-                .fields
-                .get("exampleBigIntArrayRequired")
+                .get_field("exampleBigIntArrayRequired")
                 .expect("Field not found"),
             "BigInt",
             Some(79),
@@ -2194,8 +2192,7 @@ type TestEntity {
         // BigDecimal fields
         check_field_type(
             entity
-                .fields
-                .get("exampleBigDecimal")
+                .get_field("exampleBigDecimal")
                 .expect("Field not found"),
             "BigDecimal",
             Some(80),
@@ -2206,8 +2203,7 @@ type TestEntity {
 
         check_field_type(
             entity
-                .fields
-                .get("exampleBigDecimalRequired")
+                .get_field("exampleBigDecimalRequired")
                 .expect("Field not found"),
             "BigDecimal",
             Some(81),
@@ -2218,8 +2214,7 @@ type TestEntity {
 
         check_field_type(
             entity
-                .fields
-                .get("exampleBigDecimalArray")
+                .get_field("exampleBigDecimalArray")
                 .expect("Field not found"),
             "BigDecimal",
             Some(82),
@@ -2230,8 +2225,7 @@ type TestEntity {
 
         check_field_type(
             entity
-                .fields
-                .get("exampleBigDecimalArrayRequired")
+                .get_field("exampleBigDecimalArrayRequired")
                 .expect("Field not found"),
             "BigDecimal",
             Some(83),
@@ -2243,8 +2237,7 @@ type TestEntity {
         // exampleBigDecimalOtherOrder
         check_field_type(
             entity
-                .fields
-                .get("exampleBigDecimalOtherOrder")
+                .get_field("exampleBigDecimalOtherOrder")
                 .expect("Field not found"),
             "BigDecimal",
             Some(84),
@@ -2365,5 +2358,110 @@ type TestEntity {
             entity.multi_field_indexes[1].0,
             vec!["b".to_string(), "a".to_string()]
         );
+    }
+
+    #[test]
+    fn test_fields_preserve_schema_order() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  zebra: String!
+  apple: String!
+  mango: String!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+
+        let field_names: Vec<&str> = entity
+            .get_fields()
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(field_names, vec!["id", "zebra", "apple", "mango"]);
+    }
+
+    #[test]
+    fn test_fields_preserve_schema_order_complex() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  zField: String!
+  aField: Int!
+  mField: Boolean!
+  bField: BigInt!
+}
+
+type OtherEntity {
+  id: ID!
+  lastField: String!
+  firstField: String!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+
+        let test_entity = schema.entities.get("TestEntity").unwrap();
+        let test_field_names: Vec<&str> = test_entity
+            .get_fields()
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(
+            test_field_names,
+            vec!["id", "zField", "aField", "mField", "bField"]
+        );
+
+        let other_entity = schema.entities.get("OtherEntity").unwrap();
+        let other_field_names: Vec<&str> = other_entity
+            .get_fields()
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(other_field_names, vec!["id", "lastField", "firstField"]);
+    }
+
+    #[test]
+    fn test_duplicate_field_detection() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  name: String!
+  name: String!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let result = Schema::from_document(gql_doc);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        assert!(err_message.contains("duplicate"));
+    }
+
+    #[test]
+    fn test_get_field_lookup() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  name: String!
+  value: Int!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+
+        // Test existing fields
+        assert!(entity.get_field("id").is_some());
+        assert!(entity.get_field("name").is_some());
+        assert!(entity.get_field("value").is_some());
+
+        // Test non-existing field
+        assert!(entity.get_field("nonexistent").is_none());
+
+        // Verify field content
+        let name_field = entity.get_field("name").unwrap();
+        assert_eq!(name_field.name, "name");
     }
 }
