@@ -144,41 +144,43 @@ module JsonRpcProvider = {
   @send
   external getLogs: (t, ~filter: Filter.t) => promise<array<log>> = "getLogs"
 
-  @send
-  external getTransaction: (t, ~transactionHash: string) => promise<transaction> = "getTransaction"
-
   let makeGetTransactionFields = (~getTransactionByHash, ~lowercaseAddresses: bool) => async (
     log: log,
-  ): promise<unknown> => {
-    let transaction = await getTransactionByHash(log.transactionHash)
+  ): promise<Internal.evmTransactionFields> => {
+    let transaction: Internal.evmTransactionFields = await getTransactionByHash(log.transactionHash)
     // Mutating should be fine, since the transaction isn't used anywhere else outside the function
     let fields: {..} = transaction->Obj.magic
 
-    // Make it compatible with HyperSync transaction fields
+    // RPC may return null for transactionIndex on pending transactions
     fields["transactionIndex"] = log.transactionIndex
-    fields["input"] = fields["data"]
 
     // NOTE: this is wasteful if these fields are not selected in the users config.
     //       There might be a better way to do this in the `makeThrowingGetEventTransaction` function rather based on the schema.
     //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-    if lowercaseAddresses {
-      open Js.Nullable
-      switch fields["from"] {
-      | Value(from) => fields["from"] = from->Js.String2.toLowerCase
-      | Undefined => ()
-      | Null => ()
-      }
-      switch fields["to"] {
-      | Value(to) => fields["to"] = to->Js.String2.toLowerCase
-      | Undefined => ()
-      | Null => ()
-      }
-      switch fields["contractAddress"] {
-      | Value(contractAddress) =>
-        fields["contractAddress"] = contractAddress->Js.String2.toLowerCase
-      | Undefined => ()
-      | Null => ()
-      }
+    open Js.Nullable
+    switch fields["from"] {
+    | Value(from) =>
+      fields["from"] = lowercaseAddresses
+        ? from->Js.String2.toLowerCase->Address.unsafeFromString
+        : from->Address.Evm.fromStringOrThrow
+    | Undefined => ()
+    | Null => ()
+    }
+    switch fields["to"] {
+    | Value(to) =>
+      fields["to"] = lowercaseAddresses
+        ? to->Js.String2.toLowerCase->Address.unsafeFromString
+        : to->Address.Evm.fromStringOrThrow
+    | Undefined => ()
+    | Null => ()
+    }
+    switch fields["contractAddress"] {
+    | Value(contractAddress) =>
+      fields["contractAddress"] = lowercaseAddresses
+        ? contractAddress->Js.String2.toLowerCase->Address.unsafeFromString
+        : contractAddress->Address.Evm.fromStringOrThrow
+    | Undefined => ()
+    | Null => ()
     }
 
     fields->Obj.magic

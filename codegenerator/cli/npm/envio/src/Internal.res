@@ -2,6 +2,50 @@ type eventParams
 type eventBlock
 type eventTransaction
 
+// Shared EVM transaction fields type used by both RPC and HyperSync sources
+// Field names match HyperSyncClient.ResponseTypes.transaction for consistency
+type evmTransactionFields = {
+  blockHash?: string,
+  blockNumber?: int,
+  from?: string,
+  gas?: bigint,
+  gasPrice?: bigint,
+  hash?: string,
+  input?: string,
+  nonce?: bigint,
+  to?: string,
+  transactionIndex?: int,
+  value?: bigint,
+  // Signature fields - optional for ZKSync EIP-712 compatibility
+  v?: string,
+  r?: string,
+  s?: string,
+  yParity?: string,
+  // EIP-1559 fields
+  maxPriorityFeePerGas?: bigint,
+  maxFeePerGas?: bigint,
+  chainId?: int,
+  // EIP-4844 blob fields
+  maxFeePerBlobGas?: bigint,
+  blobVersionedHashes?: array<string>,
+  // Receipt fields (from joined transaction receipts)
+  cumulativeGasUsed?: bigint,
+  effectiveGasPrice?: bigint,
+  gasUsed?: bigint,
+  contractAddress?: string,
+  logsBloom?: string,
+  @as("type")
+  type_?: int,
+  root?: string,
+  status?: int,
+  // L2 specific fields (Optimism, Arbitrum, etc.)
+  l1Fee?: bigint,
+  l1GasPrice?: bigint,
+  l1GasUsed?: bigint,
+  l1FeeScalar?: int,
+  gasUsedForL1?: bigint,
+}
+
 @genType
 type genericEvent<'params, 'block, 'transaction> = {
   params: 'params,

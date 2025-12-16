@@ -171,13 +171,14 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Queries transaction with a non-log field (with real Ethers.provider)", async () => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
-    let provider = Ethers.JsonRpcProvider.make(
-      ~rpcUrl=`https://eth.rpc.hypersync.xyz/${testApiToken}`,
-      ~chainId=1,
-    )
+    let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
+    let client = Rest.client(rpcUrl)
     let getTransactionFields = Ethers.JsonRpcProvider.makeGetTransactionFields(
-      ~getTransactionByHash=transactionHash =>
-        provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
+      ~getTransactionByHash=async transactionHash =>
+        switch await Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client) {
+        | Some(tx) => tx
+        | None => Js.Exn.raiseError(`Transaction not found for hash: ${transactionHash}`)
+        },
       ~lowercaseAddresses=false,
     )
 
@@ -251,6 +252,72 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       }->Obj.magic,
     )
   })
+
+  Async.it(
+    "Successfully fetches ZKSync EIP-712 transactions (type 0x71) with optional signature fields",
+    async () => {
+      // Transaction from Abstract Testnet (ZKSync-based) that lacks r/s/v signature fields
+      let testTransactionHash = "0x245134326b7fecdcb7e0ed0a6cf090fc8881a63420ecd329ef645686b85647ed"
+
+      let client = Rest.client("https://api.testnet.abs.xyz")
+      let transaction =
+        await Rpc.GetTransactionByHash.route->Rest.fetch(testTransactionHash, ~client)
+
+      // Transaction should be fetched successfully
+      Assert.ok(transaction->Belt.Option.isSome, ~message="Transaction should be fetched")
+      let tx = transaction->Belt.Option.getUnsafe
+
+      // Verify all transaction fields using a single comparison
+      // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity)
+      Assert.deepEqual(
+        {
+          "hash": tx.hash,
+          "blockHash": tx.blockHash,
+          "blockNumber": tx.blockNumber,
+          "from": tx.from,
+          "to": tx.to,
+          "gas": tx.gas,
+          "gasPrice": tx.gasPrice,
+          "input": tx.input,
+          "nonce": tx.nonce,
+          "transactionIndex": tx.transactionIndex,
+          "value": tx.value,
+          "type_": tx.type_,
+          "maxFeePerGas": tx.maxFeePerGas,
+          "maxPriorityFeePerGas": tx.maxPriorityFeePerGas,
+          "chainId": tx.chainId,
+          "v": tx.v,
+          "r": tx.r,
+          "s": tx.s,
+          "yParity": tx.yParity,
+        },
+        {
+          "hash": Some(testTransactionHash),
+          "blockHash": Some("0x75f6c2fcedf597b750ee1f960794906a3795d5894ea7af6400334ca2e86109f8"),
+          "blockNumber": Some(9290261),
+          "from": Some("0x58027ecef16a9da81835a82cfc4afa1e729c74ff"),
+          "to": Some("0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"),
+          "gas": Some(1189904n),
+          "gasPrice": Some(25000000n),
+          "input": Some(
+            "0xfe939afc000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000061",
+          ),
+          "nonce": Some(662n),
+          "transactionIndex": Some(0),
+          "value": Some(0n),
+          "type_": Some(113), // 0x71 = ZKSync EIP-712
+          "maxFeePerGas": Some(25000000n),
+          "maxPriorityFeePerGas": Some(0n),
+          "chainId": Some(11124),
+          // Signature fields absent for ZKSync EIP-712
+          "v": None,
+          "r": None,
+          "s": None,
+          "yParity": None,
+        },
+      )
+    },
+  )
 
   Async.it("Error with a value not matching the schema", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(

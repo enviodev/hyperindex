@@ -179,3 +179,52 @@ module GetBlockByNumber = {
 module GetBlockHeight = {
   let route = makeRpcRoute("eth_blockNumber", S.tuple(_ => ()), hexIntSchema)
 }
+
+module GetTransactionByHash = {
+  let transactionSchema = S.object((s): Internal.evmTransactionFields => {
+    blockHash: ?s.field("blockHash", S.option(S.string)),
+    blockNumber: ?s.field("blockNumber", S.option(hexIntSchema)),
+    from: ?s.field("from", S.option(S.string)),
+    gas: ?s.field("gas", S.option(hexBigintSchema)),
+    gasPrice: ?s.field("gasPrice", S.option(hexBigintSchema)),
+    hash: ?s.field("hash", S.option(S.string)),
+    input: ?s.field("input", S.option(S.string)),
+    nonce: ?s.field("nonce", S.option(hexBigintSchema)),
+    to: ?s.field("to", S.option(S.string)),
+    transactionIndex: ?s.field("transactionIndex", S.option(hexIntSchema)),
+    value: ?s.field("value", S.option(hexBigintSchema)),
+    // Signature fields - optional for ZKSync EIP-712 compatibility
+    v: ?s.field("v", S.option(S.string)),
+    r: ?s.field("r", S.option(S.string)),
+    s: ?s.field("s", S.option(S.string)),
+    yParity: ?s.field("yParity", S.option(S.string)),
+    // EIP-1559 fields
+    maxPriorityFeePerGas: ?s.field("maxPriorityFeePerGas", S.option(hexBigintSchema)),
+    maxFeePerGas: ?s.field("maxFeePerGas", S.option(hexBigintSchema)),
+    chainId: ?s.field("chainId", S.option(hexIntSchema)),
+    // EIP-4844 blob fields
+    maxFeePerBlobGas: ?s.field("maxFeePerBlobGas", S.option(hexBigintSchema)),
+    blobVersionedHashes: ?s.field("blobVersionedHashes", S.option(S.array(S.string))),
+    // Receipt fields (from joined transaction receipts)
+    cumulativeGasUsed: ?s.field("cumulativeGasUsed", S.option(hexBigintSchema)),
+    effectiveGasPrice: ?s.field("effectiveGasPrice", S.option(hexBigintSchema)),
+    gasUsed: ?s.field("gasUsed", S.option(hexBigintSchema)),
+    contractAddress: ?s.field("contractAddress", S.option(S.string)),
+    logsBloom: ?s.field("logsBloom", S.option(S.string)),
+    type_: ?s.field("type", S.option(hexIntSchema)),
+    root: ?s.field("root", S.option(S.string)),
+    status: ?s.field("status", S.option(hexIntSchema)),
+    // L2 specific fields (Optimism, Arbitrum, etc.)
+    l1Fee: ?s.field("l1Fee", S.option(hexBigintSchema)),
+    l1GasPrice: ?s.field("l1GasPrice", S.option(hexBigintSchema)),
+    l1GasUsed: ?s.field("l1GasUsed", S.option(hexBigintSchema)),
+    l1FeeScalar: ?s.field("l1FeeScalar", S.option(hexIntSchema)),
+    gasUsedForL1: ?s.field("gasUsedForL1", S.option(hexBigintSchema)),
+  })
+
+  let route = makeRpcRoute(
+    "eth_getTransactionByHash",
+    S.tuple1(S.string),
+    S.null(transactionSchema),
+  )
+}
