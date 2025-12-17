@@ -1405,3 +1405,141 @@ describe("SourceManager.executeQuery", () => {
     },
   )
 })
+
+describe("SourceManager height subscription", () => {
+  Async.it(
+    "Creates subscription when getHeightOrThrow returns same height as knownHeight",
+    async () => {
+      let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
+      let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
+
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+
+      // First call to getHeightOrThrow
+      Assert.deepEqual(mock.getHeightOrThrowCalls->Array.length, 1)
+      // Return the same height - should trigger subscription creation
+      mock.resolveGetHeightOrThrow(100)
+
+      // Wait for the subscription to be created
+      await Utils.delay(0)
+
+      Assert.deepEqual(
+        mock.heightSubscriptionCalls->Array.length,
+        1,
+        ~message="Should have created a height subscription",
+      )
+
+      // Trigger new height from subscription
+      mock.triggerHeightSubscription(101)
+
+      Assert.deepEqual(await p, 101, ~message="Should resolve with the subscription height")
+    },
+  )
+
+  Async.it("Uses cached height from subscription if higher than knownHeight", async () => {
+    let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
+    let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
+
+    // First call - create subscription
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    mock.triggerHeightSubscription(105)
+    Assert.deepEqual(await p1, 105)
+
+    // Second call - should use cached height immediately without calling getHeightOrThrow
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
+    Assert.deepEqual(
+      mock.getHeightOrThrowCalls->Array.length,
+      1,
+      ~message="Should not call getHeightOrThrow again since subscription exists",
+    )
+    Assert.deepEqual(await p2, 105, ~message="Should immediately return cached height")
+  })
+
+  Async.it(
+    "Waits for next height event when subscription exists but height <= knownHeight",
+    async () => {
+      let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
+      let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
+
+      // First call - create subscription and set initial height
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+      mock.triggerHeightSubscription(101)
+      Assert.deepEqual(await p1, 101)
+
+      // Second call with higher knownHeight - should wait for next subscription event
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
+      Assert.deepEqual(
+        mock.getHeightOrThrowCalls->Array.length,
+        1,
+        ~message="Should not call getHeightOrThrow since subscription exists",
+      )
+
+      // Trigger new height
+      mock.triggerHeightSubscription(102)
+      Assert.deepEqual(await p2, 102, ~message="Should wait for and resolve with new height")
+    },
+  )
+
+  Async.it("Falls back to polling when createHeightSubscription is not available", async () => {
+    let pollingInterval = 1
+    let mock = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
+    let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
+
+    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+
+    // Return same height - should trigger polling since no subscription available
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(pollingInterval + 1)
+
+    Assert.deepEqual(
+      mock.getHeightOrThrowCalls->Array.length,
+      2,
+      ~message="Should poll again since no subscription is available",
+    )
+
+    mock.resolveGetHeightOrThrow(101)
+    Assert.deepEqual(await p, 101)
+  })
+
+  Async.it("Ignores subscription heights lower than or equal to knownHeight", async () => {
+    let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
+    let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
+
+    // First call - create subscription
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    mock.triggerHeightSubscription(101)
+    Assert.deepEqual(await p1, 101)
+
+    // Second call with higher knownHeight
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=105)
+
+    // Trigger with lower heights - should be ignored
+    mock.triggerHeightSubscription(102)
+    mock.triggerHeightSubscription(103)
+    mock.triggerHeightSubscription(105) // Equal to knownHeight - should be ignored
+
+    // Verify promise is still pending (not resolved with lower height)
+    let resolved = ref(false)
+    let _ = p2->Promise.thenResolve(
+      _ => {
+        resolved := true
+      },
+    )
+    await Utils.delay(0)
+    Assert.deepEqual(
+      resolved.contents,
+      false,
+      ~message="Should not resolve with height <= knownHeight",
+    )
+
+    // Finally trigger with valid height
+    mock.triggerHeightSubscription(106)
+    Assert.deepEqual(await p2, 106, ~message="Should resolve with height > knownHeight")
+  })
+})
