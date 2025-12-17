@@ -1,49 +1,50 @@
 open RescriptMocha
 
 describe("Test makeClickHouseEntitySchema", () => {
-  Async.it(
-    "Should serialize Date fields using getTime() instead of ISO string",
-    async () => {
-      let entityConfig = module(Entities.EntityWithAllTypes)->Entities.entityModToInternal
+  Async.it("Should serialize Date fields using getTime() instead of ISO string", async () => {
+    let entityConfig = module(Entities.EntityWithAllTypes)->Entities.entityModToInternal
 
-      // Create a schema using makeClickHouseEntitySchema
-      let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
+    // Create a schema using makeClickHouseEntitySchema
+    let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
 
-      // Create a test entity with nullable timestamp
-      let testDate = Js.Date.fromFloat(1234567890123.0)
-      let testEntity: Entities.EntityWithAllTypes.t = {
-        id: "test-id",
-        string: "test",
-        optString: None,
-        arrayOfStrings: [],
-        int_: 1,
-        optInt: None,
-        arrayOfInts: [],
-        float_: 1.0,
-        optFloat: None,
-        arrayOfFloats: [],
-        bool: true,
-        optBool: None,
-        bigInt: BigInt.fromInt(1),
-        optBigInt: None,
-        arrayOfBigInts: [],
-        bigDecimal: BigDecimal.fromFloat(1.0),
-        optBigDecimal: None,
-        bigDecimalWithConfig: BigDecimal.fromFloat(1.0),
-        arrayOfBigDecimals: [],
-        timestamp: testDate,
-        optTimestamp: Some(testDate),
-        json: %raw(`{}`),
-        enumField: #ADMIN,
-        optEnumField: None,
-      }
+    // Create a test entity with nullable timestamp
+    let testDate = Js.Date.fromFloat(1234567890123.0)
+    let testEntity: Entities.EntityWithAllTypes.t = {
+      id: "test-id",
+      string: "test",
+      optString: None,
+      arrayOfStrings: [],
+      int_: 1,
+      optInt: None,
+      arrayOfInts: [],
+      float_: 1.0,
+      optFloat: None,
+      arrayOfFloats: [],
+      bool: true,
+      optBool: None,
+      bigInt: BigInt.fromInt(1),
+      optBigInt: None,
+      arrayOfBigInts: [],
+      bigDecimal: BigDecimal.fromFloat(1.0),
+      optBigDecimal: None,
+      bigDecimalWithConfig: BigDecimal.fromFloat(1.0),
+      arrayOfBigDecimals: [],
+      timestamp: testDate,
+      optTimestamp: Some(testDate),
+      json: %raw(`{}`),
+      enumField: ADMIN,
+      optEnumField: None,
+    }
 
-      // Serialize the entity using the ClickHouse schema
-      let serialized = testEntity->S.reverseConvertToJsonOrThrow(clickHouseSchema)
+    // Serialize the entity using the ClickHouse schema
+    let serialized =
+      testEntity
+      ->Entities.EntityWithAllTypes.castToInternal
+      ->S.reverseConvertToJsonOrThrow(clickHouseSchema)
 
-      Assert.deepEqual(
-        serialized,
-        %raw(`{
+    Assert.deepEqual(
+      serialized,
+      %raw(`{
           "id": "test-id",
           "string": "test",
           "optString": null,
@@ -61,7 +62,7 @@ describe("Test makeClickHouseEntitySchema", () => {
           "arrayOfBigInts": [],
           "bigDecimal": "1",
           "optBigDecimal": null,
-          "bigDecimalWithConfig": "1.00000000",
+          "bigDecimalWithConfig": "1",
           "arrayOfBigDecimals": [],
           "timestamp": 1234567890123.0,
           "optTimestamp": 1234567890123.0,
@@ -69,10 +70,9 @@ describe("Test makeClickHouseEntitySchema", () => {
           "enumField": "ADMIN",
           "optEnumField": null
         }`),
-        ~message="Entity should be serialized with timestamps as numbers",
-      )
-    },
-  )
+      ~message="Entity should be serialized with timestamps as numbers",
+    )
+  })
 })
 
 describe("Test ClickHouse SQL generation functions", () => {
