@@ -184,13 +184,13 @@ module GetTransactionByHash = {
   let transactionSchema = S.object((s): Internal.evmTransactionFields => {
     blockHash: ?s.field("blockHash", S.option(S.string)),
     blockNumber: ?s.field("blockNumber", S.option(hexIntSchema)),
-    from: ?s.field("from", S.option(S.string)),
+    from: ?s.field("from", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
+    to: ?s.field("to", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
     gas: ?s.field("gas", S.option(hexBigintSchema)),
     gasPrice: ?s.field("gasPrice", S.option(hexBigintSchema)),
     hash: ?s.field("hash", S.option(S.string)),
     input: ?s.field("input", S.option(S.string)),
     nonce: ?s.field("nonce", S.option(hexBigintSchema)),
-    to: ?s.field("to", S.option(S.string)),
     transactionIndex: ?s.field("transactionIndex", S.option(hexIntSchema)),
     value: ?s.field("value", S.option(hexBigintSchema)),
     // Signature fields - optional for ZKSync EIP-712 compatibility

@@ -7,13 +7,13 @@ type eventTransaction
 type evmTransactionFields = {
   blockHash?: string,
   blockNumber?: int,
-  from?: string,
+  from?: Address.t,
+  to?: Address.t,
   gas?: bigint,
   gasPrice?: bigint,
   hash?: string,
   input?: string,
   nonce?: bigint,
-  to?: string,
   transactionIndex?: int,
   value?: bigint,
   // Signature fields - optional for ZKSync EIP-712 compatibility

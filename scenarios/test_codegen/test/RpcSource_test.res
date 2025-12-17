@@ -194,25 +194,25 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               "transactionIndex": s.matches(S.int),
               "from": s.matches(S.option(Address.schema)),
               "to": s.matches(S.option(Address.schema)),
-              // "gas": s.matches(BigInt.nativeSchema), --- Not exposed by Ethers
+              "gas": s.matches(BigInt.nativeSchema),
               "gasPrice": s.matches(S.option(BigInt.nativeSchema)),
               "maxPriorityFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
               "maxFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
-              // "cumulativeGasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint
-              // "effectiveGasPrice": s.matches(BigInt.nativeSchema), --- Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint
-              // "gasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint
+              // "cumulativeGasUsed": s.matches(BigInt.nativeSchema), // --- Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint
+              // "effectiveGasPrice": s.matches(BigInt.nativeSchema), // --- Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint
+              // "gasUsed": s.matches(BigInt.nativeSchema), // --- Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint
               "input": s.matches(S.string),
-              // "nonce": s.matches(BigInt.nativeSchema), --- Returned as number by ethers
+              "nonce": s.matches(BigInt.nativeSchema),
               "value": s.matches(BigInt.nativeSchema),
-              // "v": s.matches(S.option(S.string)), --- Invalid transaction field "v" found in the RPC response. Error: Expected Option(String), received 28
-              // "r": s.matches(S.option(S.string)), --- Inside of signature
-              // "s": s.matches(S.option(S.string)),
-              // "yParity": s.matches(S.option(S.string)), --- Inside of signature and decoded to int
+              "v": s.matches(S.option(S.string)),
+              "r": s.matches(S.option(S.string)),
+              "s": s.matches(S.option(S.string)),
+              "yParity": s.matches(S.option(S.string)),
               "contractAddress": s.matches(S.option(Address.schema)),
-              // "logsBloom": s.matches(S.string), --- Invalid transaction field "logsBloom" found in the RPC response. Error: Expected String, received undefined
+              // "logsBloom": s.matches(S.string), // --- Invalid transaction field "logsBloom" found in the RPC response. Error: Expected String, received undefined
               "root": s.matches(S.option(S.string)),
               "status": s.matches(S.option(S.int)),
-              // "chainId": s.matches(S.option(S.int)), --- Decoded to bigint by ethers
+              "chainId": s.matches(S.option(S.int)),
               "maxFeePerBlobGas": s.matches(S.option(BigInt.nativeSchema)),
               "blobVersionedHashes": s.matches(S.option(S.array(S.string))),
               "kind": s.matches(S.option(S.int)),
@@ -230,17 +230,20 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         "from": Some("0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow),
         "to": Some("0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.Evm.fromStringOrThrow),
         "gasPrice": Some(17699339493n),
+        "gas": 21000n,
         "maxPriorityFeePerGas": Some(0n),
         "maxFeePerGas": Some(17699339493n),
         "input": "0x",
+        "nonce": 1722147n,
         "value": 34302998902926621n,
-        // "r": Some("0xb73e53731ff8484f3c30c2850328f0ad7ca5a8dd8681d201ba52777aaf972f87"),
-        // "s": Some("0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a"),
+        "r": Some("0xb73e53731ff8484f3c30c2850328f0ad7ca5a8dd8681d201ba52777aaf972f87"),
+        "s": Some("0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a"),
+        "v": Some("0x1"),
         "contractAddress": None,
         "root": None,
         "status": None,
-        // "yParity": Some("0x1"),
-        // "chainId": Some(1),
+        "yParity": Some("0x1"),
+        "chainId": Some(1),
         "maxFeePerBlobGas": None,
         "blobVersionedHashes": None,
         "kind": None,
@@ -249,7 +252,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         "l1GasUsed": None,
         "l1FeeScalar": None,
         "gasUsedForL1": None,
-      }->Obj.magic,
+      },
     )
   })
 
@@ -267,53 +270,28 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       Assert.ok(transaction->Belt.Option.isSome, ~message="Transaction should be fetched")
       let tx = transaction->Belt.Option.getUnsafe
 
+      tx->Utils.Dict.unsafeDeleteUndefinedFieldsInPlace
+
       // Verify all transaction fields using a single comparison
       // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity)
       Assert.deepEqual(
+        tx,
         {
-          "hash": tx.hash,
-          "blockHash": tx.blockHash,
-          "blockNumber": tx.blockNumber,
-          "from": tx.from,
-          "to": tx.to,
-          "gas": tx.gas,
-          "gasPrice": tx.gasPrice,
-          "input": tx.input,
-          "nonce": tx.nonce,
-          "transactionIndex": tx.transactionIndex,
-          "value": tx.value,
-          "type_": tx.type_,
-          "maxFeePerGas": tx.maxFeePerGas,
-          "maxPriorityFeePerGas": tx.maxPriorityFeePerGas,
-          "chainId": tx.chainId,
-          "v": tx.v,
-          "r": tx.r,
-          "s": tx.s,
-          "yParity": tx.yParity,
-        },
-        {
-          "hash": Some(testTransactionHash),
-          "blockHash": Some("0x75f6c2fcedf597b750ee1f960794906a3795d5894ea7af6400334ca2e86109f8"),
-          "blockNumber": Some(9290261),
-          "from": Some("0x58027ecef16a9da81835a82cfc4afa1e729c74ff"),
-          "to": Some("0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"),
-          "gas": Some(1189904n),
-          "gasPrice": Some(25000000n),
-          "input": Some(
-            "0xfe939afc000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000061",
-          ),
-          "nonce": Some(662n),
-          "transactionIndex": Some(0),
-          "value": Some(0n),
-          "type_": Some(113), // 0x71 = ZKSync EIP-712
-          "maxFeePerGas": Some(25000000n),
-          "maxPriorityFeePerGas": Some(0n),
-          "chainId": Some(11124),
-          // Signature fields absent for ZKSync EIP-712
-          "v": None,
-          "r": None,
-          "s": None,
-          "yParity": None,
+          hash: testTransactionHash,
+          blockHash: "0x75f6c2fcedf597b750ee1f960794906a3795d5894ea7af6400334ca2e86109f8",
+          blockNumber: 9290261,
+          from: "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
+          to: "0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"->Address.unsafeFromString,
+          gas: 1189904n,
+          gasPrice: 25000000n,
+          input: "0xfe939afc000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000061",
+          nonce: 662n,
+          transactionIndex: 0,
+          value: 0n,
+          type_: 113, // 0x71 = ZKSync EIP-712
+          maxFeePerGas: 25000000n,
+          maxPriorityFeePerGas: 0n,
+          chainId: 11124,
         },
       )
     },
