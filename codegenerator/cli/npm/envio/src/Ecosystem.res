@@ -1,4 +1,4 @@
-type name = | @as("evm") Evm | @as("fuel") Fuel | @as("solana") Solana
+type name = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
 
 type t = {
   name: name,
@@ -15,7 +15,7 @@ type t = {
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
   switch ecosystem.name {
-  | Solana => {slot: blockNumber, context}
+  | Svm => {slot: blockNumber, context}
   | _ => {
       let blockEvent = Js.Dict.empty()
       blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->Utils.magic)

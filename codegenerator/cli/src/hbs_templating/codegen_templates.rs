@@ -823,7 +823,7 @@ impl NetworkConfigTemplate {
                         format!(",abi: Types.{}.abi", contract.name.capitalized)
                     }
                     system_config::DataSource::Fuel { .. }
-                    | system_config::DataSource::Solana { .. } => "".to_string(),
+                    | system_config::DataSource::Svm { .. } => "".to_string(),
                 };
 
                 format!(
@@ -841,8 +841,8 @@ impl NetworkConfigTemplate {
                 "[HyperFuelSource.make({{chain, endpointUrl: \
                      \"{hypersync_endpoint_url}\"}})]",
             ),
-            system_config::DataSource::Solana { rpc } => {
-                format!("[Solana.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
+            system_config::DataSource::Svm { rpc } => {
+                format!("[Svm.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
             }
             system_config::DataSource::Evm {
                 main,
@@ -1094,7 +1094,7 @@ pub struct ProjectTemplate {
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
-    is_solana_ecosystem: bool,
+    is_svm_ecosystem: bool,
 
     envio_version: String,
     types_code: String,
@@ -1189,7 +1189,7 @@ impl ProjectTemplate {
         let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
         let chain_id_cases = match &cfg.human_config {
-            HumanConfig::Solana(hcfg) => hcfg
+            HumanConfig::Svm(hcfg) => hcfg
                 .chains
                 .iter()
                 .enumerate()
@@ -1251,7 +1251,7 @@ type chainId = [{}]"#,
             aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
-            is_solana_ecosystem: cfg.get_ecosystem() == Ecosystem::Solana,
+            is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             types_code: res_types_code,
             ts_types_code,

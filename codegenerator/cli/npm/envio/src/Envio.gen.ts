@@ -15,7 +15,7 @@ export type blockEvent = { readonly number: number };
 
 export type fuelBlockEvent = { readonly height: number };
 
-export type solanaOnBlockArgs<context> = { readonly slot: number; readonly context: context };
+export type svmOnBlockArgs<context> = { readonly slot: number; readonly context: context };
 
 export type onBlockArgs<block,context> = { readonly block: block; readonly context: context };
 
