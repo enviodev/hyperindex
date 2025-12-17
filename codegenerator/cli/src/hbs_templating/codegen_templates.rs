@@ -21,7 +21,10 @@ use crate::{
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
-    project_paths::{path_utils::add_trailing_relative_dot, ParsedProjectPaths},
+    project_paths::{
+        path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
+        ParsedProjectPaths,
+    },
     rescript_types::{
         RescriptRecordField, RescriptSchemaMode, RescriptTypeExpr, RescriptTypeIdent,
     },
@@ -1180,9 +1183,14 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to get relative path from output directory to project root")?;
 
-        let relative_path_to_generated_from_root =
-            diff_from_current(&project_paths.generated, &project_paths.project_root)
-                .context("Failed to get relative path from project root to generated")?;
+        let relative_path_to_generated_from_root = add_leading_relative_dot(
+            diff_paths(&project_paths.generated, &project_paths.project_root).ok_or_else(|| {
+                anyhow!("Failed to diff paths for relative_path_to_generated_from_root")
+            })?,
+        )
+        .to_str()
+        .ok_or_else(|| anyhow!("Failed converting path to str"))?
+        .to_string();
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
@@ -1346,6 +1354,11 @@ mod test {
         assert_eq!(
             project_template.relative_path_to_root_from_generated,
             "../.".to_string()
+        );
+        assert_eq!(
+            project_template.relative_path_to_generated_from_root,
+            "./generated".to_string(),
+            "relative_path_to_generated_from_root should start with ./ for Node.js module resolution"
         );
 
         assert_eq!(
