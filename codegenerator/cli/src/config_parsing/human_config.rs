@@ -89,6 +89,38 @@ pub struct BaseConfig {
     pub full_batch_size: Option<u64>,
 }
 
+/// BaseConfig with camelCase JSON serialization for CLI output
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseConfigJson {
+    pub version: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handlers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_batch_size: Option<u64>,
+}
+
+impl BaseConfigJson {
+    pub fn new(config: &BaseConfig, version: &str) -> Self {
+        BaseConfigJson {
+            version: version.to_string(),
+            name: config.name.clone(),
+            description: config.description.clone(),
+            schema: config.schema.clone(),
+            output: config.output.clone(),
+            handlers: config.handlers.clone(),
+            full_batch_size: config.full_batch_size,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalContract<T> {
