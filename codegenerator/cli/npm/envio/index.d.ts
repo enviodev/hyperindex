@@ -12,7 +12,7 @@ export type {
   onBlockArgs as OnBlockArgs,
   onBlockOptions as OnBlockOptions,
 } from "./src/Envio.gen.ts";
-export type { EffectCaller } from "./src/Types.ts";
+export type { EffectCaller, Address } from "./src/Types.ts";
 
 import type {
   effect as Effect,
