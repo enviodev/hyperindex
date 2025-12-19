@@ -5,7 +5,10 @@ use crate::{
         ContractImportArgs, InitFlow as ClapInitFlow, LocalImportArgs, LocalOrExplorerImport,
         TemplateArgs,
     },
-    config_parsing::human_config::fuel::EventConfig,
+    config_parsing::{
+        contract_import::converters::normalize_contract_name,
+        human_config::fuel::EventConfig,
+    },
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     init_config::fuel::{ContractImportSelection, InitFlow, Network, SelectedContract, Template},
 };
@@ -163,7 +166,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
     let addresses = vec![prompt_contract_address(None)?];
 
     Ok(SelectedContract {
-        name,
+        name: normalize_contract_name(name),
         addresses,
         abi,
         selected_events,

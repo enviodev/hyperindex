@@ -2,6 +2,11 @@ use crate::{config_parsing::chain_helpers::HypersyncNetwork, evm::address::Addre
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
 
+/// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores.
+pub fn normalize_contract_name(name: String) -> String {
+    name.replace([' ', '-', '.'], "_")
+}
+
 ///The hierarchy is based on how you would add items to
 ///your selection as you go. Ie. Once you have constructed
 ///the selection of a contract you can add more addresses or
@@ -20,7 +25,7 @@ impl SelectedContract {
         events: Vec<ethers::abi::Event>,
     ) -> Self {
         Self {
-            name,
+            name: normalize_contract_name(name),
             chains: vec![network_selection],
             events,
         }
@@ -111,5 +116,49 @@ impl ContractImportNetworkSelection {
 
     pub fn uses_hypersync(&self) -> bool {
         self.network.uses_hypersync()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_contract_name() {
+        // Spaces are replaced with underscores
+        assert_eq!(
+            normalize_contract_name("Yearn V3 Vault".to_string()),
+            "Yearn_V3_Vault"
+        );
+
+        // Hyphens are replaced with underscores
+        assert_eq!(
+            normalize_contract_name("Uniswap-V3".to_string()),
+            "Uniswap_V3"
+        );
+
+        // Dots are replaced with underscores
+        assert_eq!(
+            normalize_contract_name("Token.Contract".to_string()),
+            "Token_Contract"
+        );
+
+        // Multiple special characters
+        assert_eq!(
+            normalize_contract_name("My-Contract.Name V2".to_string()),
+            "My_Contract_Name_V2"
+        );
+
+        // Already valid name remains unchanged
+        assert_eq!(
+            normalize_contract_name("ValidContractName".to_string()),
+            "ValidContractName"
+        );
+
+        // Underscores are preserved
+        assert_eq!(
+            normalize_contract_name("Valid_Contract_Name".to_string()),
+            "Valid_Contract_Name"
+        );
     }
 }

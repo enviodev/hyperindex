@@ -2,7 +2,7 @@ mod evm_prompts;
 mod fuel_prompts;
 mod inquire_helpers;
 mod shared_prompts;
-mod solana_prompts;
+mod svm_prompts;
 pub mod validation;
 
 use super::{
@@ -27,7 +27,7 @@ use validation::{
 #[derive(Clone, Debug, Display, PartialEq, EnumIter)]
 enum EcosystemOption {
     Evm,
-    Solana,
+    Svm,
     Fuel,
 }
 
@@ -43,7 +43,7 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
 
             match ecosystem_option {
                 EcosystemOption::Fuel => InitFlow::Fuel { init_flow: None },
-                EcosystemOption::Solana => InitFlow::Solana { init_flow: None },
+                EcosystemOption::Svm => InitFlow::Svm { init_flow: None },
                 EcosystemOption::Evm => {
                     // Start prompt to ask the user which initialization option they want
                     // Explicitelly build options, since we don't want to include graph migration and other ecosystem selection subcomands
@@ -97,11 +97,11 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
         InitFlow::ContractImport(args) => Ecosystem::Evm {
             init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
         },
-        InitFlow::Solana {
+        InitFlow::Svm {
             init_flow: maybe_init_flow,
-        } => match solana_prompts::prompt_init_flow_missing(maybe_init_flow)? {
-            clap_definitions::solana::InitFlow::Template(args) => Ecosystem::Solana {
-                init_flow: solana_prompts::prompt_template_init_flow(args)?,
+        } => match svm_prompts::prompt_init_flow_missing(maybe_init_flow)? {
+            clap_definitions::svm::InitFlow::Template(args) => Ecosystem::Svm {
+                init_flow: svm_prompts::prompt_template_init_flow(args)?,
             },
         },
     };

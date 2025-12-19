@@ -51,8 +51,8 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                     &template, &parsed_project_paths.project_root,
                 ))?;
         }
-        Ecosystem::Solana {
-            init_flow: init_config::solana::InitFlow::Template(template),
+        Ecosystem::Svm {
+            init_flow: init_config::svm::InitFlow::Template(template),
         } => {
             template_dirs
                 .get_and_extract_template(
@@ -61,7 +61,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing Solana template {} at path {:?}",
+                    "Failed initializing Svm template {} at path {:?}",
                     &template, &parsed_project_paths.project_root,
                 ))?;
         }

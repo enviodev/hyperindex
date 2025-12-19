@@ -2,13 +2,21 @@ open Belt
 
 type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
 
+type sourceState = {
+  source: Source.t,
+  mutable knownHeight: int,
+  mutable unsubscribe: option<unit => unit>,
+  mutable pendingHeightResolvers: array<int => unit>,
+  mutable disabled: bool,
+}
+
 // Ideally the ChainFetcher name suits this better
 // But currently the ChainFetcher module is immutable
 // and handles both processing and fetching.
 // So this module is to encapsulate the fetching logic only
 // with a mutable state for easier reasoning and testing.
 type t = {
-  sources: Utils.Set.t<Source.t>,
+  sourcesState: array<sourceState>,
   mutable statusStart: Hrtime.timeRef,
   mutable status: sourceManagerStatus,
   maxPartitionConcurrency: int,
@@ -63,7 +71,13 @@ let make = (
   )
   {
     maxPartitionConcurrency,
-    sources: Utils.Set.fromArray(sources),
+    sourcesState: sources->Array.map(source => {
+      source,
+      knownHeight: 0,
+      unsubscribe: None,
+      pendingHeightResolvers: [],
+      disabled: false,
+    }),
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
     fetchingPartitionsCount: 0,
@@ -159,60 +173,109 @@ let fetchNext = async (
 
 type status = Active | Stalled | Done
 
+let disableSource = (sourceState: sourceState) => {
+  if !sourceState.disabled {
+    sourceState.disabled = true
+    switch sourceState.unsubscribe {
+    | Some(unsubscribe) => unsubscribe()
+    | None => ()
+    }
+    true
+  } else {
+    false
+  }
+}
+
 let getSourceNewHeight = async (
   sourceManager,
-  ~source: Source.t,
+  ~sourceState: sourceState,
   ~knownHeight,
   ~status: ref<status>,
   ~logger,
 ) => {
-  let newHeight = ref(0)
+  let source = sourceState.source
+  let initialHeight = sourceState.knownHeight
+  let newHeight = ref(initialHeight)
   let retry = ref(0)
 
   while newHeight.contents <= knownHeight && status.contents !== Done {
-    try {
-      // Use to detect if the source is taking too long to respond
-      let endTimer = Prometheus.SourceGetHeightDuration.startTimer({
-        "source": source.name,
-        "chainId": source.chain->ChainMap.Chain.toChainId,
+    // If subscription exists, wait for next height event
+    switch sourceState.unsubscribe {
+    | Some(_) =>
+      let height = await Promise.make((resolve, _reject) => {
+        sourceState.pendingHeightResolvers->Array.push(resolve)
       })
-      let height = await source.getHeightOrThrow()
-      endTimer()
 
-      newHeight := height
-      if height <= knownHeight {
-        retry := 0
-        // Slowdown polling when the chain isn't progressing
-        let pollingInterval = if status.contents === Stalled {
-          sourceManager.stalledPollingInterval
-        } else {
-          source.pollingInterval
-        }
-        await Utils.delay(pollingInterval)
+      // Only accept heights greater than initialHeight
+      if height > initialHeight {
+        newHeight := height
       }
-    } catch {
-    | exn =>
-      let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
-      logger->Logging.childTrace({
-        "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
-        "source": source.name,
-        "err": exn->Utils.prettifyExn,
-      })
-      retry := retry.contents + 1
-      await Utils.delay(retryInterval)
+    | None =>
+      // No subscription, use REST polling
+      try {
+        // Use to detect if the source is taking too long to respond
+        let endTimer = Prometheus.SourceGetHeightDuration.startTimer({
+          "source": source.name,
+          "chainId": source.chain->ChainMap.Chain.toChainId,
+        })
+        let height = await source.getHeightOrThrow()
+        endTimer()
+
+        newHeight := height
+        if height <= knownHeight {
+          retry := 0
+
+          // If createHeightSubscription is available and height hasn't changed,
+          // create subscription instead of polling
+          switch source.createHeightSubscription {
+          | Some(createSubscription) =>
+            let unsubscribe = createSubscription(~onHeight=newHeight => {
+              sourceState.knownHeight = newHeight
+              // Resolve all pending height resolvers
+              let resolvers = sourceState.pendingHeightResolvers
+              sourceState.pendingHeightResolvers = []
+              resolvers->Array.forEach(resolve => resolve(newHeight))
+            })
+            sourceState.unsubscribe = Some(unsubscribe)
+          | None =>
+            // Slowdown polling when the chain isn't progressing
+            let pollingInterval = if status.contents === Stalled {
+              sourceManager.stalledPollingInterval
+            } else {
+              source.pollingInterval
+            }
+            await Utils.delay(pollingInterval)
+          }
+        }
+      } catch {
+      | exn =>
+        let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
+        logger->Logging.childTrace({
+          "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
+          "source": source.name,
+          "err": exn->Utils.prettifyExn,
+        })
+        retry := retry.contents + 1
+        await Utils.delay(retryInterval)
+      }
     }
   }
-  Prometheus.SourceHeight.set(
-    ~sourceName=source.name,
-    ~chainId=source.chain->ChainMap.Chain.toChainId,
-    ~blockNumber=newHeight.contents,
-  )
+
+  // Update Prometheus only if height increased
+  if newHeight.contents > initialHeight {
+    Prometheus.SourceHeight.set(
+      ~sourceName=source.name,
+      ~chainId=source.chain->ChainMap.Chain.toChainId,
+      ~blockNumber=newHeight.contents,
+    )
+  }
+
   newHeight.contents
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
 let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
-  let {sources} = sourceManager
+  let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
     ~params={
@@ -230,8 +293,12 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
 
   let syncSources = []
   let fallbackSources = []
-  sources->Utils.Set.forEach(source => {
-    if (
+  sourcesState->Array.forEach(sourceState => {
+    let source = sourceState.source
+    if sourceState.disabled {
+      // Skip disabled sources
+      ()
+    } else if (
       source.sourceFor === Sync ||
       // Include Live sources only after initial sync has started
       // Live sources are optimized for real-time indexing with lower latency
@@ -241,9 +308,9 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
       // if all main sync sources are still not valid
       source === sourceManager.activeSource
     ) {
-      syncSources->Array.push(source)
+      syncSources->Array.push(sourceState)
     } else {
-      fallbackSources->Array.push(source)
+      fallbackSources->Array.push(sourceState)
     }
   })
 
@@ -251,8 +318,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
 
   let (source, newBlockHeight) = await Promise.race(
     syncSources
-    ->Array.map(async source => {
-      (source, await sourceManager->getSourceNewHeight(~source, ~knownHeight, ~status, ~logger))
+    ->Array.map(async sourceState => {
+      (
+        sourceState.source,
+        await sourceManager->getSourceNewHeight(~sourceState, ~knownHeight, ~status, ~logger),
+      )
     })
     ->Array.concat([
       Utils.delay(sourceManager.newBlockFallbackStallTimeout)->Promise.then(() => {
@@ -275,10 +345,10 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
         // Promise.race will be forever pending if fallbackSources is empty
         // which is good for this use case
         Promise.race(
-          fallbackSources->Array.map(async source => {
+          fallbackSources->Array.map(async sourceState => {
             (
-              source,
-              await sourceManager->getSourceNewHeight(~source, ~knownHeight, ~status, ~logger),
+              sourceState.source,
+              await sourceManager->getSourceNewHeight(~sourceState, ~knownHeight, ~status, ~logger),
             )
           }),
         )
@@ -301,11 +371,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
   newBlockHeight
 }
 
-let getNextSyncSource = (
+let getNextSyncSourceState = (
   sourceManager,
   // This is needed to include the Fallback source to rotation
-  ~initialSource,
-  ~currentSource,
+  ~initialSourceState: sourceState,
+  ~currentSourceState: sourceState,
   // After multiple failures start returning fallback sources as well
   // But don't try it when main sync sources fail because of invalid configuration
   // note: The logic might be changed in the future
@@ -316,18 +386,23 @@ let getNextSyncSource = (
 
   let hasActive = ref(false)
 
-  sourceManager.sources->Utils.Set.forEach(source => {
-    if source === currentSource {
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    let source = sourceState.source
+
+    // Skip disabled sources
+    if sourceState.disabled {
+      ()
+    } else if sourceState === currentSourceState {
       hasActive := true
     } else if (
       switch source.sourceFor {
       | Sync => true
       // Live sources should NOT be used for historical sync rotation
       // They are only meant for real-time indexing once synced
-      | Live | Fallback => attemptFallbacks || source === initialSource
+      | Live | Fallback => attemptFallbacks || sourceState === initialSourceState
       }
     ) {
-      (hasActive.contents ? after : before)->Array.push(source)
+      (hasActive.contents ? after : before)->Array.push(sourceState)
     }
   })
 
@@ -336,7 +411,7 @@ let getNextSyncSource = (
   | None =>
     switch before->Array.get(0) {
     | Some(s) => s
-    | None => currentSource
+    | None => currentSourceState
     }
   }
 }
@@ -352,12 +427,16 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
   )
   let responseRef = ref(None)
   let retryRef = ref(0)
-  let initialSource = sourceManager.activeSource
-  let sourceRef = ref(initialSource)
+  let initialSourceState =
+    sourceManager.sourcesState
+    ->Js.Array2.find(s => s.source === sourceManager.activeSource)
+    ->Option.getUnsafe
+  let sourceStateRef = ref(initialSourceState)
   let shouldUpdateActiveSource = ref(false)
 
   while responseRef.contents->Option.isNone {
-    let source = sourceRef.contents
+    let sourceState = sourceStateRef.contents
+    let source = sourceState.source
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
 
@@ -398,15 +477,19 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
       switch error {
       | UnsupportedSelection(_)
       | FailedGettingFieldSelection(_) => {
-          let nextSource = sourceManager->getNextSyncSource(~initialSource, ~currentSource=source)
+          let nextSourceState =
+            sourceManager->getNextSyncSourceState(
+              ~initialSourceState,
+              ~currentSourceState=sourceState,
+            )
 
-          // These errors are impossible to recover, so we delete the source
-          // from sourceManager so it's not attempted anymore
-          let notAlreadyDeleted = sourceManager.sources->Utils.Set.delete(source)
+          // These errors are impossible to recover, so we disable the source
+          // so it's not attempted anymore
+          let notAlreadyDisabled = disableSource(sourceState)
 
           // In case there are multiple partitions
           // failing at the same time. Log only once
-          if notAlreadyDeleted {
+          if notAlreadyDisabled {
             switch error {
             | UnsupportedSelection({message}) => logger->Logging.childError(message)
             | FailedGettingFieldSelection({exn, message, blockNumber, logIndex}) =>
@@ -420,7 +503,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             }
           }
 
-          if nextSource === source {
+          if nextSourceState === sourceState {
             %raw(`null`)->ErrorHandling.mkLogAndRaise(
               ~logger,
               ~msg="The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
@@ -428,9 +511,9 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           } else {
             logger->Logging.childInfo({
               "msg": "Switching to another data-source",
-              "source": nextSource.name,
+              "source": nextSourceState.source.name,
             })
-            sourceRef := nextSource
+            sourceStateRef := nextSourceState
             shouldUpdateActiveSource := true
             retryRef := 0
           }
@@ -444,14 +527,14 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         toBlockRef := Some(toBlock)
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
-        let nextSource =
-          sourceManager->getNextSyncSource(
-            ~initialSource,
-            ~currentSource=source,
+        let nextSourceState =
+          sourceManager->getNextSyncSourceState(
+            ~initialSourceState,
+            ~currentSourceState=sourceState,
             ~attemptFallbacks=true,
           )
 
-        let hasAnotherSource = nextSource !== initialSource
+        let hasAnotherSource = nextSourceState !== initialSourceState
 
         logger->Logging.childWarn({
           "msg": message ++ (hasAnotherSource ? " - Attempting to another source" : ""),
@@ -465,7 +548,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             ~msg="The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
           )
         } else {
-          sourceRef := nextSource
+          sourceStateRef := nextSourceState
           shouldUpdateActiveSource := false
           retryRef := 0
         }
@@ -480,19 +563,19 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         // just keep the value high
         let attemptFallbacks = retry >= 10
 
-        let nextSource = switch retry {
+        let nextSourceState = switch retry {
         // Don't attempt a switch on first two failure
-        | 0 | 1 => source
+        | 0 | 1 => sourceState
         | _ =>
           // Then try to switch every second failure
           if retry->mod(2) === 0 {
-            sourceManager->getNextSyncSource(
-              ~initialSource,
+            sourceManager->getNextSyncSourceState(
+              ~initialSourceState,
               ~attemptFallbacks,
-              ~currentSource=source,
+              ~currentSourceState=sourceState,
             )
           } else {
-            source
+            sourceState
           }
         }
 
@@ -506,13 +589,13 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           "err": exn->Utils.prettifyExn,
         })
 
-        let shouldSwitch = nextSource !== source
+        let shouldSwitch = nextSourceState !== sourceState
         if shouldSwitch {
           logger->Logging.childInfo({
             "msg": "Switching to another data-source",
-            "source": nextSource.name,
+            "source": nextSourceState.source.name,
           })
-          sourceRef := nextSource
+          sourceStateRef := nextSourceState
           shouldUpdateActiveSource := true
         } else {
           await Utils.delay(Pervasives.min(backoffMillis, 60_000))
@@ -526,7 +609,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
   }
 
   if shouldUpdateActiveSource.contents {
-    sourceManager.activeSource = sourceRef.contents
+    sourceManager.activeSource = sourceStateRef.contents.source
   }
 
   responseRef.contents->Option.getUnsafe

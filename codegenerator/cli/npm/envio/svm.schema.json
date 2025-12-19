@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Envio Solana Config Schema",
-  "description": "Schema for a YAML config for an envio Solana indexer",
+  "title": "Envio Svm Config Schema",
+  "description": "Schema for a YAML config for an envio Svm indexer",
   "type": "object",
   "properties": {
     "description": {
@@ -67,14 +67,14 @@
     "EcosystemTag": {
       "type": "string",
       "enum": [
-        "solana"
+        "svm"
       ]
     },
     "Chain": {
       "type": "object",
       "properties": {
         "rpc": {
-          "description": "RPC endpoint URL for connecting to the Solana cluster to fetch blockchain data.",
+          "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data.",
           "type": "string"
         },
         "start_block": {
@@ -101,3 +101,4 @@
     }
   }
 }
+
