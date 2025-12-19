@@ -5,8 +5,6 @@ type eventTransaction
 // Shared EVM transaction fields type used by both RPC and HyperSync sources
 // Field names match HyperSyncClient.ResponseTypes.transaction for consistency
 type evmTransactionFields = {
-  blockHash?: string,
-  blockNumber?: int,
   from?: Address.t,
   to?: Address.t,
   gas?: bigint,
@@ -24,7 +22,6 @@ type evmTransactionFields = {
   // EIP-1559 fields
   maxPriorityFeePerGas?: bigint,
   maxFeePerGas?: bigint,
-  chainId?: int,
   // EIP-4844 blob fields
   maxFeePerBlobGas?: bigint,
   blobVersionedHashes?: array<string>,

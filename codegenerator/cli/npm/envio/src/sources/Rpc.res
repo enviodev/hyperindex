@@ -182,8 +182,10 @@ module GetBlockHeight = {
 
 module GetTransactionByHash = {
   let transactionSchema = S.object((s): Internal.evmTransactionFields => {
-    blockHash: ?s.field("blockHash", S.option(S.string)),
-    blockNumber: ?s.field("blockNumber", S.option(hexIntSchema)),
+    // We already know the data so ignore the fields
+    // blockHash: ?s.field("blockHash", S.option(S.string)),
+    // blockNumber: ?s.field("blockNumber", S.option(hexIntSchema)),
+    // chainId: ?s.field("chainId", S.option(hexIntSchema)),
     from: ?s.field("from", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
     to: ?s.field("to", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
     gas: ?s.field("gas", S.option(hexBigintSchema)),
@@ -193,6 +195,7 @@ module GetTransactionByHash = {
     nonce: ?s.field("nonce", S.option(hexBigintSchema)),
     transactionIndex: ?s.field("transactionIndex", S.option(hexIntSchema)),
     value: ?s.field("value", S.option(hexBigintSchema)),
+    type_: ?s.field("type", S.option(hexIntSchema)),
     // Signature fields - optional for ZKSync EIP-712 compatibility
     v: ?s.field("v", S.option(S.string)),
     r: ?s.field("r", S.option(S.string)),
@@ -201,25 +204,16 @@ module GetTransactionByHash = {
     // EIP-1559 fields
     maxPriorityFeePerGas: ?s.field("maxPriorityFeePerGas", S.option(hexBigintSchema)),
     maxFeePerGas: ?s.field("maxFeePerGas", S.option(hexBigintSchema)),
-    chainId: ?s.field("chainId", S.option(hexIntSchema)),
     // EIP-4844 blob fields
     maxFeePerBlobGas: ?s.field("maxFeePerBlobGas", S.option(hexBigintSchema)),
     blobVersionedHashes: ?s.field("blobVersionedHashes", S.option(S.array(S.string))),
-    // Receipt fields (from joined transaction receipts)
-    cumulativeGasUsed: ?s.field("cumulativeGasUsed", S.option(hexBigintSchema)),
-    effectiveGasPrice: ?s.field("effectiveGasPrice", S.option(hexBigintSchema)),
-    gasUsed: ?s.field("gasUsed", S.option(hexBigintSchema)),
-    contractAddress: ?s.field("contractAddress", S.option(S.string)),
-    logsBloom: ?s.field("logsBloom", S.option(S.string)),
-    type_: ?s.field("type", S.option(hexIntSchema)),
-    root: ?s.field("root", S.option(S.string)),
-    status: ?s.field("status", S.option(hexIntSchema)),
-    // L2 specific fields (Optimism, Arbitrum, etc.)
-    l1Fee: ?s.field("l1Fee", S.option(hexBigintSchema)),
-    l1GasPrice: ?s.field("l1GasPrice", S.option(hexBigintSchema)),
-    l1GasUsed: ?s.field("l1GasUsed", S.option(hexBigintSchema)),
-    l1FeeScalar: ?s.field("l1FeeScalar", S.option(hexIntSchema)),
-    gasUsedForL1: ?s.field("gasUsedForL1", S.option(hexBigintSchema)),
+    // TODO: Fields to add:
+    // pub access_list: Option<Vec<AccessList>>,
+    // pub authorization_list: Option<Vec<Authorization>>,
+    // // OP stack fields
+    // pub deposit_receipt_version: Option<Quantity>,
+    // pub mint: Option<Quantity>,
+    // pub source_hash: Option<Hash>,
   })
 
   let route = makeRpcRoute(

@@ -243,7 +243,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         "root": None,
         "status": None,
         "yParity": Some("0x1"),
-        "chainId": Some(1),
+        "chainId": None, // This is stripped by the RPC schema, since not needed
         "maxFeePerBlobGas": None,
         "blobVersionedHashes": None,
         "kind": None,
@@ -278,8 +278,6 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         tx,
         {
           hash: testTransactionHash,
-          blockHash: "0x75f6c2fcedf597b750ee1f960794906a3795d5894ea7af6400334ca2e86109f8",
-          blockNumber: 9290261,
           from: "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
           to: "0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"->Address.unsafeFromString,
           gas: 1189904n,
@@ -291,7 +289,6 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
           type_: 113, // 0x71 = ZKSync EIP-712
           maxFeePerGas: 25000000n,
           maxPriorityFeePerGas: 0n,
-          chainId: 11124,
         },
       )
     },

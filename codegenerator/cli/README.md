@@ -14,11 +14,11 @@ HyperIndex is a fast, developer-friendly multichain indexer, optimized for both 
 - **[Indexer auto-generation](https://docs.envio.dev/docs/HyperIndex/contract-import)** – Generate Indexers directly from smart contract addresses
 - **High performance** – Historical backfills at over 10,000+ events per second ([fastest in market](https://docs.envio.dev/blog/indexer-benchmarking-results))
 - **Local development** – Full-featured local environment with Docker
-- **[Multichain indexing](https://docs.envio.dev/docs/HyperIndex/multichain-indexing)** – Index any EVM-compatible blockchain and Fuel (simultaneously)
+- **[Multichain indexing](https://docs.envio.dev/docs/HyperIndex/multichain-indexing)** – Index any EVM-, SVM-, or Fuel-compatible blockchain
 - **Real-time indexing** – Instantly track blockchain events
 - **[Reorg support](https://docs.envio.dev/docs/HyperIndex/reorgs-support)** – Graceful handling of blockchain reorganizations
 - **GraphQL API** – Easy-to-query indexed data
-- **Flexible language support** – JavaScript, TypeScript, and ReScript
+- **Flexible language support** – TypeScript, JavaScript, and ReScript
 - **Factory contract support** – Index data from 1M+ dynamically registered contracts seamlessly
 - **On-chain & off-chain data integration** – Easily combine multiple data sources
 - **[Self-hosted & managed options](https://docs.envio.dev/docs/HyperIndex/hosted-service)** – Run your own setup or use HyperIndex hosted services
