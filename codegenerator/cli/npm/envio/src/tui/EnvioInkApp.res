@@ -43,16 +43,20 @@ module App = {
       <SyncETA chains indexerStartTime />
       <Newline />
       <Box flexDirection={Row}>
-        <Text>
-          {"Development Console: "->React.string}
-        </Text>
+        <Text> {"Dev Console: "->React.string} </Text>
         <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
       </Box>
       <Box flexDirection={Row}>
-        <Text>
-          {"GraphQL Endpoint:    "->React.string}
-        </Text>
-        <Text color={Info} underline=true> {`${Env.Hasura.url}/v1/graphql`->React.string} </Text>
+        <Text> {"GraphQL:     "->React.string} </Text>
+        <Text color={Info} underline=true> {Env.Hasura.url->React.string} </Text>
+        {
+          let defaultPassword = "testing"
+          if Env.Hasura.secret == defaultPassword {
+            <Text color={Gray}> {` (password: ${defaultPassword})`->React.string} </Text>
+          } else {
+            React.null
+          }
+        }
       </Box>
       <Messages config />
     </Box>
