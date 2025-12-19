@@ -464,6 +464,7 @@ module Source = {
     | #getBlockHashes
     | #getHeightOrThrow
     | #getItemsOrThrow
+    | #createHeightSubscription
   ]
 
   type itemMock = {
@@ -493,6 +494,10 @@ module Source = {
     rejectGetItemsOrThrow: 'exn. 'exn => unit,
     getBlockHashesCalls: array<array<int>>,
     resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
+    // Height subscription mocking
+    heightSubscriptionCalls: array<bool>,
+    triggerHeightSubscription: int => unit,
+    unsubscribeHeightSubscription: unit => unit,
   }
 
   let make = (methods, ~chain=#1: Types.chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
@@ -513,6 +518,10 @@ module Source = {
     let getItemsOrThrowRejectFns = []
     let getBlockHashesCalls = []
     let getBlockHashesResolveFns = []
+    // Height subscription state
+    let heightSubscriptionCalls = []
+    let heightSubscriptionCallbacks: array<int => unit> = []
+    let heightSubscriptionUnsubscribed = ref(false)
     {
       getHeightOrThrowCalls,
       resolveGetHeightOrThrow: height => {
@@ -556,6 +565,16 @@ module Source = {
         }
         getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
         getBlockHashesResolveFns->Utils.Array.clearInPlace
+      },
+      heightSubscriptionCalls,
+      triggerHeightSubscription: height => {
+        if !heightSubscriptionUnsubscribed.contents {
+          heightSubscriptionCallbacks->Array.forEach(callback => callback(height))
+        }
+      },
+      unsubscribeHeightSubscription: () => {
+        heightSubscriptionUnsubscribed := true
+        heightSubscriptionCallbacks->Utils.Array.clearInPlace
       },
       source: {
         {
@@ -704,6 +723,21 @@ module Source = {
               getItemsOrThrowRejectFns->Js.Array2.push(reject)->ignore
             })
           }),
+          createHeightSubscription: ?switch methods->Js.Array2.includes(#createHeightSubscription) {
+          | true =>
+            Some(
+              (~onHeight) => {
+                heightSubscriptionCalls->Js.Array2.push(true)->ignore
+                heightSubscriptionCallbacks->Js.Array2.push(onHeight)->ignore
+                heightSubscriptionUnsubscribed := false
+                () => {
+                  heightSubscriptionUnsubscribed := true
+                  heightSubscriptionCallbacks->Utils.Array.clearInPlace
+                }
+              },
+            )
+          | false => None
+          },
         }
       },
     }
