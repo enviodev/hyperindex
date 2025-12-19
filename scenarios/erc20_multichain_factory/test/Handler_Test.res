@@ -4,8 +4,8 @@ open TestHelpers
 
 describe("Transfers", () => {
   //Get mock addresses from helpers
-  let userAddress1 = Ethers.Addresses.mockAddresses[0]->Option.getUnsafe
-  let userAddress2 = Ethers.Addresses.mockAddresses[1]->Option.getUnsafe
+  let userAddress1 = Addresses.mockAddresses[0]->Option.getUnsafe
+  let userAddress2 = Addresses.mockAddresses[1]->Option.getUnsafe
 
   let account_id = userAddress1->Address.toString
   //Make a mock entity to set the initial state of the mock db
@@ -13,7 +13,7 @@ describe("Transfers", () => {
     id: account_id,
   }
 
-  let tokenAddress = Ethers.Addresses.defaultAddress->Address.toString
+  let tokenAddress = Addresses.defaultAddress->Address.toString
   let mockAccountTokenEntity = EventHandlers.makeAccountToken(
     ~account_id,
     ~tokenAddress,
