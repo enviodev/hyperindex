@@ -1,6 +1,6 @@
-# yaml-language-server: $schema=./node_modules/envio/solana.schema.json
+# yaml-language-server: $schema=./node_modules/envio/svm.schema.json
 name: solana-block-handler
-ecosystem: solana
+ecosystem: svm
 full_batch_size: 10
 chains:
   - rpc: ${ENVIO_MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}

@@ -8,7 +8,7 @@ export type {
   rateLimit as RateLimit,
   blockEvent as BlockEvent,
   fuelBlockEvent as FuelBlockEvent,
-  solanaOnBlockArgs as SolanaOnBlockArgs,
+  svmOnBlockArgs as SvmOnBlockArgs,
   onBlockArgs as OnBlockArgs,
   onBlockOptions as OnBlockOptions,
 } from "./src/Envio.gen.ts";
