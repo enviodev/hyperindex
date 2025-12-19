@@ -179,3 +179,46 @@ module GetBlockByNumber = {
 module GetBlockHeight = {
   let route = makeRpcRoute("eth_blockNumber", S.tuple(_ => ()), hexIntSchema)
 }
+
+module GetTransactionByHash = {
+  let transactionSchema = S.object((s): Internal.evmTransactionFields => {
+    // We already know the data so ignore the fields
+    // blockHash: ?s.field("blockHash", S.option(S.string)),
+    // blockNumber: ?s.field("blockNumber", S.option(hexIntSchema)),
+    // chainId: ?s.field("chainId", S.option(hexIntSchema)),
+    from: ?s.field("from", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
+    to: ?s.field("to", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
+    gas: ?s.field("gas", S.option(hexBigintSchema)),
+    gasPrice: ?s.field("gasPrice", S.option(hexBigintSchema)),
+    hash: ?s.field("hash", S.option(S.string)),
+    input: ?s.field("input", S.option(S.string)),
+    nonce: ?s.field("nonce", S.option(hexBigintSchema)),
+    transactionIndex: ?s.field("transactionIndex", S.option(hexIntSchema)),
+    value: ?s.field("value", S.option(hexBigintSchema)),
+    type_: ?s.field("type", S.option(hexIntSchema)),
+    // Signature fields - optional for ZKSync EIP-712 compatibility
+    v: ?s.field("v", S.option(S.string)),
+    r: ?s.field("r", S.option(S.string)),
+    s: ?s.field("s", S.option(S.string)),
+    yParity: ?s.field("yParity", S.option(S.string)),
+    // EIP-1559 fields
+    maxPriorityFeePerGas: ?s.field("maxPriorityFeePerGas", S.option(hexBigintSchema)),
+    maxFeePerGas: ?s.field("maxFeePerGas", S.option(hexBigintSchema)),
+    // EIP-4844 blob fields
+    maxFeePerBlobGas: ?s.field("maxFeePerBlobGas", S.option(hexBigintSchema)),
+    blobVersionedHashes: ?s.field("blobVersionedHashes", S.option(S.array(S.string))),
+    // TODO: Fields to add:
+    // pub access_list: Option<Vec<AccessList>>,
+    // pub authorization_list: Option<Vec<Authorization>>,
+    // // OP stack fields
+    // pub deposit_receipt_version: Option<Quantity>,
+    // pub mint: Option<Quantity>,
+    // pub source_hash: Option<Hash>,
+  })
+
+  let route = makeRpcRoute(
+    "eth_getTransactionByHash",
+    S.tuple1(S.string),
+    S.null(transactionSchema),
+  )
+}

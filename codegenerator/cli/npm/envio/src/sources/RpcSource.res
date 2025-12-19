@@ -503,10 +503,12 @@ let make = (
 
   let mutSuggestedBlockIntervals = Js.Dict.empty()
 
+  let client = Rest.client(url)
+
   let makeTransactionLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash =>
-        provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
+        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client),
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -560,7 +562,12 @@ let make = (
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(
-      ~getTransactionByHash=LazyLoader.get(transactionLoader.contents, _),
+      ~getTransactionByHash=async transactionHash => {
+        switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
+        | Some(tx) => tx
+        | None => Js.Exn.raiseError(`Transaction not found for hash: ${transactionHash}`)
+        }
+      },
       ~lowercaseAddresses,
     ),
   )
@@ -901,8 +908,6 @@ let make = (
     })
     ->Promise.catch(exn => exn->Error->Promise.resolve)
   }
-
-  let client = Rest.client(url)
 
   {
     name,

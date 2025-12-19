@@ -316,7 +316,6 @@ pub mod evm {
         Root,
         Status,
         YParity,
-        ChainId,
         AccessList,
         MaxFeePerBlobGas,
         BlobVersionedHashes,
@@ -327,6 +326,8 @@ pub mod evm {
         L1FeeScalar,
         GasUsedForL1,
         AuthorizationList,
+        // We want to encourage the use of context.chain.id instead
+        // ChainId,
         //These values are available by default on the block
         //so no need to allow users to configure these values
         // BlockHash,

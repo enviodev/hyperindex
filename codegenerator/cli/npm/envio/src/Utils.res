@@ -175,6 +175,15 @@ module Dict = {
     }
   `)
 
+  let unsafeDeleteUndefinedFieldsInPlace: 'a => unit = %raw(`(dict) => {
+      for (var key in dict) {
+        if (dict[key] === undefined) {
+          delete dict[key];
+        }
+      }
+    }
+  `)
+
   let updateImmutable: (
     dict<'a>,
     string,
