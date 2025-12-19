@@ -27,10 +27,10 @@ Before running the indexer locally, make sure you have the following installed:
 
 ## Configuration
 
-Add your Solana RPC URL to the `.env` file:
+Add your Svm RPC URL to the `.env` file:
 
 ```
-ENVIO_MAINNET_RPC_URL=https://your-solana-rpc-endpoint
+ENVIO_MAINNET_RPC_URL=https://your-svm-rpc-endpoint
 ```
 
 ## Running the Indexer

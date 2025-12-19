@@ -10,8 +10,8 @@ This document contains the help content for the `envio` command-line program.
 * [`envio init contract-import explorer`↴](#envio-init-contract-import-explorer)
 * [`envio init contract-import local`↴](#envio-init-contract-import-local)
 * [`envio init template`↴](#envio-init-template)
-* [`envio init solana`↴](#envio-init-solana)
-* [`envio init solana template`↴](#envio-init-solana-template)
+* [`envio init svm`↴](#envio-init-svm)
+* [`envio init svm template`↴](#envio-init-svm-template)
 * [`envio init fuel`↴](#envio-init-fuel)
 * [`envio init fuel contract-import`↴](#envio-init-fuel-contract-import)
 * [`envio init fuel contract-import local`↴](#envio-init-fuel-contract-import-local)
@@ -66,7 +66,7 @@ Initialize an indexer with one of the initialization options
 
 * `contract-import` — Initialize Evm indexer by importing config from a contract for a given chain
 * `template` — Initialize Evm indexer from an example template
-* `solana` — Initialization option for creating Solana indexer
+* `svm` — Initialization option for creating Svm indexer
 * `fuel` — Initialization option for creating Fuel indexer
 
 ###### **Options:**
@@ -150,23 +150,23 @@ Initialize Evm indexer from an example template
 
 
 
-## `envio init solana`
+## `envio init svm`
 
-Initialization option for creating Solana indexer
+Initialization option for creating Svm indexer
 
-**Usage:** `envio init solana [COMMAND]`
+**Usage:** `envio init svm [COMMAND]`
 
 ###### **Subcommands:**
 
-* `template` — Initialize Solana indexer from an example template
+* `template` — Initialize Svm indexer from an example template
 
 
 
-## `envio init solana template`
+## `envio init svm template`
 
-Initialize Solana indexer from an example template
+Initialize Svm indexer from an example template
 
-**Usage:** `envio init solana template [OPTIONS]`
+**Usage:** `envio init svm template [OPTIONS]`
 
 ###### **Options:**
 

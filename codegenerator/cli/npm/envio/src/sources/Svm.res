@@ -9,7 +9,7 @@ let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
   }`)
 
 let ecosystem: Ecosystem.t = {
-  name: Solana,
+  name: Svm,
   blockFields: ["slot"],
   transactionFields: [],
   blockNumberName: "height",
@@ -36,13 +36,13 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
   let client = Rest.client(rpc)
 
   {
-    name: "Solana",
+    name: "Svm",
     sourceFor: Sync,
     chain,
     poweredByHyperSync: false,
     pollingInterval: 10_000,
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
-      Js.Exn.raiseError("Solana does not support getting block hashes"),
+      Js.Exn.raiseError("Svm does not support getting block hashes"),
     getHeightOrThrow: () => GetFinalizedSlot.route->Rest.fetch((), ~client),
     getItemsOrThrow: (
       ~fromBlock as _,
@@ -54,6 +54,6 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
       ~selection as _,
       ~retry as _,
       ~logger as _,
-    ) => Js.Exn.raiseError("Solana does not support getting items"),
+    ) => Js.Exn.raiseError("Svm does not support getting items"),
   }
 }

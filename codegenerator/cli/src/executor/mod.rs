@@ -110,12 +110,12 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                         .context("Failed serializing fuel json schema")?
                 );
             }
-            JsonSchema::Solana => {
-                let schema = schema_for!(human_config::solana::HumanConfig);
+            JsonSchema::Svm => {
+                let schema = schema_for!(human_config::svm::HumanConfig);
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&schema)
-                        .context("Failed serializing solana json schema")?
+                        .context("Failed serializing svm json schema")?
                 );
             }
         },

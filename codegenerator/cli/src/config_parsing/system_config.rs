@@ -46,7 +46,7 @@ pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 pub enum Ecosystem {
     Evm,
     Fuel,
-    Solana,
+    Svm,
 }
 
 // Allows to get an env var with a lazy loading of .env file
@@ -428,7 +428,7 @@ impl SystemConfig {
         match &self.human_config {
             HumanConfig::Evm(_) => Ecosystem::Evm,
             HumanConfig::Fuel(_) => Ecosystem::Fuel,
-            HumanConfig::Solana(_) => Ecosystem::Solana,
+            HumanConfig::Svm(_) => Ecosystem::Svm,
         }
     }
 
@@ -862,9 +862,9 @@ impl SystemConfig {
                     human_config,
                 })
             }
-            HumanConfig::Solana(ref solana_config) => {
-                for network in &solana_config.chains {
-                    let sync_source = DataSource::Solana {
+            HumanConfig::Svm(ref svm_config) => {
+                for network in &svm_config.chains {
+                    let sync_source = DataSource::Svm {
                         rpc: network.rpc.clone(),
                     };
 
@@ -882,9 +882,9 @@ impl SystemConfig {
                 }
 
                 Ok(SystemConfig {
-                    name: solana_config.base.name.clone(),
+                    name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: solana_config
+                    schema_path: svm_config
                         .base
                         .schema
                         .clone()
@@ -930,7 +930,7 @@ impl SystemConfig {
         let ecosystem = match config_discriminant.ecosystem.as_deref() {
             Some("evm") => Ecosystem::Evm,
             Some("fuel") => Ecosystem::Fuel,
-            Some("solana") => Ecosystem::Solana,
+            Some("svm") => Ecosystem::Svm,
             Some(ecosystem) => {
                 return Err(anyhow!(
                     "EE105: Failed to deserialize config. The ecosystem \"{}\" is not supported.",
@@ -963,16 +963,16 @@ impl SystemConfig {
                     .context("Parsing schema file for config")?;
                 Self::from_human_config(HumanConfig::Fuel(fuel_config), schema, project_paths)
             }
-            Ecosystem::Solana => {
-                let solana_config: human_config::solana::HumanConfig =
+            Ecosystem::Svm => {
+                let svm_config: human_config::svm::HumanConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
                         "EE105: Failed to deserialize config. Visit the docs for more information \
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &solana_config.base.schema)
+                let schema = Schema::parse_from_file(project_paths, &svm_config.base.schema)
                     .context("Parsing schema file for config")?;
-                Self::from_human_config(HumanConfig::Solana(solana_config), schema, project_paths)
+                Self::from_human_config(HumanConfig::Svm(svm_config), schema, project_paths)
             }
         }
     }
@@ -998,7 +998,7 @@ pub enum DataSource {
     Fuel {
         hypersync_endpoint_url: ServerUrl,
     },
-    Solana {
+    Svm {
         rpc: ServerUrl,
     },
 }

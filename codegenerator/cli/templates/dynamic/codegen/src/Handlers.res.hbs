@@ -16,8 +16,8 @@ let onBlock: (
   {{#if is_fuel_ecosystem}}
   Envio.onBlockArgs<Envio.fuelBlockEvent, Types.handlerContext> => promise<unit>,
   {{/if}}
-  {{#if is_solana_ecosystem}}
-  Envio.solanaOnBlockArgs<Types.handlerContext> => promise<unit>,
+  {{#if is_svm_ecosystem}}
+  Envio.svmOnBlockArgs<Types.handlerContext> => promise<unit>,
   {{/if}}
 ) => unit = (
   EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit

@@ -1,4 +1,4 @@
-use crate::cli_args::init_config::{evm, fuel, solana, Language};
+use crate::cli_args::init_config::{evm, fuel, svm, Language};
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir, DirEntry};
 use pathdiff::diff_paths;
@@ -32,10 +32,10 @@ impl Template for fuel::Template {
     }
 }
 
-impl Template for solana::Template {
+impl Template for svm::Template {
     fn to_dir_name(&self) -> String {
         match self {
-            solana::Template::FeatureBlockHandler => "solanablock",
+            svm::Template::FeatureBlockHandler => "svmblock",
         }
         .to_string()
     }
@@ -410,7 +410,7 @@ impl<'a> TemplateDirs<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::cli_args::init_config::{evm, fuel, solana};
+    use crate::cli_args::init_config::{evm, fuel, svm};
 
     use super::*;
     use strum::IntoEnumIterator;
@@ -460,12 +460,12 @@ mod test {
                     .get_template_shared_dir(&template)
                     .expect("static templte shared");
             }
-            for template in solana::Template::iter() {
+            for template in svm::Template::iter() {
                 template_dirs
                     .get_template_lang_dir(&template, lang)
                     .expect("static lang");
 
-                // Solana templates don't require a shared folder
+                // Svm templates don't require a shared folder
             }
         }
 
@@ -493,7 +493,7 @@ mod test {
                     .get_and_extract_template(&template, lang, &(PathBuf::from(temp_dir.path())))
                     .expect("static lang");
             }
-            for template in solana::Template::iter() {
+            for template in svm::Template::iter() {
                 template_dirs
                     .get_and_extract_template(&template, lang, &(PathBuf::from(temp_dir.path())))
                     .expect("static lang");

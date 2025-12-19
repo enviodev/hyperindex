@@ -135,7 +135,7 @@ pub struct ConfigDiscriminant {
 pub enum HumanConfig {
     Evm(evm::HumanConfig),
     Fuel(fuel::HumanConfig),
-    Solana(solana::HumanConfig),
+    Svm(svm::HumanConfig),
 }
 
 impl HumanConfig {
@@ -143,7 +143,7 @@ impl HumanConfig {
         match &self {
             HumanConfig::Evm(human_config) => &human_config.base,
             HumanConfig::Fuel(human_config) => &human_config.base,
-            HumanConfig::Solana(human_config) => &human_config.base,
+            HumanConfig::Svm(human_config) => &human_config.base,
         }
     }
 }
@@ -156,7 +156,7 @@ impl Display for HumanConfig {
             match self {
                 HumanConfig::Evm(config) => config.to_string(),
                 HumanConfig::Fuel(config) => config.to_string(),
-                HumanConfig::Solana(config) => config.to_string(),
+                HumanConfig::Svm(config) => config.to_string(),
             }
         )
     }
@@ -712,7 +712,7 @@ pub mod fuel {
     }
 }
 
-pub mod solana {
+pub mod svm {
     use std::fmt::Display;
 
     use super::BaseConfig;
@@ -723,11 +723,11 @@ pub mod solana {
     #[serde(deny_unknown_fields)]
     pub struct Chain {
         // #[schemars(
-        //     description = "The cluster's genesis hash used to identify the Solana blockchain."
+        //     description = "The cluster's genesis hash used to identify the Svm blockchain."
         // )]
         // pub id: String,
         #[schemars(
-            description = "RPC endpoint URL for connecting to the Solana cluster to fetch blockchain data."
+            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data."
         )]
         pub rpc: String,
         #[schemars(
@@ -741,8 +741,8 @@ pub mod solana {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
-        title = "Envio Solana Config Schema",
-        description = "Schema for a YAML config for an envio Solana indexer"
+        title = "Envio Svm Config Schema",
+        description = "Schema for a YAML config for an envio Svm indexer"
     )]
     #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
@@ -760,7 +760,7 @@ pub mod solana {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(
                 f,
-                "# yaml-language-server: $schema=./node_modules/envio/solana.schema.json\n{}",
+                "# yaml-language-server: $schema=./node_modules/envio/svm.schema.json\n{}",
                 serde_yaml::to_string(self).expect("Failed to serialize config")
             )
         }
@@ -770,7 +770,7 @@ pub mod solana {
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
-        Solana,
+        Svm,
     }
 }
 
@@ -820,13 +820,13 @@ mod tests {
     }
 
     #[test]
-    fn test_solana_config_schema() {
+    fn test_svm_config_schema() {
         let config_path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/solana.schema.json");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/svm.schema.json");
         let npm_schema: Schema =
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 
-        let actual_schema = schema_for!(super::solana::HumanConfig);
+        let actual_schema = schema_for!(super::svm::HumanConfig);
 
         assert_eq!(
             npm_schema, actual_schema,
