@@ -21,7 +21,10 @@ use crate::{
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
-    project_paths::{path_utils::add_trailing_relative_dot, ParsedProjectPaths},
+    project_paths::{
+        path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
+        ParsedProjectPaths,
+    },
     rescript_types::{
         RescriptRecordField, RescriptSchemaMode, RescriptTypeExpr, RescriptTypeIdent,
     },
@@ -823,7 +826,7 @@ impl NetworkConfigTemplate {
                         format!(",abi: Types.{}.abi", contract.name.capitalized)
                     }
                     system_config::DataSource::Fuel { .. }
-                    | system_config::DataSource::Solana { .. } => "".to_string(),
+                    | system_config::DataSource::Svm { .. } => "".to_string(),
                 };
 
                 format!(
@@ -841,8 +844,8 @@ impl NetworkConfigTemplate {
                 "[HyperFuelSource.make({{chain, endpointUrl: \
                      \"{hypersync_endpoint_url}\"}})]",
             ),
-            system_config::DataSource::Solana { rpc } => {
-                format!("[Solana.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
+            system_config::DataSource::Svm { rpc } => {
+                format!("[Svm.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
             }
             system_config::DataSource::Evm {
                 main,
@@ -1094,7 +1097,7 @@ pub struct ProjectTemplate {
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
-    is_solana_ecosystem: bool,
+    is_svm_ecosystem: bool,
 
     envio_version: String,
     types_code: String,
@@ -1180,16 +1183,21 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to get relative path from output directory to project root")?;
 
-        let relative_path_to_generated_from_root =
-            diff_from_current(&project_paths.generated, &project_paths.project_root)
-                .context("Failed to get relative path from project root to generated")?;
+        let relative_path_to_generated_from_root = add_leading_relative_dot(
+            diff_paths(&project_paths.generated, &project_paths.project_root).ok_or_else(|| {
+                anyhow!("Failed to diff paths for relative_path_to_generated_from_root")
+            })?,
+        )
+        .to_str()
+        .ok_or_else(|| anyhow!("Failed converting path to str"))?
+        .to_string();
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
         // TODO: Remove schemas for aggreaged, since they are not used in runtime
         let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
         let chain_id_cases = match &cfg.human_config {
-            HumanConfig::Solana(hcfg) => hcfg
+            HumanConfig::Svm(hcfg) => hcfg
                 .chains
                 .iter()
                 .enumerate()
@@ -1251,7 +1259,7 @@ type chainId = [{}]"#,
             aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
-            is_solana_ecosystem: cfg.get_ecosystem() == Ecosystem::Solana,
+            is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             types_code: res_types_code,
             ts_types_code,
@@ -1346,6 +1354,11 @@ mod test {
         assert_eq!(
             project_template.relative_path_to_root_from_generated,
             "../.".to_string()
+        );
+        assert_eq!(
+            project_template.relative_path_to_generated_from_root,
+            "./generated".to_string(),
+            "relative_path_to_generated_from_root should start with ./ for Node.js module resolution"
         );
 
         assert_eq!(

@@ -233,7 +233,7 @@ AllEvents.Burn.handler(async ({ event }) => {
 
 const transferOutSchema = S.schema({
   assetId: S.string,
-  to: S.string,
+  to: S.address,
   amount: S.bigint,
 });
 AllEvents.Transfer.handler(async ({ event }) => {

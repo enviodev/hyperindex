@@ -8,11 +8,12 @@ export type {
   rateLimit as RateLimit,
   blockEvent as BlockEvent,
   fuelBlockEvent as FuelBlockEvent,
-  solanaOnBlockArgs as SolanaOnBlockArgs,
+  svmOnBlockArgs as SvmOnBlockArgs,
   onBlockArgs as OnBlockArgs,
   onBlockOptions as OnBlockOptions,
 } from "./src/Envio.gen.ts";
-export type { EffectCaller } from "./src/Types.ts";
+import type { Address } from "./src/Types.ts";
+export type { EffectCaller, Address } from "./src/Types.ts";
 
 import type {
   effect as Effect,
@@ -109,6 +110,7 @@ export declare namespace S {
   export type Input<T> = Sury.Input<T>;
   export type Schema<Output, Input = unknown> = Sury.Schema<Output, Input>;
   export const string: typeof Sury.string;
+  export const address: Sury.Schema<Address, Address>;
   export const jsonString: typeof Sury.jsonString;
   export const boolean: typeof Sury.boolean;
   export const int32: typeof Sury.int32;
