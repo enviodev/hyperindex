@@ -12,6 +12,7 @@ export * from "./src/Envio.res.mjs";
 // Important! Should match the index.d.ts file
 export const S = {
   string: Sury.string,
+  address: Sury.string,
   jsonString: Sury.jsonString,
   boolean: Sury.boolean,
   int32: Sury.int32,

@@ -31,8 +31,8 @@ it("Handles event with a custom field selection (in TS)", async () => {
     TypeEqual<
       typeof event.transaction,
       {
-        readonly to: string | undefined;
-        readonly from: string | undefined;
+        readonly to: `0x${string}` | undefined;
+        readonly from: `0x${string}` | undefined;
         readonly hash: string;
       }
     >

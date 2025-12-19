@@ -1,6 +1,6 @@
 export type Invalid = never;
 
-export type Address = string;
+export type Address = `0x${string}`;
 
 export type Logger = {
   readonly debug: (
