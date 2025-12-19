@@ -472,6 +472,12 @@ module Schema = {
     ->(magic: S.t<Js.Json.t> => S.t<Js.Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Js.Date.toISOString})
 
+  // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
+  let clickHouseDate =
+    S.json(~validate=false)
+    ->(magic: S.t<Js.Json.t> => S.t<Js.Date.t>)
+    ->S.preprocess(_ => {serializer: date => date->magic->Js.Date.getTime})
+
   // When trying to serialize data to Json pg type, it will fail with
   // PostgresError: column "params" is of type json but expression is of type boolean
   // If there's bool or null on the root level. It works fine as object field values.

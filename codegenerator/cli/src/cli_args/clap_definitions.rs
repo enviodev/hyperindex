@@ -86,7 +86,7 @@ pub enum Script {
 pub enum JsonSchema {
     Evm,
     Fuel,
-    Solana,
+    Svm,
 }
 
 #[derive(Debug, Args)]
@@ -161,10 +161,10 @@ pub enum InitFlow {
     #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]
     SubgraphMigration(evm::SubgraphMigrationArgs),
-    ///Initialization option for creating Solana indexer
-    Solana {
+    ///Initialization option for creating Svm indexer
+    Svm {
         #[command(subcommand)]
-        init_flow: Option<solana::InitFlow>,
+        init_flow: Option<svm::InitFlow>,
     },
     ///Initialization option for creating Fuel indexer
     Fuel {
@@ -387,7 +387,7 @@ pub mod fuel {
     }
 }
 
-pub mod solana {
+pub mod svm {
     use clap::{Args, Subcommand};
     use strum::{Display, EnumIter, EnumString};
 
@@ -395,7 +395,7 @@ pub mod solana {
 
     #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
     pub enum InitFlow {
-        ///Initialize Solana indexer from an example template
+        ///Initialize Svm indexer from an example template
         Template(TemplateArgs),
     }
 
@@ -404,7 +404,7 @@ pub mod solana {
         ///Name of the template to be used in initialization
         #[arg(short, long)]
         #[clap(value_enum)]
-        pub template: Option<init_config::solana::Template>,
+        pub template: Option<init_config::svm::Template>,
     }
 }
 

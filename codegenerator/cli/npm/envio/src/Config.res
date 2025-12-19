@@ -93,7 +93,7 @@ let make = (
   let ecosystem = switch ecosystem {
   | Ecosystem.Evm => Evm.ecosystem
   | Ecosystem.Fuel => Fuel.ecosystem
-  | Ecosystem.Solana => Solana.ecosystem
+  | Ecosystem.Svm => Svm.ecosystem
   }
 
   let userEntitiesByName =

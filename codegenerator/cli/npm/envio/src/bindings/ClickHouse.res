@@ -98,6 +98,36 @@ let getClickHouseFieldType = (
   isNullable ? `Nullable(${baseType})` : baseType
 }
 
+// Creates an entity schema from table definition, using clickHouseDate for Date fields
+let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
+  S.schema(s => {
+    let dict = Js.Dict.empty()
+    table.fields->Belt.Array.forEach(field => {
+      switch field {
+      | Field(f) => {
+          let fieldName = f->Table.getDbFieldName
+          let fieldSchema = switch f.fieldType {
+          | Date => {
+              let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
+              if f.isNullable {
+                S.null(dateSchema)->S.toUnknown
+              } else if f.isArray {
+                S.array(dateSchema)->S.toUnknown
+              } else {
+                dateSchema
+              }
+            }
+          | _ => f.fieldSchema
+          }
+          dict->Js.Dict.set(fieldName, s.matches(fieldSchema))
+        }
+      | DerivedFrom(_) => () // Skip derived fields
+      }
+    })
+    dict->Utils.magic
+  })
+}
+
 let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) => {
   let checkpointsCount = batch.checkpointIds->Array.length
   if checkpointsCount === 0 {
@@ -154,7 +184,7 @@ let setUpdatesOrThrow = async (
           )}\``,
         convertOrThrow: S.compile(
           S.union([
-            EntityHistory.makeSetUpdateSchema(entityConfig.schema),
+            EntityHistory.makeSetUpdateSchema(makeClickHouseEntitySchema(entityConfig.table)),
             S.object(s => {
               s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
               Change.Delete({

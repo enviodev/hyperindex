@@ -1,7 +1,7 @@
 use crate::{
-    clap_definitions::solana::{InitFlow as ClapInitFlow, TemplateArgs},
+    clap_definitions::svm::{InitFlow as ClapInitFlow, TemplateArgs},
     cli_args::interactive_init::shared_prompts::prompt_template,
-    init_config::solana::{InitFlow, Template},
+    init_config::svm::{InitFlow, Template},
 };
 use anyhow::{Context, Result};
 use inquire::Select;
@@ -14,7 +14,7 @@ pub fn prompt_init_flow_missing(maybe_init_flow: Option<ClapInitFlow>) -> Result
             let flow_option = ClapInitFlow::iter().collect();
             Select::new("Choose an initialization option", flow_option)
                 .prompt()
-                .context("Failed prompting for Solana initialization option")?
+                .context("Failed prompting for Svm initialization option")?
         }
     };
     Ok(init_flow)

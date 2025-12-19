@@ -322,7 +322,7 @@ pub mod fuel {
     }
 }
 
-pub mod solana {
+pub mod svm {
     use clap::ValueEnum;
     use serde::{Deserialize, Serialize};
     use strum::{Display, EnumIter, EnumString};
@@ -342,7 +342,7 @@ pub mod solana {
 #[derive(Clone, Debug, Display)]
 pub enum Ecosystem {
     Evm { init_flow: evm::InitFlow },
-    Solana { init_flow: solana::InitFlow },
+    Svm { init_flow: svm::InitFlow },
     Fuel { init_flow: fuel::InitFlow },
 }
 
@@ -350,7 +350,7 @@ impl Ecosystem {
     pub fn uses_hypersync(&self) -> bool {
         match self {
             Self::Evm { init_flow } => init_flow.uses_hypersync(),
-            Self::Solana { .. } => false,
+            Self::Svm { .. } => false,
             Self::Fuel { .. } => true,
         }
     }
