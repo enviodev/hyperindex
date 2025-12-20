@@ -1,5 +1,5 @@
 use crate::{
-    clap_definitions::{JsonSchema, Script},
+    clap_definitions::{ConfigSubcommands, JsonSchema, Script},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -124,7 +124,103 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 .await
                 .context("Failed print missing networks script")?;
         }
+
+        CommandType::Config(config_cmd) => match config_cmd {
+            ConfigSubcommands::List => {
+                let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                    .context("Failed parsing config")?;
+                let base_config = config.human_config.get_base_config();
+                let json_config =
+                    human_config::BaseConfigJson::new(base_config, CURRENT_CRATE_VERSION);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json_config)
+                        .context("Failed serializing config to JSON")?
+                );
+            }
+        },
     };
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config_parsing::human_config::{evm::HumanConfig, BaseConfig, BaseConfigJson};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    const TEST_VERSION: &str = "1.0.0";
+
+    #[test]
+    fn test_config_list_outputs_camel_case_json() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test/configs/config1.yaml");
+
+        let file_str = std::fs::read_to_string(config_path).expect("Failed to read config file");
+        let config: HumanConfig = serde_yaml::from_str(&file_str).expect("Failed to parse config");
+
+        let json_config = BaseConfigJson::new(&config.base, TEST_VERSION);
+        let json_output: serde_json::Value =
+            serde_json::to_value(&json_config).expect("Failed to serialize to JSON");
+
+        assert_eq!(
+            json_output,
+            json!({
+                "version": TEST_VERSION,
+                "name": "config1",
+                "description": "Gravatar for Ethereum",
+                "schema": "../schemas/schema.graphql"
+            })
+        );
+    }
+
+    #[test]
+    fn test_config_list_omits_null_fields() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test/configs/fuel-config.yaml");
+
+        let file_str = std::fs::read_to_string(config_path).expect("Failed to read config file");
+        let config: crate::config_parsing::human_config::fuel::HumanConfig =
+            serde_yaml::from_str(&file_str).expect("Failed to parse config");
+
+        let json_config = BaseConfigJson::new(&config.base, TEST_VERSION);
+        let json_output: serde_json::Value =
+            serde_json::to_value(&json_config).expect("Failed to serialize to JSON");
+
+        assert_eq!(
+            json_output,
+            json!({
+                "version": TEST_VERSION,
+                "name": "Fuel indexer"
+            })
+        );
+    }
+
+    #[test]
+    fn test_config_list_full_batch_size_camel_case() {
+        let base_config = BaseConfig {
+            name: "test-indexer".to_string(),
+            description: Some("Test description".to_string()),
+            schema: None,
+            output: None,
+            handlers: None,
+            full_batch_size: Some(10000),
+        };
+
+        let json_config = BaseConfigJson::new(&base_config, TEST_VERSION);
+        let json_output: serde_json::Value =
+            serde_json::to_value(&json_config).expect("Failed to serialize to JSON");
+
+        assert_eq!(
+            json_output,
+            json!({
+                "version": TEST_VERSION,
+                "name": "test-indexer",
+                "description": "Test description",
+                "fullBatchSize": 10000
+            })
+        );
+    }
 }
