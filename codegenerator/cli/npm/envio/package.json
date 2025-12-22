@@ -38,7 +38,11 @@
     "viem": "2.21.0",
     "rescript-envsafe": "5.0.0",
     "dotenv": "16.4.5",
-    "date-fns": "3.3.1"
+    "date-fns": "3.3.1",
+    "@rescript/react": "0.14.0",
+    "ink": "6.5.1",
+    "ink-big-text": "2.0.0",
+    "ink-spinner": "5.0.0"
   },
   "files": [
     "local-bin.mjs",

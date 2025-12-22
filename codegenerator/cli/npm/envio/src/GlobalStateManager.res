@@ -11,18 +11,16 @@ module type State = {
 }
 
 module MakeManager = (S: State) => {
-  type t = {mutable state: S.t, stateUpdatedHook: option<S.t => unit>, onError: exn => unit}
+  type t = {mutable state: S.t, onError: exn => unit}
 
   let make = (
     state: S.t,
-    ~stateUpdatedHook: option<S.t => unit>=?,
     ~onError=e => {
       e->ErrorHandling.make(~msg="Indexer has failed with an unexpected error")->ErrorHandling.log
       NodeJs.process->NodeJs.exitWithCode(Failure)
     },
   ) => {
     state,
-    stateUpdatedHook,
     onError,
   }
 
@@ -34,12 +32,6 @@ module MakeManager = (S: State) => {
         S.invalidatedActionReducer
       }
       let (nextState, nextTasks) = reducer(self.state, action)
-      switch self.stateUpdatedHook {
-      // In ReScript `!==` is shallow equality check rather than `!=`
-      // This is just a check to see if a new object reference was returned
-      | Some(hook) if self.state !== nextState => hook(nextState)
-      | _ => ()
-      }
       self.state = nextState
       nextTasks->Array.forEach(task => dispatchTask(self, task))
     } catch {
