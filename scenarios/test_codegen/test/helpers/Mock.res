@@ -301,8 +301,8 @@ module Indexer = {
       storage,
     }
 
-    let indexer = {
-      Indexer.registrations,
+    let ctx = {
+      Ctx.registrations,
       config,
       persistence,
     }
@@ -326,7 +326,7 @@ module Indexer = {
       ~persistence,
     )
     let globalState = GlobalState.make(
-      ~indexer,
+      ~ctx,
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,

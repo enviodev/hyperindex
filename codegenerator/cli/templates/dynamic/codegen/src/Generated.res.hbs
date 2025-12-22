@@ -219,21 +219,21 @@ let codegenPersistence = Persistence.make(
   ~storage=makeStorage(~sql=initialSql),
 )
 
-%%private(let indexer: ref<option<Indexer.t>> = ref(None))
-let getIndexer = async () => {
-  switch indexer.contents {
-  | Some(indexer) => indexer
+%%private(let ctx: ref<option<Ctx.t>> = ref(None))
+let getCtx = async () => {
+  switch ctx.contents {
+  | Some(ctx) => ctx
   | None =>
     let registrations = await registerAllHandlers()
-    let i = {
-      Indexer.registrations: registrations,
+    let c = {
+      Ctx.registrations: registrations,
       // Need to recreate initial config one more time,
       // since configWithoutRegistrations called register for event
       // before they were ready
       config: makeGeneratedConfig(),
       persistence: codegenPersistence,
     }
-    indexer := Some(i)
-    i
+    ctx := Some(c)
+    c
   }
 }

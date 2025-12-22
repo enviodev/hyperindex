@@ -56,7 +56,7 @@ let stateSchema = S.union([
   })),
 ])
 
-let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => {
+let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   open Express
 
   let app = make()
@@ -98,7 +98,7 @@ let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => 
 
   app->post("/console/syncCache", (_req, res) => {
     if isDevelopmentMode {
-      (indexer.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+      (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
       ->Promise.done
     } else {
@@ -127,6 +127,85 @@ type process
 
 type mainArgs = Yargs.parsedArgs<args>
 
+let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
+  let chains =
+    globalState.chainManager.chainFetchers
+    ->ChainMap.values
+    ->Array.map(cf => {
+      let {numEventsProcessed, fetchState, numBatchesFetched} = cf
+      let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
+      let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
+      let knownHeight =
+        cf->ChainFetcher.hasProcessedToEndblock
+          ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+          : cf.fetchState.knownHeight
+
+      let progress: ChainData.progress = if hasProcessedToEndblock {
+        // If the endblock has been reached then set the progress to synced.
+        // if there's chains that have no events in the block range start->end,
+        // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
+        // This ensures TUI still displays synced in this case
+        let {
+          committedProgressBlockNumber,
+          timestampCaughtUpToHeadOrEndblock,
+          numEventsProcessed,
+          firstEventBlockNumber,
+        } = cf
+
+        Synced({
+          firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
+          latestProcessedBlock: committedProgressBlockNumber,
+          timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
+            Js.Date.now()->Js.Date.fromFloat,
+          ),
+          numEventsProcessed,
+        })
+      } else {
+        switch cf {
+        | {
+            committedProgressBlockNumber,
+            timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+          } =>
+          Synced({
+            firstEventBlockNumber,
+            latestProcessedBlock: committedProgressBlockNumber,
+            timestampCaughtUpToHeadOrEndblock,
+            numEventsProcessed,
+          })
+        | {
+            committedProgressBlockNumber,
+            timestampCaughtUpToHeadOrEndblock: None,
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+          } =>
+          Syncing({
+            firstEventBlockNumber,
+            latestProcessedBlock: committedProgressBlockNumber,
+            numEventsProcessed,
+          })
+        | {firstEventBlockNumber: None} => SearchingForEvents
+        }
+      }
+
+      (
+        {
+          progress,
+          knownHeight,
+          latestFetchedBlockNumber,
+          numBatchesFetched,
+          chain: ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id),
+          endBlock: cf.fetchState.endBlock,
+          poweredByHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
+        }: EnvioInkApp.chainData
+      )
+    })
+  {
+    config: globalState.ctx.config,
+    indexerStartTime: globalState.indexerStartTime,
+    chains,
+  }
+}
+
 // Function to open the URL in the browser
 // @module("child_process")
 // external exec: (string, (Js.Nullable.t<Js.Exn.t>, 'a, 'b) => unit) => unit = "exec"
@@ -149,58 +228,60 @@ let main = async () => {
     // and prevent exposing the console to public, when creating a real deployment.
     let isDevelopmentMode = Env.Db.password === "testing"
 
-    let indexer = await Generated.getIndexer()
+    let ctx = await Generated.getCtx()
 
     let gsManagerRef = ref(None)
 
     let envioVersion = Utils.EnvioPackage.value.version
     Prometheus.Info.set(~version=envioVersion)
-    Prometheus.RollbackEnabled.set(~enabled=indexer.config.shouldRollbackOnReorg)
+    Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
-    startServer(~indexer, ~isDevelopmentMode, ~getState=() =>
+    startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
       switch gsManagerRef.contents {
       | None => Initializing({})
       | Some(gsManager) => {
           let state = gsManager->GlobalStateManager.getState
-          let chains =
-            state.chainManager.chainFetchers
-            ->ChainMap.values
-            ->Array.map(cf => {
-              let {fetchState} = cf
-              let latestFetchedBlockNumber = Pervasives.max(
-                FetchState.bufferBlockNumber(fetchState),
-                0,
-              )
-              let knownHeight =
-                cf->ChainFetcher.hasProcessedToEndblock
-                  ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
-                  : cf.fetchState.knownHeight
-
-              {
-                chainId: cf.chainConfig.id->Js.Int.toFloat,
-                poweredByHyperSync: (
-                  cf.sourceManager->SourceManager.getActiveSource
-                ).poweredByHyperSync,
-                latestFetchedBlockNumber,
-                knownHeight,
-                numBatchesFetched: cf.numBatchesFetched,
-                endBlock: cf.fetchState.endBlock,
-                firstEventBlockNumber: cf.firstEventBlockNumber,
-                latestProcessedBlock: cf.committedProgressBlockNumber === -1
-                  ? None
-                  : Some(cf.committedProgressBlockNumber),
-                timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
-                numEventsProcessed: cf.numEventsProcessed,
-                numAddresses: cf.fetchState->FetchState.numAddresses,
-              }
-            })
+          let appState = state->makeAppState
           Active({
             envioVersion,
-            chains,
-            indexerStartTime: state.indexerStartTime,
+            chains: appState.chains->Js.Array2.map(c => {
+              let cf = state.chainManager.chainFetchers->ChainMap.get(c.chain)
+              {
+                chainId: c.chain->ChainMap.Chain.toChainId->Js.Int.toFloat,
+                poweredByHyperSync: c.poweredByHyperSync,
+                latestFetchedBlockNumber: c.latestFetchedBlockNumber,
+                knownHeight: c.knownHeight,
+                numBatchesFetched: c.numBatchesFetched,
+                endBlock: c.endBlock,
+                firstEventBlockNumber: switch c.progress {
+                | SearchingForEvents => None
+                | Syncing({firstEventBlockNumber}) | Synced({firstEventBlockNumber}) =>
+                  Some(firstEventBlockNumber)
+                },
+                latestProcessedBlock: switch c.progress {
+                | SearchingForEvents => None
+                | Syncing({latestProcessedBlock}) | Synced({latestProcessedBlock}) =>
+                  Some(latestProcessedBlock)
+                },
+                timestampCaughtUpToHeadOrEndblock: switch c.progress {
+                | SearchingForEvents
+                | Syncing(_) =>
+                  None
+                | Synced({timestampCaughtUpToHeadOrEndblock}) =>
+                  Some(timestampCaughtUpToHeadOrEndblock)
+                },
+                numEventsProcessed: switch c.progress {
+                | SearchingForEvents => 0
+                | Syncing({numEventsProcessed})
+                | Synced({numEventsProcessed}) => numEventsProcessed
+                },
+                numAddresses: cf.fetchState->FetchState.numAddresses,
+              }
+            }),
+            indexerStartTime: appState.indexerStartTime,
             isPreRegisteringDynamicContracts: false,
-            rollbackOnReorg: indexer.config.shouldRollbackOnReorg,
-            isUnorderedMultichainMode: switch indexer.config.multichain {
+            rollbackOnReorg: ctx.config.shouldRollbackOnReorg,
+            isUnorderedMultichainMode: switch ctx.config.multichain {
             | Unordered => true
             | Ordered => false
             },
@@ -209,21 +290,24 @@ let main = async () => {
       }
     )
 
-    await indexer.persistence->Persistence.init(
-      ~chainConfigs=indexer.config.chainMap->ChainMap.values,
+    await ctx.persistence->Persistence.init(
+      ~chainConfigs=ctx.config.chainMap->ChainMap.values,
     )
 
     let chainManager = await ChainManager.makeFromDbState(
-      ~initialState=indexer.persistence->Persistence.getInitializedState,
-      ~config=indexer.config,
-      ~registrations=indexer.registrations,
-      ~persistence=indexer.persistence,
+      ~initialState=ctx.persistence->Persistence.getInitializedState,
+      ~config=ctx.config,
+      ~registrations=ctx.registrations,
+      ~persistence=ctx.persistence,
     )
-    let globalState = GlobalState.make(~indexer, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
-    let gsManager = globalState->GlobalStateManager.make
-    if shouldUseTui {
-      let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)
+    let globalState = GlobalState.make(~ctx, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
+    let stateUpdatedHook = if shouldUseTui {
+      let rerender = EnvioInkApp.startApp(makeAppState(globalState))
+      Some(globalState => globalState->makeAppState->rerender)
+    } else {
+      None
     }
+    let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook?)
     gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
