@@ -5,7 +5,7 @@ module ChainLine = {
   @react.component
   let make = (
     ~chainId,
-    ~maxChainIdLenght,
+    ~maxChainIdLength,
     ~stdoutColumns: int,
     ~progressBlock,
     ~bufferBlock,
@@ -17,7 +17,7 @@ module ChainLine = {
     ~eventsProcessed,
   ) => {
     let chainsWidth = Pervasives.min(stdoutColumns - 2, 60)
-    let headerWidth = maxChainIdLenght + 10 // 10 for additional text
+    let headerWidth = maxChainIdLength + 10 // 10 for additional text
 
     switch (progressBlock, bufferBlock, sourceBlock) {
     | (Some(progressBlock), Some(bufferBlock), Some(sourceBlock)) =>
@@ -199,7 +199,7 @@ module App = {
     let totalEventsProcessed = chains->Array.reduce(0, (acc, chain) => {
       acc + chain.eventsProcessed
     })
-    let maxChainIdLenght = chains->Array.reduce(0, (acc, chain) => {
+    let maxChainIdLength = chains->Array.reduce(0, (acc, chain) => {
       let chainIdLength = chain.chainId->String.length
       if chainIdLength > acc {
         chainIdLength
@@ -221,7 +221,7 @@ module App = {
         <ChainLine
           key={i->Int.toString}
           chainId={chainData.chainId}
-          maxChainIdLenght={maxChainIdLenght}
+          maxChainIdLength={maxChainIdLength}
           progressBlock={chainData.progressBlock}
           bufferBlock={chainData.bufferBlock}
           sourceBlock={chainData.sourceBlock}
