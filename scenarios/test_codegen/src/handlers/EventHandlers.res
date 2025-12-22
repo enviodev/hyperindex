@@ -12,7 +12,7 @@ let noopEffect = Envio.createEffect(
   },
 )
 
-Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
+Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let () = await context.effect(noopEffect, ())
 
   let gravatarSize: Enums.GravatarSize.t = SMALL
@@ -28,7 +28,7 @@ Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
+Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
   let maybeGravatar = await context.gravatar.get(event.params.id->BigInt.toString)
 
   /// Some examples of user logging
@@ -106,7 +106,7 @@ Handlers.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Handlers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
+Indexer.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
   let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>
@@ -132,10 +132,10 @@ Handlers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({con
 })
 
 // Generates modules for both TestEvent and TestEventWithCustomName
-Handlers.Gravatar.TestEventWithCustomName.handler(async _ => {
+Indexer.Gravatar.TestEventWithCustomName.handler(async _ => {
   ()
 })
-Handlers.Gravatar.TestEvent.handler(async _ => {
+Indexer.Gravatar.TestEvent.handler(async _ => {
   ()
 })
 
@@ -143,7 +143,7 @@ Handlers.Gravatar.TestEvent.handler(async _ => {
 // Instead of a single eventOrigin enum, we store the entire chains dict
 let lastEmptyEventChains: ref<option<Internal.chains>> = ref(None)
 
-Handlers.Gravatar.EmptyEvent.handler(async ({context}) => {
+Indexer.Gravatar.EmptyEvent.handler(async ({context}) => {
   // This handler tests that chains state is accessible in the context
   // Chains will have isLive: false during sync and isLive: true during live indexing
   lastEmptyEventChains := Some(context.chains)

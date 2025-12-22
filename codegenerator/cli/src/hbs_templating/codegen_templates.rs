@@ -1100,7 +1100,7 @@ pub struct ProjectTemplate {
     is_svm_ecosystem: bool,
 
     envio_version: String,
-    types_code: String,
+    indexer_code: String,
     ts_types_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
@@ -1215,7 +1215,42 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        let res_types_code = format!(
+        // Generate contract modules with event registration
+        let contract_modules = codegen_contracts
+            .iter()
+            .map(|contract| {
+                let event_modules = contract
+                    .codegen_events
+                    .iter()
+                    .map(|event| {
+                        format!(
+                            "  module {} = Types.MakeRegister(Types.{}.{})",
+                            event.name, contract.name.capitalized, event.name
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "@genType\nmodule {} = {{\n{}\n}}",
+                    contract.name.capitalized, event_modules
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Generate onBlock function with ecosystem-specific types
+        let on_block_handler_type = match cfg.get_ecosystem() {
+            Ecosystem::Evm => {
+                "Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>"
+            }
+            Ecosystem::Fuel => {
+                "Envio.onBlockArgs<Envio.fuelBlockEvent, Types.handlerContext> => promise<unit>"
+            }
+            Ecosystem::Svm => "Envio.svmOnBlockArgs<Types.handlerContext> => promise<unit>",
+        };
+
+        // Generate chainId type
+        let chain_id_type = format!(
             r#"@genType.import(("./Types.ts", "ChainId"))
 type chainId = [{}]"#,
             chain_id_cases
@@ -1223,6 +1258,23 @@ type chainId = [{}]"#,
                 .map(|chain_id_case| format!("#{}", chain_id_case))
                 .collect::<Vec<_>>()
                 .join(" | "),
+        );
+
+        let on_block_code = format!(
+            r#"@genType /** Register a Block Handler. It'll be called for every block by default. */
+let onBlock: (
+  Envio.onBlockOptions<chainId>,
+  {},
+) => unit = (
+  EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
+)->Utils.magic"#,
+            on_block_handler_type
+        );
+
+        // Combine all parts into indexer_code
+        let indexer_code = format!(
+            "{}\n\n{}\n\n{}",
+            contract_modules, chain_id_type, on_block_code
         );
 
         let ts_types_code = format!(
@@ -1261,7 +1313,7 @@ type chainId = [{}]"#,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
-            types_code: res_types_code,
+            indexer_code,
             ts_types_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,

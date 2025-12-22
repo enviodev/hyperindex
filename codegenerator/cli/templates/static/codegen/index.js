@@ -4,5 +4,5 @@
 
 export { default as BigDecimal } from "bignumber.js";
 
-export * from "./src/Handlers.res.mjs";
+export * from "./src/Indexer.res.mjs";
 export * as TestHelpers from "./src/TestHelpers.res.mjs";
