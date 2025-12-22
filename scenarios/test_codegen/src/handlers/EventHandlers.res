@@ -1,5 +1,14 @@
 // Test types
 
+// Indexer type and value tests (compile-time type checking)
+let _indexer: Indexer.indexer = Indexer.indexer
+let _chain: Indexer.indexerChain = Indexer.getChainById(Indexer.indexer, #1)
+let _chains: Indexer.indexerChains = Indexer.indexer.chains
+
+// Compile-time test: getChainById has exhaustive pattern matching
+// This ensures the function covers all chain IDs
+let _testGetChainById = (chainId: Indexer.chainId) => Indexer.getChainById(Indexer.indexer, chainId)
+
 let noopEffect = Envio.createEffect(
   {
     name: "noopEffect",

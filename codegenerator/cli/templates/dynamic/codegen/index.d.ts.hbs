@@ -6,6 +6,9 @@ export {
 } from "./src/Indexer.gen";
 export type * from "./src/Types.gen";
 export type * from "./src/Types.ts";
+
+import type { Indexer } from "./src/Types.ts";
+export const indexer: Indexer;
 import {
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},

@@ -1271,19 +1271,164 @@ let onBlock: (
             on_block_handler_type
         );
 
-        // Combine all parts into indexer_code
-        let indexer_code = format!(
-            "{}\n\n{}\n\n{}",
-            contract_modules, chain_id_type, on_block_code
+        // Generate indexer types and value
+        let indexer_chain_type = r#"/** Per-chain configuration for the indexer. */
+type indexerChain = {
+  /** The chain ID. */
+  id: chainId,
+  /** The block number to start indexing from. */
+  startBlock: int,
+  /** The block number to stop indexing at (if specified). */
+  endBlock: option<int>,
+}"#;
+
+        // Generate indexerChains type with fields for each chain
+        let indexer_chains_fields = chain_configs
+            .iter()
+            .map(|chain| {
+                format!(
+                    "  @as(\"{}\") c{}: indexerChain,",
+                    chain.network_config.id, chain.network_config.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let indexer_chains_type = format!(
+            r#"/** Strongly-typed record of chain configurations keyed by chain ID. */
+type indexerChains = {{
+{}
+}}"#,
+            indexer_chains_fields
         );
 
+        let indexer_type = r#"/** Metadata and configuration for the indexer. */
+type indexer = {
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+}"#;
+
+        // Generate indexer value
+        let description_code = match &cfg.human_config.get_base_config().description {
+            Some(desc) => format!("Some(\"{}\")", desc.replace('\"', "\\\"")),
+            None => "None".to_string(),
+        };
+
+        let chain_ids_code = chain_id_cases
+            .iter()
+            .map(|id| format!("#{}", id))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let chains_fields_code = chain_configs
+            .iter()
+            .map(|chain| {
+                let end_block = match chain.network_config.end_block {
+                    Some(block) => format!("Some({})", block),
+                    None => "None".to_string(),
+                };
+                format!(
+                    "    c{}: {{id: #{}, startBlock: {}, endBlock: {}}},",
+                    chain.network_config.id,
+                    chain.network_config.id,
+                    chain.network_config.start_block,
+                    end_block
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let indexer_value = format!(
+            r#"let indexer: indexer = {{
+  name: "{}",
+  description: {},
+  chainIds: [{}],
+  chains: {{
+{}
+  }},
+}}"#,
+            cfg.name, description_code, chain_ids_code, chains_fields_code
+        );
+
+        // Generate getChainById function
+        let get_chain_by_id_cases = chain_configs
+            .iter()
+            .map(|chain| {
+                format!(
+                    "  | #{} => indexer.chains.c{}",
+                    chain.network_config.id, chain.network_config.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let get_chain_by_id = format!(
+            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {{
+  switch chainId {{
+{}
+  }}
+}}"#,
+            get_chain_by_id_cases
+        );
+
+        // Combine all parts into indexer_code
+        let indexer_code = format!(
+            "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            contract_modules,
+            chain_id_type,
+            indexer_chain_type,
+            indexer_chains_type,
+            indexer_type,
+            indexer_value,
+            get_chain_by_id,
+        );
+
+        // Add onBlock at the end
+        let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
+
+        let chain_id_type_ts = chain_id_cases
+            .iter()
+            .map(|chain_id_case| chain_id_case.to_string())
+            .collect::<Vec<_>>()
+            .join(" | ");
+
         let ts_types_code = format!(
-            r#"export type ChainId = {}"#,
-            chain_id_cases
-                .iter()
-                .map(|chain_id_case| chain_id_case.to_string())
-                .collect::<Vec<_>>()
-                .join(" | "),
+            r#"export type ChainId = {};
+
+/** Per-chain configuration for the indexer. */
+export type IndexerChain = {{
+  /** The chain ID. */
+  readonly id: ChainId;
+  /** The block number to start indexing from. */
+  readonly startBlock: number;
+  /** The block number to stop indexing at (if specified). */
+  readonly endBlock: number | undefined;
+}};
+
+/** Strongly-typed record of chain configurations keyed by chain ID. */
+export type IndexerChains = {{
+  readonly [chainId in ChainId]: IndexerChain;
+}};
+
+/** Metadata and configuration for the indexer. */
+export type Indexer = {{
+  /** The name of the indexer from config.yaml. */
+  readonly name: string;
+  /** The description of the indexer from config.yaml. */
+  readonly description: string | undefined;
+  /** Array of all chain IDs this indexer operates on. */
+  readonly chainIds: readonly ChainId[];
+  /** Per-chain configuration keyed by chain ID. */
+  readonly chains: IndexerChains;
+}};"#,
+            chain_id_type_ts
         );
 
         let full_batch_size_code = match cfg.human_config.get_base_config().full_batch_size {
