@@ -13,6 +13,9 @@ export * from "./src/Envio.res.mjs";
 export const S = {
   string: Sury.string,
   address: Sury.string,
+  evmChainId: Sury.number,
+  fuelChainId: Sury.number,
+  svmChainId: Sury.number,
   jsonString: Sury.jsonString,
   boolean: Sury.boolean,
   int32: Sury.int32,

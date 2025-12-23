@@ -1101,7 +1101,7 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    ts_types_code: String,
+    envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
@@ -1249,9 +1249,14 @@ impl ProjectTemplate {
             Ecosystem::Svm => "Envio.svmOnBlockArgs<Types.handlerContext> => promise<unit>",
         };
 
-        // Generate chainId type
+        // Generate chainId type with ecosystem-specific import from envio
+        let chain_id_import_name = match cfg.get_ecosystem() {
+            Ecosystem::Evm => "EvmChainId",
+            Ecosystem::Fuel => "FuelChainId",
+            Ecosystem::Svm => "SvmChainId",
+        };
         let chain_id_type = format!(
-            r#"@genType.import(("./Types.ts", "ChainId"))
+            r#"@genType.import(("envio", "{chain_id_import_name}"))
 type chainId = [{}]"#,
             chain_id_cases
                 .iter()
@@ -1393,42 +1398,25 @@ let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {{
         // Add onBlock at the end
         let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
 
-        let chain_id_type_ts = chain_id_cases
-            .iter()
-            .map(|chain_id_case| chain_id_case.to_string())
-            .collect::<Vec<_>>()
-            .join(" | ");
+        // Generate envio.d.ts content with ecosystem-namespaced chainIds
+        let chain_ids_ts = chain_id_cases.join(", ");
+        let ecosystem_name = match cfg.get_ecosystem() {
+            Ecosystem::Evm => "evm",
+            Ecosystem::Fuel => "fuel",
+            Ecosystem::Svm => "svm",
+        };
+        let envio_dts_code = format!(
+            r#"declare module "envio" {{
+  interface IndexerConfig {{
+    {}: {{
+      chainIds: readonly [{}];
+    }};
+  }}
+}}
 
-        let ts_types_code = format!(
-            r#"export type ChainId = {};
-
-/** Per-chain configuration for the indexer. */
-export type IndexerChain = {{
-  /** The chain ID. */
-  readonly id: ChainId;
-  /** The block number to start indexing from. */
-  readonly startBlock: number;
-  /** The block number to stop indexing at (if specified). */
-  readonly endBlock: number | undefined;
-}};
-
-/** Strongly-typed record of chain configurations keyed by chain ID. */
-export type IndexerChains = {{
-  readonly [chainId in ChainId]: IndexerChain;
-}};
-
-/** Metadata and configuration for the indexer. */
-export type Indexer = {{
-  /** The name of the indexer from config.yaml. */
-  readonly name: string;
-  /** The description of the indexer from config.yaml. */
-  readonly description: string | undefined;
-  /** Array of all chain IDs this indexer operates on. */
-  readonly chainIds: readonly ChainId[];
-  /** Per-chain configuration keyed by chain ID. */
-  readonly chains: IndexerChains;
-}};"#,
-            chain_id_type_ts
+export {{}};
+"#,
+            ecosystem_name, chain_ids_ts
         );
 
         let full_batch_size_code = match cfg.human_config.get_base_config().full_batch_size {
@@ -1459,7 +1447,7 @@ export type Indexer = {{
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            ts_types_code,
+            envio_dts_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,

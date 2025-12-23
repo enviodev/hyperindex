@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "gen:clean": "(cd generated && rescript clean)",
-    "gen:build": "(cd generated && rescript)",
-    "gen:watch": "(cd generated && rescript -w)",
     "res:clean": "rescript clean",
     "res:build": "rescript",
     "res:watch": "rescript -w",
@@ -13,7 +10,7 @@
     "test": "rescript && tsc --noEmit && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
     "test:log": "DEBUG=true npm test",
-    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
+    "codegen": "envio codegen && rescript",
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",

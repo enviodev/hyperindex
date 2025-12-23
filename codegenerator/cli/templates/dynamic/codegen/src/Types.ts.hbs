@@ -2,7 +2,7 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, EffectCaller } from "envio";
+import type { Logger, EffectCaller{{#if is_evm_ecosystem}}, EvmChainId as ChainId{{/if}}{{#if is_fuel_ecosystem}}, FuelChainId as ChainId{{/if}}{{#if is_svm_ecosystem}}, SvmChainId as ChainId{{/if}} } from "envio";
 import type * as Entities from "./db/Entities.gen.ts";
 
 export type HandlerContext = {
@@ -78,4 +78,3 @@ export type HandlerContext = {
   }
   {{/each}}
 };
-{{ts_types_code}}

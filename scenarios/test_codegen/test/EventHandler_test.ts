@@ -1,10 +1,75 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers, type User } from "generated";
+import { TestHelpers, type User, indexer } from "generated";
+import {
+  type Address,
+  type Indexer,
+  type EvmChainId,
+  type EvmChain,
+  type EvmChains,
+  type FuelChainId,
+  type FuelChains,
+  type SvmChainId,
+  type SvmChains,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
 
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
+  it("Indexer types and value", () => {
+    // Address type test
+    expectType<TypeEqual<Address, `0x${string}`>>(true);
+
+    // Indexer type tests
+    expectType<TypeEqual<typeof indexer, Indexer>>(true);
+    expectType<TypeEqual<typeof indexer.chains, EvmChains>>(true);
+    const _chain: EvmChain = indexer.chains[1];
+    const _chainId: EvmChainId = 1;
+
+    // EvmChainId should be the union of configured chain IDs
+    expectType<TypeEqual<EvmChainId, 1 | 1337 | 100 | 137>>(true);
+
+    // Non-configured ecosystem types should return error strings
+    expectType<
+      TypeEqual<
+        FuelChainId,
+        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        FuelChains,
+        "FuelChains is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        SvmChainId,
+        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        SvmChains,
+        "SvmChains is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
+
+    // Indexer value assertion
+    assert.deepEqual(indexer, {
+      name: "test_codegen",
+      description: "Gravatar for Ethereum",
+      chainIds: [1337, 1, 100, 137],
+      chains: {
+        1337: { id: 1337, startBlock: 1, endBlock: undefined },
+        1: { id: 1, startBlock: 1, endBlock: undefined },
+        100: { id: 100, startBlock: 1, endBlock: undefined },
+        137: { id: 137, startBlock: 1, endBlock: undefined },
+      },
+    });
+  });
+
   it("Runs contract register handler", async () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();

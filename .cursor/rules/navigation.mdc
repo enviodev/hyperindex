@@ -8,6 +8,7 @@ alwaysApply: true
 
 - Sacrifice grammar for the sake of concision
 - List any unresolved questions at the end, if any
+- Use `pnpm` over `npm`/`npx`
 
 ## Navigation
 

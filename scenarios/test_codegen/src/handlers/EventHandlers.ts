@@ -5,7 +5,7 @@ import {
   S,
   type Logger,
   type EffectCaller,
-  type Address,
+  type EvmChainId,
 } from "envio";
 import { TestEvents } from "generated";
 import { TestHelpers } from "generated";
@@ -20,28 +20,10 @@ import {
   type eventLog,
   type NftFactory_SimpleNftCreated_eventArgs,
   type NftFactory_SimpleNftCreated_event,
-  type ChainId,
   onBlock,
-  indexer,
-  type Indexer,
-  type IndexerChain,
-  type IndexerChains,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
-
-expectType<TypeEqual<Address, `0x${string}`>>(true);
-
-// Indexer type tests - these should compile without errors
-expectType<TypeEqual<typeof indexer, Indexer>>(true);
-expectType<TypeEqual<typeof indexer.chains, IndexerChains>>(true);
-const _chain: IndexerChain = indexer.chains[1];
-
-// Indexer value assertions
-deepEqual(indexer.name, "test_codegen");
-deepEqual(indexer.chainIds, [1337, 1, 100, 137]);
-deepEqual(indexer.chains[1].id, 1);
-deepEqual(indexer.chains[1].startBlock, 1);
 
 // Test effects type inference
 const noopEffect = createEffect(
@@ -208,8 +190,8 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chains,
       {
-        [chainId in ChainId]: {
-          readonly id: ChainId;
+        [chainId in EvmChainId]: {
+          readonly id: EvmChainId;
           readonly isLive: boolean;
         };
       }
@@ -220,7 +202,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     TypeEqual<
       typeof context.chain,
       {
-        readonly id: ChainId;
+        readonly id: EvmChainId;
         readonly isLive: boolean;
       }
     >
