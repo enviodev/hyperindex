@@ -5,6 +5,7 @@ import {
   type Address,
   type Indexer,
   type EvmChainId,
+  type EvmChainName,
   type EvmChain,
   type EvmChains,
   type FuelChainId,

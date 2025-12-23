@@ -148,33 +148,64 @@ export declare namespace S {
 
 /**
  * Configuration interface for the indexer.
- * This interface is augmented by generated/envio.d.ts with project-specific chain IDs.
+ * This interface is augmented by generated/envio.d.ts with project-specific config using typeof config properties.
  *
  * @example
  * // In generated/envio.d.ts:
  * declare module "envio" {
- *   interface IndexerConfig {
- *     evm: { chainIds: readonly [1, 137] };
+ *   interface GlobalIndexerConfig {
+ *     name: typeof config.name;
+ *     description: typeof config.description;
+ *     evm: typeof config.evm;
  *   }
  * }
  */
-export interface IndexerConfig {}
+export interface GlobalIndexerConfig {
+  name: string;
+}
 
 /**
  * Shape of the indexer configuration.
  * Used as a constraint for IndexerFromConfig to allow usage without codegen.
  */
-export type IndexerConfigShape = {
-  evm?: { chainIds: readonly number[] };
-  fuel?: { chainIds: readonly number[] };
-  svm?: { chainIds: readonly number[] };
+export type IndexerConfig = {
+  /** The indexer name. */
+  name: string;
+  /** The indexer description. */
+  description?: string;
+  /** EVM ecosystem configuration. */
+  evm?: {
+    /** Chain configurations keyed by chain name. */
+    chains: Record<string, EvmChain>;
+  };
+  /** Fuel ecosystem configuration. */
+  fuel?: {
+    /** Chain configurations keyed by chain name. */
+    chains: Record<string, FuelChain>;
+  };
+  /** SVM ecosystem configuration. */
+  svm?: {
+    /** Chain configurations keyed by chain name. */
+    chains: Record<string, SvmChain>;
+  };
 };
 
 // ============== EVM Types ==============
 
+/** Union of all configured EVM chain names. */
+export type EvmChainName = "evm" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["evm"] extends {
+      chains: Record<infer K extends string, any>;
+    }
+    ? K
+    : never
+  : "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
+
 /** Union of all configured EVM chain IDs. */
-export type EvmChainId = "evm" extends keyof IndexerConfig
-  ? IndexerConfig["evm"] extends { chainIds: readonly (infer T)[] }
+export type EvmChainId = "evm" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["evm"] extends {
+      chains: Record<string, { id: infer T extends number }>;
+    }
     ? T
     : never
   : "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
@@ -189,20 +220,31 @@ export type EvmChain<Id extends number = number> = {
   readonly endBlock: number | undefined;
 };
 
-/** Record of EVM chain configurations keyed by chain ID. */
-export type EvmChains = "evm" extends keyof IndexerConfig
-  ? IndexerConfig["evm"] extends {
-      chainIds: readonly (infer T extends number)[];
-    }
-    ? { readonly [K in T]: EvmChain<K> }
+/** Record of EVM chain configurations keyed by chain name. */
+export type EvmChains = "evm" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["evm"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: infer Id extends number }>
+      ? { readonly [K in keyof Chains]: EvmChain<Chains[K]["id"]> }
+      : never
     : never
   : "EvmChains is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
 
 // ============== Fuel Types ==============
 
+/** Union of all configured Fuel chain names. */
+export type FuelChainName = "fuel" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["fuel"] extends {
+      chains: Record<infer K extends string, any>;
+    }
+    ? K
+    : never
+  : "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
+
 /** Union of all configured Fuel chain IDs. */
-export type FuelChainId = "fuel" extends keyof IndexerConfig
-  ? IndexerConfig["fuel"] extends { chainIds: readonly (infer T)[] }
+export type FuelChainId = "fuel" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["fuel"] extends {
+      chains: Record<string, { id: infer T extends number }>;
+    }
     ? T
     : never
   : "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
@@ -217,20 +259,31 @@ export type FuelChain<Id extends number = number> = {
   readonly endBlock: number | undefined;
 };
 
-/** Record of Fuel chain configurations keyed by chain ID. */
-export type FuelChains = "fuel" extends keyof IndexerConfig
-  ? IndexerConfig["fuel"] extends {
-      chainIds: readonly (infer T extends number)[];
-    }
-    ? { readonly [K in T]: FuelChain<K> }
+/** Record of Fuel chain configurations keyed by chain name. */
+export type FuelChains = "fuel" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["fuel"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: infer Id extends number }>
+      ? { readonly [K in keyof Chains]: FuelChain<Chains[K]["id"]> }
+      : never
     : never
   : "FuelChains is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
 
 // ============== SVM (Solana) Types ==============
 
+/** Union of all configured SVM chain names. */
+export type SvmChainName = "svm" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["svm"] extends {
+      chains: Record<infer K extends string, any>;
+    }
+    ? K
+    : never
+  : "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
+
 /** Union of all configured SVM chain IDs. */
-export type SvmChainId = "svm" extends keyof IndexerConfig
-  ? IndexerConfig["svm"] extends { chainIds: readonly (infer T)[] }
+export type SvmChainId = "svm" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["svm"] extends {
+      chains: Record<string, { id: infer T extends number }>;
+    }
     ? T
     : never
   : "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
@@ -245,12 +298,12 @@ export type SvmChain<Id extends number = number> = {
   readonly endBlock: number | undefined;
 };
 
-/** Record of SVM chain configurations keyed by chain ID. */
-export type SvmChains = "svm" extends keyof IndexerConfig
-  ? IndexerConfig["svm"] extends {
-      chainIds: readonly (infer T extends number)[];
-    }
-    ? { readonly [K in T]: SvmChain<K> }
+/** Record of SVM chain configurations keyed by chain name. */
+export type SvmChains = "svm" extends keyof GlobalIndexerConfig
+  ? GlobalIndexerConfig["svm"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: infer Id extends number }>
+      ? { readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]> }
+      : never
     : never
   : "SvmChains is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
 
@@ -275,21 +328,21 @@ type SingleEcosystemChains<Config> = HasEvm<Config> extends true
   ? {
       /** Array of all chain IDs this indexer operates on. */
       readonly chainIds: readonly EvmChainId[];
-      /** Per-chain configuration keyed by chain ID. */
+      /** Per-chain configuration keyed by chain name. */
       readonly chains: EvmChains;
     }
   : HasFuel<Config> extends true
   ? {
       /** Array of all chain IDs this indexer operates on. */
       readonly chainIds: readonly FuelChainId[];
-      /** Per-chain configuration keyed by chain ID. */
+      /** Per-chain configuration keyed by chain name. */
       readonly chains: FuelChains;
     }
   : HasSvm<Config> extends true
   ? {
       /** Array of all chain IDs this indexer operates on. */
       readonly chainIds: readonly SvmChainId[];
-      /** Per-chain configuration keyed by chain ID. */
+      /** Per-chain configuration keyed by chain name. */
       readonly chains: SvmChains;
     }
   : {};
@@ -299,9 +352,9 @@ type MultiEcosystemChains<Config> = (HasEvm<Config> extends true
   ? {
       /** EVM ecosystem configuration. */
       readonly evm: {
-        /** Array of EVM chain IDs. */
+        /** Array of all EVM chain IDs. */
         readonly chainIds: readonly EvmChainId[];
-        /** Per-chain configuration keyed by chain ID. */
+        /** Per-chain configuration keyed by chain name. */
         readonly chains: EvmChains;
       };
     }
@@ -310,9 +363,9 @@ type MultiEcosystemChains<Config> = (HasEvm<Config> extends true
     ? {
         /** Fuel ecosystem configuration. */
         readonly fuel: {
-          /** Array of Fuel chain IDs. */
+          /** Array of all Fuel chain IDs. */
           readonly chainIds: readonly FuelChainId[];
-          /** Per-chain configuration keyed by chain ID. */
+          /** Per-chain configuration keyed by chain name. */
           readonly chains: FuelChains;
         };
       }
@@ -321,9 +374,9 @@ type MultiEcosystemChains<Config> = (HasEvm<Config> extends true
     ? {
         /** SVM ecosystem configuration. */
         readonly svm: {
-          /** Array of SVM chain IDs. */
+          /** Array of all SVM chain IDs. */
           readonly chainIds: readonly SvmChainId[];
-          /** Per-chain configuration keyed by chain ID. */
+          /** Per-chain configuration keyed by chain name. */
           readonly chains: SvmChains;
         };
       }
@@ -331,10 +384,10 @@ type MultiEcosystemChains<Config> = (HasEvm<Config> extends true
 
 /**
  * Indexer type resolved from config, adapting chain properties based on configured ecosystems.
- * - Single ecosystem: chainIds and chains are at the root level.
- * - Multiple ecosystems: chainIds and chains are namespaced by ecosystem (evm, fuel, svm).
+ * - Single ecosystem: chains are at the root level.
+ * - Multiple ecosystems: chains are namespaced by ecosystem (evm, fuel, svm).
  */
-export type IndexerFromConfig<Config extends IndexerConfigShape> = {
+export type IndexerFromConfig<Config extends IndexerConfig> = {
   /** The indexer name from config.yaml. */
   readonly name: string;
   /** The indexer description from config.yaml. */
@@ -344,6 +397,6 @@ export type IndexerFromConfig<Config extends IndexerConfigShape> = {
   : MultiEcosystemChains<Config>);
 
 /** The indexer type. */
-export type Indexer = EcosystemCount<IndexerConfig> extends 0
+export type Indexer = EcosystemCount<GlobalIndexerConfig> extends 0
   ? "The Indexer type is not available. Run 'pnpm envio codegen' to generate types"
-  : IndexerFromConfig<IndexerConfig>;
+  : IndexerFromConfig<GlobalIndexerConfig>;
