@@ -94,7 +94,7 @@ const getBalance = createEffect(
   {
     name: "getBalance",
     input: {
-      address: S.string,
+      address: S.address,
       blockNumber: S.optional(S.bigint),
     },
     output: S.bigDecimal,
@@ -128,7 +128,10 @@ const getBalance = createEffect(
 expectType<
   TypeEqual<
     typeof getBalance,
-    Effect<{ address: string; blockNumber?: bigint | undefined }, BigDecimal>
+    Effect<
+      { address: `0x${string}`; blockNumber?: bigint | undefined },
+      BigDecimal
+    >
   >
 >(true);
 

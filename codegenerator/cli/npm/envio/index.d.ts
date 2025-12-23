@@ -160,6 +160,16 @@ export declare namespace S {
  */
 export interface IndexerConfig {}
 
+/**
+ * Shape of the indexer configuration.
+ * Used as a constraint for IndexerFromConfig to allow usage without codegen.
+ */
+export type IndexerConfigShape = {
+  evm?: { chainIds: readonly number[] };
+  fuel?: { chainIds: readonly number[] };
+  svm?: { chainIds: readonly number[] };
+};
+
 // ============== EVM Types ==============
 
 /** Union of all configured EVM chain IDs. */
@@ -324,7 +334,7 @@ type MultiEcosystemChains<Config> = (HasEvm<Config> extends true
  * - Single ecosystem: chainIds and chains are at the root level.
  * - Multiple ecosystems: chainIds and chains are namespaced by ecosystem (evm, fuel, svm).
  */
-export type IndexerFromConfig<Config extends IndexerConfig> = {
+export type IndexerFromConfig<Config extends IndexerConfigShape> = {
   /** The indexer name from config.yaml. */
   readonly name: string;
   /** The indexer description from config.yaml. */
