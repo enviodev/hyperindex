@@ -6,7 +6,6 @@ import {
   type Indexer,
   type EvmChainId,
   type EvmChainName,
-  type EvmChain,
   type FuelChainId,
   type SvmChainId,
 } from "envio";
@@ -21,25 +20,84 @@ describe("Use Envio test framework to test event handlers", () => {
 
     // Indexer type tests
     expectType<TypeEqual<typeof indexer, Indexer>>(true);
+    // Chain types are internal, so we check through the indexer type
     expectType<
       TypeEqual<
         typeof indexer.chains,
         {
-          readonly ethereumMainnet: EvmChain<1>;
-          readonly gnosis: EvmChain<100>;
-          readonly polygon: EvmChain<137>;
-          readonly "1337": EvmChain<1337>;
+          readonly ethereumMainnet: {
+            readonly id: 1;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
+          readonly gnosis: {
+            readonly id: 100;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
+          readonly polygon: {
+            readonly id: 137;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
+          readonly "1337": {
+            readonly id: 1337;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
         } & {
-          readonly 1: EvmChain<1>;
-          readonly 100: EvmChain<100>;
-          readonly 137: EvmChain<137>;
-          readonly 1337: EvmChain<1337>;
+          readonly 1: {
+            readonly id: 1;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
+          readonly 100: {
+            readonly id: 100;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
+          readonly 137: {
+            readonly id: 137;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
+          readonly 1337: {
+            readonly id: 1337;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          };
         }
       >
     >(true);
-    expectType<TypeEqual<typeof indexer.chains.ethereumMainnet, EvmChain<1>>>(
-      true
-    );
+    // Check that chain has the expected structure with name and isLive
+    expectType<
+      TypeEqual<
+        typeof indexer.chains.ethereumMainnet,
+        {
+          readonly id: 1;
+          readonly startBlock: number;
+          readonly endBlock: number | undefined;
+          readonly name: string;
+          readonly isLive: boolean;
+        }
+      >
+    >(true);
 
     const _chainId: EvmChainId = 1;
 
@@ -69,10 +127,34 @@ describe("Use Envio test framework to test event handlers", () => {
       description: "Gravatar for Ethereum",
       chainIds: [1337, 1, 100, 137],
       chains: {
-        1337: { id: 1337, startBlock: 1, endBlock: undefined },
-        1: { id: 1, startBlock: 1, endBlock: undefined },
-        100: { id: 100, startBlock: 1, endBlock: undefined },
-        137: { id: 137, startBlock: 1, endBlock: undefined },
+        1337: {
+          id: 1337,
+          startBlock: 1,
+          endBlock: undefined,
+          name: "1337",
+          isLive: false,
+        },
+        1: {
+          id: 1,
+          startBlock: 1,
+          endBlock: undefined,
+          name: "ethereumMainnet",
+          isLive: false,
+        },
+        100: {
+          id: 100,
+          startBlock: 1,
+          endBlock: undefined,
+          name: "gnosis",
+          isLive: false,
+        },
+        137: {
+          id: 137,
+          startBlock: 1,
+          endBlock: undefined,
+          name: "polygon",
+          isLive: false,
+        },
       },
     });
   });

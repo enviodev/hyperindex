@@ -172,17 +172,17 @@ export type IndexerConfig = {
   /** EVM ecosystem configuration. */
   evm?: {
     /** Chain configurations keyed by chain name. */
-    chains: Record<string, EvmChain>;
+    chains: Record<string, EvmChainConfig>;
   };
   /** Fuel ecosystem configuration. */
   fuel?: {
     /** Chain configurations keyed by chain name. */
-    chains: Record<string, FuelChain>;
+    chains: Record<string, FuelChainConfig>;
   };
   /** SVM ecosystem configuration. */
   svm?: {
     /** Chain configurations keyed by chain name. */
-    chains: Record<string, SvmChain>;
+    chains: Record<string, SvmChainConfig>;
   };
 };
 
@@ -209,14 +209,28 @@ export type EvmChainId = GlobalIndexerConfig extends { evm: infer Evm }
     : "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
   : "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
 
-/** EVM chain configuration. */
-export type EvmChain<Id extends number = number> = {
+/** EVM chain configuration (for IndexerConfig). */
+type EvmChainConfig<Id extends number = number> = {
   /** The chain ID. */
   readonly id: Id;
   /** The block number indexing starts from. */
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
+  readonly endBlock?: number;
+};
+
+/** EVM chain value (for runtime Indexer). */
+type EvmChain<Id extends number = number> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The chain name. */
+  readonly name: string;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
+  /** Whether the chain has completed initial sync and is processing live events. */
+  readonly isLive: boolean;
 };
 
 // ============== Fuel Types ==============
@@ -239,14 +253,28 @@ export type FuelChainId = GlobalIndexerConfig extends { fuel: infer Fuel }
     : "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
   : "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
 
-/** Fuel chain configuration. */
-export type FuelChain<Id extends number = number> = {
+/** Fuel chain configuration (for IndexerConfig). */
+type FuelChainConfig<Id extends number = number> = {
   /** The chain ID. */
   readonly id: Id;
   /** The block number indexing starts from. */
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
+  readonly endBlock?: number;
+};
+
+/** Fuel chain value (for runtime Indexer). */
+type FuelChain<Id extends number = number> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The chain name. */
+  readonly name: string;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
+  /** Whether the chain has completed initial sync and is processing live events. */
+  readonly isLive: boolean;
 };
 
 // ============== SVM (Solana) Types ==============
@@ -269,14 +297,28 @@ export type SvmChainId = GlobalIndexerConfig extends { svm: infer Svm }
     : "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
   : "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
 
-/** SVM chain configuration. */
-export type SvmChain<Id extends number = number> = {
+/** SVM chain configuration (for IndexerConfig). */
+type SvmChainConfig<Id extends number = number> = {
   /** The chain ID. */
   readonly id: Id;
   /** The block number indexing starts from. */
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
+  readonly endBlock?: number;
+};
+
+/** SVM chain value (for runtime Indexer). */
+type SvmChain<Id extends number = number> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The chain name. */
+  readonly name: string;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
+  /** Whether the chain has completed initial sync and is processing live events. */
+  readonly isLive: boolean;
 };
 
 // ============== Indexer Type ==============
@@ -305,9 +347,9 @@ type EvmEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
             readonly chainIds: readonly Chains[keyof Chains]["id"][];
             /** Per-chain configuration keyed by chain name or ID. */
             readonly chains: {
-              readonly [K in keyof Chains]: EvmChain<Chains[K]["id"]>;
-            } & {
               readonly [K in Chains[keyof Chains]["id"]]: EvmChain<K>;
+            } & {
+              readonly [K in keyof Chains]: EvmChain<Chains[K]["id"]>;
             };
           }
         : never
@@ -324,9 +366,9 @@ type FuelEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
             readonly chainIds: readonly Chains[keyof Chains]["id"][];
             /** Per-chain configuration keyed by chain name or ID. */
             readonly chains: {
-              readonly [K in keyof Chains]: FuelChain<Chains[K]["id"]>;
-            } & {
               readonly [K in Chains[keyof Chains]["id"]]: FuelChain<K>;
+            } & {
+              readonly [K in keyof Chains]: FuelChain<Chains[K]["id"]>;
             };
           }
         : never
@@ -343,9 +385,9 @@ type SvmEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
             readonly chainIds: readonly Chains[keyof Chains]["id"][];
             /** Per-chain configuration keyed by chain name or ID. */
             readonly chains: {
-              readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
-            } & {
               readonly [K in Chains[keyof Chains]["id"]]: SvmChain<K>;
+            } & {
+              readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
             };
           }
         : never
