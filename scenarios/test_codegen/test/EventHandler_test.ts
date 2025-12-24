@@ -25,7 +25,7 @@ describe("Use Envio test framework to test event handlers", () => {
     // Indexer type tests
     expectType<TypeEqual<typeof indexer, Indexer>>(true);
     expectType<TypeEqual<typeof indexer.chains, EvmChains>>(true);
-    const _chain: EvmChain = indexer.chains[1];
+    const _chain: EvmChain<1> = indexer.chains["ethereum-mainnet"];
     const _chainId: EvmChainId = 1;
 
     // EvmChainId should be the union of configured chain IDs

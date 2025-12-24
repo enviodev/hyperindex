@@ -1102,7 +1102,6 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    envio_dts_code: String,
     envio_config_ts_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
@@ -1478,41 +1477,6 @@ name: "{}",
             }
         );
 
-        // Generate envio.d.ts content with typeof config properties
-        // Note: config is exported as default, so we reference it via import type
-        // Only include ecosystems that have chains configured
-        let mut dts_ecosystem_parts = Vec::new();
-        if !chain_configs.is_empty() {
-            let ecosystem_name = match cfg.get_ecosystem() {
-                Ecosystem::Evm => "evm",
-                Ecosystem::Fuel => "fuel",
-                Ecosystem::Svm => "svm",
-            };
-            dts_ecosystem_parts.push(format!(
-                "  {}: typeof config.{};",
-                ecosystem_name, ecosystem_name
-            ));
-        }
-
-        let envio_dts_code = format!(
-            r#"import type config from "./envio.config";
-
-declare module "envio" {{
-interface GlobalIndexerConfig {{
-  name: typeof config.name;
-{}
-}}
-}}
-
-export {{}};
-"#,
-            if dts_ecosystem_parts.is_empty() {
-                String::new()
-            } else {
-                format!("{}", dts_ecosystem_parts.join("\n"))
-            }
-        );
-
         let full_batch_size_code = match cfg.human_config.get_base_config().full_batch_size {
             None => "None".to_string(),
             Some(v) => format!("Some({v})"),
@@ -1541,7 +1505,6 @@ export {{}};
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            envio_dts_code,
             envio_config_ts_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
@@ -2163,21 +2126,32 @@ fuel: {
     }
 
     #[test]
-    fn envio_dts_code_uses_typeof_config() {
-        let project_template = get_project_template_helper("config1.yaml");
-
-        let expected = r#"import type config from "./envio.config";
+    fn envio_dts_is_static_template() {
+        // envio.d.ts is now a static template file that gets copied as-is
+        // No dynamic generation needed - the content is always the same
+        let expected = r#"import type config from "./envio.config.ts";
 
 declare module "envio" {
-interface GlobalIndexerConfig {
-  name: typeof config.name;
-  evm: typeof config.evm;
+interface Global {
+  config: typeof config;
 }
 }
 
 export {};
 "#;
 
-        assert_eq!(project_template.envio_dts_code.trim(), expected.trim());
+        // Verify the static template file exists and has correct content
+        use include_dir::{include_dir, Dir};
+        static TEMPLATES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates");
+
+        let envio_dts_file = TEMPLATES_DIR
+            .get_file("static/codegen/envio.d.ts")
+            .expect("envio.d.ts static template should exist");
+
+        let content = envio_dts_file
+            .contents_utf8()
+            .expect("envio.d.ts should be valid UTF-8");
+
+        assert_eq!(content.trim(), expected.trim());
     }
 }
