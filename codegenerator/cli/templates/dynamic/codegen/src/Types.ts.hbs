@@ -25,19 +25,6 @@ export type HandlerContext = {
    */
   readonly isPreload: boolean;
   /**
-   * Per-chain state information accessible in event handlers and block handlers.
-   * Each chain ID maps to an object containing chain-specific state:
-   * - id: the chain ID
-   * - isLive: true when the chain has completed initial sync and is processing live events,
-   *            false during historical synchronization
-   */
-  readonly chains: {
-    [chainId in ChainId]: {
-      readonly id: ChainId;
-      readonly isLive: boolean;
-    };
-  };
-  /**
    * Chain state information for the current event's chain.
    * - id: the chain ID
    * - isLive: true when the chain has completed initial sync and is processing live events,

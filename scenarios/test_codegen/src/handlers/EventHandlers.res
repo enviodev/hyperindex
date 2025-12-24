@@ -148,20 +148,15 @@ Indexer.Gravatar.TestEvent.handler(async _ => {
   ()
 })
 
-// Test chains accessibility - exposed for testing
-// Instead of a single eventOrigin enum, we store the entire chains dict
-let lastEmptyEventChains: ref<option<Internal.chains>> = ref(None)
+// Test chain accessibility - exposed for testing
+let lastEmptyEventChain: ref<option<Internal.chainInfo>> = ref(None)
 
 Indexer.Gravatar.EmptyEvent.handler(async ({context}) => {
-  // This handler tests that chains state is accessible in the context
-  // Chains will have isLive: false during sync and isLive: true during live indexing
-  lastEmptyEventChains := Some(context.chains)
+  // This handler tests that chain state is accessible in the context
+  // Chain will have isLive: false during sync and isLive: true during live indexing
+  lastEmptyEventChain := Some(context.chain)
 
-  // Log chain states for verification
-  context.chains
-  ->Js.Dict.entries
-  ->Belt.Array.forEach(((chainId, chainInfo)) => {
-    let status = chainInfo.isLive ? "ready (live)" : "syncing (historical)"
-    context.log.debug(`Chain ${chainId} status: ${status}`)
-  })
+  // Log chain state for verification
+  let status = context.chain.isLive ? "ready (live)" : "syncing (historical)"
+  context.log.debug(`Chain ${context.chain.id->Belt.Int.toString} status: ${status}`)
 })

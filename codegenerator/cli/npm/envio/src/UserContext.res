@@ -261,7 +261,6 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       )
 
     | "isPreload" => params.isPreload->Utils.magic
-    | "chains" => params.chains->Utils.magic
     | "chain" =>
       let chainId = params.item->Internal.getItemChainId
       params.chains->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Utils.magic

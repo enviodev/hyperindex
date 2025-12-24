@@ -160,9 +160,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     parentHash: "0xParentHash",
   });
   S.assertOrThrow(event.block, blockSchema)!;
-  let chainFromChains = context.chains[event.chainId];
   deepEqual(context.chain.id, event.chainId);
-  equal(chainFromChains, context.chain);
 
   // We already do type checking in the tests,
   // but double-check that we receive correct types
@@ -189,19 +187,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     >
   >(true);
 
-  // Test chains field accessibility in TypeScript
-  expectType<
-    TypeEqual<
-      typeof context.chains,
-      {
-        [chainId in EvmChainId]: {
-          readonly id: EvmChainId;
-          readonly isLive: boolean;
-        };
-      }
-    >
-  >(true);
-
+  // Test chain field accessibility in TypeScript
   expectType<
     TypeEqual<
       typeof context.chain,
