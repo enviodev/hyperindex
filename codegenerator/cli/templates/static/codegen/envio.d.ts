@@ -1,4 +1,4 @@
-import type config from "./envio.config.ts";
+import type config from "./internal.config.ts";
 
 declare module "envio" {
   interface Global {

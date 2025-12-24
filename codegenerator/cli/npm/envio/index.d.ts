@@ -219,16 +219,6 @@ export type EvmChain<Id extends number = number> = {
   readonly endBlock: number | undefined;
 };
 
-/** Record of EVM chain configurations keyed by chain name. */
-export type EvmChains<Config extends IndexerConfig = GlobalIndexerConfig> =
-  "evm" extends keyof Config
-    ? Config["evm"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: infer Id extends number }>
-        ? { readonly [K in keyof Chains]: EvmChain<Chains[K]["id"]> }
-        : never
-      : never
-    : "EvmChains is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
-
 // ============== Fuel Types ==============
 
 /** Union of all configured Fuel chain names. */
@@ -258,16 +248,6 @@ export type FuelChain<Id extends number = number> = {
   /** The block number indexing stops at (if configured). */
   readonly endBlock: number | undefined;
 };
-
-/** Record of Fuel chain configurations keyed by chain name. */
-export type FuelChains<Config extends IndexerConfig = GlobalIndexerConfig> =
-  "fuel" extends keyof Config
-    ? Config["fuel"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: infer Id extends number }>
-        ? { readonly [K in keyof Chains]: FuelChain<Chains[K]["id"]> }
-        : never
-      : never
-    : "FuelChains is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
 
 // ============== SVM (Solana) Types ==============
 
@@ -299,16 +279,6 @@ export type SvmChain<Id extends number = number> = {
   readonly endBlock: number | undefined;
 };
 
-/** Record of SVM chain configurations keyed by chain name. */
-export type SvmChains<Config extends IndexerConfig = GlobalIndexerConfig> =
-  "svm" extends keyof Config
-    ? Config["svm"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: infer Id extends number }>
-        ? { readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]> }
-        : never
-      : never
-    : "SvmChains is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
-
 // ============== Indexer Type ==============
 
 // Helper: Check if ecosystem is configured in a given config
@@ -325,29 +295,71 @@ type EcosystemTuple<Config> = [
 ];
 type EcosystemCount<Config> = EcosystemTuple<Config>["length"];
 
+// EVM ecosystem type
+type EvmEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
+  "evm" extends keyof Config
+    ? Config["evm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all EVM chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in keyof Chains]: EvmChain<Chains[K]["id"]>;
+            } & {
+              readonly [K in Chains[keyof Chains]["id"]]: EvmChain<K>;
+            };
+          }
+        : never
+      : never
+    : never;
+
+// Fuel ecosystem type
+type FuelEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
+  "fuel" extends keyof Config
+    ? Config["fuel"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all Fuel chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in keyof Chains]: FuelChain<Chains[K]["id"]>;
+            } & {
+              readonly [K in Chains[keyof Chains]["id"]]: FuelChain<K>;
+            };
+          }
+        : never
+      : never
+    : never;
+
+// SVM ecosystem type
+type SvmEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
+  "svm" extends keyof Config
+    ? Config["svm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all SVM chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
+            } & {
+              readonly [K in Chains[keyof Chains]["id"]]: SvmChain<K>;
+            };
+          }
+        : never
+      : never
+    : never;
+
 // Single ecosystem chains (flattened at root level)
 type SingleEcosystemChains<Config extends IndexerConfig> =
   HasEvm<Config> extends true
-    ? {
-        /** Array of all chain IDs this indexer operates on. */
-        readonly chainIds: readonly EvmChainId[];
-        /** Per-chain configuration keyed by chain name. */
-        readonly chains: EvmChains<Config>;
-      }
+    ? EvmEcosystem<Config>
     : HasFuel<Config> extends true
-    ? {
-        /** Array of all chain IDs this indexer operates on. */
-        readonly chainIds: readonly FuelChainId[];
-        /** Per-chain configuration keyed by chain name. */
-        readonly chains: FuelChains<Config>;
-      }
+    ? FuelEcosystem<Config>
     : HasSvm<Config> extends true
-    ? {
-        /** Array of all chain IDs this indexer operates on. */
-        readonly chainIds: readonly SvmChainId[];
-        /** Per-chain configuration keyed by chain name. */
-        readonly chains: SvmChains<Config>;
-      }
+    ? SvmEcosystem<Config>
     : {};
 
 // Multi-ecosystem chains (namespaced by ecosystem)
@@ -355,34 +367,19 @@ type MultiEcosystemChains<Config extends IndexerConfig> =
   (HasEvm<Config> extends true
     ? {
         /** EVM ecosystem configuration. */
-        readonly evm: {
-          /** Array of all EVM chain IDs. */
-          readonly chainIds: readonly EvmChainId[];
-          /** Per-chain configuration keyed by chain name. */
-          readonly chains: EvmChains<Config>;
-        };
+        readonly evm: EvmEcosystem<Config>;
       }
     : {}) &
     (HasFuel<Config> extends true
       ? {
           /** Fuel ecosystem configuration. */
-          readonly fuel: {
-            /** Array of all Fuel chain IDs. */
-            readonly chainIds: readonly FuelChainId[];
-            /** Per-chain configuration keyed by chain name. */
-            readonly chains: FuelChains<Config>;
-          };
+          readonly fuel: FuelEcosystem<Config>;
         }
       : {}) &
     (HasSvm<Config> extends true
       ? {
           /** SVM ecosystem configuration. */
-          readonly svm: {
-            /** Array of all SVM chain IDs. */
-            readonly chainIds: readonly SvmChainId[];
-            /** Per-chain configuration keyed by chain name. */
-            readonly chains: SvmChains<Config>;
-          };
+          readonly svm: SvmEcosystem<Config>;
         }
       : {});
 
@@ -393,9 +390,9 @@ type MultiEcosystemChains<Config extends IndexerConfig> =
  */
 export type IndexerFromConfig<Config extends IndexerConfig> = {
   /** The indexer name from config.yaml. */
-  readonly name: string;
+  readonly name: Config["name"];
   /** The indexer description from config.yaml. */
-  readonly description: string | undefined;
+  readonly description: Config["description"];
 } & (EcosystemCount<Config> extends 1
   ? SingleEcosystemChains<Config>
   : MultiEcosystemChains<Config>);

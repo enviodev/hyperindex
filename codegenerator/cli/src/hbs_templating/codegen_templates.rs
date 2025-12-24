@@ -33,6 +33,7 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
+use convert_case::{Case, Casing};
 use ethers::abi::EventParam;
 use pathdiff::diff_paths;
 use serde::Serialize;
@@ -1102,7 +1103,7 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    envio_config_ts_code: String,
+    internal_config_ts_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
@@ -1399,27 +1400,30 @@ switch chainId {{
         // Add onBlock at the end
         let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
 
+        // Helper function to convert kebab-case to camelCase
+        let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
+
         // Helper function to convert chain ID to chain name
         let chain_id_to_name = |chain_id: u64, ecosystem: &Ecosystem| -> String {
             match ecosystem {
                 Ecosystem::Evm => Network::from_repr(chain_id)
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| format!("chain-{}", chain_id)),
+                    .map(|n| kebab_to_camel(&n.to_string()))
+                    .unwrap_or_else(|| chain_id.to_string()),
                 Ecosystem::Fuel => {
-                    // For Fuel, use a simple naming scheme
-                    format!("fuel-chain-{}", chain_id)
+                    // For Fuel, use chain ID directly when no proper name exists
+                    chain_id.to_string()
                 }
                 Ecosystem::Svm => {
-                    // For SVM, use index-based naming or a simple scheme
-                    format!("svm-chain-{}", chain_id)
+                    // For SVM, use chain ID directly when no proper name exists
+                    chain_id.to_string()
                 }
             }
         };
 
-        // Generate envio.config.ts content
+        // Generate internal.config.ts content
         let description_str = match &cfg.human_config.get_base_config().description {
-            Some(desc) => format!("description: \"{}\",", desc.replace('\"', "\\\"")),
-            None => "description: undefined,".to_string(),
+            Some(desc) => format!("  description: \"{}\",", desc.replace('\"', "\\\"")),
+            None => "  description: undefined,".to_string(),
         };
 
         // Generate ecosystem sections only if they have chains
@@ -1437,7 +1441,7 @@ switch chainId {{
                         None => "undefined".to_string(),
                     };
                     format!(
-                        "  \"{}\": {{ id: {}, startBlock: {}, endBlock: {} }}",
+                        "      \"{}\": {{ id: {}, startBlock: {}, endBlock: {} }},",
                         chain_name,
                         chain_config.network_config.id,
                         chain_config.network_config.start_block,
@@ -1453,18 +1457,18 @@ switch chainId {{
             };
 
             ecosystem_parts.push(format!(
-                "{}: {{\n  chains: {{\n{}\n  }}\n}}",
+                "  {}: {{\n    chains: {{\n{}\n    }},\n  }}",
                 ecosystem_name,
-                chains_entries.join(",\n")
+                chains_entries.join("\n")
             ));
         }
 
-        let envio_config_ts_code = format!(
+        let internal_config_ts_code = format!(
             r#"import type {{ IndexerConfig }} from "envio";
 
 export default {{
-name: "{}",
-{}
+  name: "{}",
+  {},
 {}
 }} as const satisfies IndexerConfig;
 "#,
@@ -1473,7 +1477,7 @@ name: "{}",
             if ecosystem_parts.is_empty() {
                 String::new()
             } else {
-                format!("{}", ecosystem_parts.join(",\n"))
+                format!("  {},\n", ecosystem_parts.join(",\n"))
             }
         );
 
@@ -1505,7 +1509,7 @@ name: "{}",
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            envio_config_ts_code,
+            internal_config_ts_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
@@ -2080,47 +2084,47 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     }
 
     #[test]
-    fn envio_config_ts_code_generated_for_evm() {
+    fn internal_config_ts_code_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
 
         let expected = r#"import type { IndexerConfig } from "envio";
 
 export default {
-name: "config1",
-description: "Gravatar for Ethereum",
-evm: {
-  chains: {
-  "ethereum-mainnet": { id: 1, startBlock: 0, endBlock: undefined }
-  }
-}
+  name: "config1",
+  description: "Gravatar for Ethereum",
+  evm: {
+    chains: {
+      "ethereumMainnet": { id: 1, startBlock: 0, endBlock: undefined },
+    },
+  },
 } as const satisfies IndexerConfig;
 "#;
 
         assert_eq!(
-            project_template.envio_config_ts_code.trim(),
+            project_template.internal_config_ts_code.trim(),
             expected.trim()
         );
     }
 
     #[test]
-    fn envio_config_ts_code_generated_for_fuel() {
+    fn internal_config_ts_code_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
 
         let expected = r#"import type { IndexerConfig } from "envio";
 
 export default {
-name: "Fuel indexer",
-description: undefined,
-fuel: {
-  chains: {
-  "fuel-chain-0": { id: 0, startBlock: 0, endBlock: undefined }
-  }
-}
+  name: "Fuel indexer",
+  description: undefined,
+  fuel: {
+    chains: {
+      "0": { id: 0, startBlock: 0, endBlock: undefined },
+    },
+  },
 } as const satisfies IndexerConfig;
 "#;
 
         assert_eq!(
-            project_template.envio_config_ts_code.trim(),
+            project_template.internal_config_ts_code.trim(),
             expected.trim()
         );
     }
@@ -2129,7 +2133,7 @@ fuel: {
     fn envio_dts_is_static_template() {
         // envio.d.ts is now a static template file that gets copied as-is
         // No dynamic generation needed - the content is always the same
-        let expected = r#"import type config from "./envio.config.ts";
+        let expected = r#"import type config from "./internal.config.ts";
 
 declare module "envio" {
 interface Global {

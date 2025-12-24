@@ -7,11 +7,8 @@ import {
   type EvmChainId,
   type EvmChainName,
   type EvmChain,
-  type EvmChains,
   type FuelChainId,
-  type FuelChains,
   type SvmChainId,
-  type SvmChains,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
@@ -24,12 +21,33 @@ describe("Use Envio test framework to test event handlers", () => {
 
     // Indexer type tests
     expectType<TypeEqual<typeof indexer, Indexer>>(true);
-    expectType<TypeEqual<typeof indexer.chains, EvmChains>>(true);
-    const _chain: EvmChain<1> = indexer.chains["ethereum-mainnet"];
+    expectType<
+      TypeEqual<
+        typeof indexer.chains,
+        {
+          readonly ethereumMainnet: EvmChain<1>;
+          readonly gnosis: EvmChain<100>;
+          readonly polygon: EvmChain<137>;
+          readonly "1337": EvmChain<1337>;
+        } & {
+          readonly 1: EvmChain<1>;
+          readonly 100: EvmChain<100>;
+          readonly 137: EvmChain<137>;
+          readonly 1337: EvmChain<1337>;
+        }
+      >
+    >(true);
+    expectType<TypeEqual<typeof indexer.chains.ethereumMainnet, EvmChain<1>>>(
+      true
+    );
+
     const _chainId: EvmChainId = 1;
 
     // EvmChainId should be the union of configured chain IDs
     expectType<TypeEqual<EvmChainId, 1 | 1337 | 100 | 137>>(true);
+    expectType<
+      TypeEqual<EvmChainName, "ethereumMainnet" | "gnosis" | "polygon" | "1337">
+    >(true);
 
     // Non-configured ecosystem types should return error strings
     expectType<
@@ -40,20 +58,8 @@ describe("Use Envio test framework to test event handlers", () => {
     >(true);
     expectType<
       TypeEqual<
-        FuelChains,
-        "FuelChains is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
-      >
-    >(true);
-    expectType<
-      TypeEqual<
         SvmChainId,
         "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
-      >
-    >(true);
-    expectType<
-      TypeEqual<
-        SvmChains,
-        "SvmChains is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
       >
     >(true);
 
