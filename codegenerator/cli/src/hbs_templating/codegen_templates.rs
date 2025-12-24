@@ -1420,17 +1420,12 @@ switch chainId {{
             }
         };
 
-        // Generate internal.config.ts content
-        let description_str = match &cfg.human_config.get_base_config().description {
-            Some(desc) => format!("  description: \"{}\",", desc.replace('\"', "\\\"")),
-            None => "  description: undefined,".to_string(),
-        };
-
         // Generate ecosystem sections only if they have chains
         let mut ecosystem_parts = Vec::new();
+        let has_ecosystem = !chain_configs.is_empty();
 
         // Generate chains for the current ecosystem (only if chains exist)
-        if !chain_configs.is_empty() {
+        if has_ecosystem {
             let chains_entries: Vec<String> = chain_configs
                 .iter()
                 .map(|chain_config| {
@@ -1457,19 +1452,23 @@ switch chainId {{
             };
 
             ecosystem_parts.push(format!(
-                "  {}: {{\n    chains: {{\n{}\n    }},\n  }}",
+                ",\n  {}: {{\n    chains: {{\n{}\n    }},\n  }},",
                 ecosystem_name,
                 chains_entries.join("\n")
             ));
         }
 
+        // Generate internal.config.ts content
+        let description_str = match &cfg.human_config.get_base_config().description {
+            Some(desc) => format!(",\n  description: \"{}\"", desc.replace('\"', "\\\"")),
+            None => String::new(),
+        };
+
         let internal_config_ts_code = format!(
             r#"import type {{ IndexerConfig }} from "envio";
 
 export default {{
-  name: "{}",
-  {},
-{}
+  name: "{}"{}{}
 }} as const satisfies IndexerConfig;
 "#,
             cfg.name,
@@ -1477,7 +1476,7 @@ export default {{
             if ecosystem_parts.is_empty() {
                 String::new()
             } else {
-                format!("  {},\n", ecosystem_parts.join(",\n"))
+                ecosystem_parts.join("")
             }
         );
 
@@ -2114,7 +2113,6 @@ export default {
 
 export default {
   name: "Fuel indexer",
-  description: undefined,
   fuel: {
     chains: {
       "0": { id: 0, startBlock: 0, endBlock: undefined },
@@ -2136,9 +2134,9 @@ export default {
         let expected = r#"import type config from "./internal.config.ts";
 
 declare module "envio" {
-interface Global {
-  config: typeof config;
-}
+  interface Global {
+    config: typeof config;
+  }
 }
 
 export {};

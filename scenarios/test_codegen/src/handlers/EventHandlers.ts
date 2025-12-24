@@ -7,11 +7,12 @@ import {
   type EffectCaller,
   type EvmChainId,
 } from "envio";
-import { TestEvents } from "generated";
-import { TestHelpers } from "generated";
-import { EventFiltersTest } from "generated";
 import {
+  TestEvents,
+  TestHelpers,
+  EventFiltersTest,
   Gravatar,
+  indexer,
   BigDecimal,
   NftFactory,
   SimpleNft,
