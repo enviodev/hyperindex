@@ -56,6 +56,8 @@ let stateSchema = S.union([
   })),
 ])
 
+let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
+
 let getGlobalIndexer = (~internalConfigJson: Js.Json.t): 'indexer => {
   let indexerConfig = IndexerConfig.parseOrThrow(internalConfigJson)
 
@@ -119,7 +121,22 @@ let getGlobalIndexer = (~internalConfigJson: Js.Json.t): 'indexer => {
       {enumerable: true, value: chainConfig.endBlock},
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainName})
-    ->Utils.Object.definePropertyWithValue("isLive", {enumerable: true, value: false})
+    ->Utils.Object.defineProperty(
+      "isLive",
+      {
+        enumerable: true,
+        get: () => {
+          switch globalGsManagerRef.contents {
+          | None => false
+          | Some(gsManager) =>
+            let state = gsManager->GlobalStateManager.getState
+            let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+            let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+            chainFetcher->ChainFetcher.isLive
+          }
+        },
+      },
+    )
     ->ignore
 
     // Primary key is chain ID as string
@@ -232,14 +249,12 @@ let start = async (
     persistence,
   }
 
-  let gsManagerRef = ref(None)
-
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
   startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
-    switch gsManagerRef.contents {
+    switch globalGsManagerRef.contents {
     | None => Initializing({})
     | Some(gsManager) => {
         let state = gsManager->GlobalStateManager.getState
@@ -303,7 +318,7 @@ let start = async (
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)
   }
-  gsManagerRef := Some(gsManager)
+  globalGsManagerRef := Some(gsManager)
   gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
   /*
     NOTE:

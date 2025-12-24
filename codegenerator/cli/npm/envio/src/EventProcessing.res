@@ -13,7 +13,7 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
   ->ChainMap.entries
   ->Array.forEach(((chain, chainFetcher)) => {
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isLive = chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+    let isLive = chainFetcher->ChainFetcher.isLive
 
     chains->Js.Dict.set(
       chainId,

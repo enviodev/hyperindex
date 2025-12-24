@@ -272,14 +272,12 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     if cf->ChainFetcher.hasProcessedToEndblock {
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
-        cf.timestampCaughtUpToHeadOrEndblock->Option.isSome
-          ? cf.timestampCaughtUpToHeadOrEndblock
-          : Js.Date.make()->Some
+        cf->ChainFetcher.isLive ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
       {
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
       }
-    } else if cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf.isProgressAtHead {
+    } else if !(cf->ChainFetcher.isLive) && cf.isProgressAtHead {
       //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
       //its not already set
       //CASE1
@@ -315,7 +313,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
   let allChainsSyncedAtHead =
     chainFetchers
     ->ChainMap.values
-    ->Array.every(cf => cf.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+    ->Array.every(cf => cf->ChainFetcher.isLive)
 
   if allChainsSyncedAtHead {
     Prometheus.setAllChainsSyncedToHead()
