@@ -1,3 +1,5 @@
+@module("../internal.config.ts")
+external internalConfigJson: Js.Json.t = "default"
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {

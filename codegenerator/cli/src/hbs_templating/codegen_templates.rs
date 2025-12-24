@@ -1281,22 +1281,31 @@ EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
         // Generate indexer types and value
         let indexer_chain_type = r#"/** Per-chain configuration for the indexer. */
 type indexerChain = {
-/** The chain ID. */
-id: chainId,
-/** The block number to start indexing from. */
-startBlock: int,
-/** The block number to stop indexing at (if specified). */
-endBlock: option<int>,
+  /** The chain ID. */
+  id: chainId,
+  /** The chain name. */
+  name: string,
+  /** The block number to start indexing from. */
+  startBlock: int,
+  /** The block number to stop indexing at (if specified). */
+  endBlock: option<int>,
+  /** Whether the chain has completed initial sync and is processing live events. */
+  isLive: bool,
 }"#;
 
         // Generate indexerChains type with fields for each chain
         let indexer_chains_fields = chain_configs
             .iter()
             .map(|chain| {
-                format!(
-                    "  @as(\"{}\") c{}: indexerChain,",
-                    chain.network_config.id, chain.network_config.id
-                )
+                let id = chain.network_config.id;
+                let id_field = format!("  @as(\"{}\") c{}: indexerChain,", id, id);
+                // Add name-based field only for known networks
+                if let Ok(network) = Network::from_network_id(id) {
+                    let name = network.to_string().to_case(Case::Camel);
+                    format!("{}\n  {}: indexerChain,", id_field, name)
+                } else {
+                    id_field
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1311,57 +1320,18 @@ type indexerChains = {{
 
         let indexer_type = r#"/** Metadata and configuration for the indexer. */
 type indexer = {
-/** The name of the indexer from config.yaml. */
-name: string,
-/** The description of the indexer from config.yaml. */
-description: option<string>,
-/** Array of all chain IDs this indexer operates on. */
-chainIds: array<chainId>,
-/** Per-chain configuration keyed by chain ID. */
-chains: indexerChains,
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
 }"#;
 
-        // Generate indexer value
-        let description_code = match &cfg.human_config.get_base_config().description {
-            Some(desc) => format!("Some(\"{}\")", desc.replace('\"', "\\\"")),
-            None => "None".to_string(),
-        };
-
-        let chain_ids_code = chain_id_cases
-            .iter()
-            .map(|id| format!("#{}", id))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let chains_fields_code = chain_configs
-            .iter()
-            .map(|chain| {
-                let end_block = match chain.network_config.end_block {
-                    Some(block) => format!("Some({})", block),
-                    None => "None".to_string(),
-                };
-                format!(
-                    "    c{}: {{id: #{}, startBlock: {}, endBlock: {}}},",
-                    chain.network_config.id,
-                    chain.network_config.id,
-                    chain.network_config.start_block,
-                    end_block
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let indexer_value = format!(
-            r#"let indexer: indexer = {{
-name: "{}",
-description: {},
-chainIds: [{}],
-chains: {{
-{}
-}},
-}}"#,
-            cfg.name, description_code, chain_ids_code, chains_fields_code
-        );
+        // Generate indexer value using Main.getGlobalIndexer
+        let indexer_value = r#"let indexer: indexer = Main.getGlobalIndexer(~internalConfigJson=Generated.internalConfigJson)"#;
 
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
@@ -2155,5 +2125,113 @@ export {};
             .expect("envio.d.ts should be valid UTF-8");
 
         assert_eq!(content.trim(), expected.trim());
+    }
+
+    #[test]
+    fn indexer_code_generates_correct_types_and_values() {
+        let project_template = get_project_template_helper("config1.yaml");
+
+        // Verify indexerChain type
+        assert!(project_template.indexer_code.contains(
+            r#"/** Per-chain configuration for the indexer. */
+type indexerChain = {
+  /** The chain ID. */
+  id: chainId,
+  /** The chain name. */
+  name: string,
+  /** The block number to start indexing from. */
+  startBlock: int,
+  /** The block number to stop indexing at (if specified). */
+  endBlock: option<int>,
+  /** Whether the chain has completed initial sync and is processing live events. */
+  isLive: bool,
+}"#
+        ));
+
+        // Verify indexerChains type with both ID-based and name-based fields
+        assert!(project_template.indexer_code.contains(
+            r#"/** Strongly-typed record of chain configurations keyed by chain ID. */
+type indexerChains = {
+  @as("1") c1: indexerChain,
+  ethereumMainnet: indexerChain,
+}"#
+        ));
+
+        // Verify indexer type
+        assert!(project_template.indexer_code.contains(
+            r#"/** Metadata and configuration for the indexer. */
+type indexer = {
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+}"#
+        ));
+
+        // Verify indexer value with name and isLive fields
+        assert!(project_template.indexer_code.contains(
+            r#"let indexer: indexer = {
+name: "config1",
+description: Some("Gravatar for Ethereum"),
+chainIds: [#1],
+chains: {
+    c1: {id: #1, name: "ethereum-mainnet", startBlock: 0, endBlock: None, isLive: false},
+},
+}"#
+        ));
+
+        // Verify getChainById function
+        assert!(project_template.indexer_code.contains(
+            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
+switch chainId {
+  | #1 => indexer.chains.c1
+}
+}"#
+        ));
+    }
+
+    #[test]
+    fn indexer_code_multiple_chains() {
+        // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
+        let project_template = get_project_template_helper("config2.yaml");
+
+        // Verify indexerChains type: chain 1 has name-based field, chain 2 only has ID-based
+        assert!(project_template.indexer_code.contains(
+            r#"/** Strongly-typed record of chain configurations keyed by chain ID. */
+type indexerChains = {
+  @as("1") c1: indexerChain,
+  ethereumMainnet: indexerChain,
+  @as("2") c2: indexerChain,
+}"#
+        ));
+
+        // Verify indexer value: chain 1 uses network name, chain 2 falls back to ID
+        assert!(project_template.indexer_code.contains(
+            r#"let indexer: indexer = {
+name: "config2",
+description: Some("Gravatar for Ethereum"),
+chainIds: [#1, #2],
+chains: {
+    c1: {id: #1, name: "ethereum-mainnet", startBlock: 0, endBlock: None, isLive: false},
+    c2: {id: #2, name: "2", startBlock: 0, endBlock: None, isLive: false},
+},
+}"#
+        ));
+
+        // Verify getChainById with multiple cases
+        assert!(project_template.indexer_code.contains(
+            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
+switch chainId {
+  | #1 => indexer.chains.c1
+  | #2 => indexer.chains.c2
+}
+}"#
+        ));
     }
 }

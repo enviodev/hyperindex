@@ -56,6 +56,92 @@ let stateSchema = S.union([
   })),
 ])
 
+let getGlobalIndexer = (~internalConfigJson: Js.Json.t): 'indexer => {
+  let indexerConfig = IndexerConfig.parseOrThrow(internalConfigJson)
+
+  let indexer = Utils.Object.createNullObject()
+
+  indexer
+  ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: indexerConfig.name})
+  ->Utils.Object.definePropertyWithValue(
+    "description",
+    {enumerable: true, value: indexerConfig.description},
+  )
+  ->ignore
+
+  let ecosystemCount = ref(0)
+  switch indexerConfig {
+  | {evm: Some(_)} => ecosystemCount := ecosystemCount.contents + 1
+  | _ => ()
+  }
+  switch indexerConfig {
+  | {fuel: Some(_)} => ecosystemCount := ecosystemCount.contents + 1
+  | _ => ()
+  }
+  switch indexerConfig {
+  | {svm: Some(_)} => ecosystemCount := ecosystemCount.contents + 1
+  | _ => ()
+  }
+
+  if ecosystemCount.contents > 1 {
+    Js.Exn.raiseError(
+      "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
+    )
+  }
+
+  let ecosystemConfig = switch indexerConfig {
+  | {evm: Some(ecosystemConfig)} => ecosystemConfig
+  | {fuel: Some(ecosystemConfig)} => ecosystemConfig
+  | {svm: Some(ecosystemConfig)} => ecosystemConfig
+  | _ => Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
+  }
+
+  let chainNames = ecosystemConfig.chains->Js.Dict.keys
+  let chainIds = []
+
+  // Build chains object with chain ID as string key
+  let chains = Utils.Object.createNullObject()
+  chainNames->Array.forEach(chainName => {
+    let chainConfig = ecosystemConfig.chains->Js.Dict.unsafeGet(chainName)
+    let chainIdStr = chainConfig.id->Int.toString
+
+    chainIds->Js.Array2.push(chainConfig.id)->ignore
+
+    let chainObj = Utils.Object.createNullObject()
+    chainObj
+    ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
+    ->Utils.Object.definePropertyWithValue(
+      "startBlock",
+      {enumerable: true, value: chainConfig.startBlock},
+    )
+    ->Utils.Object.definePropertyWithValue(
+      "endBlock",
+      {enumerable: true, value: chainConfig.endBlock},
+    )
+    ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainName})
+    ->Utils.Object.definePropertyWithValue("isLive", {enumerable: true, value: false})
+    ->ignore
+
+    // Primary key is chain ID as string
+    chains
+    ->Utils.Object.definePropertyWithValue(chainIdStr, {enumerable: true, value: chainObj})
+    ->ignore
+
+    // If chain has a name different from ID, add non-enumerable alias
+    if chainName !== chainIdStr {
+      chains
+      ->Utils.Object.definePropertyWithValue(chainName, {enumerable: false, value: chainObj})
+      ->ignore
+    }
+  })
+  indexer
+  ->Utils.Object.definePropertyWithValue("chainIds", {enumerable: true, value: chainIds})
+  ->ignore
+  indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
+
+  indexer->Utils.magic
+}
+
 let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   open Express
 

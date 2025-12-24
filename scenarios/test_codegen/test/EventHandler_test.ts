@@ -157,6 +157,12 @@ describe("Use Envio test framework to test event handlers", () => {
         },
       },
     });
+    assert.deepEqual(indexer.chainIds, [1337, 1, 100, 137]);
+    assert.deepEqual(
+      indexer.chains[1],
+      indexer.chains.ethereumMainnet,
+      "Chains by name are not enumerable, but should be accessible by name"
+    );
   });
 
   it("Runs contract register handler", async () => {
