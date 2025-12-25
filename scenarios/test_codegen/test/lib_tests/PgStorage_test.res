@@ -131,6 +131,7 @@ describe("Test PgStorage SQL generation functions", () => {
           ~enums,
           ~chainConfigs=[
             {
+              name: "Chain1",
               id: 1,
               startBlock: 100,
               endBlock: 200,
@@ -139,6 +140,7 @@ describe("Test PgStorage SQL generation functions", () => {
               sources: [],
             },
             {
+              name: "Chain137",
               id: 137,
               startBlock: 0,
               maxReorgDepth: 200,
@@ -623,6 +625,7 @@ WHERE cp."block_hash" IS NOT NULL
       "Should create correct SQL for single chain config",
       async () => {
         let chainConfig: Config.chain = {
+          name: "Chain1",
           id: 1,
           startBlock: 100,
           endBlock: 200,
@@ -651,6 +654,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
       "Should create correct SQL for single chain config with no end block",
       async () => {
         let chainConfig: Config.chain = {
+          name: "Chain1",
           id: 1,
           startBlock: 100,
           maxReorgDepth: 5,
@@ -678,6 +682,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
       "Should create correct SQL for multiple chain configs",
       async () => {
         let chainConfig1: Config.chain = {
+          name: "Chain1",
           id: 1,
           startBlock: 100,
           endBlock: 200,
@@ -687,6 +692,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
         }
 
         let chainConfig2: Config.chain = {
+          name: "Chain42",
           id: 42,
           startBlock: 500,
           maxReorgDepth: 0,

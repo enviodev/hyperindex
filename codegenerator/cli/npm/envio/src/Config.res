@@ -18,7 +18,17 @@ type contract = {
   startBlock: option<int>,
 }
 
+type codegenChain = {
+  id: int,
+  startBlock: int,
+  endBlock?: int,
+  maxReorgDepth: int,
+  contracts: array<contract>,
+  sources: array<Source.t>,
+}
+
 type chain = {
+  name: string,
   id: int,
   startBlock: int,
   endBlock?: int,
@@ -40,6 +50,8 @@ type sourceSync = {
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 
 type t = {
+  name: string,
+  description: option<string>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   multichain: multichain,
@@ -54,10 +66,29 @@ type t = {
   userEntitiesByName: dict<Internal.entityConfig>,
 }
 
-let make = (
+let publicConfigChainSchema = S.schema(s => {
+  "id": s.matches(S.int),
+  "startBlock": s.matches(S.int),
+  "endBlock": s.matches(S.option(S.int)),
+})
+
+let publicConfigEcosystemSchema = S.schema(s => {
+  "chains": s.matches(S.dict(publicConfigChainSchema)),
+})
+
+let publicConfigSchema = S.schema(s => {
+  "name": s.matches(S.string),
+  "description": s.matches(S.option(S.string)),
+  "evm": s.matches(S.option(publicConfigEcosystemSchema)),
+  "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
+  "svm": s.matches(S.option(publicConfigEcosystemSchema)),
+})
+
+let fromPublic = (
+  publicConfigJson: Js.Json.t,
   ~shouldRollbackOnReorg=true,
   ~shouldSaveFullHistory=false,
-  ~chains: array<chain>=[],
+  ~codegenChains: array<codegenChain>=[],
   ~enableRawEvents=false,
   ~ecosystem: Ecosystem.name=Ecosystem.Evm,
   ~batchSize=5000,
@@ -67,6 +98,35 @@ let make = (
   ~maxAddrInPartition=5000,
   ~userEntities: array<Internal.entityConfig>=[],
 ) => {
+  // Parse public config
+  let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
+  | S.Raised(exn) =>
+    Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->Utils.magic}`)
+  }
+
+  // Validate that only one ecosystem is configured
+  let ecosystemCount =
+    (publicConfig["evm"]->Option.isSome ? 1 : 0) +
+    (publicConfig["fuel"]->Option.isSome ? 1 : 0) +
+    (publicConfig["svm"]->Option.isSome ? 1 : 0)
+
+  if ecosystemCount > 1 {
+    Js.Exn.raiseError(
+      "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
+    )
+  }
+
+  let publicEcosystemConfig = switch (
+    publicConfig["evm"],
+    publicConfig["fuel"],
+    publicConfig["svm"],
+  ) {
+  | (Some(ecosystemConfig), _, _) => ecosystemConfig
+  | (_, Some(ecosystemConfig), _) => ecosystemConfig
+  | (_, _, Some(ecosystemConfig)) => ecosystemConfig
+  | _ => Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
+  }
+
   // Validate that lowercase addresses is not used with viem decoder
   if lowercaseAddresses && !shouldUseHypersyncClientDecoder {
     Js.Exn.raiseError(
@@ -74,10 +134,41 @@ let make = (
     )
   }
 
+  // Index codegenChains by id for efficient lookup
+  let codegenChainById = Js.Dict.empty()
+  codegenChains->Array.forEach(codegenChain => {
+    codegenChainById->Js.Dict.set(codegenChain.id->Int.toString, codegenChain)
+  })
+
+  // Merge codegenChains with names from publicConfig
+  let chains =
+    publicEcosystemConfig["chains"]
+    ->Js.Dict.keys
+    ->Js.Array2.map(chainName => {
+      let publicChainConfig = publicEcosystemConfig["chains"]->Js.Dict.unsafeGet(chainName)
+      let chainId = publicChainConfig["id"]
+      let codegenChain = switch codegenChainById->Js.Dict.get(chainId->Int.toString) {
+      | Some(c) => c
+      | None =>
+        Js.Exn.raiseError(
+          `Chain with id ${chainId->Int.toString} not found in codegen chains`,
+        )
+      }
+      {
+        name: chainName,
+        id: codegenChain.id,
+        startBlock: codegenChain.startBlock,
+        endBlock: ?codegenChain.endBlock,
+        maxReorgDepth: codegenChain.maxReorgDepth,
+        contracts: codegenChain.contracts,
+        sources: codegenChain.sources,
+      }
+    })
+
   let chainMap =
     chains
-    ->Js.Array2.map(n => {
-      (ChainMap.Chain.makeUnsafe(~chainId=n.id), n)
+    ->Js.Array2.map(chain => {
+      (ChainMap.Chain.makeUnsafe(~chainId=chain.id), chain)
     })
     ->ChainMap.fromArrayUnsafe
 
@@ -104,6 +195,8 @@ let make = (
     ->Js.Dict.fromArray
 
   {
+    name: publicConfig["name"],
+    description: publicConfig["description"],
     shouldRollbackOnReorg,
     shouldSaveFullHistory,
     multichain,

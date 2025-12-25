@@ -1,14 +1,16 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers, type User, indexer } from "generated";
 import {
-  type Address,
+  TestHelpers,
+  indexer,
+  type User,
   type Indexer,
   type EvmChainId,
   type EvmChainName,
   type FuelChainId,
   type SvmChainId,
-} from "envio";
+} from "generated";
+import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
@@ -125,7 +127,7 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(indexer, {
       name: "test_codegen",
       description: "Gravatar for Ethereum",
-      chainIds: [1337, 1, 100, 137],
+      chainIds: [1, 100, 137, 1337],
       chains: {
         1337: {
           id: 1337,
@@ -157,7 +159,7 @@ describe("Use Envio test framework to test event handlers", () => {
         },
       },
     });
-    assert.deepEqual(indexer.chainIds, [1337, 1, 100, 137]);
+    assert.deepEqual(indexer.chainIds, [1, 100, 137, 1337]);
     assert.deepEqual(
       indexer.chains[1],
       indexer.chains.ethereumMainnet,

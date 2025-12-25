@@ -58,53 +58,22 @@ let stateSchema = S.union([
 
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
-let getGlobalIndexer = (~internalConfigJson: Js.Json.t): 'indexer => {
-  let indexerConfig = IndexerConfig.parseOrThrow(internalConfigJson)
-
+let getGlobalIndexer = (~config: Config.t): 'indexer => {
   let indexer = Utils.Object.createNullObject()
 
   indexer
-  ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: indexerConfig.name})
+  ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: config.name})
   ->Utils.Object.definePropertyWithValue(
     "description",
-    {enumerable: true, value: indexerConfig.description},
+    {enumerable: true, value: config.description},
   )
   ->ignore
 
-  let ecosystemCount = ref(0)
-  switch indexerConfig {
-  | {evm: Some(_)} => ecosystemCount := ecosystemCount.contents + 1
-  | _ => ()
-  }
-  switch indexerConfig {
-  | {fuel: Some(_)} => ecosystemCount := ecosystemCount.contents + 1
-  | _ => ()
-  }
-  switch indexerConfig {
-  | {svm: Some(_)} => ecosystemCount := ecosystemCount.contents + 1
-  | _ => ()
-  }
-
-  if ecosystemCount.contents > 1 {
-    Js.Exn.raiseError(
-      "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
-    )
-  }
-
-  let ecosystemConfig = switch indexerConfig {
-  | {evm: Some(ecosystemConfig)} => ecosystemConfig
-  | {fuel: Some(ecosystemConfig)} => ecosystemConfig
-  | {svm: Some(ecosystemConfig)} => ecosystemConfig
-  | _ => Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
-  }
-
-  let chainNames = ecosystemConfig.chains->Js.Dict.keys
   let chainIds = []
 
   // Build chains object with chain ID as string key
   let chains = Utils.Object.createNullObject()
-  chainNames->Array.forEach(chainName => {
-    let chainConfig = ecosystemConfig.chains->Js.Dict.unsafeGet(chainName)
+  config.chainMap->ChainMap.values->Array.forEach(chainConfig => {
     let chainIdStr = chainConfig.id->Int.toString
 
     chainIds->Js.Array2.push(chainConfig.id)->ignore
@@ -120,7 +89,7 @@ let getGlobalIndexer = (~internalConfigJson: Js.Json.t): 'indexer => {
       "endBlock",
       {enumerable: true, value: chainConfig.endBlock},
     )
-    ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainName})
+    ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
       "isLive",
       {
@@ -145,9 +114,9 @@ let getGlobalIndexer = (~internalConfigJson: Js.Json.t): 'indexer => {
     ->ignore
 
     // If chain has a name different from ID, add non-enumerable alias
-    if chainName !== chainIdStr {
+    if chainConfig.name !== chainIdStr {
       chains
-      ->Utils.Object.definePropertyWithValue(chainName, {enumerable: false, value: chainObj})
+      ->Utils.Object.definePropertyWithValue(chainConfig.name, {enumerable: false, value: chainObj})
       ->ignore
     }
   })

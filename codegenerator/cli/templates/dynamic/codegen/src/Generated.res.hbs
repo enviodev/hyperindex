@@ -51,7 +51,7 @@ let autoLoadFromSrcHandlers = async () => {
 }
 
 let makeGeneratedConfig = () => {
-  let chains = [
+  let codegenChains = [
     {{#each chain_configs as | chain_config |}}
     {
       let contracts = [
@@ -96,7 +96,8 @@ let makeGeneratedConfig = () => {
     {{/each}}
   ]
 
-  Config.make(
+  Config.fromPublic(
+    internalConfigJson,
     ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
     ~shouldSaveFullHistory={{should_save_full_history}},
     ~multichain=if {{is_unordered_multichain_mode}} {
@@ -104,7 +105,7 @@ let makeGeneratedConfig = () => {
     } else {
       Ordered
     },
-    ~chains,
+    ~codegenChains,
     ~enableRawEvents={{enable_raw_events}},
     ~batchSize=?{{full_batch_size_code}},
     ~lowercaseAddresses={{lowercase_addresses}},

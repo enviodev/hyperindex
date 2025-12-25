@@ -4,7 +4,7 @@ describe("Indexer.indexer", () => {
   it("has correct metadata", () => {
     Assert.deepEqual(Indexer.indexer.name, "test_codegen")
     Assert.deepEqual(Indexer.indexer.description, Some("Gravatar for Ethereum"))
-    Assert.deepEqual(Indexer.indexer.chainIds, [#1337, #1, #100, #137])
+    Assert.deepEqual(Indexer.indexer.chainIds, [#1, #100, #137, #1337])
   })
 
   it("has correct chain configurations", () => {

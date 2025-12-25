@@ -1331,7 +1331,7 @@ type indexer = {
 }"#;
 
         // Generate indexer value using Main.getGlobalIndexer
-        let indexer_value = r#"let indexer: indexer = Main.getGlobalIndexer(~internalConfigJson=Generated.internalConfigJson)"#;
+        let indexer_value = r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#;
 
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs

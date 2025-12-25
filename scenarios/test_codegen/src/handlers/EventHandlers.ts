@@ -1,21 +1,20 @@
-import { deepEqual, equal, fail } from "assert";
+import { deepEqual, fail } from "assert";
 import {
   createEffect,
   type Effect,
   S,
   type Logger,
   type EffectCaller,
-  type EvmChainId,
 } from "envio";
 import {
   TestEvents,
   TestHelpers,
   EventFiltersTest,
   Gravatar,
-  indexer,
   BigDecimal,
   NftFactory,
   SimpleNft,
+  type EvmChainId,
   type NftCollection,
   type User,
   type eventLog,

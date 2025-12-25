@@ -53,6 +53,9 @@ importers:
       pino-pretty:
         specifier: 10.2.3
         version: 10.2.3
+      postgres:
+        specifier: 3.4.1
+        version: 3.4.1
       prom-client:
         specifier: 15.0.0
         version: 15.0.0
@@ -744,6 +747,10 @@ packages:
   pino@8.16.1:
     resolution: {integrity: sha512-3bKsVhBmgPjGV9pyn4fO/8RtoVDR8ssW1ev819FsRXlRNgW8gR/9Kx+gCK4UPWd4JjrRDLWpzd/pb1AyWm3MGA==}
     hasBin: true
+
+  postgres@3.4.1:
+    resolution: {integrity: sha512-Wasjv6WEzrZXbwKByR2RGD7MBfj7VBqco3hYWz8ifzSAp6tb2L6MlmcKFzkmgV1jT7/vKlcSa+lxXZeTdeVMzQ==}
+    engines: {node: '>=12'}
 
   process-warning@2.3.2:
     resolution: {integrity: sha512-n9wh8tvBe5sFmsqlg+XQhaQLumwpqoAUruLwjCopgTmUBjJ/fjtBsJzKleCaIGBOMXYEhp1YfKl4d7rJ5ZKJGA==}
@@ -1683,6 +1690,8 @@ snapshots:
       safe-stable-stringify: 2.5.0
       sonic-boom: 3.8.1
       thread-stream: 2.7.0
+
+  postgres@3.4.1: {}
 
   process-warning@2.3.2: {}
 
