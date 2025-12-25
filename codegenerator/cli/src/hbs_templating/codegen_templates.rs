@@ -1102,8 +1102,6 @@ pub struct ProjectTemplate {
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
-    lowercase_addresses: bool,
-    should_use_hypersync_client_decoder: bool,
 }
 
 impl ProjectTemplate {
@@ -1415,10 +1413,31 @@ switch chainId {{
                 Ecosystem::Svm => "svm",
             };
 
+            // For EVM, always include addressFormat and decoder
+            let evm_options = if cfg.get_ecosystem() == Ecosystem::Evm {
+                let address_format = if cfg.lowercase_addresses {
+                    "lowercase"
+                } else {
+                    "checksum"
+                };
+                let decoder = if cfg.should_use_hypersync_client_decoder {
+                    "hypersync"
+                } else {
+                    "viem"
+                };
+                format!(
+                    "\n    addressFormat: \"{}\",\n    eventDecoder: \"{}\",",
+                    address_format, decoder
+                )
+            } else {
+                String::new()
+            };
+
             ecosystem_parts.push(format!(
-                ",\n  {}: {{\n    chains: {{\n{}\n    }},\n  }},",
-                ecosystem_name,
-                chains_entries.join("\n")
+                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }},{evm_options}\n  }},",
+                ecosystem_name = ecosystem_name,
+                chains = chains_entries.join("\n"),
+                evm_options = evm_options
             ));
         }
 
@@ -1507,8 +1526,6 @@ export default {{
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
-            lowercase_addresses: cfg.lowercase_addresses,
-            should_use_hypersync_client_decoder: cfg.should_use_hypersync_client_decoder,
         })
     }
 }
@@ -2089,6 +2106,8 @@ export default {
     chains: {
       "ethereumMainnet": { id: 1, startBlock: 0, endBlock: undefined },
     },
+    addressFormat: "checksum",
+    eventDecoder: "hypersync",
   },
 } as const satisfies IndexerConfig;
 "#;
@@ -2174,6 +2193,20 @@ export default {
                 .internal_config_ts_code
                 .contains("rawEvents: true"),
             "rawEvents: true should be included"
+        );
+
+        // Verify EVM options are always included for EVM ecosystem
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("addressFormat: \"checksum\""),
+            "addressFormat should be included for EVM ecosystem"
+        );
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("eventDecoder: \"hypersync\""),
+            "eventDecoder should be included for EVM ecosystem"
         );
     }
 

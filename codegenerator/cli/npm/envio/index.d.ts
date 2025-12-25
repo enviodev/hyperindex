@@ -185,6 +185,10 @@ export type IndexerConfig = {
   evm?: {
     /** Chain configurations keyed by chain name. */
     chains: Record<string, EvmChainConfig>;
+    /** Address format (default: "checksum"). */
+    addressFormat?: "lowercase" | "checksum";
+    /** Event decoder (default: "hypersync"). */
+    eventDecoder?: "hypersync" | "viem";
   };
   /** Fuel ecosystem configuration. */
   fuel?: {

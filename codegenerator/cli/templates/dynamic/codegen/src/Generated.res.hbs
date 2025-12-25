@@ -99,8 +99,6 @@ let makeGeneratedConfig = () => {
   Config.fromPublic(
     internalConfigJson,
     ~codegenChains,
-    ~lowercaseAddresses={{lowercase_addresses}},
-    ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     ~userEntities=Entities.userEntities,
   )
 }

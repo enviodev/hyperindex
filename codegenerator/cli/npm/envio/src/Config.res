@@ -81,6 +81,17 @@ let publicConfigEcosystemSchema = S.schema(s =>
   }
 )
 
+type addressFormat = | @as("lowercase") Lowercase | @as("checksum") Checksum
+type decoder = | @as("hypersync") Hypersync | @as("viem") Viem
+
+let publicConfigEvmSchema = S.schema(s =>
+  {
+    "chains": s.matches(S.dict(publicConfigChainSchema)),
+    "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
+    "eventDecoder": s.matches(S.option(S.enum([Hypersync, Viem]))),
+  }
+)
+
 let multichainSchema = S.enum([Ordered, Unordered])
 
 let publicConfigSchema = S.schema(s =>
@@ -93,7 +104,7 @@ let publicConfigSchema = S.schema(s =>
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
-    "evm": s.matches(S.option(publicConfigEcosystemSchema)),
+    "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
   }
@@ -102,8 +113,6 @@ let publicConfigSchema = S.schema(s =>
 let fromPublic = (
   publicConfigJson: Js.Json.t,
   ~codegenChains: array<codegenChain>=[],
-  ~lowercaseAddresses=false,
-  ~shouldUseHypersyncClientDecoder=true,
   ~maxAddrInPartition=5000,
   ~userEntities: array<Internal.entityConfig>=[],
 ) => {
@@ -113,21 +122,30 @@ let fromPublic = (
     Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->Utils.magic}`)
   }
 
-  // Determine ecosystem from publicConfig
-  let (publicEcosystemConfig, ecosystemName) = switch (
+  // Determine ecosystem from publicConfig (extract just chains for unified handling)
+  let (publicChainsConfig, ecosystemName) = switch (
     publicConfig["evm"],
     publicConfig["fuel"],
     publicConfig["svm"],
   ) {
-  | (Some(ecosystemConfig), None, None) => (ecosystemConfig, Ecosystem.Evm)
-  | (None, Some(ecosystemConfig), None) => (ecosystemConfig, Ecosystem.Fuel)
-  | (None, None, Some(ecosystemConfig)) => (ecosystemConfig, Ecosystem.Svm)
+  | (Some(ecosystemConfig), None, None) => (ecosystemConfig["chains"], Ecosystem.Evm)
+  | (None, Some(ecosystemConfig), None) => (ecosystemConfig["chains"], Ecosystem.Fuel)
+  | (None, None, Some(ecosystemConfig)) => (ecosystemConfig["chains"], Ecosystem.Svm)
   | (None, None, None) =>
     Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
   | _ =>
     Js.Exn.raiseError(
       "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
     )
+  }
+
+  // Extract EVM-specific options with defaults
+  let (lowercaseAddresses, shouldUseHypersyncClientDecoder) = switch publicConfig["evm"] {
+  | Some(evm) => (
+      evm["addressFormat"]->Option.getWithDefault(Checksum) == Lowercase,
+      evm["eventDecoder"]->Option.getWithDefault(Hypersync) == Hypersync,
+    )
+  | None => (false, true)
   }
 
   // Validate that lowercase addresses is not used with viem decoder
@@ -145,10 +163,10 @@ let fromPublic = (
 
   // Merge codegenChains with names from publicConfig
   let chains =
-    publicEcosystemConfig["chains"]
+    publicChainsConfig
     ->Js.Dict.keys
     ->Js.Array2.map(chainName => {
-      let publicChainConfig = publicEcosystemConfig["chains"]->Js.Dict.unsafeGet(chainName)
+      let publicChainConfig = publicChainsConfig->Js.Dict.unsafeGet(chainName)
       let chainId = publicChainConfig["id"]
       let codegenChain = switch codegenChainById->Js.Dict.get(chainId->Int.toString) {
       | Some(c) => c
