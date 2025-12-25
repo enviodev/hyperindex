@@ -1251,14 +1251,14 @@ impl ProjectTemplate {
             Ecosystem::Svm => "Envio.svmOnBlockArgs<Types.handlerContext> => promise<unit>",
         };
 
-        // Generate chainId type with ecosystem-specific import from envio
+        // Generate chainId type with ecosystem-specific import from Types.ts
         let chain_id_import_name = match cfg.get_ecosystem() {
             Ecosystem::Evm => "EvmChainId",
             Ecosystem::Fuel => "FuelChainId",
             Ecosystem::Svm => "SvmChainId",
         };
         let chain_id_type = format!(
-            r#"@genType.import(("envio", "{chain_id_import_name}"))
+            r#"@genType.import(("./Types.ts", "{chain_id_import_name}"))
 type chainId = [{}]"#,
             chain_id_cases
                 .iter()
