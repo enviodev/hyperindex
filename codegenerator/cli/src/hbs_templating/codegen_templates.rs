@@ -1089,12 +1089,10 @@ pub struct ProjectTemplate {
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     persisted_state: PersistedStateJsonString,
-    is_unordered_multichain_mode: bool,
     should_rollback_on_reorg: bool,
     should_save_full_history: bool,
     enable_raw_events: bool,
     has_multiple_events: bool,
-    full_batch_size_code: String,
     field_selection: FieldSelection,
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
@@ -1109,7 +1107,6 @@ pub struct ProjectTemplate {
     relative_path_to_generated_from_root: String,
     lowercase_addresses: bool,
     should_use_hypersync_client_decoder: bool,
-    handlers_path: Option<String>,
 }
 
 impl ProjectTemplate {
@@ -1434,26 +1431,43 @@ switch chainId {{
             None => String::new(),
         };
 
+        let handlers_str = match &cfg.handlers {
+            Some(h) => format!(",\n  handlers: \"{}\"", h),
+            None => String::new(),
+        };
+
+        let multichain_str = match cfg.multichain {
+            crate::config_parsing::human_config::evm::Multichain::Ordered => {
+                ",\n  multichain: \"ordered\"".to_string()
+            }
+            crate::config_parsing::human_config::evm::Multichain::Unordered => String::new(),
+        };
+
+        let full_batch_size_str = match cfg.human_config.get_base_config().full_batch_size {
+            Some(size) => format!(",\n  fullBatchSize: {}", size),
+            None => String::new(),
+        };
+
+        let ecosystem_str = if ecosystem_parts.is_empty() {
+            String::new()
+        } else {
+            ecosystem_parts.join("")
+        };
+
         let internal_config_ts_code = format!(
             r#"import type {{ IndexerConfig }} from "envio";
 
 export default {{
-  name: "{}"{}{}
+  name: "{name}"{description_str}{handlers_str}{multichain_str}{full_batch_size_str}{ecosystem_str}
 }} as const satisfies IndexerConfig;
 "#,
-            cfg.name,
-            description_str,
-            if ecosystem_parts.is_empty() {
-                String::new()
-            } else {
-                ecosystem_parts.join("")
-            }
+            name = cfg.name,
+            description_str = description_str,
+            handlers_str = handlers_str,
+            multichain_str = multichain_str,
+            full_batch_size_str = full_batch_size_str,
+            ecosystem_str = ecosystem_str,
         );
-
-        let full_batch_size_code = match cfg.human_config.get_base_config().full_batch_size {
-            None => "None".to_string(),
-            Some(v) => format!("Some({v})"),
-        };
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1462,14 +1476,9 @@ export default {{
             gql_enums,
             chain_configs,
             persisted_state,
-            is_unordered_multichain_mode: matches!(
-                cfg.multichain,
-                crate::config_parsing::human_config::evm::Multichain::Unordered
-            ),
             should_rollback_on_reorg: cfg.rollback_on_reorg,
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,
-            full_batch_size_code,
             has_multiple_events,
             field_selection: global_field_selection,
             aggregated_field_selection,
@@ -1484,7 +1493,6 @@ export default {{
             relative_path_to_generated_from_root,
             lowercase_addresses: cfg.lowercase_addresses,
             should_use_hypersync_client_decoder: cfg.should_use_hypersync_client_decoder,
-            handlers_path: cfg.handlers.clone(),
         })
     }
 }
@@ -2094,6 +2102,61 @@ export default {
         assert_eq!(
             project_template.internal_config_ts_code.trim(),
             expected.trim()
+        );
+    }
+
+    #[test]
+    fn internal_config_ts_code_with_all_options() {
+        let project_template = get_project_template_helper("config-with-all-options.yaml");
+
+        // Verify handlers option is included
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("handlers: \"custom/handlers\""),
+            "handlers should be included when set"
+        );
+
+        // Verify multichain option is included (only when ordered, since unordered is default)
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("multichain: \"ordered\""),
+            "multichain: ordered should be included"
+        );
+
+        // Verify fullBatchSize option is included
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("fullBatchSize: 1000"),
+            "fullBatchSize should be included when set"
+        );
+    }
+
+    #[test]
+    fn internal_config_ts_code_omits_default_values() {
+        // Test with config1.yaml (no custom options)
+        let project_template = get_project_template_helper("config1.yaml");
+
+        // Default values should be omitted from output
+        assert!(
+            !project_template
+                .internal_config_ts_code
+                .contains("handlers:"),
+            "handlers should be omitted when using default"
+        );
+        assert!(
+            !project_template
+                .internal_config_ts_code
+                .contains("multichain:"),
+            "multichain should be omitted when using default (unordered)"
+        );
+        assert!(
+            !project_template
+                .internal_config_ts_code
+                .contains("fullBatchSize:"),
+            "fullBatchSize should be omitted when using default"
         );
     }
 

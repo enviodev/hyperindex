@@ -52,6 +52,7 @@ type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 type t = {
   name: string,
   description: option<string>,
+  handlers: string,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   multichain: multichain,
@@ -66,23 +67,34 @@ type t = {
   userEntitiesByName: dict<Internal.entityConfig>,
 }
 
-let publicConfigChainSchema = S.schema(s => {
-  "id": s.matches(S.int),
-  "startBlock": s.matches(S.int),
-  "endBlock": s.matches(S.option(S.int)),
-})
+let publicConfigChainSchema = S.schema(s =>
+  {
+    "id": s.matches(S.int),
+    "startBlock": s.matches(S.int),
+    "endBlock": s.matches(S.option(S.int)),
+  }
+)
 
-let publicConfigEcosystemSchema = S.schema(s => {
-  "chains": s.matches(S.dict(publicConfigChainSchema)),
-})
+let publicConfigEcosystemSchema = S.schema(s =>
+  {
+    "chains": s.matches(S.dict(publicConfigChainSchema)),
+  }
+)
 
-let publicConfigSchema = S.schema(s => {
-  "name": s.matches(S.string),
-  "description": s.matches(S.option(S.string)),
-  "evm": s.matches(S.option(publicConfigEcosystemSchema)),
-  "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
-  "svm": s.matches(S.option(publicConfigEcosystemSchema)),
-})
+let multichainSchema = S.enum([Ordered, Unordered])
+
+let publicConfigSchema = S.schema(s =>
+  {
+    "name": s.matches(S.string),
+    "description": s.matches(S.option(S.string)),
+    "handlers": s.matches(S.option(S.string)),
+    "multichain": s.matches(S.option(multichainSchema)),
+    "fullBatchSize": s.matches(S.option(S.int)),
+    "evm": s.matches(S.option(publicConfigEcosystemSchema)),
+    "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
+    "svm": s.matches(S.option(publicConfigEcosystemSchema)),
+  }
+)
 
 let fromPublic = (
   publicConfigJson: Js.Json.t,
@@ -90,9 +102,7 @@ let fromPublic = (
   ~shouldSaveFullHistory=false,
   ~codegenChains: array<codegenChain>=[],
   ~enableRawEvents=false,
-  ~batchSize=5000,
   ~lowercaseAddresses=false,
-  ~multichain=Unordered,
   ~shouldUseHypersyncClientDecoder=true,
   ~maxAddrInPartition=5000,
   ~userEntities: array<Internal.entityConfig>=[],
@@ -143,9 +153,7 @@ let fromPublic = (
       let codegenChain = switch codegenChainById->Js.Dict.get(chainId->Int.toString) {
       | Some(c) => c
       | None =>
-        Js.Exn.raiseError(
-          `Chain with id ${chainId->Int.toString} not found in codegen chains`,
-        )
+        Js.Exn.raiseError(`Chain with id ${chainId->Int.toString} not found in codegen chains`)
       }
       {
         name: chainName,
@@ -190,15 +198,16 @@ let fromPublic = (
   {
     name: publicConfig["name"],
     description: publicConfig["description"],
+    handlers: publicConfig["handlers"]->Option.getWithDefault("src/handlers"),
     shouldRollbackOnReorg,
     shouldSaveFullHistory,
-    multichain,
+    multichain: publicConfig["multichain"]->Option.getWithDefault(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents,
     ecosystem,
     maxAddrInPartition,
-    batchSize,
+    batchSize: publicConfig["fullBatchSize"]->Option.getWithDefault(5000),
     lowercaseAddresses,
     addContractNameToContractNameMapping,
     userEntitiesByName,

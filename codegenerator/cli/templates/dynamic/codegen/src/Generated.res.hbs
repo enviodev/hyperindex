@@ -19,9 +19,9 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
 
 @module("node:fs/promises") external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
 
-let autoLoadFromSrcHandlers = async () => {
+let autoLoadFromSrcHandlers = async (~handlers: string) => {
   // Relative to cwd (project root)
-  let srcPattern = `./{{#if handlers_path}}{{handlers_path}}{{else}}src/handlers{{/if}}/**/*.{js,mjs,ts}`
+  let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
   let handlerFiles = try {
     let iterator = await globIterator(srcPattern)
     await iterator->Utils.Array.fromAsyncIterator
@@ -100,14 +100,8 @@ let makeGeneratedConfig = () => {
     internalConfigJson,
     ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
     ~shouldSaveFullHistory={{should_save_full_history}},
-    ~multichain=if {{is_unordered_multichain_mode}} {
-      Unordered
-    } else {
-      Ordered
-    },
     ~codegenChains,
     ~enableRawEvents={{enable_raw_events}},
-    ~batchSize=?{{full_batch_size_code}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     ~userEntities=Entities.userEntities,
@@ -123,7 +117,7 @@ let registerAllHandlers = async () => {
   )
 
   // Auto-load all .js files from src/handlers directory
-  await autoLoadFromSrcHandlers()
+  await autoLoadFromSrcHandlers(~handlers=configWithoutRegistrations.handlers)
 
   // Load contract-specific handlers (existing behavior)
   let _ = await [

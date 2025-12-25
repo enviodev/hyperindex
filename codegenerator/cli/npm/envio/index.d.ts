@@ -111,9 +111,9 @@ export declare namespace S {
   export type Schema<Output, Input = unknown> = Sury.Schema<Output, Input>;
   export const string: typeof Sury.string;
   export const address: Sury.Schema<Address, Address>;
-  export const evmChainId: Sury.Schema<EvmChainId, EvmChainId>;
-  export const fuelChainId: Sury.Schema<FuelChainId, FuelChainId>;
-  export const svmChainId: Sury.Schema<SvmChainId, SvmChainId>;
+  // export const evmChainId: Sury.Schema<EvmChainId, EvmChainId>;
+  // export const fuelChainId: Sury.Schema<FuelChainId, FuelChainId>;
+  // export const svmChainId: Sury.Schema<SvmChainId, SvmChainId>;
   export const jsonString: typeof Sury.jsonString;
   export const boolean: typeof Sury.boolean;
   export const int32: typeof Sury.int32;
@@ -169,6 +169,12 @@ export type IndexerConfig = {
   name: string;
   /** The indexer description. */
   description?: string;
+  /** Path to handlers directory for auto-loading (default: "src/handlers"). */
+  handlers?: string;
+  /** Multichain mode: ordered or unordered (default: "unordered"). */
+  multichain?: "ordered" | "unordered";
+  /** Target batch size for event processing (default: 5000). */
+  fullBatchSize?: number;
   /** EVM ecosystem configuration. */
   evm?: {
     /** Chain configurations keyed by chain name. */
@@ -281,7 +287,7 @@ type EcosystemTuple<Config> = [
 type EcosystemCount<Config> = EcosystemTuple<Config>["length"];
 
 // EVM ecosystem type
-type EvmEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
+type EvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
   "evm" extends keyof Config
     ? Config["evm"] extends { chains: infer Chains }
       ? Chains extends Record<string, { id: number }>
@@ -300,7 +306,7 @@ type EvmEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
     : never;
 
 // Fuel ecosystem type
-type FuelEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
+type FuelEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
   "fuel" extends keyof Config
     ? Config["fuel"] extends { chains: infer Chains }
       ? Chains extends Record<string, { id: number }>
@@ -319,7 +325,7 @@ type FuelEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
     : never;
 
 // SVM ecosystem type
-type SvmEcosystem<Config extends IndexerConfig = GlobalIndexerConfig> =
+type SvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
   "svm" extends keyof Config
     ? Config["svm"] extends { chains: infer Chains }
       ? Chains extends Record<string, { id: number }>
