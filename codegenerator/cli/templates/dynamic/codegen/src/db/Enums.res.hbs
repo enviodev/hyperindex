@@ -7,7 +7,7 @@ module {{enum.name.capitalized}} = {
     | @as("{{param.original}}") {{param.capitalized}}
   {{/each}}
 
-  let name = "{{enum.name.capitalized}}"
+  let name = "{{enum.name.original}}"
   let variants = [
   {{#each enum.params as | param | }}
     {{param.capitalized}},
