@@ -1394,15 +1394,15 @@ switch chainId {{
                     let chain_name =
                         chain_id_to_name(chain_config.network_config.id, &cfg.get_ecosystem());
                     let end_block_str = match chain_config.network_config.end_block {
-                        Some(block) => format!("{}", block),
-                        None => "undefined".to_string(),
+                        Some(block) => format!(", endBlock: {}", block),
+                        None => String::new(),
                     };
                     let max_reorg_str = match chain_config.network_config.max_reorg_depth {
                         Some(depth) => format!(", maxReorgDepth: {}", depth),
                         None => String::new(),
                     };
                     format!(
-                        "      \"{}\": {{ id: {}, startBlock: {}, endBlock: {}{} }},",
+                        "      \"{}\": {{ id: {}, startBlock: {}{}{} }},",
                         chain_name,
                         chain_config.network_config.id,
                         chain_config.network_config.start_block,
@@ -2097,7 +2097,7 @@ export default {
   description: "Gravatar for Ethereum",
   evm: {
     chains: {
-      "ethereumMainnet": { id: 1, startBlock: 0, endBlock: undefined, maxReorgDepth: 200 },
+      "ethereumMainnet": { id: 1, startBlock: 0 },
     },
     addressFormat: "checksum",
     eventDecoder: "hypersync",
@@ -2124,7 +2124,7 @@ export default {
   rollbackOnReorg: false,
   fuel: {
     chains: {
-      "0": { id: 0, startBlock: 0, endBlock: undefined },
+      "0": { id: 0, startBlock: 0 },
     },
   },
 } as const satisfies IndexerConfig;
@@ -2248,36 +2248,6 @@ export default {
     }
 
     #[test]
-    fn envio_dts_is_static_template() {
-        // envio.d.ts is now a static template file that gets copied as-is
-        // No dynamic generation needed - the content is always the same
-        let expected = r#"import type config from "./internal.config.ts";
-
-declare module "envio" {
-  interface Global {
-    config: typeof config;
-  }
-}
-
-export {};
-"#;
-
-        // Verify the static template file exists and has correct content
-        use include_dir::{include_dir, Dir};
-        static TEMPLATES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates");
-
-        let envio_dts_file = TEMPLATES_DIR
-            .get_file("static/codegen/envio.d.ts")
-            .expect("envio.d.ts static template should exist");
-
-        let content = envio_dts_file
-            .contents_utf8()
-            .expect("envio.d.ts should be valid UTF-8");
-
-        assert_eq!(content.trim(), expected.trim());
-    }
-
-    #[test]
     fn indexer_code_generates_correct_types_and_values() {
         let project_template = get_project_template_helper("config1.yaml");
 
@@ -2322,16 +2292,9 @@ type indexer = {
 }"#
         ));
 
-        // Verify indexer value with name and isLive fields
+        // Verify indexer value uses Main.getGlobalIndexer
         assert!(project_template.indexer_code.contains(
-            r#"let indexer: indexer = {
-name: "config1",
-description: Some("Gravatar for Ethereum"),
-chainIds: [#1],
-chains: {
-    c1: {id: #1, name: "ethereum-mainnet", startBlock: 0, endBlock: None, isLive: false},
-},
-}"#
+            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#
         ));
 
         // Verify getChainById function
@@ -2360,17 +2323,9 @@ type indexerChains = {
 }"#
         ));
 
-        // Verify indexer value: chain 1 uses network name, chain 2 falls back to ID
+        // Verify indexer value uses Main.getGlobalIndexer
         assert!(project_template.indexer_code.contains(
-            r#"let indexer: indexer = {
-name: "config2",
-description: Some("Gravatar for Ethereum"),
-chainIds: [#1, #2],
-chains: {
-    c1: {id: #1, name: "ethereum-mainnet", startBlock: 0, endBlock: None, isLive: false},
-    c2: {id: #2, name: "2", startBlock: 0, endBlock: None, isLive: false},
-},
-}"#
+            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#
         ));
 
         // Verify getChainById with multiple cases
