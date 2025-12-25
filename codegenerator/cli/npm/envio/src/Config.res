@@ -90,7 +90,6 @@ let fromPublic = (
   ~shouldSaveFullHistory=false,
   ~codegenChains: array<codegenChain>=[],
   ~enableRawEvents=false,
-  ~ecosystem: Ecosystem.name=Ecosystem.Evm,
   ~batchSize=5000,
   ~lowercaseAddresses=false,
   ~multichain=Unordered,
@@ -104,27 +103,21 @@ let fromPublic = (
     Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->Utils.magic}`)
   }
 
-  // Validate that only one ecosystem is configured
-  let ecosystemCount =
-    (publicConfig["evm"]->Option.isSome ? 1 : 0) +
-    (publicConfig["fuel"]->Option.isSome ? 1 : 0) +
-    (publicConfig["svm"]->Option.isSome ? 1 : 0)
-
-  if ecosystemCount > 1 {
-    Js.Exn.raiseError(
-      "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
-    )
-  }
-
-  let publicEcosystemConfig = switch (
+  // Determine ecosystem from publicConfig
+  let (publicEcosystemConfig, ecosystemName) = switch (
     publicConfig["evm"],
     publicConfig["fuel"],
     publicConfig["svm"],
   ) {
-  | (Some(ecosystemConfig), _, _) => ecosystemConfig
-  | (_, Some(ecosystemConfig), _) => ecosystemConfig
-  | (_, _, Some(ecosystemConfig)) => ecosystemConfig
-  | _ => Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
+  | (Some(ecosystemConfig), None, None) => (ecosystemConfig, Ecosystem.Evm)
+  | (None, Some(ecosystemConfig), None) => (ecosystemConfig, Ecosystem.Fuel)
+  | (None, None, Some(ecosystemConfig)) => (ecosystemConfig, Ecosystem.Svm)
+  | (None, None, None) =>
+    Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
+  | _ =>
+    Js.Exn.raiseError(
+      "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
+    )
   }
 
   // Validate that lowercase addresses is not used with viem decoder
@@ -181,7 +174,7 @@ let fromPublic = (
     })
   })
 
-  let ecosystem = switch ecosystem {
+  let ecosystem = switch ecosystemName {
   | Ecosystem.Evm => Evm.ecosystem
   | Ecosystem.Fuel => Fuel.ecosystem
   | Ecosystem.Svm => Svm.ecosystem

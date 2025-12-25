@@ -110,12 +110,6 @@ let makeGeneratedConfig = () => {
     ~batchSize=?{{full_batch_size_code}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
-    {{#if is_fuel_ecosystem}}
-    ~ecosystem=Fuel,
-    {{/if}}
-    {{#if is_svm_ecosystem}}
-    ~ecosystem=Svm,
-    {{/if}}
     ~userEntities=Entities.userEntities,
   )
 }
