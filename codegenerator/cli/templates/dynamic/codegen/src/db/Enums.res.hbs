@@ -1,20 +1,3 @@
-module EntityType = {
-  @genType
-  type t = 
-  {{#each entities as | entity |}}
-    | @as("{{entity.name.original}}") {{entity.name.capitalized}}
-  {{/each}}
-    | @as("dynamic_contract_registry") DynamicContractRegistry
-
-  let name = "ENTITY_TYPE"
-  let variants = [
-  {{#each entities as | entity |}}
-    {{entity.name.capitalized}},
-  {{/each}}
-    DynamicContractRegistry,
-  ]
-  let config = Table.makeEnumConfig(~name, ~variants)
-}
 {{#each gql_enums as | enum |}} 
 
 module {{enum.name.capitalized}} = {
@@ -35,7 +18,6 @@ module {{enum.name.capitalized}} = {
 {{/each}}
 
 let allEnums = ([
-  EntityType.config->Table.fromGenericEnumConfig,
 {{#each gql_enums as | enum |}} 
   {{enum.name.capitalized}}.config->Table.fromGenericEnumConfig,
 {{/each}}
