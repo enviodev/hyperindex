@@ -175,6 +175,12 @@ export type IndexerConfig = {
   multichain?: "ordered" | "unordered";
   /** Target batch size for event processing (default: 5000). */
   fullBatchSize?: number;
+  /** Whether to rollback on chain reorg (default: true). */
+  rollbackOnReorg?: boolean;
+  /** Whether to save full entity history (default: false). */
+  saveFullHistory?: boolean;
+  /** Whether raw events are enabled (default: false). */
+  rawEvents?: boolean;
   /** EVM ecosystem configuration. */
   evm?: {
     /** Chain configurations keyed by chain name. */

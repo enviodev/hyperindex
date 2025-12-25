@@ -98,10 +98,7 @@ let makeGeneratedConfig = () => {
 
   Config.fromPublic(
     internalConfigJson,
-    ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
-    ~shouldSaveFullHistory={{should_save_full_history}},
     ~codegenChains,
-    ~enableRawEvents={{enable_raw_events}},
     ~lowercaseAddresses={{lowercase_addresses}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     ~userEntities=Entities.userEntities,

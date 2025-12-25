@@ -1089,9 +1089,6 @@ pub struct ProjectTemplate {
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     persisted_state: PersistedStateJsonString,
-    should_rollback_on_reorg: bool,
-    should_save_full_history: bool,
-    enable_raw_events: bool,
     has_multiple_events: bool,
     field_selection: FieldSelection,
     aggregated_field_selection: FieldSelection,
@@ -1448,6 +1445,25 @@ switch chainId {{
             None => String::new(),
         };
 
+        // Only include non-default boolean values
+        let rollback_on_reorg_str = if !cfg.rollback_on_reorg {
+            ",\n  rollbackOnReorg: false".to_string()
+        } else {
+            String::new()
+        };
+
+        let save_full_history_str = if cfg.save_full_history {
+            ",\n  saveFullHistory: true".to_string()
+        } else {
+            String::new()
+        };
+
+        let raw_events_str = if cfg.enable_raw_events {
+            ",\n  rawEvents: true".to_string()
+        } else {
+            String::new()
+        };
+
         let ecosystem_str = if ecosystem_parts.is_empty() {
             String::new()
         } else {
@@ -1458,7 +1474,7 @@ switch chainId {{
             r#"import type {{ IndexerConfig }} from "envio";
 
 export default {{
-  name: "{name}"{description_str}{handlers_str}{multichain_str}{full_batch_size_str}{ecosystem_str}
+  name: "{name}"{description_str}{handlers_str}{multichain_str}{full_batch_size_str}{rollback_on_reorg_str}{save_full_history_str}{raw_events_str}{ecosystem_str}
 }} as const satisfies IndexerConfig;
 "#,
             name = cfg.name,
@@ -1466,6 +1482,9 @@ export default {{
             handlers_str = handlers_str,
             multichain_str = multichain_str,
             full_batch_size_str = full_batch_size_str,
+            rollback_on_reorg_str = rollback_on_reorg_str,
+            save_full_history_str = save_full_history_str,
+            raw_events_str = raw_events_str,
             ecosystem_str = ecosystem_str,
         );
 
@@ -1476,9 +1495,6 @@ export default {{
             gql_enums,
             chain_configs,
             persisted_state,
-            should_rollback_on_reorg: cfg.rollback_on_reorg,
-            should_save_full_history: cfg.save_full_history,
-            enable_raw_events: cfg.enable_raw_events,
             has_multiple_events,
             field_selection: global_field_selection,
             aggregated_field_selection,
@@ -2087,10 +2103,13 @@ export default {
     fn internal_config_ts_code_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
 
+        // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
+        // which differs from the runtime default of true, so it's included
         let expected = r#"import type { IndexerConfig } from "envio";
 
 export default {
   name: "Fuel indexer",
+  rollbackOnReorg: false,
   fuel: {
     chains: {
       "0": { id: 0, startBlock: 0, endBlock: undefined },
@@ -2132,6 +2151,30 @@ export default {
                 .contains("fullBatchSize: 1000"),
             "fullBatchSize should be included when set"
         );
+
+        // Verify rollbackOnReorg option is included (only when false, since true is default)
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("rollbackOnReorg: false"),
+            "rollbackOnReorg: false should be included"
+        );
+
+        // Verify saveFullHistory option is included (only when true, since false is default)
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("saveFullHistory: true"),
+            "saveFullHistory: true should be included"
+        );
+
+        // Verify rawEvents option is included (only when true, since false is default)
+        assert!(
+            project_template
+                .internal_config_ts_code
+                .contains("rawEvents: true"),
+            "rawEvents: true should be included"
+        );
     }
 
     #[test]
@@ -2157,6 +2200,24 @@ export default {
                 .internal_config_ts_code
                 .contains("fullBatchSize:"),
             "fullBatchSize should be omitted when using default"
+        );
+        assert!(
+            !project_template
+                .internal_config_ts_code
+                .contains("rollbackOnReorg:"),
+            "rollbackOnReorg should be omitted when using default (true)"
+        );
+        assert!(
+            !project_template
+                .internal_config_ts_code
+                .contains("saveFullHistory:"),
+            "saveFullHistory should be omitted when using default (false)"
+        );
+        assert!(
+            !project_template
+                .internal_config_ts_code
+                .contains("rawEvents:"),
+            "rawEvents should be omitted when using default (false)"
         );
     }
 
