@@ -654,7 +654,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event))
+            .map(EventTemplate::from_config_event)
             .collect::<Result<_>>()?;
 
         let chain_ids = contract.get_chain_ids(config);
@@ -766,10 +766,10 @@ impl PerNetworkContractTemplate {
 
 type EthAddress = String;
 
-#[derive(Debug, Serialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, PartialEq, Clone, Default)]
 struct NetworkTemplate {
     pub id: u64,
-    max_reorg_depth: i32,
+    max_reorg_depth: Option<i32>,
     start_block: u64,
     end_block: Option<u64>,
 }
@@ -1397,12 +1397,17 @@ switch chainId {{
                         Some(block) => format!("{}", block),
                         None => "undefined".to_string(),
                     };
+                    let max_reorg_str = match chain_config.network_config.max_reorg_depth {
+                        Some(depth) => format!(", maxReorgDepth: {}", depth),
+                        None => String::new(),
+                    };
                     format!(
-                        "      \"{}\": {{ id: {}, startBlock: {}, endBlock: {} }},",
+                        "      \"{}\": {{ id: {}, startBlock: {}, endBlock: {}{} }},",
                         chain_name,
                         chain_config.network_config.id,
                         chain_config.network_config.start_block,
-                        end_block_str
+                        end_block_str,
+                        max_reorg_str
                     )
                 })
                 .collect();
@@ -1568,17 +1573,6 @@ mod test {
             .expect("should be able to get project template")
     }
 
-    impl Default for NetworkTemplate {
-        fn default() -> Self {
-            Self {
-                id: 0,
-                max_reorg_depth: 200,
-                start_block: 0,
-                end_block: None,
-            }
-        }
-    }
-
     #[test]
     fn chain_configs_parsed_case_fuel() {
         let address1 =
@@ -1586,7 +1580,6 @@ mod test {
 
         let network1 = NetworkTemplate {
             id: 0,
-            max_reorg_depth: 0,
             ..NetworkTemplate::default()
         };
 
@@ -2104,7 +2097,7 @@ export default {
   description: "Gravatar for Ethereum",
   evm: {
     chains: {
-      "ethereumMainnet": { id: 1, startBlock: 0, endBlock: undefined },
+      "ethereumMainnet": { id: 1, startBlock: 0, endBlock: undefined, maxReorgDepth: 200 },
     },
     addressFormat: "checksum",
     eventDecoder: "hypersync",

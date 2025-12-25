@@ -212,6 +212,8 @@ type EvmChainConfig<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock?: number;
+  /** Number of blocks to keep for reorg handling (default: 200). */
+  readonly maxReorgDepth?: number;
 };
 
 /** EVM chain value (for runtime Indexer). */
@@ -238,6 +240,8 @@ type FuelChainConfig<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock?: number;
+  /** Number of blocks to keep for reorg handling (default: 200). */
+  readonly maxReorgDepth?: number;
 };
 
 /** Fuel chain value (for runtime Indexer). */
@@ -264,6 +268,8 @@ type SvmChainConfig<Id extends number = number> = {
   readonly startBlock: number;
   /** The block number indexing stops at (if configured). */
   readonly endBlock?: number;
+  /** Number of blocks to keep for reorg handling (default: 200). */
+  readonly maxReorgDepth?: number;
 };
 
 /** SVM chain value (for runtime Indexer). */

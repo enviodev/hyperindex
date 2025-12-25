@@ -83,12 +83,7 @@ let makeGeneratedConfig = () => {
       ]
       let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
       {
-        Config.maxReorgDepth: {{chain_config.network_config.max_reorg_depth}},
-        startBlock: {{chain_config.network_config.start_block}},
-        {{#if chain_config.network_config.end_block}}
-        endBlock: {{chain_config.network_config.end_block}},
-        {{/if}}
-        id: {{chain_config.network_config.id}},
+        Config.id: {{chain_config.network_config.id}},
         contracts,
         sources: {{chain_config.sources_code}}
       }

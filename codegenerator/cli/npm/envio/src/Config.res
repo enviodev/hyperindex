@@ -20,9 +20,6 @@ type contract = {
 
 type codegenChain = {
   id: int,
-  startBlock: int,
-  endBlock?: int,
-  maxReorgDepth: int,
   contracts: array<contract>,
   sources: array<Source.t>,
 }
@@ -72,6 +69,7 @@ let publicConfigChainSchema = S.schema(s =>
     "id": s.matches(S.int),
     "startBlock": s.matches(S.int),
     "endBlock": s.matches(S.option(S.int)),
+    "maxReorgDepth": s.matches(S.option(S.int)),
   }
 )
 
@@ -176,9 +174,13 @@ let fromPublic = (
       {
         name: chainName,
         id: codegenChain.id,
-        startBlock: codegenChain.startBlock,
-        endBlock: ?codegenChain.endBlock,
-        maxReorgDepth: codegenChain.maxReorgDepth,
+        startBlock: publicChainConfig["startBlock"],
+        endBlock: ?publicChainConfig["endBlock"],
+        maxReorgDepth: switch ecosystemName {
+        | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getWithDefault(200)
+        // Fuel doesn't have reorgs, SVM reorg handling is not supported
+        | Ecosystem.Fuel | Ecosystem.Svm => 0
+        },
         contracts: codegenChain.contracts,
         sources: codegenChain.sources,
       }
