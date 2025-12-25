@@ -188,27 +188,6 @@ export type IndexerConfig = {
 
 // ============== EVM Types ==============
 
-// Helper to extract config from Global if it exists
-type GlobalIndexerConfig = Global extends { config: infer C } ? C : never;
-
-/** Union of all configured EVM chain names. */
-export type EvmChainName = GlobalIndexerConfig extends { evm: infer Evm }
-  ? Evm extends {
-      chains: Record<infer K extends string, any>;
-    }
-    ? K
-    : "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
-
-/** Union of all configured EVM chain IDs. */
-export type EvmChainId = GlobalIndexerConfig extends { evm: infer Evm }
-  ? Evm extends {
-      chains: Record<string, { id: infer T extends number }>;
-    }
-    ? T
-    : "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
-
 /** EVM chain configuration (for IndexerConfig). */
 type EvmChainConfig<Id extends number = number> = {
   /** The chain ID. */
@@ -235,24 +214,6 @@ type EvmChain<Id extends number = number> = {
 
 // ============== Fuel Types ==============
 
-/** Union of all configured Fuel chain names. */
-export type FuelChainName = GlobalIndexerConfig extends { fuel: infer Fuel }
-  ? Fuel extends {
-      chains: Record<infer K extends string, any>;
-    }
-    ? K
-    : "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
-  : "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
-
-/** Union of all configured Fuel chain IDs. */
-export type FuelChainId = GlobalIndexerConfig extends { fuel: infer Fuel }
-  ? Fuel extends {
-      chains: Record<string, { id: infer T extends number }>;
-    }
-    ? T
-    : "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
-  : "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
-
 /** Fuel chain configuration (for IndexerConfig). */
 type FuelChainConfig<Id extends number = number> = {
   /** The chain ID. */
@@ -278,24 +239,6 @@ type FuelChain<Id extends number = number> = {
 };
 
 // ============== SVM (Solana) Types ==============
-
-/** Union of all configured SVM chain names. */
-export type SvmChainName = GlobalIndexerConfig extends { svm: infer Svm }
-  ? Svm extends {
-      chains: Record<infer K extends string, any>;
-    }
-    ? K
-    : "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
-
-/** Union of all configured SVM chain IDs. */
-export type SvmChainId = GlobalIndexerConfig extends { svm: infer Svm }
-  ? Svm extends {
-      chains: Record<string, { id: infer T extends number }>;
-    }
-    ? T
-    : "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
 
 /** SVM chain configuration (for IndexerConfig). */
 type SvmChainConfig<Id extends number = number> = {
@@ -434,14 +377,7 @@ export type IndexerFromConfig<Config extends IndexerConfig> = {
   /** The indexer name from config.yaml. */
   readonly name: Config["name"];
   /** The indexer description from config.yaml. */
-  readonly description: Config["description"];
+  readonly description: string | undefined;
 } & (EcosystemCount<Config> extends 1
   ? SingleEcosystemChains<Config>
   : MultiEcosystemChains<Config>);
-
-/** The indexer type. */
-export type Indexer = Global extends {
-  config: infer Config extends IndexerConfig;
-}
-  ? IndexerFromConfig<Config>
-  : "The Indexer type is not available. Run 'pnpm envio codegen' to generate types";
