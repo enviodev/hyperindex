@@ -294,7 +294,7 @@ module Indexer = {
       }
     }
 
-    let sql = Db.makeClient()
+    let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
     let storage = Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
