@@ -17,7 +17,7 @@ module {{enum.name.capitalized}} = {
 }
 {{/each}}
 
-let allEnums = ([
+let allEnums: array<Table.enumConfig<Table.enum>> = ([
 {{#each gql_enums as | enum |}} 
   {{enum.name.capitalized}}.config->Table.fromGenericEnumConfig,
 {{/each}}

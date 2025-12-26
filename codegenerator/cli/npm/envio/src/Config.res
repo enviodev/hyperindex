@@ -18,9 +18,16 @@ type contract = {
   startBlock: option<int>,
 }
 
+type codegenContract = {
+  name: string,
+  addresses: array<Address.t>,
+  events: array<Internal.eventConfig>,
+  startBlock: option<int>,
+}
+
 type codegenChain = {
   id: int,
-  contracts: array<contract>,
+  contracts: array<codegenContract>,
   sources: array<Source.t>,
 }
 
@@ -73,9 +80,16 @@ let publicConfigChainSchema = S.schema(s =>
   }
 )
 
+let contractConfigSchema = S.schema(s =>
+  {
+    "abi": s.matches(S.json(~validate=false)),
+  }
+)
+
 let publicConfigEcosystemSchema = S.schema(s =>
   {
     "chains": s.matches(S.dict(publicConfigChainSchema)),
+    "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
   }
 )
 
@@ -85,6 +99,7 @@ type decoder = | @as("hypersync") Hypersync | @as("viem") Viem
 let publicConfigEvmSchema = S.schema(s =>
   {
     "chains": s.matches(S.dict(publicConfigChainSchema)),
+    "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
     "eventDecoder": s.matches(S.option(S.enum([Hypersync, Viem]))),
   }
@@ -153,10 +168,51 @@ let fromPublic = (
     )
   }
 
+  // Parse ABIs from public config
+  let publicContractsConfig = switch (ecosystemName, publicConfig["evm"], publicConfig["fuel"]) {
+  | (Ecosystem.Evm, Some(evm), _) => evm["contracts"]
+  | (Ecosystem.Fuel, _, Some(fuel)) => fuel["contracts"]
+  | _ => None
+  }
+
+  let contractsWithAbis = switch publicContractsConfig {
+  | Some(contractsDict) =>
+    contractsDict
+    ->Js.Dict.entries
+    ->Js.Array2.map(((contractName, contractConfig)) => {
+      let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
+      (contractName, abi)
+    })
+    ->Js.Dict.fromArray
+  | None => Js.Dict.empty()
+  }
+
   // Index codegenChains by id for efficient lookup
   let codegenChainById = Js.Dict.empty()
   codegenChains->Array.forEach(codegenChain => {
     codegenChainById->Js.Dict.set(codegenChain.id->Int.toString, codegenChain)
+  })
+
+  // Create a dictionary to store merged contracts with ABIs by chain id
+  let contractsByChainId: Js.Dict.t<array<contract>> = Js.Dict.empty()
+  codegenChains->Array.forEach(codegenChain => {
+    let mergedContracts = codegenChain.contracts->Array.map(codegenContract => {
+      switch contractsWithAbis->Js.Dict.get(codegenContract.name) {
+      | Some(abi) => // Convert codegenContract to contract by adding abi
+        {
+          name: codegenContract.name,
+          abi,
+          addresses: codegenContract.addresses,
+          events: codegenContract.events,
+          startBlock: codegenContract.startBlock,
+        }
+      | None =>
+        Js.Exn.raiseError(
+          `Contract "${codegenContract.name}" is missing ABI in public config (internal.config.ts)`,
+        )
+      }
+    })
+    contractsByChainId->Js.Dict.set(codegenChain.id->Int.toString, mergedContracts)
   })
 
   // Merge codegenChains with names from publicConfig
@@ -171,6 +227,13 @@ let fromPublic = (
       | None =>
         Js.Exn.raiseError(`Chain with id ${chainId->Int.toString} not found in codegen chains`)
       }
+      let mergedContracts = switch contractsByChainId->Js.Dict.get(chainId->Int.toString) {
+      | Some(contracts) => contracts
+      | None =>
+        Js.Exn.raiseError(
+          `Contracts for chain with id ${chainId->Int.toString} not found in merged contracts`,
+        )
+      }
       {
         name: chainName,
         id: codegenChain.id,
@@ -181,7 +244,7 @@ let fromPublic = (
         // Fuel doesn't have reorgs, SVM reorg handling is not supported
         | Ecosystem.Fuel | Ecosystem.Svm => 0
         },
-        contracts: codegenChain.contracts,
+        contracts: mergedContracts,
         sources: codegenChain.sources,
       }
     })

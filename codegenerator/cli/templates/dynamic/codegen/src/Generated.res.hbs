@@ -58,7 +58,6 @@ let makeGeneratedConfig = () => {
         {{#each chain_config.codegen_contracts as | contract |}}
         {
           Config.name: "{{contract.name.capitalized}}",
-          abi: Types.{{contract.name.capitalized}}.abi,
           addresses: [
             {{#each contract.addresses as | address |}}
             {{#if ../../../is_evm_ecosystem}}

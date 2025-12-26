@@ -73,7 +73,9 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
 
   // Build chains object with chain ID as string key
   let chains = Utils.Object.createNullObject()
-  config.chainMap->ChainMap.values->Array.forEach(chainConfig => {
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig => {
     let chainIdStr = chainConfig.id->Int.toString
 
     chainIds->Js.Array2.push(chainConfig.id)->ignore
@@ -107,6 +109,19 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       },
     )
     ->ignore
+
+    // Add contracts to chain object
+    chainConfig.contracts->Array.forEach(contract => {
+      let contractObj = Utils.Object.createNullObject()
+      contractObj
+      ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
+      ->Utils.Object.definePropertyWithValue("abi", {enumerable: true, value: contract.abi})
+      ->ignore
+
+      chainObj
+      ->Utils.Object.definePropertyWithValue(contract.name, {enumerable: true, value: contractObj})
+      ->ignore
+    })
 
     // Primary key is chain ID as string
     chains

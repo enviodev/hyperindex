@@ -185,6 +185,8 @@ export type IndexerConfig = {
   evm?: {
     /** Chain configurations keyed by chain name. */
     chains: Record<string, EvmChainConfig>;
+    /** Contract configurations keyed by contract name. */
+    contracts?: Record<string, EvmContractConfig>;
     /** Address format (default: "checksum"). */
     addressFormat?: "lowercase" | "checksum";
     /** Event decoder (default: "hypersync"). */
@@ -194,12 +196,28 @@ export type IndexerConfig = {
   fuel?: {
     /** Chain configurations keyed by chain name. */
     chains: Record<string, FuelChainConfig>;
+    /** Contract configurations keyed by contract name. */
+    contracts?: Record<string, FuelContractConfig>;
   };
   /** SVM ecosystem configuration. */
   svm?: {
     /** Chain configurations keyed by chain name. */
     chains: Record<string, SvmChainConfig>;
   };
+};
+
+// ============== Contract Types ==============
+
+/** EVM contract configuration. */
+type EvmContractConfig = {
+  /** The contract ABI. */
+  readonly abi: unknown[];
+};
+
+/** Fuel contract configuration. */
+type FuelContractConfig = {
+  /** The contract ABI. */
+  readonly abi: unknown;
 };
 
 // ============== EVM Types ==============
@@ -217,7 +235,10 @@ type EvmChainConfig<Id extends number = number> = {
 };
 
 /** EVM chain value (for runtime Indexer). */
-type EvmChain<Id extends number = number> = {
+type EvmChain<
+  Id extends number = number,
+  ContractName extends string = never
+> = {
   /** The chain ID. */
   readonly id: Id;
   /** The chain name. */
@@ -228,6 +249,24 @@ type EvmChain<Id extends number = number> = {
   readonly endBlock: number | undefined;
   /** Whether the chain has completed initial sync and is processing live events. */
   readonly isLive: boolean;
+} & {
+  readonly [K in ContractName]: EvmContract<K>;
+};
+
+/** EVM contract (for runtime Indexer). */
+type EvmContract<Name extends string = string> = {
+  /** The contract name. */
+  readonly name: Name;
+  /** The contract ABI. */
+  readonly abi: readonly unknown[];
+};
+
+/** Fuel contract (for runtime Indexer). */
+type FuelContract<Name extends string = string> = {
+  /** The contract name. */
+  readonly name: Name;
+  /** The contract ABI. */
+  readonly abi: unknown;
 };
 
 // ============== Fuel Types ==============
@@ -245,7 +284,10 @@ type FuelChainConfig<Id extends number = number> = {
 };
 
 /** Fuel chain value (for runtime Indexer). */
-type FuelChain<Id extends number = number> = {
+type FuelChain<
+  Id extends number = number,
+  ContractName extends string = never
+> = {
   /** The chain ID. */
   readonly id: Id;
   /** The chain name. */
@@ -256,6 +298,8 @@ type FuelChain<Id extends number = number> = {
   readonly endBlock: number | undefined;
   /** Whether the chain has completed initial sync and is processing live events. */
   readonly isLive: boolean;
+} & {
+  readonly [K in ContractName]: FuelContract<K>;
 };
 
 // ============== SVM (Solana) Types ==============
@@ -305,16 +349,25 @@ type EcosystemCount<Config> = EcosystemTuple<Config>["length"];
 // EVM ecosystem type
 type EvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
   "evm" extends keyof Config
-    ? Config["evm"] extends { chains: infer Chains }
+    ? Config["evm"] extends {
+        chains: infer Chains;
+        contracts?: Record<infer ContractName, any>;
+      }
       ? Chains extends Record<string, { id: number }>
         ? {
             /** Array of all EVM chain IDs. */
             readonly chainIds: readonly Chains[keyof Chains]["id"][];
             /** Per-chain configuration keyed by chain name or ID. */
             readonly chains: {
-              readonly [K in Chains[keyof Chains]["id"]]: EvmChain<K>;
+              readonly [K in Chains[keyof Chains]["id"]]: EvmChain<
+                K,
+                ContractName extends string ? ContractName : never
+              >;
             } & {
-              readonly [K in keyof Chains]: EvmChain<Chains[K]["id"]>;
+              readonly [K in keyof Chains]: EvmChain<
+                Chains[K]["id"],
+                ContractName extends string ? ContractName : never
+              >;
             };
           }
         : never
@@ -324,16 +377,25 @@ type EvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
 // Fuel ecosystem type
 type FuelEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
   "fuel" extends keyof Config
-    ? Config["fuel"] extends { chains: infer Chains }
+    ? Config["fuel"] extends {
+        chains: infer Chains;
+        contracts?: Record<infer ContractName, any>;
+      }
       ? Chains extends Record<string, { id: number }>
         ? {
             /** Array of all Fuel chain IDs. */
             readonly chainIds: readonly Chains[keyof Chains]["id"][];
             /** Per-chain configuration keyed by chain name or ID. */
             readonly chains: {
-              readonly [K in Chains[keyof Chains]["id"]]: FuelChain<K>;
+              readonly [K in Chains[keyof Chains]["id"]]: FuelChain<
+                K,
+                ContractName extends string ? ContractName : never
+              >;
             } & {
-              readonly [K in keyof Chains]: FuelChain<Chains[K]["id"]>;
+              readonly [K in keyof Chains]: FuelChain<
+                Chains[K]["id"],
+                ContractName extends string ? ContractName : never
+              >;
             };
           }
         : never

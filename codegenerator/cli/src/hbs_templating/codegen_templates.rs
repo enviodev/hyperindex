@@ -680,7 +680,7 @@ impl ContractTemplate {
                 let signatures = abi.get_event_signatures();
 
                 format!(
-                    r#"let abi = Ethers.makeAbi((%raw(`{}`): Js.Json.t))
+                    r#"let abi = (%raw(`{}`): EvmTypes.Abi.t)
 let eventSignatures = [{}]
 {chain_id_type_code}"#,
                     abi.raw,
@@ -704,9 +704,9 @@ let eventSignatures = [{}]
                   // If we decide to inline the abi, instead of using require
                   // we need to remember that abi might contain ` and we should escape it
                   abi.path_buf.to_string_lossy(),
-                  all_abi_type_declarations,
-                  all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
-              )
+                    all_abi_type_declarations,
+                    all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
+                )
             }
         };
 
@@ -1384,6 +1384,7 @@ switch chainId {{
 
         // Generate ecosystem sections only if they have chains
         let mut ecosystem_parts = Vec::new();
+        let mut fuel_imports = Vec::new();
         let has_ecosystem = !chain_configs.is_empty();
 
         // Generate chains for the current ecosystem (only if chains exist)
@@ -1418,6 +1419,45 @@ switch chainId {{
                 Ecosystem::Svm => "svm",
             };
 
+            // Generate contracts configuration
+            let contracts_entries: Vec<String> = cfg
+                .contracts
+                .values()
+                .map(|contract| {
+                    let abi_value = match &contract.abi {
+                        Abi::Evm(abi) => {
+                            // Inline the ABI JSON for EVM
+                            format!("{}", abi.raw)
+                        }
+                        Abi::Fuel(abi) => {
+                            // Generate import and reference for Fuel
+                            let import_name = format!("{}Abi", contract.name);
+                            let path_str = abi.path_buf.to_string_lossy();
+                            let relative_path = if path_str.starts_with('/') {
+                                format!("..{}", path_str)
+                            } else {
+                                format!("../{}", path_str)
+                            };
+                            fuel_imports.push(format!(
+                                "import {} from \"{}\";",
+                                import_name, relative_path
+                            ));
+                            import_name
+                        }
+                    };
+                    format!("      \"{}\": {{ abi: {} }},", contract.name, abi_value)
+                })
+                .collect();
+
+            let contracts_str = if contracts_entries.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ",\n    contracts: {{\n{}\n    }},",
+                    contracts_entries.join("\n")
+                )
+            };
+
             // For EVM, always include addressFormat and decoder
             let evm_options = if cfg.get_ecosystem() == Ecosystem::Evm {
                 let address_format = if cfg.lowercase_addresses {
@@ -1439,9 +1479,10 @@ switch chainId {{
             };
 
             ecosystem_parts.push(format!(
-                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }},{evm_options}\n  }},",
+                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }}{contracts}{evm_options}\n  }},",
                 ecosystem_name = ecosystem_name,
                 chains = chains_entries.join("\n"),
+                contracts = contracts_str,
                 evm_options = evm_options
             ));
         }
@@ -1494,13 +1535,21 @@ switch chainId {{
             ecosystem_parts.join("")
         };
 
+        // Prepend Fuel imports if any
+        let imports_str = if fuel_imports.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", fuel_imports.join("\n"))
+        };
+
         let internal_config_ts_code = format!(
-            r#"import type {{ IndexerConfig }} from "envio";
+            r#"{imports_str}import type {{ IndexerConfig }} from "envio";
 
 export default {{
   name: "{name}"{description_str}{handlers_str}{multichain_str}{full_batch_size_str}{rollback_on_reorg_str}{save_full_history_str}{raw_events_str}{ecosystem_str}
 }} as const satisfies IndexerConfig;
 "#,
+            imports_str = imports_str,
             name = cfg.name,
             description_str = description_str,
             handlers_str = handlers_str,
@@ -2089,254 +2138,39 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     #[test]
     fn internal_config_ts_code_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
-
-        let expected = r#"import type { IndexerConfig } from "envio";
-
-export default {
-  name: "config1",
-  description: "Gravatar for Ethereum",
-  evm: {
-    chains: {
-      "ethereumMainnet": { id: 1, startBlock: 0 },
-    },
-    addressFormat: "checksum",
-    eventDecoder: "hypersync",
-  },
-} as const satisfies IndexerConfig;
-"#;
-
-        assert_eq!(
-            project_template.internal_config_ts_code.trim(),
-            expected.trim()
-        );
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
     }
 
     #[test]
     fn internal_config_ts_code_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
-
         // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
         // which differs from the runtime default of true, so it's included
-        let expected = r#"import type { IndexerConfig } from "envio";
-
-export default {
-  name: "Fuel indexer",
-  rollbackOnReorg: false,
-  fuel: {
-    chains: {
-      "0": { id: 0, startBlock: 0 },
-    },
-  },
-} as const satisfies IndexerConfig;
-"#;
-
-        assert_eq!(
-            project_template.internal_config_ts_code.trim(),
-            expected.trim()
-        );
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
     }
 
     #[test]
     fn internal_config_ts_code_with_all_options() {
         let project_template = get_project_template_helper("config-with-all-options.yaml");
-
-        // Verify handlers option is included
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("handlers: \"custom/handlers\""),
-            "handlers should be included when set"
-        );
-
-        // Verify multichain option is included (only when ordered, since unordered is default)
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("multichain: \"ordered\""),
-            "multichain: ordered should be included"
-        );
-
-        // Verify fullBatchSize option is included
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("fullBatchSize: 1000"),
-            "fullBatchSize should be included when set"
-        );
-
-        // Verify rollbackOnReorg option is included (only when false, since true is default)
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("rollbackOnReorg: false"),
-            "rollbackOnReorg: false should be included"
-        );
-
-        // Verify saveFullHistory option is included (only when true, since false is default)
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("saveFullHistory: true"),
-            "saveFullHistory: true should be included"
-        );
-
-        // Verify rawEvents option is included (only when true, since false is default)
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("rawEvents: true"),
-            "rawEvents: true should be included"
-        );
-
-        // Verify EVM options are always included for EVM ecosystem
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("addressFormat: \"checksum\""),
-            "addressFormat should be included for EVM ecosystem"
-        );
-        assert!(
-            project_template
-                .internal_config_ts_code
-                .contains("eventDecoder: \"hypersync\""),
-            "eventDecoder should be included for EVM ecosystem"
-        );
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
     }
 
     #[test]
     fn internal_config_ts_code_omits_default_values() {
-        // Test with config1.yaml (no custom options)
         let project_template = get_project_template_helper("config1.yaml");
-
-        // Default values should be omitted from output
-        assert!(
-            !project_template
-                .internal_config_ts_code
-                .contains("handlers:"),
-            "handlers should be omitted when using default"
-        );
-        assert!(
-            !project_template
-                .internal_config_ts_code
-                .contains("multichain:"),
-            "multichain should be omitted when using default (unordered)"
-        );
-        assert!(
-            !project_template
-                .internal_config_ts_code
-                .contains("fullBatchSize:"),
-            "fullBatchSize should be omitted when using default"
-        );
-        assert!(
-            !project_template
-                .internal_config_ts_code
-                .contains("rollbackOnReorg:"),
-            "rollbackOnReorg should be omitted when using default (true)"
-        );
-        assert!(
-            !project_template
-                .internal_config_ts_code
-                .contains("saveFullHistory:"),
-            "saveFullHistory should be omitted when using default (false)"
-        );
-        assert!(
-            !project_template
-                .internal_config_ts_code
-                .contains("rawEvents:"),
-            "rawEvents should be omitted when using default (false)"
-        );
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
     }
 
     #[test]
     fn indexer_code_generates_correct_types_and_values() {
         let project_template = get_project_template_helper("config1.yaml");
-
-        // Verify indexerChain type
-        assert!(project_template.indexer_code.contains(
-            r#"/** Per-chain configuration for the indexer. */
-type indexerChain = {
-  /** The chain ID. */
-  id: chainId,
-  /** The chain name. */
-  name: string,
-  /** The block number to start indexing from. */
-  startBlock: int,
-  /** The block number to stop indexing at (if specified). */
-  endBlock: option<int>,
-  /** Whether the chain has completed initial sync and is processing live events. */
-  isLive: bool,
-}"#
-        ));
-
-        // Verify indexerChains type with both ID-based and name-based fields
-        assert!(project_template.indexer_code.contains(
-            r#"/** Strongly-typed record of chain configurations keyed by chain ID. */
-type indexerChains = {
-  @as("1") c1: indexerChain,
-  ethereumMainnet: indexerChain,
-}"#
-        ));
-
-        // Verify indexer type
-        assert!(project_template.indexer_code.contains(
-            r#"/** Metadata and configuration for the indexer. */
-type indexer = {
-  /** The name of the indexer from config.yaml. */
-  name: string,
-  /** The description of the indexer from config.yaml. */
-  description: option<string>,
-  /** Array of all chain IDs this indexer operates on. */
-  chainIds: array<chainId>,
-  /** Per-chain configuration keyed by chain ID. */
-  chains: indexerChains,
-}"#
-        ));
-
-        // Verify indexer value uses Main.getGlobalIndexer
-        assert!(project_template.indexer_code.contains(
-            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#
-        ));
-
-        // Verify getChainById function
-        assert!(project_template.indexer_code.contains(
-            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
-let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
-switch chainId {
-  | #1 => indexer.chains.c1
-}
-}"#
-        ));
+        insta::assert_snapshot!(project_template.indexer_code);
     }
 
     #[test]
     fn indexer_code_multiple_chains() {
         // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
         let project_template = get_project_template_helper("config2.yaml");
-
-        // Verify indexerChains type: chain 1 has name-based field, chain 2 only has ID-based
-        assert!(project_template.indexer_code.contains(
-            r#"/** Strongly-typed record of chain configurations keyed by chain ID. */
-type indexerChains = {
-  @as("1") c1: indexerChain,
-  ethereumMainnet: indexerChain,
-  @as("2") c2: indexerChain,
-}"#
-        ));
-
-        // Verify indexer value uses Main.getGlobalIndexer
-        assert!(project_template.indexer_code.contains(
-            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#
-        ));
-
-        // Verify getChainById with multiple cases
-        assert!(project_template.indexer_code.contains(
-            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
-let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
-switch chainId {
-  | #1 => indexer.chains.c1
-  | #2 => indexer.chains.c2
-}
-}"#
-        ));
+        insta::assert_snapshot!(project_template.indexer_code);
     }
 }

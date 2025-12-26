@@ -167,6 +167,62 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
+  it("Indexer chains should have contracts with name and abi", () => {
+    // Type check: contracts should be present on chain objects
+    expectType<
+      TypeEqual<
+        typeof indexer.chains.ethereumMainnet.Noop,
+        {
+          readonly name: "Noop";
+          readonly abi: readonly unknown[];
+        }
+      >
+    >(true);
+
+    expectType<
+      TypeEqual<
+        typeof indexer.chains[1337].Gravatar,
+        {
+          readonly name: "Gravatar";
+          readonly abi: readonly unknown[];
+        }
+      >
+    >(true);
+
+    // Value checks: contracts should have name and abi properties
+    const { Gravatar, NftFactory } = indexer.chains[1337];
+    assert.strictEqual(Gravatar.name, "Gravatar");
+    assert.ok(Array.isArray(Gravatar.abi) && Gravatar.abi.length > 0);
+    
+    assert.strictEqual(NftFactory.name, "NftFactory");
+    assert.ok(Array.isArray(NftFactory.abi));
+
+    // Check contracts exist on other chains
+    assert.strictEqual(indexer.chains[1].Noop.name, "Noop");
+    assert.strictEqual(indexer.chains[100].EventFiltersTest.name, "EventFiltersTest");
+    assert.strictEqual(indexer.chains[137].Noop.name, "Noop");
+  });
+
+  it("Contract ABIs should be the same across chains for same contract", () => {
+    // Same contract (Noop) on different chains should have the same ABI
+    const chain1 = indexer.chains[1];
+    const chain137 = indexer.chains[137];
+
+    assert.deepStrictEqual(
+      chain1.Noop.abi,
+      chain137.Noop.abi,
+      "Same contract on different chains should have identical ABIs"
+    );
+
+    // Same contract (EventFiltersTest) on different chains should have the same ABI
+    const chain100 = indexer.chains[100];
+    assert.deepStrictEqual(
+      chain100.EventFiltersTest.abi,
+      chain137.EventFiltersTest.abi,
+      "EventFiltersTest should have identical ABIs across chains"
+    );
+  });
+
   it("Runs contract register handler", async () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();
