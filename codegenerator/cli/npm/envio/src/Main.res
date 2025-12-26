@@ -116,6 +116,34 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       contractObj
       ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
       ->Utils.Object.definePropertyWithValue("abi", {enumerable: true, value: contract.abi})
+      ->Utils.Object.defineProperty(
+        "addresses",
+        {
+          enumerable: true,
+          get: () => {
+            switch globalGsManagerRef.contents {
+            | None => contract.addresses
+            | Some(gsManager) => {
+                let state = gsManager->GlobalStateManager.getState
+                let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+                let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
+                let indexingContracts = chainFetcher.fetchState.indexingContracts
+
+                // Collect all addresses for this contract name from indexingContracts
+                let addresses = []
+                let values = indexingContracts->Js.Dict.values
+                for idx in 0 to values->Array.length - 1 {
+                  let indexingContract = values->Js.Array2.unsafe_get(idx)
+                  if indexingContract.contractName === contract.name {
+                    addresses->Array.push(indexingContract.address)->ignore
+                  }
+                }
+                addresses
+              }
+            }
+          },
+        },
+      )
       ->ignore
 
       chainObj

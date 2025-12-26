@@ -17,6 +17,16 @@ module Contract2 = {
 @genType.import(("./Types.ts", "EvmChainId"))
 type chainId = [#1 | #2]
 
+/** Contract configuration with name and ABI. */
+type indexerContract = {
+  /** The contract name. */
+  name: string,
+  /** The contract ABI. */
+  abi: unknown,
+  /** The contract addresses. */
+  addresses: array<Address.t>,
+}
+
 /** Per-chain configuration for the indexer. */
 type indexerChain = {
   /** The chain ID. */
@@ -29,13 +39,15 @@ type indexerChain = {
   endBlock: option<int>,
   /** Whether the chain has completed initial sync and is processing live events. */
   isLive: bool,
+  \"Contract1": indexerContract,
+  \"Contract2": indexerContract,
 }
 
 /** Strongly-typed record of chain configurations keyed by chain ID. */
 type indexerChains = {
-  @as("1") c1: indexerChain,
+  @as("1") chain1: indexerChain,
   ethereumMainnet: indexerChain,
-  @as("2") c2: indexerChain,
+  @as("2") chain2: indexerChain,
 }
 
 /** Metadata and configuration for the indexer. */
@@ -55,8 +67,8 @@ let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegi
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
 switch chainId {
-  | #1 => indexer.chains.c1
-  | #2 => indexer.chains.c2
+  | #1 => indexer.chains.chain1
+  | #2 => indexer.chains.chain2
 }
 }
 

@@ -799,11 +799,34 @@ impl NetworkConfigTemplate {
         config: &SystemConfig,
     ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
-        let codegen_contracts: Vec<PerNetworkContractTemplate> = network
-            .contracts
+        let codegen_contracts: Vec<PerNetworkContractTemplate> = config
+            .get_contracts()
             .iter()
-            .map(|network_contract| {
-                PerNetworkContractTemplate::from_config_network_contract(network_contract, config)
+            .map(|contract| {
+                // Check if this contract is defined on the current network
+                let network_contract = network.contracts.iter().find(|nc| nc.name == contract.name);
+
+                match network_contract {
+                    Some(nc) => {
+                        // Contract is defined on this network, use its addresses
+                        PerNetworkContractTemplate::from_config_network_contract(nc, config)
+                    }
+                    None => {
+                        // Contract is not defined on this network, create with empty addresses
+                        let events = contract
+                            .events
+                            .iter()
+                            .map(|event| PerNetworkContractEventTemplate::new(event.name.clone()))
+                            .collect();
+
+                        Ok(PerNetworkContractTemplate {
+                            name: contract.name.to_capitalized_options(),
+                            addresses: vec![],
+                            events,
+                            start_block: None,
+                        })
+                    }
+                }
             })
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
@@ -1271,8 +1294,39 @@ EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
         );
 
         // Generate indexer types and value
-        let indexer_chain_type = r#"/** Per-chain configuration for the indexer. */
-type indexerChain = {
+        let indexer_contract_type = r#"/** Contract configuration with name and ABI. */
+type indexerContract = {
+  /** The contract name. */
+  name: string,
+  /** The contract ABI. */
+  abi: unknown,
+  /** The contract addresses. */
+  addresses: array<Address.t>,
+}"#;
+
+        // Collect all unique contract names across chains
+        let mut all_contract_names = BTreeSet::new();
+        for chain_config in &chain_configs {
+            for contract in &chain_config.codegen_contracts {
+                all_contract_names.insert(contract.name.original.clone());
+            }
+        }
+
+        // Generate contract fields - use quoted names to avoid ReScript naming issues
+        let contract_fields = if all_contract_names.is_empty() {
+            String::new()
+        } else {
+            all_contract_names
+                .iter()
+                .map(|contract_name| format!("\n  \\\"{}\": indexerContract,", contract_name))
+                .collect::<Vec<String>>()
+                .join("")
+        };
+
+        // Generate indexer chain type with contract fields
+        let indexer_chain_type = format!(
+            r#"/** Per-chain configuration for the indexer. */
+type indexerChain = {{
   /** The chain ID. */
   id: chainId,
   /** The chain name. */
@@ -1282,15 +1336,16 @@ type indexerChain = {
   /** The block number to stop indexing at (if specified). */
   endBlock: option<int>,
   /** Whether the chain has completed initial sync and is processing live events. */
-  isLive: bool,
-}"#;
+  isLive: bool,{contract_fields}
+}}"#
+        );
 
         // Generate indexerChains type with fields for each chain
         let indexer_chains_fields = chain_configs
             .iter()
             .map(|chain| {
                 let id = chain.network_config.id;
-                let id_field = format!("  @as(\"{}\") c{}: indexerChain,", id, id);
+                let id_field = format!("  @as(\"{}\") chain{}: indexerChain,", id, id);
                 // Add name-based field only for known networks
                 if let Ok(network) = Network::from_network_id(id) {
                     let name = network.to_string().to_case(Case::Camel);
@@ -1330,7 +1385,7 @@ type indexer = {
             .iter()
             .map(|chain| {
                 format!(
-                    "  | #{} => indexer.chains.c{}",
+                    "  | #{} => indexer.chains.chain{}",
                     chain.network_config.id, chain.network_config.id
                 )
             })
@@ -1349,9 +1404,10 @@ switch chainId {{
 
         // Combine all parts into indexer_code
         let indexer_code = format!(
-            "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             contract_modules,
             chain_id_type,
+            indexer_contract_type,
             indexer_chain_type,
             indexer_chains_type,
             indexer_type,
@@ -1427,7 +1483,7 @@ switch chainId {{
                     let abi_value = match &contract.abi {
                         Abi::Evm(abi) => {
                             // Inline the ABI JSON for EVM
-                            format!("{}", abi.raw)
+                            abi.raw.to_string()
                         }
                         Abi::Fuel(abi) => {
                             // Generate import and reference for Fuel
@@ -1722,30 +1778,43 @@ mod test {
         };
 
         let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
-        let contract1 = super::PerNetworkContractTemplate {
+        let contract1_on_chain1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
-            events,
+            events: events.clone(),
             start_block: None,
         };
 
-        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
-        let contract2 = super::PerNetworkContractTemplate {
+        let contract2_on_chain1 = super::PerNetworkContractTemplate {
+            name: String::from("Contract2").to_capitalized_options(),
+            addresses: vec![],
+            events: events.clone(),
+            start_block: None,
+        };
+
+        let contract1_on_chain2 = super::PerNetworkContractTemplate {
+            name: String::from("Contract1").to_capitalized_options(),
+            addresses: vec![],
+            events: events.clone(),
+            start_block: None,
+        };
+
+        let contract2_on_chain2 = super::PerNetworkContractTemplate {
             name: String::from("Contract2").to_capitalized_options(),
             addresses: vec![address2.clone()],
-            events,
+            events: events.clone(),
             start_block: None,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
-          codegen_contracts: vec![contract1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+          codegen_contracts: vec![contract1_on_chain1, contract2_on_chain1],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
         let chain_config_2 = super::NetworkConfigTemplate {
           network_config: network2,
-          codegen_contracts: vec![contract2],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+          codegen_contracts: vec![contract1_on_chain2, contract2_on_chain2],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];

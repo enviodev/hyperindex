@@ -211,7 +211,7 @@ export type IndexerConfig = {
 /** EVM contract configuration. */
 type EvmContractConfig = {
   /** The contract ABI. */
-  readonly abi: unknown[];
+  readonly abi: unknown;
 };
 
 /** Fuel contract configuration. */
@@ -259,6 +259,8 @@ type EvmContract<Name extends string = string> = {
   readonly name: Name;
   /** The contract ABI. */
   readonly abi: readonly unknown[];
+  /** The contract addresses. */
+  readonly addresses: readonly Address[];
 };
 
 /** Fuel contract (for runtime Indexer). */
@@ -267,6 +269,8 @@ type FuelContract<Name extends string = string> = {
   readonly name: Name;
   /** The contract ABI. */
   readonly abi: unknown;
+  /** The contract addresses. */
+  readonly addresses: readonly Address[];
 };
 
 // ============== Fuel Types ==============

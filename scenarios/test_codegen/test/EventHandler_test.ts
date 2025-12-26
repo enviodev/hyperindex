@@ -22,6 +22,40 @@ describe("Use Envio test framework to test event handlers", () => {
 
     // Indexer type tests
     expectType<TypeEqual<typeof indexer, Indexer>>(true);
+
+    type ExpectedEvmContracts = {
+      readonly NftFactory: {
+        readonly name: "NftFactory";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly EventFiltersTest: {
+        readonly name: "EventFiltersTest";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly SimpleNft: {
+        readonly name: "SimpleNft";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly TestEvents: {
+        readonly name: "TestEvents";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly Gravatar: {
+        readonly name: "Gravatar";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly Noop: {
+        readonly name: "Noop";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+    };
+
     // Chain types are internal, so we check through the indexer type
     expectType<
       TypeEqual<
@@ -33,28 +67,28 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
           readonly gnosis: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
           readonly polygon: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
           readonly "1337": {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
         } & {
           readonly 1: {
             readonly id: 1;
@@ -62,28 +96,28 @@ describe("Use Envio test framework to test event handlers", () => {
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
           readonly 100: {
             readonly id: 100;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
           readonly 137: {
             readonly id: 137;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
           readonly 1337: {
             readonly id: 1337;
             readonly startBlock: number;
             readonly endBlock: number | undefined;
             readonly name: string;
             readonly isLive: boolean;
-          };
+          } & ExpectedEvmContracts;
         }
       >
     >(true);
@@ -97,7 +131,7 @@ describe("Use Envio test framework to test event handlers", () => {
           readonly endBlock: number | undefined;
           readonly name: string;
           readonly isLive: boolean;
-        }
+        } & ExpectedEvmContracts
       >
     >(true);
 
@@ -175,16 +209,18 @@ describe("Use Envio test framework to test event handlers", () => {
         {
           readonly name: "Noop";
           readonly abi: readonly unknown[];
+          readonly addresses: readonly Address[];
         }
       >
     >(true);
 
     expectType<
       TypeEqual<
-        typeof indexer.chains[1337].Gravatar,
+        (typeof indexer.chains)[1337]["Gravatar"],
         {
           readonly name: "Gravatar";
           readonly abi: readonly unknown[];
+          readonly addresses: readonly Address[];
         }
       >
     >(true);
@@ -193,13 +229,16 @@ describe("Use Envio test framework to test event handlers", () => {
     const { Gravatar, NftFactory } = indexer.chains[1337];
     assert.strictEqual(Gravatar.name, "Gravatar");
     assert.ok(Array.isArray(Gravatar.abi) && Gravatar.abi.length > 0);
-    
+
     assert.strictEqual(NftFactory.name, "NftFactory");
     assert.ok(Array.isArray(NftFactory.abi));
 
     // Check contracts exist on other chains
     assert.strictEqual(indexer.chains[1].Noop.name, "Noop");
-    assert.strictEqual(indexer.chains[100].EventFiltersTest.name, "EventFiltersTest");
+    assert.strictEqual(
+      indexer.chains[100].EventFiltersTest.name,
+      "EventFiltersTest"
+    );
     assert.strictEqual(indexer.chains[137].Noop.name, "Noop");
   });
 
