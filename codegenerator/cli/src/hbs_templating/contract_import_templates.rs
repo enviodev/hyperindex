@@ -317,7 +317,7 @@ impl Contract {
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "Handlers.{}.{}.handler(async ({{event, context}}) => {{\n",
+                "Indexer.{}.{}.handler(async ({{event, context}}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(

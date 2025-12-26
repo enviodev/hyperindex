@@ -13,7 +13,7 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
   ->ChainMap.entries
   ->Array.forEach(((chain, chainFetcher)) => {
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isLive = chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+    let isLive = chainFetcher->ChainFetcher.isLive
 
     chains->Js.Dict.set(
       chainId,
@@ -169,7 +169,7 @@ let runHandlerOrThrow = async (
   ~checkpointId,
   ~inMemoryStore,
   ~loadManager,
-  ~indexer: Indexer.t,
+  ~ctx: Ctx.t,
   ~shouldSaveHistory,
   ~shouldBenchmark,
   ~chains: Internal.chains,
@@ -181,18 +181,18 @@ let runHandlerOrThrow = async (
         item,
         inMemoryStore,
         loadManager,
-        persistence: indexer.persistence,
+        persistence: ctx.persistence,
         shouldSaveHistory,
         checkpointId,
         isPreload: false,
         chains,
-        config: indexer.config,
+        config: ctx.config,
         isResolved: false,
       }
       await handler(
         Ecosystem.makeOnBlockArgs(
           ~blockNumber,
-          ~ecosystem=indexer.config.ecosystem,
+          ~ecosystem=ctx.config.ecosystem,
           ~context=UserContext.getHandlerContext(contextParams),
         ),
       )
@@ -215,19 +215,19 @@ let runHandlerOrThrow = async (
           ~checkpointId,
           ~inMemoryStore,
           ~loadManager,
-          ~persistence=indexer.persistence,
+          ~persistence=ctx.persistence,
           ~shouldSaveHistory,
           ~shouldBenchmark,
           ~chains,
-          ~config=indexer.config,
+          ~config=ctx.config,
         )
       | None => ()
       }
 
-      if indexer.config.enableRawEvents {
+      if ctx.config.enableRawEvents {
         item
         ->Internal.castUnsafeEventItem
-        ->addItemToRawEvents(~inMemoryStore, ~config=indexer.config)
+        ->addItemToRawEvents(~inMemoryStore, ~config=ctx.config)
       }
     }
   }
@@ -324,7 +324,7 @@ let runBatchHandlersOrThrow = async (
   batch: Batch.t,
   ~inMemoryStore,
   ~loadManager,
-  ~indexer,
+  ~ctx,
   ~shouldSaveHistory,
   ~shouldBenchmark,
   ~chains: Internal.chains,
@@ -344,7 +344,7 @@ let runBatchHandlersOrThrow = async (
         ~checkpointId,
         ~inMemoryStore,
         ~loadManager,
-        ~indexer,
+        ~ctx,
         ~shouldSaveHistory,
         ~shouldBenchmark,
         ~chains,
@@ -386,7 +386,7 @@ let processEventBatch = async (
   ~inMemoryStore: InMemoryStore.t,
   ~isInReorgThreshold,
   ~loadManager,
-  ~indexer: Indexer.t,
+  ~ctx: Ctx.t,
   ~chainFetchers: ChainMap.t<ChainFetcher.t>,
 ) => {
   let totalBatchSize = batch.totalBatchSize
@@ -411,10 +411,10 @@ let processEventBatch = async (
     if batch.items->Utils.Array.notEmpty {
       await batch->preloadBatchOrThrow(
         ~loadManager,
-        ~persistence=indexer.persistence,
+        ~persistence=ctx.persistence,
         ~inMemoryStore,
         ~chains,
-        ~config=indexer.config,
+        ~config=ctx.config,
       )
     }
 
@@ -424,8 +424,8 @@ let processEventBatch = async (
       await batch->runBatchHandlersOrThrow(
         ~inMemoryStore,
         ~loadManager,
-        ~indexer,
-        ~shouldSaveHistory=indexer.config->Config.shouldSaveHistory(~isInReorgThreshold),
+        ~ctx,
+        ~shouldSaveHistory=ctx.config->Config.shouldSaveHistory(~isInReorgThreshold),
         ~shouldBenchmark=Env.Benchmark.shouldSaveData,
         ~chains,
       )
@@ -435,9 +435,9 @@ let processEventBatch = async (
       timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     try {
-      await indexer.persistence->Persistence.writeBatch(
+      await ctx.persistence->Persistence.writeBatch(
         ~batch,
-        ~config=indexer.config,
+        ~config=ctx.config,
         ~inMemoryStore,
         ~isInReorgThreshold,
       )

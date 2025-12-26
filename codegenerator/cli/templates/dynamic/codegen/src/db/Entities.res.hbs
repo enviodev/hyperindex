@@ -1,5 +1,4 @@
 open Table
-open Enums.EntityType
 type id = string
 
 type internalEntity = Internal.entity
@@ -30,7 +29,7 @@ let isIndex = true
 {{#each entities as |entity|}}
 
 module {{entity.name.capitalized}} = {
-  let name = ({{entity.name.capitalized}} :> string)
+  let name = "{{entity.name.capitalized}}"
   let index = {{@index}}
   @genType
   type t = {{{entity.type_code}}}
@@ -47,7 +46,7 @@ module {{entity.name.capitalized}} = {
   }
 
   let table = mkTable(
-    (name :> string),
+    name,
     ~fields=[
   {{#each entity.postgres_fields as | pg_field |}}
       mkField(

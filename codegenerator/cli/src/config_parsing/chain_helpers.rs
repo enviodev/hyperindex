@@ -6,8 +6,6 @@ use std::fmt;
 use strum::IntoEnumIterator;
 use subenum::subenum;
 
-use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
-
 #[derive(strum::Display)]
 #[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork)]
 #[derive(
@@ -444,8 +442,8 @@ impl Network {
         }
     }
 
-    //TODO: research a sufficient threshold for all chain (some should be 0)
-    pub fn get_max_reorg_depth(&self) -> i32 {
+    //TODO: research a sufficient threshold for all chains (some should be 0)
+    pub fn get_max_reorg_depth(&self) -> Option<i32> {
         match self {
             //Reorgs do not happen on these networks
             Network::ArbitrumTestnet
@@ -457,7 +455,7 @@ impl Network {
             | Network::CitreaTestnet
             | Network::Optimism
             | Network::OptimismGoerli
-            | Network::OptimismSepolia => 0,
+            | Network::OptimismSepolia => Some(0),
             //TODO: research a sufficient threshold for all chains
             Network::Amoy
             | Network::Aurora
@@ -580,7 +578,7 @@ impl Network {
             | Network::SonicTestnet
             | Network::Sentient
             | Network::Swell
-            | Network::Taraxa => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::Taraxa => None,
         }
     }
 }
@@ -677,10 +675,10 @@ impl fmt::Display for NetworkWithExplorer {
     }
 }
 
-pub fn get_max_reorg_depth_from_id(id: u64) -> i32 {
-    Network::from_network_id(id).map_or(DEFAULT_CONFIRMED_BLOCK_THRESHOLD, |n| {
-        n.get_max_reorg_depth()
-    })
+pub fn get_max_reorg_depth_from_id(id: u64) -> Option<i32> {
+    Network::from_network_id(id)
+        .ok()
+        .and_then(|n| n.get_max_reorg_depth())
 }
 
 #[cfg(test)]

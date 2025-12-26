@@ -111,6 +111,9 @@ export declare namespace S {
   export type Schema<Output, Input = unknown> = Sury.Schema<Output, Input>;
   export const string: typeof Sury.string;
   export const address: Sury.Schema<Address, Address>;
+  // export const evmChainId: Sury.Schema<EvmChainId, EvmChainId>;
+  // export const fuelChainId: Sury.Schema<FuelChainId, FuelChainId>;
+  // export const svmChainId: Sury.Schema<SvmChainId, SvmChainId>;
   export const jsonString: typeof Sury.jsonString;
   export const boolean: typeof Sury.boolean;
   export const int32: typeof Sury.int32;
@@ -140,3 +143,329 @@ export declare namespace S {
   export const assertOrThrow: typeof Sury.assertOrThrow;
   export const parseOrThrow: typeof Sury.parseOrThrow;
 }
+
+// ============== Indexer Config (Module Augmentation) ==============
+
+/**
+ * Configuration interface for the indexer.
+ * This interface is augmented by generated/envio.d.ts with project-specific config using typeof config.
+ *
+ * @example
+ * // In generated/envio.d.ts:
+ * declare module "envio" {
+ *   interface Global {
+ *     config: typeof config;
+ *   }
+ * }
+ */
+export interface Global {}
+
+/**
+ * Shape of the indexer configuration.
+ * Used as a constraint for IndexerFromConfig to allow usage without codegen.
+ */
+export type IndexerConfig = {
+  /** The indexer name. */
+  name: string;
+  /** The indexer description. */
+  description?: string;
+  /** Path to handlers directory for auto-loading (default: "src/handlers"). */
+  handlers?: string;
+  /** Multichain mode: ordered or unordered (default: "unordered"). */
+  multichain?: "ordered" | "unordered";
+  /** Target batch size for event processing (default: 5000). */
+  fullBatchSize?: number;
+  /** Whether to rollback on chain reorg (default: true). */
+  rollbackOnReorg?: boolean;
+  /** Whether to save full entity history (default: false). */
+  saveFullHistory?: boolean;
+  /** Whether raw events are enabled (default: false). */
+  rawEvents?: boolean;
+  /** EVM ecosystem configuration. */
+  evm?: {
+    /** Chain configurations keyed by chain name. */
+    chains: Record<string, EvmChainConfig>;
+    /** Contract configurations keyed by contract name. */
+    contracts?: Record<string, EvmContractConfig>;
+    /** Address format (default: "checksum"). */
+    addressFormat?: "lowercase" | "checksum";
+    /** Event decoder (default: "hypersync"). */
+    eventDecoder?: "hypersync" | "viem";
+  };
+  /** Fuel ecosystem configuration. */
+  fuel?: {
+    /** Chain configurations keyed by chain name. */
+    chains: Record<string, FuelChainConfig>;
+    /** Contract configurations keyed by contract name. */
+    contracts?: Record<string, FuelContractConfig>;
+  };
+  /** SVM ecosystem configuration. */
+  svm?: {
+    /** Chain configurations keyed by chain name. */
+    chains: Record<string, SvmChainConfig>;
+  };
+};
+
+// ============== Contract Types ==============
+
+/** EVM contract configuration. */
+type EvmContractConfig = {
+  /** The contract ABI. */
+  readonly abi: unknown;
+};
+
+/** Fuel contract configuration. */
+type FuelContractConfig = {
+  /** The contract ABI. */
+  readonly abi: unknown;
+};
+
+// ============== EVM Types ==============
+
+/** EVM chain configuration (for IndexerConfig). */
+type EvmChainConfig<Id extends number = number> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
+  readonly endBlock?: number;
+  /** Number of blocks to keep for reorg handling (default: 200). */
+  readonly maxReorgDepth?: number;
+};
+
+/** EVM chain value (for runtime Indexer). */
+type EvmChain<
+  Id extends number = number,
+  ContractName extends string = never
+> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The chain name. */
+  readonly name: string;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
+  readonly endBlock: number | undefined;
+  /** Whether the chain has completed initial sync and is processing live events. */
+  readonly isLive: boolean;
+} & {
+  readonly [K in ContractName]: EvmContract<K>;
+};
+
+/** EVM contract (for runtime Indexer). */
+type EvmContract<Name extends string = string> = {
+  /** The contract name. */
+  readonly name: Name;
+  /** The contract ABI. */
+  readonly abi: readonly unknown[];
+  /** The contract addresses. */
+  readonly addresses: readonly Address[];
+};
+
+/** Fuel contract (for runtime Indexer). */
+type FuelContract<Name extends string = string> = {
+  /** The contract name. */
+  readonly name: Name;
+  /** The contract ABI. */
+  readonly abi: unknown;
+  /** The contract addresses. */
+  readonly addresses: readonly Address[];
+};
+
+// ============== Fuel Types ==============
+
+/** Fuel chain configuration (for IndexerConfig). */
+type FuelChainConfig<Id extends number = number> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
+  readonly endBlock?: number;
+  /** Number of blocks to keep for reorg handling (default: 200). */
+  readonly maxReorgDepth?: number;
+};
+
+/** Fuel chain value (for runtime Indexer). */
+type FuelChain<
+  Id extends number = number,
+  ContractName extends string = never
+> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The chain name. */
+  readonly name: string;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
+  readonly endBlock: number | undefined;
+  /** Whether the chain has completed initial sync and is processing live events. */
+  readonly isLive: boolean;
+} & {
+  readonly [K in ContractName]: FuelContract<K>;
+};
+
+// ============== SVM (Solana) Types ==============
+
+/** SVM chain configuration (for IndexerConfig). */
+type SvmChainConfig<Id extends number = number> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
+  readonly endBlock?: number;
+  /** Number of blocks to keep for reorg handling (default: 200). */
+  readonly maxReorgDepth?: number;
+};
+
+/** SVM chain value (for runtime Indexer). */
+type SvmChain<Id extends number = number> = {
+  /** The chain ID. */
+  readonly id: Id;
+  /** The chain name. */
+  readonly name: string;
+  /** The block number indexing starts from. */
+  readonly startBlock: number;
+  /** The block number indexing stops at (if configured). */
+  readonly endBlock: number | undefined;
+  /** Whether the chain has completed initial sync and is processing live events. */
+  readonly isLive: boolean;
+};
+
+// ============== Indexer Type ==============
+
+// Helper: Check if ecosystem is configured in a given config
+type HasEvm<Config> = "evm" extends keyof Config ? true : false;
+type HasFuel<Config> = "fuel" extends keyof Config ? true : false;
+type HasSvm<Config> = "svm" extends keyof Config ? true : false;
+
+// Count ecosystems using tuple length
+type BoolToNum<B extends boolean> = B extends true ? 1 : 0;
+type EcosystemTuple<Config> = [
+  ...([BoolToNum<HasEvm<Config>>] extends [1] ? [1] : []),
+  ...([BoolToNum<HasFuel<Config>>] extends [1] ? [1] : []),
+  ...([BoolToNum<HasSvm<Config>>] extends [1] ? [1] : [])
+];
+type EcosystemCount<Config> = EcosystemTuple<Config>["length"];
+
+// EVM ecosystem type
+type EvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
+  "evm" extends keyof Config
+    ? Config["evm"] extends {
+        chains: infer Chains;
+        contracts?: Record<infer ContractName, any>;
+      }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all EVM chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in Chains[keyof Chains]["id"]]: EvmChain<
+                K,
+                ContractName extends string ? ContractName : never
+              >;
+            } & {
+              readonly [K in keyof Chains]: EvmChain<
+                Chains[K]["id"],
+                ContractName extends string ? ContractName : never
+              >;
+            };
+          }
+        : never
+      : never
+    : never;
+
+// Fuel ecosystem type
+type FuelEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
+  "fuel" extends keyof Config
+    ? Config["fuel"] extends {
+        chains: infer Chains;
+        contracts?: Record<infer ContractName, any>;
+      }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all Fuel chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in Chains[keyof Chains]["id"]]: FuelChain<
+                K,
+                ContractName extends string ? ContractName : never
+              >;
+            } & {
+              readonly [K in keyof Chains]: FuelChain<
+                Chains[K]["id"],
+                ContractName extends string ? ContractName : never
+              >;
+            };
+          }
+        : never
+      : never
+    : never;
+
+// SVM ecosystem type
+type SvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
+  "svm" extends keyof Config
+    ? Config["svm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all SVM chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in Chains[keyof Chains]["id"]]: SvmChain<K>;
+            } & {
+              readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
+            };
+          }
+        : never
+      : never
+    : never;
+
+// Single ecosystem chains (flattened at root level)
+type SingleEcosystemChains<Config extends IndexerConfig> =
+  HasEvm<Config> extends true
+    ? EvmEcosystem<Config>
+    : HasFuel<Config> extends true
+    ? FuelEcosystem<Config>
+    : HasSvm<Config> extends true
+    ? SvmEcosystem<Config>
+    : {};
+
+// Multi-ecosystem chains (namespaced by ecosystem)
+type MultiEcosystemChains<Config extends IndexerConfig> =
+  (HasEvm<Config> extends true
+    ? {
+        /** EVM ecosystem configuration. */
+        readonly evm: EvmEcosystem<Config>;
+      }
+    : {}) &
+    (HasFuel<Config> extends true
+      ? {
+          /** Fuel ecosystem configuration. */
+          readonly fuel: FuelEcosystem<Config>;
+        }
+      : {}) &
+    (HasSvm<Config> extends true
+      ? {
+          /** SVM ecosystem configuration. */
+          readonly svm: SvmEcosystem<Config>;
+        }
+      : {});
+
+/**
+ * Indexer type resolved from config, adapting chain properties based on configured ecosystems.
+ * - Single ecosystem: chains are at the root level.
+ * - Multiple ecosystems: chains are namespaced by ecosystem (evm, fuel, svm).
+ */
+export type IndexerFromConfig<Config extends IndexerConfig> = {
+  /** The indexer name from config.yaml. */
+  readonly name: Config["name"];
+  /** The indexer description from config.yaml. */
+  readonly description: string | undefined;
+} & (EcosystemCount<Config> extends 1
+  ? SingleEcosystemChains<Config>
+  : MultiEcosystemChains<Config>);

@@ -539,16 +539,17 @@ mod test {
         }
     }
 
-    #[test]
-    fn subgraph_migration_templates_exist() {
-        let template_dirs = TemplateDirs::new();
-
-        for lang in Language::iter() {
-            template_dirs
-                .get_subgraph_migration_lang_dir(&lang)
-                .expect("subgraph migration lang");
-        }
-    }
+    // Subgraph migration is a deprecated feature
+    // #[test]
+    // fn subgraph_migration_templates_exist() {
+    //     let template_dirs = TemplateDirs::new();
+    //
+    //     for lang in Language::iter() {
+    //         template_dirs
+    //             .get_subgraph_migration_lang_dir(&lang)
+    //             .expect("subgraph migration lang");
+    //     }
+    // }
 
     #[test]
     #[should_panic]

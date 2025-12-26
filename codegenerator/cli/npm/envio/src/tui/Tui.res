@@ -253,7 +253,7 @@ module App = {
         <Text> {"Dev Console: "->React.string} </Text>
         <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
       </Box>
-      <Messages config=state.indexer.config />
+      <Messages config=state.ctx.config />
     </Box>
   }
 }

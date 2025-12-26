@@ -106,7 +106,6 @@ type chains = dict<chainInfo>
 type loaderReturn
 type handlerContext = private {
   isPreload: bool,
-  chains: chains,
   chain: chainInfo,
 }
 type handlerArgs = {

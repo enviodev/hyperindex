@@ -4,6 +4,7 @@ target
 *~
 *.swo
 *.swp
+.pnpm-store
 
 #All generated code for scenarios
 scenarios/**/*.bs.js

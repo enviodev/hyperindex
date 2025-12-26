@@ -1,6 +1,6 @@
 open RescriptMocha
 
-@module("viem") external parseAbi: array<string> => Ethers.abi = "parseAbi"
+@module("viem") external parseAbi: array<string> => EvmTypes.Abi.t = "parseAbi"
 
 describe("decodeEventLogOrThrow", () => {
   it("decodes event with args as an object", () => {

@@ -15,10 +15,11 @@ type receiptType =
   | @as(12) Burn
 
 @module("./vendored-fuel-abi-coder.js")
-external transpileAbi: Js.Json.t => Ethers.abi = "transpileAbi"
+external transpileAbi: Js.Json.t => EvmTypes.Abi.t = "transpileAbi"
 
 @module("./vendored-fuel-abi-coder.js") @scope("AbiCoder")
-external getLogDecoder: (~abi: Ethers.abi, ~logId: string) => string => unknown = "getLogDecoder"
+external getLogDecoder: (~abi: EvmTypes.Abi.t, ~logId: string) => string => unknown =
+  "getLogDecoder"
 
 module Receipt = {
   @tag("receiptType")
@@ -30,7 +31,7 @@ module Receipt = {
     | @as(11) Mint({val: bigint, subId: string})
     | @as(12) Burn({val: bigint, subId: string})
 
-  let getLogDataDecoder = (~abi: Ethers.abi, ~logId: string) => {
+  let getLogDataDecoder = (~abi: EvmTypes.Abi.t, ~logId: string) => {
     let decode = getLogDecoder(~abi, ~logId)
     data => data->decode->Utils.magic
   }

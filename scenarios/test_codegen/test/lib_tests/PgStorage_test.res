@@ -122,7 +122,7 @@ describe("Test PgStorage SQL generation functions", () => {
           )->Entities.entityModToInternal,
           module(Entities.EntityWithAllTypes)->Entities.entityModToInternal,
         ]
-        let enums = [Enums.EntityType.config->Table.fromGenericEnumConfig]
+        let enums = Enums.allEnums
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
@@ -131,6 +131,7 @@ describe("Test PgStorage SQL generation functions", () => {
           ~enums,
           ~chainConfigs=[
             {
+              name: "Chain1",
               id: 1,
               startBlock: 100,
               endBlock: 200,
@@ -139,6 +140,7 @@ describe("Test PgStorage SQL generation functions", () => {
               sources: [],
             },
             {
+              name: "Chain137",
               id: 137,
               startBlock: 0,
               maxReorgDepth: 200,
@@ -164,7 +166,8 @@ describe("Test PgStorage SQL generation functions", () => {
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TYPE "test_schema".ENTITY_TYPE AS ENUM('A', 'B', 'C', 'CustomSelectionTestPass', 'D', 'EntityWith63LenghtName______________________________________one', 'EntityWith63LenghtName______________________________________two', 'EntityWithAllNonArrayTypes', 'EntityWithAllTypes', 'EntityWithBigDecimal', 'EntityWithRestrictedReScriptField', 'EntityWithTimestamp', 'Gravatar', 'NftCollection', 'PostgresNumericPrecisionEntityTester', 'SimpleEntity', 'Token', 'User', 'dynamic_contract_registry');
+CREATE TYPE "test_schema".AccountType AS ENUM('ADMIN', 'USER');
+CREATE TYPE "test_schema".GravatarSize AS ENUM('SMALL', 'MEDIUM', 'LARGE');
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" INTEGER NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, "_num_batches_fetched" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" INTEGER NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
@@ -623,6 +626,7 @@ WHERE cp."block_hash" IS NOT NULL
       "Should create correct SQL for single chain config",
       async () => {
         let chainConfig: Config.chain = {
+          name: "Chain1",
           id: 1,
           startBlock: 100,
           endBlock: 200,
@@ -651,6 +655,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
       "Should create correct SQL for single chain config with no end block",
       async () => {
         let chainConfig: Config.chain = {
+          name: "Chain1",
           id: 1,
           startBlock: 100,
           maxReorgDepth: 5,
@@ -678,6 +683,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
       "Should create correct SQL for multiple chain configs",
       async () => {
         let chainConfig1: Config.chain = {
+          name: "Chain1",
           id: 1,
           startBlock: 100,
           endBlock: 200,
@@ -687,6 +693,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
         }
 
         let chainConfig2: Config.chain = {
+          name: "Chain42",
           id: 42,
           startBlock: 500,
           maxReorgDepth: 0,
