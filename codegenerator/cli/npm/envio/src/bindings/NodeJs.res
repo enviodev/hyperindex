@@ -123,3 +123,28 @@ module Fs = {
     external readdir: Path.t => Js.Promise.t<array<string>> = "readdir"
   }
 }
+
+module Test = {
+  @module("node:test")
+  external describe: (string, unit => unit) => unit = "describe"
+
+  @module("node:test")
+  external it: (string, unit => promise<unit>) => unit = "test"
+
+  @module("node:test")
+  external it_only: (string, unit => promise<unit>) => unit = "test.only"
+
+  @module("node:test")
+  external it_skip: (string, unit => promise<unit>) => unit = "test.skip"
+}
+
+module Assert = {
+  type assertion<'a> = ('a, 'a, ~message: string=?) => unit
+
+  @module("node:assert") external deepEqual: assertion<'a> = "deepEqual"
+  @module("node:assert") external strictEqual: assertion<'a> = "strictEqual"
+  @module("node:assert")
+  external deepStrictEqual: assertion<'a> = "deepStrictEqual"
+  @module("node:assert") external ok: (bool, ~message: string=?) => unit = "ok"
+  @module("node:assert") external fail: string => 'a = "fail"
+}

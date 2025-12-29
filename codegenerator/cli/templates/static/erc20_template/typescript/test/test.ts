@@ -1,4 +1,5 @@
-import assert from "assert";
+import { describe, it } from "node:test";
+import assert from "node:assert";
 import { TestHelpers, type Account } from "generated";
 
 const { MockDb, ERC20, Addresses } = TestHelpers;
@@ -43,9 +44,9 @@ describe("Transfers", () => {
       mockDbAfterTransfer.entities.Account.get(userAddress1)?.balance;
 
     //Assert the expected balance
-    assert.equal(
-      2n,
+    assert.strictEqual(
       account1Balance,
+      2n,
       "Should have subtracted transfer amount 3 from userAddress1 balance 5"
     );
 
@@ -54,9 +55,9 @@ describe("Transfers", () => {
       mockDbAfterTransfer.entities.Account.get(userAddress2)?.balance;
 
     //Assert the expected balance
-    assert.equal(
-      3n,
+    assert.strictEqual(
       account2Balance,
+      3n,
       "Should have added transfer amount 3 to userAddress2 balance 0"
     );
   });

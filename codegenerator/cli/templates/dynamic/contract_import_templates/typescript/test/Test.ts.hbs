@@ -1,6 +1,7 @@
 {{#with imported_contracts.[0] as | contract |}}
     {{#with contract.imported_events.[0] as | event |}}
-import assert from "assert";
+import { describe, it } from "node:test";
+import assert from "node:assert";
 import { 
   TestHelpers,
   type {{contract.name.capitalized}}_{{event.name}}

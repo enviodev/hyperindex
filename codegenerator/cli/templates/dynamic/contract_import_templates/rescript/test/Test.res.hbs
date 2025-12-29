@@ -1,18 +1,17 @@
-open RescriptMocha
-
 open Belt
+open NodeJs
 open TestHelpers
 
 {{#with imported_contracts.[0] as | contract |}}
     {{#with contract.imported_events.[0] as | event |}}
-describe("{{contract.name.capitalized}} contract {{event.name}} event tests", () => {
+Test.describe("{{contract.name.capitalized}} contract {{event.name}} event tests", () => {
   // Create mock db
   let mockDb = MockDb.createMockDb()
 
   // Creating mock for {{contract.name.capitalized}} contract {{event.name}} event
   let event = {{event.create_mock_code}};
 
-  Async.it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async () => {
+  Test.it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async () => {
     // Processing the event
     let mockDbUpdated = await {{contract.name.capitalized}}.{{event.name}}.processEvent({
       event,

@@ -3,33 +3,24 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-  {{#if is_typescript}}
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.ts",
-  {{/if}}
   {{#if is_rescript}}
-    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.res.mjs",
-    "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
   {{/if}}
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
     "start": "{{#if is_rescript}}pnpm build && {{/if}}envio start",
-    "test": "{{#if is_rescript}}pnpm build && {{/if}}pnpm mocha"
+    "test": "{{#if is_rescript}}pnpm build && {{/if}}node --no-warnings --import tsx --test test/**/*.{{#if is_rescript}}res.mjs{{else}}ts{{/if}}"
   },
   "devDependencies": {
   {{#if is_rescript}}
     "rescript": "11.1.3",
   {{/if}}
   {{#if is_typescript}}
-    "@types/chai": "^4.3.11",    
-    "@types/mocha": "10.0.6",
     "@types/node": "^24.10.1",
-    "typescript": "5.9.3",
-    "chai": "4.3.10",
   {{/if}}
-    "tsx": "4.21.0",
-    "mocha": "10.2.0"
+    "typescript": "5.9.3",
+    "tsx": "4.21.0"
   },
   "dependencies": {
     "envio": "{{envio_version}}"
