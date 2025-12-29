@@ -1479,7 +1479,7 @@ switch chainId {{
             let contracts_entries: Vec<String> = cfg
                 .contracts
                 .values()
-                .map(|contract| {
+                .map(|contract| -> Result<String> {
                     let abi_value = match &contract.abi {
                         Abi::Evm(abi) => {
                             // Inline the ABI JSON for EVM
@@ -1488,12 +1488,20 @@ switch chainId {{
                         Abi::Fuel(abi) => {
                             // Generate import and reference for Fuel
                             let import_name = format!("{}Abi", contract.name);
-                            let path_str = abi.path_buf.to_string_lossy();
-                            let relative_path = if path_str.starts_with('/') {
-                                format!("..{}", path_str)
-                            } else {
-                                format!("../{}", path_str)
-                            };
+                            // Compute relative path from generated directory to ABI file
+                            let relative_path_buf =
+                                diff_paths(&abi.path_buf, &cfg.parsed_project_paths.generated)
+                                    .ok_or_else(|| {
+                                        anyhow!(
+                                    "Failed to compute relative path from generated to ABI file"
+                                )
+                                    })?;
+                            let relative_path_with_dot =
+                                add_leading_relative_dot(relative_path_buf);
+                            let relative_path = relative_path_with_dot
+                                .to_str()
+                                .ok_or_else(|| anyhow!("Failed converting ABI path to str"))?
+                                .to_string();
                             fuel_imports.push(format!(
                                 "import {} from \"{}\";",
                                 import_name, relative_path
@@ -1501,9 +1509,12 @@ switch chainId {{
                             import_name
                         }
                     };
-                    format!("      \"{}\": {{ abi: {} }},", contract.name, abi_value)
+                    Ok(format!(
+                        "      \"{}\": {{ abi: {} }},",
+                        contract.name, abi_value
+                    ))
                 })
-                .collect();
+                .collect::<Result<Vec<String>>>()?;
 
             let contracts_str = if contracts_entries.is_empty() {
                 String::new()

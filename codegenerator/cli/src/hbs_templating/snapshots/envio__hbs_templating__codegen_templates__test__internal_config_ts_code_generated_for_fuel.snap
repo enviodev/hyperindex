@@ -2,7 +2,7 @@
 source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.internal_config_ts_code
 ---
-import GreeterAbi from "../Users/dzakh/code/envio/hyperindex/codegenerator/cli/test/abis/greeter-abi.json";
+import GreeterAbi from "../abis/greeter-abi.json";
 import type { IndexerConfig } from "envio";
 
 export default {
