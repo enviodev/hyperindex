@@ -1,5 +1,5 @@
 import { runUpMigrations } from "../../generated/src/db/Migrations.res.mjs";
-import { makeClient } from "../../../../codegenerator/cli/npm/envio/src/PgStorage.gen";
+import { makeClient } from "envio/src/PgStorage.gen";
 
 export const createSql = makeClient;
 

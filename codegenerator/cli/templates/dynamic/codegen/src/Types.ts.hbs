@@ -82,7 +82,7 @@ export type Indexer = Global extends {
   ? IndexerFromConfig<Config>
   : "The Indexer type is not available. Run 'pnpm envio codegen' to generate types";
 
-type ChainId = {{#if is_evm_ecosystem}}EvmChainId{{/if}}{{#if is_fuel_ecosystem}}FuelChainId{{/if}}{{#if is_svm_ecosystem}}SvmChainId{{/if}}
+export type ChainId = {{#if is_evm_ecosystem}}EvmChainId{{/if}}{{#if is_fuel_ecosystem}}FuelChainId{{/if}}{{#if is_svm_ecosystem}}SvmChainId{{/if}}
 
 export type HandlerContext = {
   /**
