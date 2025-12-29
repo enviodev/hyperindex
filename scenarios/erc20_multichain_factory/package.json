@@ -6,7 +6,7 @@
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
-    "mocha": "mocha --exit test/**/*.{ts,res.mjs}",
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.res.mjs",
     "test": "pnpm build && pnpm mocha",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "pnpm build && envio dev",
@@ -15,6 +15,7 @@
   "dependencies": {
     "envio": "file:../../codegenerator/cli/npm/envio",
     "ethers": "6.8.0",
+    "tsx": "4.21.0",
     "helpers": "../helpers",
     "mocha": "10.2.0",
     "rescript": "11.1.3",

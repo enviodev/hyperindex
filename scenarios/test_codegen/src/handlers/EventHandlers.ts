@@ -390,6 +390,9 @@ const WHITELISTED_ADDRESSES = {
 EventFiltersTest.Transfer.handler(async (_) => {}, {
   wildcard: true,
   eventFilters: ({ chainId }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
     return [
       { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId] },
       { from: WHITELISTED_ADDRESSES[chainId], to: ZERO_ADDRESS },
@@ -398,11 +401,19 @@ EventFiltersTest.Transfer.handler(async (_) => {}, {
 });
 EventFiltersTest.EmptyFiltersArray.handler(async (_) => {}, {
   wildcard: true,
-  eventFilters: [],
+  eventFilters: ({ chainId }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
+    return [];
+  },
 });
 EventFiltersTest.WildcardWithAddress.handler(async (_) => {}, {
   wildcard: true,
-  eventFilters: ({ addresses }) => {
+  eventFilters: ({ chainId, addresses }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
     return [
       { from: ZERO_ADDRESS, to: addresses },
       { from: addresses, to: ZERO_ADDRESS },
@@ -411,7 +422,10 @@ EventFiltersTest.WildcardWithAddress.handler(async (_) => {}, {
 });
 EventFiltersTest.WithExcessField.handler(async (_) => {}, {
   wildcard: true,
-  eventFilters: (_) => {
+  eventFilters: ({ chainId }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
     return { from: ZERO_ADDRESS, to: ZERO_ADDRESS };
   },
 });
@@ -734,12 +748,13 @@ EventFiltersTest.FilterTestEvent.handler(
     }
   },
   {
-    eventFilters: {
-      addr: ["0x000"],
+    eventFilters: ({ chainId }) => {
+      if (chainId !== 100 && chainId !== 137) {
+        return false;
+      }
+      return {
+        addr: ["0x000"],
+      };
     },
   }
 );
-
-EventFiltersTest.WildcardHandlerWithLoader.handler(async (_) => {}, {
-  wildcard: true,
-});

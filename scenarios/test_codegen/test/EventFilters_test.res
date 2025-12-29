@@ -1,5 +1,7 @@
 open RescriptMocha
 
+let _ = await Generated.registerAllHandlers()
+
 // Test types:
 let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Types.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
 
@@ -96,7 +98,7 @@ describe("Test eventFilters", () => {
     let eventConfig = Types.EventFiltersTest.EmptyFiltersArray.register()
 
     Assert.deepEqual(
-      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=1)),
+      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
       Static([
         {
           topic0: [
@@ -108,7 +110,7 @@ describe("Test eventFilters", () => {
         },
       ]),
     )
-    Assert.equal(eventConfig.dependsOnAddresses, false)
+    Assert.equal(eventConfig.dependsOnAddresses, false, ~message="foo")
   })
 
   it("Fails on filter with excess field", () => {
@@ -116,7 +118,7 @@ describe("Test eventFilters", () => {
 
     Assert.throws(
       () => {
-        eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=1))
+        eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137))
       },
       ~error={
         "message": `Invalid event filters configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`,

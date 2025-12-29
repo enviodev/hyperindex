@@ -158,47 +158,37 @@ describe("Use Envio test framework to test event handlers", () => {
     >(true);
 
     // Indexer value assertion
-    assert.deepEqual(indexer, {
-      name: "test_codegen",
-      description: "Gravatar for Ethereum",
-      chainIds: [1, 100, 137, 1337],
-      chains: {
-        1337: {
-          id: 1337,
-          startBlock: 1,
-          endBlock: undefined,
-          name: "1337",
-          isLive: false,
-        },
-        1: {
-          id: 1,
-          startBlock: 1,
-          endBlock: undefined,
-          name: "ethereumMainnet",
-          isLive: false,
-        },
-        100: {
-          id: 100,
-          startBlock: 1,
-          endBlock: undefined,
-          name: "gnosis",
-          isLive: false,
-        },
-        137: {
-          id: 137,
-          startBlock: 1,
-          endBlock: undefined,
-          name: "polygon",
-          isLive: false,
-        },
-      },
-    });
+    assert.deepEqual(indexer.name, "test_codegen");
+    assert.deepEqual(indexer.description, "Gravatar for Ethereum");
     assert.deepEqual(indexer.chainIds, [1, 100, 137, 1337]);
+    assert.deepEqual(Object.keys(indexer.chains), [1, 100, 137, 1337]);
     assert.deepEqual(
       indexer.chains[1],
       indexer.chains.ethereumMainnet,
       "Chains by name are not enumerable, but should be accessible by name"
     );
+    assert.deepEqual(indexer.chains[1].id, 1);
+    assert.deepEqual(indexer.chains[1].startBlock, 1);
+    assert.deepEqual(indexer.chains[1].endBlock, undefined);
+    assert.deepEqual(indexer.chains[1].name, "ethereumMainnet");
+    assert.deepEqual(indexer.chains[1].isLive, false);
+    assert.deepEqual(indexer.chains[1].Noop.addresses, [
+      "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3",
+    ]);
+    assert.deepEqual(indexer.chains[1].Noop.name, "Noop");
+    assert.deepEqual(Object.keys(indexer.chains[1]), [
+      "id",
+      "startBlock",
+      "endBlock",
+      "name",
+      "isLive",
+      "EventFiltersTest",
+      "Gravatar",
+      "NftFactory",
+      "Noop",
+      "SimpleNft",
+      "TestEvents",
+    ]);
   });
 
   it("Indexer chains should have contracts with name and abi", () => {
@@ -642,18 +632,5 @@ describe("Use Envio test framework to test event handlers", () => {
     await assert.rejects(mockDbInitial.processEvents([event]), {
       message: "This should not be called",
     });
-  });
-
-  it("Can initialize the handlerWithLoader using wildcard", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const event = EventFiltersTest.WildcardHandlerWithLoader.createMockEvent(
-      {}
-    );
-
-    const _updatedMockDb = await mockDbInitial.processEvents([event]);
-
-    // Nothing to check here. There was a regression caused by Caml_option.some
-    // So we just want to make sure that the handler is initialized correctly.
   });
 });

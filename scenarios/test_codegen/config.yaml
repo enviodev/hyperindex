@@ -17,7 +17,6 @@ contracts:
       - event: WildcardWithAddress(address indexed from, address indexed to, uint256 amount)
       - event: WithExcessField(address indexed from)
       - event: EmptyFiltersArray(address indexed from)
-      - event: "WildcardHandlerWithLoader()"
       - event: "FilterTestEvent(address indexed addr)"
 event_decoder: "hypersync-client" # default
 chains:

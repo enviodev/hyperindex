@@ -232,7 +232,7 @@ impl EventMod {
                 network where this event occurred. */ chainId: chainId, /** Addresses of the \
                 contracts indexing the event. */ addresses: array<Address.t>}\n
 @genType @unboxed type eventFiltersDefinition = Single(eventFilter) | \
-                Multiple(array<eventFilter>)\n
+                Multiple(array<eventFilter>) | @as(false) Skip | @as(true) Keep\n
 @genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => \
                 eventFiltersDefinition)"
                 .to_string(),
