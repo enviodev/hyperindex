@@ -60,15 +60,7 @@ let makeGeneratedConfig = () => {
           Config.name: "{{contract.name.capitalized}}",
           addresses: [
             {{#each contract.addresses as | address |}}
-            {{#if ../../../is_evm_ecosystem}}
-            {{#if ../../../lowercase_addresses}}
-            "{{address}}"->Address.Evm.fromStringLowercaseOrThrow
-            {{else}}
-            "{{address}}"->Address.Evm.fromStringOrThrow
-            {{/if}}
-            {{else}}
-            "{{address}}"->Address.unsafeFromString
-            {{/if}},
+            "{{address}}",
             {{/each}}
           ],
           events: [

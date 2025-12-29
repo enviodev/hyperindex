@@ -20,7 +20,7 @@ type contract = {
 
 type codegenContract = {
   name: string,
-  addresses: array<Address.t>,
+  addresses: array<string>,
   events: array<Internal.eventConfig>,
   startBlock: option<int>,
 }
@@ -198,11 +198,26 @@ let fromPublic = (
   codegenChains->Array.forEach(codegenChain => {
     let mergedContracts = codegenChain.contracts->Array.map(codegenContract => {
       switch contractsWithAbis->Js.Dict.get(codegenContract.name) {
-      | Some(abi) => // Convert codegenContract to contract by adding abi
+      | Some(abi) =>
+        // Parse addresses based on ecosystem and address format
+        let parsedAddresses = codegenContract.addresses->Array.map(
+          addressString => {
+            switch ecosystemName {
+            | Ecosystem.Evm =>
+              if lowercaseAddresses {
+                addressString->Address.Evm.fromStringLowercaseOrThrow
+              } else {
+                addressString->Address.Evm.fromStringOrThrow
+              }
+            | Ecosystem.Fuel | Ecosystem.Svm => addressString->Address.unsafeFromString
+            }
+          },
+        )
+        // Convert codegenContract to contract by adding abi
         {
           name: codegenContract.name,
           abi,
-          addresses: codegenContract.addresses,
+          addresses: parsedAddresses,
           events: codegenContract.events,
           startBlock: codegenContract.startBlock,
         }
