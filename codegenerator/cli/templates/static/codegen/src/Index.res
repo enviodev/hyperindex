@@ -116,6 +116,25 @@ let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => 
       ->Promise.thenResolve(metrics => res->endWithData(metrics))
   })
 
+  // MCP Server (dev mode only)
+  if isDevelopmentMode {
+    let mcpContext: McpServer.toolContext = {
+      getState: () => getState()->S.reverseConvertToJsonOrThrow(stateSchema),
+      indexerConfig: indexer,
+    }
+
+    let mcpServer = McpServer.createServer(~context=mcpContext)
+    let transport = Mcp.createStreamableHttpServerTransport()
+    
+    // Connect server to transport
+    let _ = mcpServer->Mcp.connect(transport)
+
+    // Handle MCP requests via the SDK's transport
+    app->post("/mcp", (req, res) => {
+      let _ = transport->Mcp.handleRequest(req, res)
+    })
+  }
+
   let _ = app->listen(Env.serverPort)
 }
 

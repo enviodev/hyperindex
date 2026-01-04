@@ -54,6 +54,12 @@ module App = {
         </Text>
         <Text color={Info} underline=true> {`${Env.Hasura.url}/v1/graphql`->React.string} </Text>
       </Box>
+      <Box flexDirection={Row}>
+        <Text>
+          {"MCP Server:          "->React.string}
+        </Text>
+        <Text color={Info} underline=true> {`http://localhost:${Env.serverPort->Belt.Int.toString}/mcp`->React.string} </Text>
+      </Box>
       <Messages config />
     </Box>
   }

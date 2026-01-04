@@ -11,6 +11,7 @@ type req = private {
   headers: dict<string>,
   method: Rest.method,
   query: dict<string>,
+  body: Js.Json.t,
 }
 type res
 
