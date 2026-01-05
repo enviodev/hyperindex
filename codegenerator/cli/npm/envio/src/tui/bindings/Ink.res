@@ -107,9 +107,8 @@ module Newline = {
   Adds one or more newline characters. Must be used within <Text> components.
 
   */
-  @module("ink")
   @react.component
-  external make: (~count: int=?) => React.element = "Newline"
+  let make = () => <Text> {" "->React.string} </Text>
 }
 
 module Spacer = {
@@ -216,6 +215,23 @@ module Hooks = {
   }
   @module("ink")
   external useFocusManager: unit => focusManager = "useFocusManager"
+
+  @get external getColumns: writableStream => int = "columns"
+  @send external on: (writableStream, @as("resize") _, unit => unit) => unit = "on"
+  @send external off: (writableStream, @as("resize") _, unit => unit) => unit = "off"
+
+  let useStdoutColumns = () => {
+    let {stdout} = useStdout()
+    let (columns, setColumns) = React.useState(() => stdout->getColumns)
+
+    React.useEffect1(() => {
+      let handler = () => setColumns(_ => stdout->getColumns)
+      stdout->on(handler)
+      Some(() => stdout->off(handler))
+    }, [stdout])
+
+    columns
+  }
 }
 
 module BigText = {
@@ -352,4 +368,9 @@ module Spinner = {
     | @as("dwarfFortress") DwarfFortress
   @module("ink-spinner") @react.component
   external make: (@as("type") ~type_: typeOption=?) => React.element = "default"
+}
+
+module Table = {
+  @module("ink-table") @react.component
+  external make: (~head: array<string>, ~rows: array<array<string>>) => React.element = "Table"
 }

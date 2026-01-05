@@ -28,7 +28,6 @@ type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chains: Internal.chains,
   chain: Internal.chainInfo,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
@@ -190,4 +189,3 @@ module {{event.name}} = {
 }
 
 {{/each}}
-{{types_code}}

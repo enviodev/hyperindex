@@ -1,32 +1,29 @@
-import { deepEqual, equal, fail } from "assert";
+import { deepEqual, fail } from "assert";
 import {
   createEffect,
   type Effect,
   S,
   type Logger,
   type EffectCaller,
-  type Address,
 } from "envio";
-import { TestEvents } from "generated";
-import { TestHelpers } from "generated";
-import { EventFiltersTest } from "generated";
 import {
+  TestEvents,
+  TestHelpers,
+  EventFiltersTest,
   Gravatar,
   BigDecimal,
   NftFactory,
   SimpleNft,
+  type EvmChainId,
   type NftCollection,
   type User,
   type eventLog,
   type NftFactory_SimpleNftCreated_eventArgs,
   type NftFactory_SimpleNftCreated_event,
-  type ChainId,
   onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
-
-expectType<TypeEqual<Address, `0x${string}`>>(true);
 
 // Test effects type inference
 const noopEffect = createEffect(
@@ -97,7 +94,7 @@ const getBalance = createEffect(
   {
     name: "getBalance",
     input: {
-      address: S.string,
+      address: S.address,
       blockNumber: S.optional(S.bigint),
     },
     output: S.bigDecimal,
@@ -131,7 +128,10 @@ const getBalance = createEffect(
 expectType<
   TypeEqual<
     typeof getBalance,
-    Effect<{ address: string; blockNumber?: bigint | undefined }, BigDecimal>
+    Effect<
+      { address: `0x${string}`; blockNumber?: bigint | undefined },
+      BigDecimal
+    >
   >
 >(true);
 
@@ -159,9 +159,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     parentHash: "0xParentHash",
   });
   S.assertOrThrow(event.block, blockSchema)!;
-  let chainFromChains = context.chains[event.chainId];
   deepEqual(context.chain.id, event.chainId);
-  equal(chainFromChains, context.chain);
 
   // We already do type checking in the tests,
   // but double-check that we receive correct types
@@ -188,24 +186,12 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
     >
   >(true);
 
-  // Test chains field accessibility in TypeScript
-  expectType<
-    TypeEqual<
-      typeof context.chains,
-      {
-        [chainId in ChainId]: {
-          readonly id: ChainId;
-          readonly isLive: boolean;
-        };
-      }
-    >
-  >(true);
-
+  // Test chain field accessibility in TypeScript
   expectType<
     TypeEqual<
       typeof context.chain,
       {
-        readonly id: ChainId;
+        readonly id: EvmChainId;
         readonly isLive: boolean;
       }
     >
@@ -404,6 +390,9 @@ const WHITELISTED_ADDRESSES = {
 EventFiltersTest.Transfer.handler(async (_) => {}, {
   wildcard: true,
   eventFilters: ({ chainId }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
     return [
       { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId] },
       { from: WHITELISTED_ADDRESSES[chainId], to: ZERO_ADDRESS },
@@ -412,11 +401,19 @@ EventFiltersTest.Transfer.handler(async (_) => {}, {
 });
 EventFiltersTest.EmptyFiltersArray.handler(async (_) => {}, {
   wildcard: true,
-  eventFilters: [],
+  eventFilters: ({ chainId }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
+    return [];
+  },
 });
 EventFiltersTest.WildcardWithAddress.handler(async (_) => {}, {
   wildcard: true,
-  eventFilters: ({ addresses }) => {
+  eventFilters: ({ chainId, addresses }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
     return [
       { from: ZERO_ADDRESS, to: addresses },
       { from: addresses, to: ZERO_ADDRESS },
@@ -425,7 +422,10 @@ EventFiltersTest.WildcardWithAddress.handler(async (_) => {}, {
 });
 EventFiltersTest.WithExcessField.handler(async (_) => {}, {
   wildcard: true,
-  eventFilters: (_) => {
+  eventFilters: ({ chainId }) => {
+    if (chainId !== 100 && chainId !== 137) {
+      return false;
+    }
     return { from: ZERO_ADDRESS, to: ZERO_ADDRESS };
   },
 });
@@ -748,12 +748,13 @@ EventFiltersTest.FilterTestEvent.handler(
     }
   },
   {
-    eventFilters: {
-      addr: ["0x000"],
+    eventFilters: ({ chainId }) => {
+      if (chainId !== 100 && chainId !== 137) {
+        return false;
+      }
+      return {
+        addr: ["0x000"],
+      };
     },
   }
 );
-
-EventFiltersTest.WildcardHandlerWithLoader.handler(async (_) => {}, {
-  wildcard: true,
-});

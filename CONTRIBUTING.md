@@ -220,7 +220,7 @@ _Please refer to the [documentation website](https://docs.envio.dev) for a thoro
 Once you have configured the above files and deployed the contracts, the following can be used generate all the code that is required for indexing your project:
 
 ```sh
-envio codegen
+pnpm codegen
 ```
 
 ## Run the indexer

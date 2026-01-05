@@ -3,17 +3,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "gen:clean": "(cd generated && rescript clean)",
-    "gen:build": "(cd generated && rescript)",
-    "gen:watch": "(cd generated && rescript -w)",
-    "res:clean": "rescript clean",
-    "res:build": "rescript",
-    "res:watch": "rescript -w",
+    "build": "rescript",
+    "watch": "rescript -w",
     "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit 'test/**/*.{ts,res.mjs}'",
     "test": "rescript && tsc --noEmit && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
     "test:log": "DEBUG=true npm test",
-    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
+    "codegen": "envio codegen",
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
@@ -41,7 +37,6 @@
     "sinon": "^15.0.4"
   },
   "dependencies": {
-    "@rescript/react": "0.12.1",
     "bignumber.js": "^9.1.2",
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",

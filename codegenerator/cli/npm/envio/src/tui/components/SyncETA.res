@@ -1,7 +1,7 @@
 open Ink
 open Belt
 
-let isIndexerFullySynced = (chains: array<ChainData.chainData>) => {
+let isIndexerFullySynced = (chains: array<TuiData.chain>) => {
   chains->Array.reduce(true, (accum, current) => {
     switch current.progress {
     | Synced(_) => accum
@@ -10,11 +10,11 @@ let isIndexerFullySynced = (chains: array<ChainData.chainData>) => {
   })
 }
 
-let getTotalRemainingBlocks = (chains: array<ChainData.chainData>) => {
+let getTotalRemainingBlocks = (chains: array<TuiData.chain>) => {
   chains->Array.reduce(0, (accum, {progress, knownHeight, latestFetchedBlockNumber, endBlock}) => {
     let finalBlock = switch endBlock {
-      | Some(endBlock) => endBlock
-      | None => knownHeight
+    | Some(endBlock) => endBlock
+    | None => knownHeight
     }
     switch progress {
     | Syncing({latestProcessedBlock})
@@ -25,10 +25,7 @@ let getTotalRemainingBlocks = (chains: array<ChainData.chainData>) => {
   })
 }
 
-let getLatestTimeCaughtUpToHead = (
-  chains: array<ChainData.chainData>,
-  indexerStartTime: Js.Date.t,
-) => {
+let getLatestTimeCaughtUpToHead = (chains: array<TuiData.chain>, indexerStartTime: Js.Date.t) => {
   let latesttimestampCaughtUpToHeadOrEndblockFloat = chains->Array.reduce(0.0, (accum, current) => {
     switch current.progress {
     | Synced({timestampCaughtUpToHeadOrEndblock}) =>
@@ -47,7 +44,7 @@ let getLatestTimeCaughtUpToHead = (
   )
 }
 
-let getTotalBlocksProcessed = (chains: array<ChainData.chainData>) => {
+let getTotalBlocksProcessed = (chains: array<TuiData.chain>) => {
   chains->Array.reduce(0, (accum, {progress, latestFetchedBlockNumber}) => {
     switch progress {
     | Syncing({latestProcessedBlock, firstEventBlockNumber})
@@ -58,7 +55,7 @@ let getTotalBlocksProcessed = (chains: array<ChainData.chainData>) => {
   })
 }
 
-let useShouldDisplayEta = (~chains: array<ChainData.chainData>) => {
+let useShouldDisplayEta = (~chains: array<TuiData.chain>) => {
   let (shouldDisplayEta, setShouldDisplayEta) = React.useState(_ => false)
   React.useEffect(() => {
     //Only compute this while it is not displaying eta
@@ -144,9 +141,7 @@ module Syncing = {
   @react.component
   let make = (~etaStr) => {
     <Text bold=true>
-      <Text>
-        {"Sync Time ETA: "->React.string}
-      </Text>
+      <Text> {"Sync Time ETA: "->React.string} </Text>
       <Text> {etaStr->React.string} </Text>
       <Text> {" ("->React.string} </Text>
       <Text color=Primary>

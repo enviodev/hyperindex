@@ -32,6 +32,19 @@ module Object = {
 
   @val @scope("Object")
   external defineProperty: ('obj, string, propertyDescriptor<'a>) => 'obj = "defineProperty"
+
+  // Property descriptor with required value field (no boxing)
+  type enumerablePropertyDescriptor<'a> = {
+    enumerable: bool,
+    value: 'a,
+  }
+
+  @val @scope("Object")
+  external definePropertyWithValue: ('obj, string, enumerablePropertyDescriptor<'a>) => 'obj =
+    "defineProperty"
+
+  @val @scope("Object")
+  external createNullObject: (@as(json`null`) _, unit) => 'a = "create"
 }
 
 module Error = {

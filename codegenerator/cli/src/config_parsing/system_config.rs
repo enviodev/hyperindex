@@ -668,7 +668,7 @@ impl SystemConfig {
                         id: network.id,
                         max_reorg_depth: network
                             .max_reorg_depth
-                            .unwrap_or(get_max_reorg_depth_from_id(network.id)),
+                            .or_else(|| get_max_reorg_depth_from_id(network.id)),
                         start_block: network.start_block,
                         end_block: network.end_block,
                         sync_source,
@@ -832,7 +832,7 @@ impl SystemConfig {
                         id: network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
-                        max_reorg_depth: 0,
+                        max_reorg_depth: None,
                         sync_source,
                         contracts,
                     };
@@ -872,7 +872,7 @@ impl SystemConfig {
                         id: 0, //network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
-                        max_reorg_depth: 0,
+                        max_reorg_depth: None,
                         sync_source,
                         contracts: vec![],
                     };
@@ -1113,7 +1113,7 @@ pub struct Network {
     pub sync_source: DataSource,
     pub start_block: u64,
     pub end_block: Option<u64>,
-    pub max_reorg_depth: i32,
+    pub max_reorg_depth: Option<i32>,
     pub contracts: Vec<NetworkContract>,
 }
 

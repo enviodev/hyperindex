@@ -1,10 +1,257 @@
 import assert from "assert";
 import { it } from "mocha";
-import { TestHelpers, type User } from "generated";
+import {
+  TestHelpers,
+  indexer,
+  type User,
+  type Indexer,
+  type EvmChainId,
+  type EvmChainName,
+  type FuelChainId,
+  type SvmChainId,
+} from "generated";
+import { type Address } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
 
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 
 describe("Use Envio test framework to test event handlers", () => {
+  it("Indexer types and value", () => {
+    // Address type test
+    expectType<TypeEqual<Address, `0x${string}`>>(true);
+
+    // Indexer type tests
+    expectType<TypeEqual<typeof indexer, Indexer>>(true);
+
+    type ExpectedEvmContracts = {
+      readonly NftFactory: {
+        readonly name: "NftFactory";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly EventFiltersTest: {
+        readonly name: "EventFiltersTest";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly SimpleNft: {
+        readonly name: "SimpleNft";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly TestEvents: {
+        readonly name: "TestEvents";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly Gravatar: {
+        readonly name: "Gravatar";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+      readonly Noop: {
+        readonly name: "Noop";
+        readonly abi: readonly unknown[];
+        readonly addresses: readonly Address[];
+      };
+    };
+
+    // Chain types are internal, so we check through the indexer type
+    expectType<
+      TypeEqual<
+        typeof indexer.chains,
+        {
+          readonly ethereumMainnet: {
+            readonly id: 1;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+          readonly gnosis: {
+            readonly id: 100;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+          readonly polygon: {
+            readonly id: 137;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+          readonly "1337": {
+            readonly id: 1337;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+        } & {
+          readonly 1: {
+            readonly id: 1;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+          readonly 100: {
+            readonly id: 100;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+          readonly 137: {
+            readonly id: 137;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+          readonly 1337: {
+            readonly id: 1337;
+            readonly startBlock: number;
+            readonly endBlock: number | undefined;
+            readonly name: string;
+            readonly isLive: boolean;
+          } & ExpectedEvmContracts;
+        }
+      >
+    >(true);
+    // Check that chain has the expected structure with name and isLive
+    expectType<
+      TypeEqual<
+        typeof indexer.chains.ethereumMainnet,
+        {
+          readonly id: 1;
+          readonly startBlock: number;
+          readonly endBlock: number | undefined;
+          readonly name: string;
+          readonly isLive: boolean;
+        } & ExpectedEvmContracts
+      >
+    >(true);
+
+    const _chainId: EvmChainId = 1;
+
+    // EvmChainId should be the union of configured chain IDs
+    expectType<TypeEqual<EvmChainId, 1 | 1337 | 100 | 137>>(true);
+    expectType<
+      TypeEqual<EvmChainName, "ethereumMainnet" | "gnosis" | "polygon" | "1337">
+    >(true);
+
+    // Non-configured ecosystem types should return error strings
+    expectType<
+      TypeEqual<
+        FuelChainId,
+        "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        SvmChainId,
+        "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
+
+    // Indexer value assertion
+    assert.deepEqual(indexer.name, "test_codegen");
+    assert.deepEqual(indexer.description, "Gravatar for Ethereum");
+    assert.deepEqual(indexer.chainIds, [1, 100, 137, 1337]);
+    assert.deepEqual(Object.keys(indexer.chains), [1, 100, 137, 1337]);
+    assert.deepEqual(
+      indexer.chains[1],
+      indexer.chains.ethereumMainnet,
+      "Chains by name are not enumerable, but should be accessible by name"
+    );
+    assert.deepEqual(indexer.chains[1].id, 1);
+    assert.deepEqual(indexer.chains[1].startBlock, 1);
+    assert.deepEqual(indexer.chains[1].endBlock, undefined);
+    assert.deepEqual(indexer.chains[1].name, "ethereumMainnet");
+    assert.deepEqual(indexer.chains[1].isLive, false);
+    assert.deepEqual(indexer.chains[1].Noop.addresses, [
+      "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3",
+    ]);
+    assert.deepEqual(indexer.chains[1].Noop.name, "Noop");
+    assert.deepEqual(Object.keys(indexer.chains[1]), [
+      "id",
+      "startBlock",
+      "endBlock",
+      "name",
+      "isLive",
+      "EventFiltersTest",
+      "Gravatar",
+      "NftFactory",
+      "Noop",
+      "SimpleNft",
+      "TestEvents",
+    ]);
+  });
+
+  it("Indexer chains should have contracts with name and abi", () => {
+    // Type check: contracts should be present on chain objects
+    expectType<
+      TypeEqual<
+        typeof indexer.chains.ethereumMainnet.Noop,
+        {
+          readonly name: "Noop";
+          readonly abi: readonly unknown[];
+          readonly addresses: readonly Address[];
+        }
+      >
+    >(true);
+
+    expectType<
+      TypeEqual<
+        (typeof indexer.chains)[1337]["Gravatar"],
+        {
+          readonly name: "Gravatar";
+          readonly abi: readonly unknown[];
+          readonly addresses: readonly Address[];
+        }
+      >
+    >(true);
+
+    // Value checks: contracts should have name and abi properties
+    const { Gravatar, NftFactory } = indexer.chains[1337];
+    assert.strictEqual(Gravatar.name, "Gravatar");
+    assert.ok(Array.isArray(Gravatar.abi) && Gravatar.abi.length > 0);
+
+    assert.strictEqual(NftFactory.name, "NftFactory");
+    assert.ok(Array.isArray(NftFactory.abi));
+
+    // Check contracts exist on other chains
+    assert.strictEqual(indexer.chains[1].Noop.name, "Noop");
+    assert.strictEqual(
+      indexer.chains[100].EventFiltersTest.name,
+      "EventFiltersTest"
+    );
+    assert.strictEqual(indexer.chains[137].Noop.name, "Noop");
+  });
+
+  it("Contract ABIs should be the same across chains for same contract", () => {
+    // Same contract (Noop) on different chains should have the same ABI
+    const chain1 = indexer.chains[1];
+    const chain137 = indexer.chains[137];
+
+    assert.deepStrictEqual(
+      chain1.Noop.abi,
+      chain137.Noop.abi,
+      "Same contract on different chains should have identical ABIs"
+    );
+
+    // Same contract (EventFiltersTest) on different chains should have the same ABI
+    const chain100 = indexer.chains[100];
+    assert.deepStrictEqual(
+      chain100.EventFiltersTest.abi,
+      chain137.EventFiltersTest.abi,
+      "EventFiltersTest should have identical ABIs across chains"
+    );
+  });
+
   it("Runs contract register handler", async () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();
@@ -385,18 +632,5 @@ describe("Use Envio test framework to test event handlers", () => {
     await assert.rejects(mockDbInitial.processEvents([event]), {
       message: "This should not be called",
     });
-  });
-
-  it("Can initialize the handlerWithLoader using wildcard", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const event = EventFiltersTest.WildcardHandlerWithLoader.createMockEvent(
-      {}
-    );
-
-    const _updatedMockDb = await mockDbInitial.processEvents([event]);
-
-    // Nothing to check here. There was a regression caused by Caml_option.some
-    // So we just want to make sure that the handler is initialized correctly.
   });
 });
