@@ -189,5 +189,6 @@ pub async fn prompt_missing_init_args(
         ecosystem,
         language,
         api_token,
+        package_manager: init_args.package_manager,
     })
 }

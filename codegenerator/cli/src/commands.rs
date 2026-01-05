@@ -29,21 +29,36 @@ async fn execute_command(
         ))
 }
 
+/// Execute a command with String arguments (needed for dynamic package manager commands)
+async fn execute_command_string_args(
+    cmd: &str,
+    args: Vec<String>,
+    current_dir: &Path,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    execute_command(cmd, args_refs, current_dir).await
+}
+
 pub mod rescript {
-    use super::execute_command;
+    use super::execute_command_string_args;
+    use crate::package_manager::PackageManagerConfig;
     use anyhow::Result;
     use std::path::Path;
 
-    pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript"];
-        execute_command("pnpm", args, path).await
+    pub async fn build(
+        path: &Path,
+        pm_config: &PackageManagerConfig,
+    ) -> Result<std::process::ExitStatus> {
+        let pm = &pm_config.package_manager;
+        execute_command_string_args(pm.command(), pm.run_script_args("rescript"), path).await
     }
 }
 
 pub mod codegen {
     use super::{execute_command, rescript};
     use crate::{
-        config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
+        config_parsing::system_config::SystemConfig, hbs_templating,
+        package_manager::PackageManagerConfig, template_dirs::TemplateDirs,
     };
     use anyhow::{self, Context, Result};
     use std::path::Path;
@@ -71,53 +86,139 @@ pub mod codegen {
         Ok(())
     }
 
-    pub async fn check_and_install_pnpm(current_dir: &Path) -> Result<()> {
-        // Check if pnpm is already installed
-        let check_pnpm = execute_command("pnpm", vec!["--version"], current_dir).await;
+    /// Check if the package manager is available, and auto-install if supported
+    pub async fn check_package_manager(
+        pm_config: &PackageManagerConfig,
+        current_dir: &Path,
+    ) -> Result<()> {
+        let pm = &pm_config.package_manager;
+        let check = execute_command(pm.command(), vec!["--version"], current_dir).await;
 
-        // If pnpm is not installed, run the installation command
-        match check_pnpm {
+        match check {
             Ok(status) if status.success() => {
-                println!("Package pnpm is already installed. Continuing...");
+                println!("{} is available. Continuing...", pm.display_name());
             }
             _ => {
-                println!("Package pnpm is not installed. Installing now...");
-                let args = vec!["install", "--global", "pnpm"];
-                execute_command("npm", args, current_dir).await?;
+                if pm.can_auto_install() {
+                    println!(
+                        "{} is not installed. Installing now...",
+                        pm.display_name()
+                    );
+                    let args = vec!["install", "--global", pm.command()];
+                    execute_command("npm", args, current_dir).await?;
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "{} is not installed. Please install it first.",
+                        pm.display_name()
+                    ));
+                }
             }
         }
         Ok(())
     }
 
-    async fn pnpm_install(project_paths: &ParsedProjectPaths) -> Result<std::process::ExitStatus> {
-        println!("Checking for pnpm package...");
-        check_and_install_pnpm(&project_paths.generated).await?;
+    async fn install_dependencies(
+        project_paths: &ParsedProjectPaths,
+        pm_config: &PackageManagerConfig,
+    ) -> Result<std::process::ExitStatus> {
+        let pm = &pm_config.package_manager;
+        println!("Checking for {} package...", pm.display_name());
+        check_package_manager(pm_config, &project_paths.generated).await?;
 
+        // Install in generated directory (without lockfile)
         execute_command(
-            "pnpm",
-            vec!["install", "--no-lockfile", "--prefer-offline"],
+            pm.command(),
+            pm.install_args_no_lockfile(),
             &project_paths.generated,
         )
         .await?;
+
+        // Install in project root (with lockfile preservation)
         execute_command(
-            "pnpm",
-            vec!["install", "--prefer-offline"],
+            pm.command(),
+            pm.install_args_optimized(),
             &project_paths.project_root,
         )
         .await
     }
 
+    /// Fix the node_modules/generated symlink for bun projects.
+    ///
+    /// Bun copies local file dependencies instead of symlinking them, which causes
+    /// module duplication issues when the handler files import from "generated".
+    /// This ensures node_modules/generated is a symlink to ./generated.
+    fn fix_bun_generated_symlink(project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
+        let node_modules_generated = project_paths.project_root.join("node_modules/generated");
+
+        // Check if node_modules/generated exists
+        if node_modules_generated.exists() {
+            // Check if it's already a symlink
+            if node_modules_generated.is_symlink() {
+                // Already a symlink, nothing to do
+                return Ok(());
+            }
+
+            // It's a directory (bun copied instead of symlinking)
+            // Remove the directory
+            std::fs::remove_dir_all(&node_modules_generated).with_context(|| {
+                format!(
+                    "Failed to remove node_modules/generated directory at {}",
+                    node_modules_generated.display()
+                )
+            })?;
+        }
+
+        // Create symlink from node_modules/generated -> ../generated
+        // Use relative path for portability
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("../generated", &node_modules_generated).with_context(
+                || {
+                    format!(
+                        "Failed to create symlink at {}",
+                        node_modules_generated.display()
+                    )
+                },
+            )?;
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, use junction for directory symlinks (doesn't require admin)
+            std::os::windows::fs::symlink_dir(
+                project_paths.project_root.join("generated"),
+                &node_modules_generated,
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to create symlink at {}",
+                    node_modules_generated.display()
+                )
+            })?;
+        }
+
+        Ok(())
+    }
+
     async fn run_post_codegen_command_sequence(
         project_paths: &ParsedProjectPaths,
+        pm_config: &PackageManagerConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
         println!("Installing packages... ");
-        let exit1 = pnpm_install(project_paths).await?;
+        let exit1 = install_dependencies(project_paths, pm_config).await?;
         if !exit1.success() {
             return Ok(exit1);
         }
 
+        // Fix bun's module duplication issue by ensuring node_modules/generated is a symlink
+        // Bun copies local file dependencies instead of symlinking them, which breaks
+        // module identity when handler files import from "generated"
+        if pm_config.is_bun_runtime() {
+            fix_bun_generated_symlink(project_paths)?;
+        }
+
         println!("Generating HyperIndex code...");
-        let exit3 = rescript::build(&project_paths.generated)
+        let exit3 = rescript::build(&project_paths.generated, pm_config)
             .await
             .context("Failed running rescript build")?;
         if !exit3.success() {
@@ -143,16 +244,41 @@ pub mod codegen {
             .generate_templates(&config.parsed_project_paths)
             .context("Failed generating dynamic codegen files")?;
 
-        run_post_codegen_command_sequence(&config.parsed_project_paths)
-            .await
-            .context("Failed running post codegen command sequence")?;
+        // Create bunfig.toml for bun projects in generated folder
+        if config.package_manager_config.is_bun_runtime() {
+            let bunfig_content = r#"# Bun configuration file
+
+[install]
+# Disable telemetry
+telemetry = false
+
+# Use node_modules (default behavior)
+linkStrategy = "node"
+linker = "hoisted"
+
+# Save exact versions
+save = "exact"
+"#;
+            std::fs::write(
+                config.parsed_project_paths.generated.join("bunfig.toml"),
+                bunfig_content,
+            )
+            .context("Failed to create bunfig.toml in generated folder")?;
+        }
+
+        run_post_codegen_command_sequence(
+            &config.parsed_project_paths,
+            &config.package_manager_config,
+        )
+        .await
+        .context("Failed running post codegen command sequence")?;
 
         Ok(())
     }
 }
 
 pub mod start {
-    use super::execute_command;
+    use super::execute_command_string_args;
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
 
@@ -169,14 +295,19 @@ pub mod start {
                 );
             }
         }
-        let cmd = "npm";
-        let args = vec!["run", "start"];
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.generated).await?;
+        let pm = &config.package_manager_config.package_manager;
+        let exit = execute_command_string_args(
+            pm.command(),
+            pm.run_script_args("start"),
+            &config.parsed_project_paths.generated,
+        )
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!(
                 "Indexer crashed. For more details see the error logs above the TUI. Can't find \
-                 them? Restart the indexer with the 'TUI_OFF=true pnpm start' command."
+                 them? Restart the indexer with the 'TUI_OFF=true {} start' command.",
+                pm.command()
             ));
         }
         println!(
@@ -215,16 +346,18 @@ pub mod db_migrate {
 
     use std::process::ExitStatus;
 
-    use super::execute_command;
+    use super::execute_command_string_args;
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
     pub async fn run_up_migrations(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let args = vec!["db-up"];
+        let pm = &config.package_manager_config.package_manager;
         let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let exit =
+            execute_command_string_args(pm.command(), pm.run_script_args("db-up"), current_dir)
+                .await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -238,18 +371,20 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        let args = vec!["db-down"];
+        let pm = &config.package_manager_config.package_manager;
         let current_dir = &config.parsed_project_paths.generated;
-        execute_command("pnpm", args, current_dir).await
+        execute_command_string_args(pm.command(), pm.run_script_args("db-down"), current_dir).await
     }
 
     pub async fn run_db_setup(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let args = vec!["db-setup"];
+        let pm = &config.package_manager_config.package_manager;
         let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let exit =
+            execute_command_string_args(pm.command(), pm.run_script_args("db-setup"), current_dir)
+                .await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -264,14 +399,19 @@ pub mod db_migrate {
 }
 
 pub mod benchmark {
-    use super::execute_command;
+    use super::execute_command_string_args;
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::{anyhow, Result};
 
     pub async fn print_summary(config: &SystemConfig) -> Result<()> {
-        let args = vec!["print-benchmark-summary"];
+        let pm = &config.package_manager_config.package_manager;
         let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let exit = execute_command_string_args(
+            pm.command(),
+            pm.run_script_args("print-benchmark-summary"),
+            current_dir,
+        )
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed printing benchmark summary"));
