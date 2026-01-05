@@ -155,7 +155,7 @@ importers:
         specifier: 17.7.2
         version: 17.7.2
       zod:
-        specifier: ^3.25.0
+        specifier: 3.25.76
         version: 3.25.76
 
 packages:
