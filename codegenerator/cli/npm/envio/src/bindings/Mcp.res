@@ -41,8 +41,29 @@ external isConnected: mcpServer => bool = "isConnected"
 // Transport
 type streamableHttpServerTransport
 
+// Event store interface for resumability support
+type eventStore<'streamId, 'eventId> = {
+  storeEvent: ('streamId, Js.Json.t) => Promise.t<'eventId>,
+  getStreamIdForEventId?: 'eventId => Promise.t<option<'streamId>>,
+  replayEventsAfter: ('eventId, {"send": ('eventId, Js.Json.t) => Promise.t<unit>}) => Promise.t<'streamId>,
+}
+
+// Transport options for StreamableHTTPServerTransport
+// Based on WebStandardStreamableHTTPServerTransportOptions from @modelcontextprotocol/sdk v1.25.1
+type streamableHttpServerTransportOptions = {
+  sessionIdGenerator?: unit => string,
+  onsessioninitialized?: string => Promise.t<unit>,
+  onsessionclosed?: string => Promise.t<unit>,
+  enableJsonResponse?: bool,
+  eventStore?: eventStore<string, string>,
+  allowedHosts?: array<string>,
+  allowedOrigins?: array<string>,
+  enableDnsRebindingProtection?: bool,
+  retryInterval?: int,
+}
+
 @module("@modelcontextprotocol/sdk/server/streamableHttp.js") @new
-external createStreamableHttpServerTransport: unit => streamableHttpServerTransport = "StreamableHTTPServerTransport"
+external createStreamableHttpServerTransport: streamableHttpServerTransportOptions => streamableHttpServerTransport = "StreamableHTTPServerTransport"
 
 // Connect server to transport
 @send

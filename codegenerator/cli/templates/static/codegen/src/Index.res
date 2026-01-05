@@ -124,7 +124,7 @@ let startServer = (~getState, ~indexer: Indexer.t, ~isDevelopmentMode: bool) => 
     }
 
     let mcpServer = McpServer.createServer(~context=mcpContext)
-    let transport = Mcp.createStreamableHttpServerTransport()
+    let transport = Mcp.createStreamableHttpServerTransport({})
     
     // Connect server to transport
     let _ = mcpServer->Mcp.connect(transport)
