@@ -190,13 +190,13 @@ let handleGetConfig = (_arguments: Js.Json.t, context: toolContext): Promise.t<t
 
 
 
-// Helper to create inputSchema object with Zod schemas
-let makeInputSchema = (fields: array<(string, 'a)>): Js.Json.t => {
+// Helper to create inputSchema with Zod object schema
+let makeInputSchema = (fields: array<(string, 'a)>): 'a => {
   let dict = Js.Dict.empty()
   fields->Js.Array2.forEach(((key, value)) => {
     dict->Js.Dict.set(key, value)
   })
-  dict->Js.Json.object_
+  Z.object(dict)
 }
 
 // Create and configure MCP server  
