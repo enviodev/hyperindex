@@ -1079,8 +1079,7 @@ let make = (
   }
 
   let cacheDirPath = NodeJs.Path.resolve([
-    // Right outside of the generated directory
-    "..",
+    // Right at the project root
     ".envio",
     "cache",
   ])
