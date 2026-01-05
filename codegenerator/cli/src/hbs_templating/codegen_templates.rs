@@ -1125,6 +1125,11 @@ pub struct ProjectTemplate {
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
+    // Package manager and runtime info for templates
+    package_manager: String,
+    is_bun_runtime: bool,
+    // Package manager run prefix: "npm run ", "yarn ", "pnpm ", or "bun run "
+    pm_run_prefix: String,
 }
 
 impl ProjectTemplate {
@@ -1647,6 +1652,9 @@ export default {{
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
+            package_manager: cfg.package_manager_config.package_manager.command().to_string(),
+            is_bun_runtime: cfg.package_manager_config.is_bun_runtime(),
+            pm_run_prefix: cfg.package_manager_config.run_script_prefix().to_string(),
         })
     }
 }

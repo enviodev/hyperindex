@@ -18,6 +18,7 @@ use crate::{
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
+    package_manager::PackageManagerConfig,
     project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
     utils::unique_hashmap,
@@ -414,6 +415,7 @@ pub struct SystemConfig {
     pub lowercase_addresses: bool,
     pub should_use_hypersync_client_decoder: bool,
     pub handlers: Option<String>,
+    pub package_manager_config: PackageManagerConfig,
 }
 
 //Getter methods for system config
@@ -689,6 +691,12 @@ impl SystemConfig {
                     has_rpc_sync_src,
                 )?;
 
+                // Detect package manager from lockfiles or config override
+                let package_manager_config = PackageManagerConfig::detect(
+                    &final_project_paths.project_root,
+                    base_config.package_manager,
+                );
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -719,6 +727,7 @@ impl SystemConfig {
                     },
                     handlers: base_config.handlers.clone(),
                     human_config,
+                    package_manager_config,
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -841,6 +850,12 @@ impl SystemConfig {
                         .context("Failed inserting network at chains map")?;
                 }
 
+                // Detect package manager from lockfiles or config override
+                let package_manager_config = PackageManagerConfig::detect(
+                    &final_project_paths.project_root,
+                    base_config.package_manager,
+                );
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -860,6 +875,7 @@ impl SystemConfig {
                     should_use_hypersync_client_decoder: true,
                     handlers: base_config.handlers.clone(),
                     human_config,
+                    package_manager_config,
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
@@ -881,6 +897,12 @@ impl SystemConfig {
                         .context("Failed inserting network at chains map")?;
                 }
 
+                // Detect package manager from lockfiles or config override
+                let package_manager_config = PackageManagerConfig::detect(
+                    &final_project_paths.project_root,
+                    svm_config.base.package_manager,
+                );
+
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -901,6 +923,7 @@ impl SystemConfig {
                     should_use_hypersync_client_decoder: false,
                     handlers: None,
                     human_config,
+                    package_manager_config,
                 })
             }
         }
@@ -2122,6 +2145,7 @@ mod test {
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                package_manager: None,
             },
             ecosystem: None,
             contracts: None,
@@ -2172,6 +2196,7 @@ mod test {
                 output: Some("custom/output".to_string()),
                 handlers: None,
                 full_batch_size: None,
+                package_manager: None,
             },
             ecosystem: None,
             contracts: None,

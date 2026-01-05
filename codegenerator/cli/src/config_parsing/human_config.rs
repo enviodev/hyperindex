@@ -1,3 +1,4 @@
+use crate::package_manager::PackageManager;
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,12 @@ pub struct BaseConfig {
         description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Package manager to use: npm, yarn, pnpm, or bun. If not specified, \
+                       auto-detected from lockfiles in the project directory."
+    )]
+    pub package_manager: Option<PackageManager>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -999,6 +1006,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                package_manager: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1048,6 +1056,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                package_manager: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,

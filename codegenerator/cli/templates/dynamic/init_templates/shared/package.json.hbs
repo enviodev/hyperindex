@@ -3,33 +3,48 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+  {{#if is_bun_runtime}}
   {{#if is_typescript}}
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.ts",
+    "test": "bun test test/**/*.ts",
   {{/if}}
   {{#if is_rescript}}
-    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.res.mjs",
+    "test": "bun run build && bun test test/**/*.res.mjs",
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
   {{/if}}
+  {{else}}
+  {{#if is_typescript}}
+    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.ts",
+    "test": "{{pm_run_prefix}}mocha",
+  {{/if}}
+  {{#if is_rescript}}
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.res.mjs",
+    "test": "{{pm_run_prefix}}build && {{pm_run_prefix}}mocha",
+    "clean": "rescript clean",
+    "build": "rescript",
+    "watch": "rescript -w",
+  {{/if}}
+  {{/if}}
     "codegen": "envio codegen",
-    "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
-    "start": "{{#if is_rescript}}pnpm build && {{/if}}envio start",
-    "test": "{{#if is_rescript}}pnpm build && {{/if}}pnpm mocha"
+    "dev": "{{#if is_rescript}}{{pm_run_prefix}}build && {{/if}}envio dev",
+    "start": "{{#if is_rescript}}{{pm_run_prefix}}build && {{/if}}envio start"
   },
   "devDependencies": {
   {{#if is_rescript}}
-    "rescript": "11.1.3",
+    "rescript": "11.1.3"{{#unless is_bun_runtime}},
+    "tsx": "4.21.0",
+    "mocha": "10.2.0"{{/unless}}
   {{/if}}
   {{#if is_typescript}}
-    "@types/chai": "^4.3.11",    
+    "@types/chai": "^4.3.11",
     "@types/mocha": "10.0.6",
     "@types/node": "^24.10.1",
     "typescript": "5.9.3",
-    "chai": "4.3.10",
-  {{/if}}
+    "chai": "4.3.10"{{#unless is_bun_runtime}},
     "tsx": "4.21.0",
-    "mocha": "10.2.0"
+    "mocha": "10.2.0"{{/unless}}
+  {{/if}}
   },
   "dependencies": {
     "envio": "{{envio_version}}"
@@ -38,6 +53,10 @@
     "generated": "{{relative_path_from_root_to_generated}}"
   },
   "engines": {
+  {{#if is_bun_runtime}}
+    "bun": ">=1.0.0"
+  {{else}}
     "node": ">=22.0.0"
+  {{/if}}
   }
 }

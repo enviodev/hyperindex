@@ -15,6 +15,7 @@ use crate::{
         contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
         init_templates::InitTemplates,
     },
+    package_manager::PackageManagerConfig,
     project_paths::ParsedProjectPaths,
     template_dirs::TemplateDirs,
     utils::file_system,
@@ -244,12 +245,19 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
     let envio_version = get_envio_version()?;
 
+    // Use CLI flag if provided, otherwise detect from lockfiles (defaults to npm for new projects)
+    let pm_config = PackageManagerConfig::detect(
+        &parsed_project_paths.project_root,
+        init_config.package_manager,
+    );
+
     let hbs_template = InitTemplates::new(
         init_config.name.clone(),
         &init_config.language,
         &parsed_project_paths,
         envio_version.clone(),
         init_config.api_token,
+        &pm_config,
     )
     .context("Failed creating init templates")?;
 
@@ -263,6 +271,28 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
     hbs_generator.generate_hbs_templates()?;
 
+    // Create bunfig.toml for bun projects
+    if pm_config.is_bun_runtime() {
+        let bunfig_content = r#"# Bun configuration file
+
+[install]
+# Disable telemetry
+telemetry = false
+
+# Use node_modules (default behavior)
+linkStrategy = "node"
+linker = "hoisted"
+
+# Save exact versions
+save = "exact"
+"#;
+        std::fs::write(
+            parsed_project_paths.project_root.join("bunfig.toml"),
+            bunfig_content,
+        )
+        .context("Failed to create bunfig.toml")?;
+    }
+
     println!("Project template ready");
     println!("Running codegen");
 
@@ -272,7 +302,11 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     commands::codegen::run_codegen(&config).await?;
 
     if init_config.language == Language::ReScript {
-        let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
+        let res_build_exit = commands::rescript::build(
+            &parsed_project_paths.project_root,
+            &config.package_manager_config,
+        )
+        .await?;
         if !res_build_exit.success() {
             return Err(anyhow!("Failed to build rescript"))?;
         }

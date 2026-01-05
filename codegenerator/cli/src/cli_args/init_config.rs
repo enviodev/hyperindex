@@ -164,6 +164,7 @@ pub mod evm {
                     output: None,
                     handlers: None,
                     full_batch_size: None,
+                    package_manager: init_config.package_manager,
                 },
                 ecosystem: None,
                 contracts,
@@ -306,6 +307,7 @@ pub mod fuel {
                     output: None,
                     handlers: None,
                     full_batch_size: None,
+                    package_manager: init_config.package_manager,
                 },
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,
@@ -374,4 +376,5 @@ pub struct InitConfig {
     pub ecosystem: Ecosystem,
     pub language: Language,
     pub api_token: Option<String>,
+    pub package_manager: Option<crate::package_manager::PackageManager>,
 }

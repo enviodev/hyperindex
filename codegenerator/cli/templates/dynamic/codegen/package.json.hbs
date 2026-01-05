@@ -12,18 +12,31 @@
     "format": "rescript format -all",
     {{!-- We need this to always have cwd at the root of the project --}}
     {{!-- For imports and dotenv to correctly resolve --}}
-    {{!-- Also, tsx is needed for db- scripts only because of internal.config.ts --}}
+    {{#if is_bun_runtime}}
+    {{!-- Bun can run TS natively, no tsx needed --}}
+    "db-up": "cd {{relative_path_to_root_from_generated}} && bun -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))'",
+    "db-down": "cd {{relative_path_to_root_from_generated}} && bun -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))'",
+    "db-setup": "cd {{relative_path_to_root_from_generated}} && bun -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
+    "print-benchmark-summary": "cd {{relative_path_to_root_from_generated}} && bun -e 'import(\"{{relative_path_to_generated_from_root}}/src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
+    "start": "cd {{relative_path_to_root_from_generated}} && bun run {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
+    {{else}}
+    {{!-- Node requires tsx for TypeScript imports --}}
     "db-up": "cd {{relative_path_to_root_from_generated}} && node --import {{relative_path_to_generated_from_root}}/node_modules/tsx/dist/esm/index.mjs -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))'",
     "db-down": "cd {{relative_path_to_root_from_generated}} && node --import {{relative_path_to_generated_from_root}}/node_modules/tsx/dist/esm/index.mjs -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))'",
     "db-setup": "cd {{relative_path_to_root_from_generated}} && node --import {{relative_path_to_generated_from_root}}/node_modules/tsx/dist/esm/index.mjs -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
     "print-benchmark-summary": "cd {{relative_path_to_root_from_generated}} && node --import {{relative_path_to_generated_from_root}}/node_modules/tsx/dist/esm/index.mjs -e 'import(\"{{relative_path_to_generated_from_root}}/src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
     "start": "cd {{relative_path_to_root_from_generated}} && tsc --noEmit && node --no-warnings --import {{relative_path_to_generated_from_root}}/node_modules/tsx/dist/esm/index.mjs {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
+    {{/if}}
   },
   "keywords": [
     "ReScript"
   ],
   "engines": {
+  {{#if is_bun_runtime}}
+    "bun": ">=1.0.0"
+  {{else}}
     "node": ">=22.0.0"
+  {{/if}}
   },
   "author": "",
   "license": "MIT",
@@ -36,7 +49,9 @@
     "@fuel-ts/utils": "0.96.1",
     "@fuel-ts/address": "0.96.1",
     {{/if}}
+    {{#unless is_bun_runtime}}
     "tsx": "4.21.0",
+    {{/unless}}
     "bignumber.js": "9.1.2",
     "date-fns": "3.3.1",
     "ethers": "6.8.0",

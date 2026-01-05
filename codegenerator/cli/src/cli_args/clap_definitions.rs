@@ -1,4 +1,5 @@
 use crate::constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
+use crate::package_manager::PackageManager;
 
 use clap::{Args, Parser, Subcommand};
 use clap_markdown::MarkdownOptions;
@@ -145,6 +146,11 @@ pub struct InitArgs {
     ///The hypersync API key to be initialized in your templates .env file
     #[arg(global = true, long)]
     pub api_token: Option<String>,
+
+    ///The package manager to use (npm, yarn, pnpm, bun). Auto-detected from lockfiles if not specified.
+    #[arg(global = true, short = 'p', long = "package-manager")]
+    #[clap(value_enum)]
+    pub package_manager: Option<PackageManager>,
 }
 
 #[subenum(EvmInitFlowInteractive)]

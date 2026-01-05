@@ -45,6 +45,17 @@
       "format": "uint64",
       "minimum": 0
     },
+    "package_manager": {
+      "description": "Package manager to use: npm, yarn, pnpm, or bun. If not specified, auto-detected from lockfiles in the project directory.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PackageManager"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "$ref": "#/$defs/EcosystemTag"
@@ -81,6 +92,16 @@
     "chains"
   ],
   "$defs": {
+    "PackageManager": {
+      "description": "Supported package managers",
+      "type": "string",
+      "enum": [
+        "npm",
+        "yarn",
+        "pnpm",
+        "bun"
+      ]
+    },
     "EcosystemTag": {
       "type": "string",
       "enum": [

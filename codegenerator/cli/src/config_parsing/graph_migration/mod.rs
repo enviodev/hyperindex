@@ -267,6 +267,7 @@ pub async fn generate_config_from_subgraph_id(
             output: None,
             handlers: None,
             full_batch_size: None,
+            package_manager: None,
         },
         ecosystem: None,
         contracts: None,

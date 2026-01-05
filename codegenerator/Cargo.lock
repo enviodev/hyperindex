@@ -1004,6 +1004,7 @@ dependencies = [
  "strum_macros",
  "subenum",
  "tempdir",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing-subscriber",
