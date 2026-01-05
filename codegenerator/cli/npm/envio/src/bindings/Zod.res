@@ -18,6 +18,9 @@ external number: unit => zodSchema<float> = "number"
 external boolean: unit => zodSchema<bool> = "boolean"
 
 @module("zod/v4") @scope("z")
+external array: zodSchema<'a> => zodSchema<array<'a>> = "array"
+
+@module("zod/v4") @scope("z")
 external object: Js.Dict.t<zodSchema<'a>> => zodSchema<Js.Dict.t<'a>> = "object"
 
 // Modifiers

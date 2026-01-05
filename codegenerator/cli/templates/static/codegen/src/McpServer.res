@@ -3,15 +3,8 @@
 
 open Mcp
 
-// Import Zod for creating schemas
-module Z = {
-  @module("zod/v4") @scope("z") external string: unit => 'a = "string"
-  @module("zod/v4") @scope("z") external number: unit => 'a = "number"
-  @module("zod/v4") @scope("z") external object: Js.Dict.t<'a> => 'a = "object"
-  
-  @send external optional: 'a => 'a = "optional"
-  @send external describe: ('a, string) => 'a = "describe"
-}
+// Use shared Zod bindings for schema validation
+module Z = Zod
 
 // Context needed to execute tools
 type toolContext = {
@@ -232,7 +225,7 @@ let handleDumpEffectCache = (_arguments: Js.Json.t, context: toolContext): Promi
 }
 
 // Helper to create inputSchema with Zod object schema
-let makeInputSchema = (fields: array<(string, 'a)>): 'a => {
+let makeInputSchema = (fields: array<(string, Zod.zodSchema<'a>)>) => {
   let dict = Js.Dict.empty()
   fields->Js.Array2.forEach(((key, value)) => {
     dict->Js.Dict.set(key, value)
