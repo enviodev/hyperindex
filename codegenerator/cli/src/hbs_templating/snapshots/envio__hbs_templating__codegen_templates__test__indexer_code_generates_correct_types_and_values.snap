@@ -1,0 +1,72 @@
+---
+source: cli/src/hbs_templating/codegen_templates.rs
+expression: project_template.indexer_code
+---
+@genType
+module Contract1 = {
+  module NewGravatar = Types.MakeRegister(Types.Contract1.NewGravatar)
+  module UpdatedGravatar = Types.MakeRegister(Types.Contract1.UpdatedGravatar)
+}
+
+@genType.import(("./Types.ts", "EvmChainId"))
+type chainId = [#1]
+
+/** Contract configuration with name and ABI. */
+type indexerContract = {
+  /** The contract name. */
+  name: string,
+  /** The contract ABI. */
+  abi: unknown,
+  /** The contract addresses. */
+  addresses: array<Address.t>,
+}
+
+/** Per-chain configuration for the indexer. */
+type indexerChain = {
+  /** The chain ID. */
+  id: chainId,
+  /** The chain name. */
+  name: string,
+  /** The block number to start indexing from. */
+  startBlock: int,
+  /** The block number to stop indexing at (if specified). */
+  endBlock: option<int>,
+  /** Whether the chain has completed initial sync and is processing live events. */
+  isLive: bool,
+  \"Contract1": indexerContract,
+}
+
+/** Strongly-typed record of chain configurations keyed by chain ID. */
+type indexerChains = {
+  @as("1") chain1: indexerChain,
+  ethereumMainnet: indexerChain,
+}
+
+/** Metadata and configuration for the indexer. */
+type indexer = {
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+}
+
+let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)
+
+/** Get chain configuration by chain ID with exhaustive pattern matching. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
+switch chainId {
+  | #1 => indexer.chains.chain1
+}
+}
+
+@genType /** Register a Block Handler. It'll be called for every block by default. */
+let onBlock: (
+Envio.onBlockOptions<chainId>,
+Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>,
+) => unit = (
+EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
+)->Utils.magic

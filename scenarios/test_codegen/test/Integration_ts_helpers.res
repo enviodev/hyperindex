@@ -28,6 +28,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   })
   let chain = MockConfig.chain1337
   {
+    name: "LocalChain",
     maxReorgDepth: 200,
     startBlock: 1,
     id: 1337,
@@ -61,14 +62,14 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
 @genType.opaque
 type chainManager = ChainManager.t
 
-@genType
-let makeChainManager = (cfg: chainConfig): chainManager => {
-  // FIXME: Should fork from the main ChainMap?
-  ChainManager.makeFromConfig(
-    ~config=Config.make(~multichain=Unordered, ~chains=[cfg]),
-    ~registrations={onBlockByChainId: Js.Dict.empty(), hasEvents: false},
-  )
-}
+// @genType
+// let makeChainManager = (cfg: chainConfig): chainManager => {
+//   // FIXME: Should fork from the main ChainMap?
+//   ChainManager.makeFromConfig(
+//     ~config=Config.makeForTest(~multichain=Unordered, ~chains=[cfg]),
+//     ~registrations={onBlockByChainId: Js.Dict.empty(), hasEvents: false},
+//   )
+// }
 
 @genType
 let startProcessing = (_config, _cfg: chainConfig, _chainManager: chainManager) => {

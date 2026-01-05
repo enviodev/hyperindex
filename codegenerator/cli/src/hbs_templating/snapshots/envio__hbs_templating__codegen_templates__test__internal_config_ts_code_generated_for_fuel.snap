@@ -1,0 +1,19 @@
+---
+source: cli/src/hbs_templating/codegen_templates.rs
+expression: project_template.internal_config_ts_code
+---
+import GreeterAbi from "../abis/greeter-abi.json";
+import type { IndexerConfig } from "envio";
+
+export default {
+  name: "Fuel indexer",
+  rollbackOnReorg: false,
+  fuel: {
+    chains: {
+      "0": { id: 0, startBlock: 0 },
+    },
+    contracts: {
+      "Greeter": { abi: GreeterAbi },
+    },
+  },
+} as const satisfies IndexerConfig;

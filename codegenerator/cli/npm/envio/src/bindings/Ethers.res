@@ -1,7 +1,3 @@
-type abi = EvmTypes.Abi.t
-
-let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
-
 type txHash = string
 
 module Constants = {

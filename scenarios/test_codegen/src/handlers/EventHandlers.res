@@ -1,5 +1,14 @@
 // Test types
 
+// Indexer type and value tests (compile-time type checking)
+let _indexer: Indexer.indexer = Indexer.indexer
+let _chain: Indexer.indexerChain = Indexer.getChainById(Indexer.indexer, #1)
+let _chains: Indexer.indexerChains = Indexer.indexer.chains
+
+// Compile-time test: getChainById has exhaustive pattern matching
+// This ensures the function covers all chain IDs
+let _testGetChainById = (chainId: Indexer.chainId) => Indexer.getChainById(Indexer.indexer, chainId)
+
 let noopEffect = Envio.createEffect(
   {
     name: "noopEffect",
@@ -12,7 +21,7 @@ let noopEffect = Envio.createEffect(
   },
 )
 
-Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
+Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let () = await context.effect(noopEffect, ())
 
   let gravatarSize: Enums.GravatarSize.t = SMALL
@@ -28,7 +37,7 @@ Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
+Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
   let maybeGravatar = await context.gravatar.get(event.params.id->BigInt.toString)
 
   /// Some examples of user logging
@@ -106,7 +115,7 @@ Handlers.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Handlers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
+Indexer.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
   let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>
@@ -132,27 +141,22 @@ Handlers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({con
 })
 
 // Generates modules for both TestEvent and TestEventWithCustomName
-Handlers.Gravatar.TestEventWithCustomName.handler(async _ => {
+Indexer.Gravatar.TestEventWithCustomName.handler(async _ => {
   ()
 })
-Handlers.Gravatar.TestEvent.handler(async _ => {
+Indexer.Gravatar.TestEvent.handler(async _ => {
   ()
 })
 
-// Test chains accessibility - exposed for testing
-// Instead of a single eventOrigin enum, we store the entire chains dict
-let lastEmptyEventChains: ref<option<Internal.chains>> = ref(None)
+// Test chain accessibility - exposed for testing
+let lastEmptyEventChain: ref<option<Internal.chainInfo>> = ref(None)
 
-Handlers.Gravatar.EmptyEvent.handler(async ({context}) => {
-  // This handler tests that chains state is accessible in the context
-  // Chains will have isLive: false during sync and isLive: true during live indexing
-  lastEmptyEventChains := Some(context.chains)
+Indexer.Gravatar.EmptyEvent.handler(async ({context}) => {
+  // This handler tests that chain state is accessible in the context
+  // Chain will have isLive: false during sync and isLive: true during live indexing
+  lastEmptyEventChain := Some(context.chain)
 
-  // Log chain states for verification
-  context.chains
-  ->Js.Dict.entries
-  ->Belt.Array.forEach(((chainId, chainInfo)) => {
-    let status = chainInfo.isLive ? "ready (live)" : "syncing (historical)"
-    context.log.debug(`Chain ${chainId} status: ${status}`)
-  })
+  // Log chain state for verification
+  let status = context.chain.isLive ? "ready (live)" : "syncing (historical)"
+  context.log.debug(`Chain ${context.chain.id->Belt.Int.toString} status: ${status}`)
 })

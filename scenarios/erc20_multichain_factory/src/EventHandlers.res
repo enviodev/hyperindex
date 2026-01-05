@@ -1,6 +1,6 @@
 open Entities
 
-Handlers.ERC20Factory.TokenCreated.contractRegister(async ({event, context}) => {
+Indexer.ERC20Factory.TokenCreated.contractRegister(async ({event, context}) => {
   context.addERC20(event.params.token)
 })
 
@@ -47,7 +47,7 @@ let createNewAccountWithZeroBalance = (
   accountToken
 }
 
-Handlers.ERC20.Approval.handler(async ({event, context}) => {
+Indexer.ERC20.Approval.handler(async ({event, context}) => {
   let ownerAccount = await context.account.get(event.params.owner->Address.toString)
 
   let account_id = event.params.owner->Address.toString
@@ -98,7 +98,7 @@ let manipulateAccountBalance = (
   ->fn(value)
   ->setAccountToken
 
-Handlers.ERC20.Transfer.handler(async ({event, context}) => {
+Indexer.ERC20.Transfer.handler(async ({event, context}) => {
   let fromAccount_id = event.params.from->Address.toString
   let toAccount_id = event.params.to->Address.toString
   let tokenAddress = event.srcAddress->Address.toString
@@ -129,7 +129,7 @@ Handlers.ERC20.Transfer.handler(async ({event, context}) => {
   receiverAccountToken->manipulateAccountBalance(addToBalance, ~account_id=toAccount_id)
 })
 
-Handlers.ERC20Factory.DeleteUser.handler(async ({event, context}) => {
+Indexer.ERC20Factory.DeleteUser.handler(async ({event, context}) => {
   let account_id = event.params.user->Address.toString
   let accountTokens = await context.accountToken.getWhere.account_id.eq(account_id)
 

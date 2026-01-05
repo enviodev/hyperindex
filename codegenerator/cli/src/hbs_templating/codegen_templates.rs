@@ -8,6 +8,7 @@ use std::{
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     config_parsing::{
+        chain_helpers::Network,
         entity_parsing::{Entity, Field, GraphQLEnum},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
         field_types,
@@ -32,6 +33,7 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
+use convert_case::{Case, Casing};
 use ethers::abi::EventParam;
 use pathdiff::diff_paths;
 use serde::Serialize;
@@ -227,12 +229,12 @@ impl EventMod {
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
             _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain \
-                  network where this event occurred. */ chainId: chainId, /** Addresses of the \
-                  contracts indexing the event. */ addresses: array<Address.t>}\n
+                network where this event occurred. */ chainId: chainId, /** Addresses of the \
+                contracts indexing the event. */ addresses: array<Address.t>}\n
 @genType @unboxed type eventFiltersDefinition = Single(eventFilter) | \
-                  Multiple(array<eventFilter>)\n
+                Multiple(array<eventFilter>) | @as(false) Skip | @as(true) Keep\n
 @genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => \
-                  eventFiltersDefinition)"
+                eventFiltersDefinition)"
                 .to_string(),
         };
 
@@ -244,8 +246,8 @@ impl EventMod {
             Some(FuelEventKind::Transfer) => Some("Transfer".to_string()),
             Some(FuelEventKind::LogData(_)) => Some(
                 r#"LogData({
-  logId: sighash,
-  decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
+logId: sighash,
+decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
 })"#
                 .to_string(),
             ),
@@ -285,42 +287,42 @@ impl EventMod {
             };
 
         let base_event_config_code = r#"id,
-  name,
-  contractName,
-  isWildcard: (handlerRegister->EventRegister.isWildcard),
-  handler: handlerRegister->EventRegister.getHandler,
-  contractRegister: handlerRegister->EventRegister.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
+name,
+contractName,
+isWildcard: (handlerRegister->EventRegister.isWildcard),
+handler: handlerRegister->EventRegister.getHandler,
+contractRegister: handlerRegister->EventRegister.getContractRegister,
+paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
 
         let non_event_mod_code = match fuel_event_kind_code {
             None => format!(
                 r#"
 let register = (): Internal.evmEventConfig => {{
-  let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
-  {{
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
-    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-    convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
-    {base_event_config_code}
-  }}
+let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
+{{
+  getEventFiltersOrThrow,
+  filterByAddresses,
+  dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
+  {base_event_config_code}
+}}
 }}"#
             ),
             Some(fuel_event_kind_code) => format!(
                 r#"
 let register = (): Internal.fuelEventConfig => {{
-  kind: {fuel_event_kind_code},
-  filterByAddresses: false,
-  dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard),
-  {base_event_config_code}
+kind: {fuel_event_kind_code},
+filterByAddresses: false,
+dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard),
+{base_event_config_code}
 }}"#
             ),
         };
 
         let types_code =
-            r#"@genType
+          r#"@genType
 type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
@@ -343,18 +345,18 @@ type transaction = {transaction_type}
 
 @genType
 type event = {{
-  /** The parameters or arguments associated with this event. */
-  params: eventArgs,
-  /** The unique identifier of the blockchain network where this event occurred. */
-  chainId: chainId,
-  /** The address of the contract that emitted this event. */
-  srcAddress: Address.t,
-  /** The index of this event's log within the block. */
-  logIndex: int,
-  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
-  transaction: transaction,
-  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
-  block: block,
+/** The parameters or arguments associated with this event. */
+params: eventArgs,
+/** The unique identifier of the blockchain network where this event occurred. */
+chainId: chainId,
+/** The address of the contract that emitted this event. */
+srcAddress: Address.t,
+/** The index of this event's log within the block. */
+logIndex: int,
+/** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+transaction: transaction,
+/** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+block: block,
 }}
 
 {types_code}
@@ -364,8 +366,8 @@ let blockSchema = {block_schema}
 let transactionSchema = {transaction_schema}
 
 let handlerRegister: EventRegister.t = EventRegister.make(
-  ~contractName,
-  ~eventName=name,
+~contractName,
+~eventName=name,
 )
 
 @genType
@@ -432,17 +434,17 @@ impl EventTemplate {
                     let _ = write!(
                         output,
                         ", ~topic{topic_number}=({event_filter_arg}) => \
-                         {event_filter_arg}->Utils.Dict.dangerouslyGetNonOption(\"{param_name}\"\
-                         )->Belt.Option.mapWithDefault([], topicFilters => \
-                         topicFilters->Obj.magic->SingleOrMultiple.\
-                         normalizeOrThrow{nested_type_flags}->Belt.Array.map({topic_encoder}))"
+                       {event_filter_arg}->Utils.Dict.dangerouslyGetNonOption(\"{param_name}\"\
+                       )->Belt.Option.mapWithDefault([], topicFilters => \
+                       topicFilters->Obj.magic->SingleOrMultiple.\
+                       normalizeOrThrow{nested_type_flags}->Belt.Array.map({topic_encoder}))"
                     );
                     output
                 });
 
         format!(
             "LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.\
-             getEventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
+           getEventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
         )
     }
 
@@ -465,7 +467,7 @@ impl EventTemplate {
         for (index, param) in indexed_params.into_iter().enumerate() {
             code.push_str(&format!(
                 "{}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
-                 toUnderlying->Utils.magic, ",
+               toUnderlying->Utils.magic, ",
                 RescriptRecordField::to_valid_res_name(&param.name),
                 index
             ));
@@ -474,7 +476,7 @@ impl EventTemplate {
         for (index, param) in body_params.into_iter().enumerate() {
             code.push_str(&format!(
                 "{}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
-                 toUnderlying->Utils.magic, ",
+               toUnderlying->Utils.magic, ",
                 RescriptRecordField::to_valid_res_name(&param.name),
                 index
             ));
@@ -652,7 +654,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event))
+            .map(EventTemplate::from_config_event)
             .collect::<Result<_>>()?;
 
         let chain_ids = contract.get_chain_ids(config);
@@ -678,7 +680,7 @@ impl ContractTemplate {
                 let signatures = abi.get_event_signatures();
 
                 format!(
-                    r#"let abi = Ethers.makeAbi((%raw(`{}`): Js.Json.t))
+                    r#"let abi = (%raw(`{}`): EvmTypes.Abi.t)
 let eventSignatures = [{}]
 {chain_id_type_code}"#,
                     abi.raw,
@@ -697,11 +699,11 @@ let eventSignatures = [{}]
                     ))?;
 
                 format!(
-                    "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
-                     relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}\n{chain_id_type_code}",
-                    // If we decide to inline the abi, instead of using require
-                    // we need to remember that abi might contain ` and we should escape it
-                    abi.path_buf.to_string_lossy(),
+                  "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
+                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}\n{chain_id_type_code}",
+                  // If we decide to inline the abi, instead of using require
+                  // we need to remember that abi might contain ` and we should escape it
+                  abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
                 )
@@ -764,10 +766,10 @@ impl PerNetworkContractTemplate {
 
 type EthAddress = String;
 
-#[derive(Debug, Serialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, PartialEq, Clone, Default)]
 struct NetworkTemplate {
     pub id: u64,
-    max_reorg_depth: i32,
+    max_reorg_depth: Option<i32>,
     start_block: u64,
     end_block: Option<u64>,
 }
@@ -797,11 +799,34 @@ impl NetworkConfigTemplate {
         config: &SystemConfig,
     ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
-        let codegen_contracts: Vec<PerNetworkContractTemplate> = network
-            .contracts
+        let codegen_contracts: Vec<PerNetworkContractTemplate> = config
+            .get_contracts()
             .iter()
-            .map(|network_contract| {
-                PerNetworkContractTemplate::from_config_network_contract(network_contract, config)
+            .map(|contract| {
+                // Check if this contract is defined on the current network
+                let network_contract = network.contracts.iter().find(|nc| nc.name == contract.name);
+
+                match network_contract {
+                    Some(nc) => {
+                        // Contract is defined on this network, use its addresses
+                        PerNetworkContractTemplate::from_config_network_contract(nc, config)
+                    }
+                    None => {
+                        // Contract is not defined on this network, create with empty addresses
+                        let events = contract
+                            .events
+                            .iter()
+                            .map(|event| PerNetworkContractEventTemplate::new(event.name.clone()))
+                            .collect();
+
+                        Ok(PerNetworkContractTemplate {
+                            name: contract.name.to_capitalized_options(),
+                            addresses: vec![],
+                            events,
+                            start_block: None,
+                        })
+                    }
+                }
             })
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
@@ -842,7 +867,7 @@ impl NetworkConfigTemplate {
                 hypersync_endpoint_url,
             } => format!(
                 "[HyperFuelSource.make({{chain, endpointUrl: \
-                     \"{hypersync_endpoint_url}\"}})]",
+                   \"{hypersync_endpoint_url}\"}})]",
             ),
             system_config::DataSource::Svm { rpc } => {
                 format!("[Svm.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
@@ -937,10 +962,10 @@ impl NetworkConfigTemplate {
 
                 format!(
                     "EvmChain.makeSources(~chain, ~contracts=[{contracts_code}], \
-                         ~hyperSync={hyper_sync_code}, \
-                         ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
-                         ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{rpcs}], \
-                         ~lowercaseAddresses={})",
+                       ~hyperSync={hyper_sync_code}, \
+                       ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
+                       ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{rpcs}], \
+                       ~lowercaseAddresses={})",
                     if config.lowercase_addresses {
                         "true"
                     } else {
@@ -1087,12 +1112,7 @@ pub struct ProjectTemplate {
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     persisted_state: PersistedStateJsonString,
-    is_unordered_multichain_mode: bool,
-    should_rollback_on_reorg: bool,
-    should_save_full_history: bool,
-    enable_raw_events: bool,
     has_multiple_events: bool,
-    full_batch_size_code: String,
     field_selection: FieldSelection,
     aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
@@ -1100,14 +1120,11 @@ pub struct ProjectTemplate {
     is_svm_ecosystem: bool,
 
     envio_version: String,
-    types_code: String,
-    ts_types_code: String,
+    indexer_code: String,
+    internal_config_ts_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
-    lowercase_addresses: bool,
-    should_use_hypersync_client_decoder: bool,
-    handlers_path: Option<String>,
 }
 
 impl ProjectTemplate {
@@ -1215,8 +1232,48 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        let res_types_code = format!(
-            r#"@genType.import(("./Types.ts", "ChainId"))
+        // Generate contract modules with event registration
+        let contract_modules = codegen_contracts
+            .iter()
+            .map(|contract| {
+                let event_modules = contract
+                    .codegen_events
+                    .iter()
+                    .map(|event| {
+                        format!(
+                            "  module {} = Types.MakeRegister(Types.{}.{})",
+                            event.name, contract.name.capitalized, event.name
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "@genType\nmodule {} = {{\n{}\n}}",
+                    contract.name.capitalized, event_modules
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Generate onBlock function with ecosystem-specific types
+        let on_block_handler_type = match cfg.get_ecosystem() {
+            Ecosystem::Evm => {
+                "Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>"
+            }
+            Ecosystem::Fuel => {
+                "Envio.onBlockArgs<Envio.fuelBlockEvent, Types.handlerContext> => promise<unit>"
+            }
+            Ecosystem::Svm => "Envio.svmOnBlockArgs<Types.handlerContext> => promise<unit>",
+        };
+
+        // Generate chainId type with ecosystem-specific import from Types.ts
+        let chain_id_import_name = match cfg.get_ecosystem() {
+            Ecosystem::Evm => "EvmChainId",
+            Ecosystem::Fuel => "FuelChainId",
+            Ecosystem::Svm => "SvmChainId",
+        };
+        let chain_id_type = format!(
+            r#"@genType.import(("./Types.ts", "{chain_id_import_name}"))
 type chainId = [{}]"#,
             chain_id_cases
                 .iter()
@@ -1225,19 +1282,351 @@ type chainId = [{}]"#,
                 .join(" | "),
         );
 
-        let ts_types_code = format!(
-            r#"export type ChainId = {}"#,
-            chain_id_cases
-                .iter()
-                .map(|chain_id_case| chain_id_case.to_string())
-                .collect::<Vec<_>>()
-                .join(" | "),
+        let on_block_code = format!(
+            r#"@genType /** Register a Block Handler. It'll be called for every block by default. */
+let onBlock: (
+Envio.onBlockOptions<chainId>,
+{},
+) => unit = (
+EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
+)->Utils.magic"#,
+            on_block_handler_type
         );
 
-        let full_batch_size_code = match cfg.human_config.get_base_config().full_batch_size {
-            None => "None".to_string(),
-            Some(v) => format!("Some({v})"),
+        // Generate indexer types and value
+        let indexer_contract_type = r#"/** Contract configuration with name and ABI. */
+type indexerContract = {
+  /** The contract name. */
+  name: string,
+  /** The contract ABI. */
+  abi: unknown,
+  /** The contract addresses. */
+  addresses: array<Address.t>,
+}"#;
+
+        // Collect all unique contract names across chains
+        let mut all_contract_names = BTreeSet::new();
+        for chain_config in &chain_configs {
+            for contract in &chain_config.codegen_contracts {
+                all_contract_names.insert(contract.name.original.clone());
+            }
+        }
+
+        // Generate contract fields - use quoted names to avoid ReScript naming issues
+        let contract_fields = if all_contract_names.is_empty() {
+            String::new()
+        } else {
+            all_contract_names
+                .iter()
+                .map(|contract_name| format!("\n  \\\"{}\": indexerContract,", contract_name))
+                .collect::<Vec<String>>()
+                .join("")
         };
+
+        // Generate indexer chain type with contract fields
+        let indexer_chain_type = format!(
+            r#"/** Per-chain configuration for the indexer. */
+type indexerChain = {{
+  /** The chain ID. */
+  id: chainId,
+  /** The chain name. */
+  name: string,
+  /** The block number to start indexing from. */
+  startBlock: int,
+  /** The block number to stop indexing at (if specified). */
+  endBlock: option<int>,
+  /** Whether the chain has completed initial sync and is processing live events. */
+  isLive: bool,{contract_fields}
+}}"#
+        );
+
+        // Generate indexerChains type with fields for each chain
+        let indexer_chains_fields = chain_configs
+            .iter()
+            .map(|chain| {
+                let id = chain.network_config.id;
+                let id_field = format!("  @as(\"{}\") chain{}: indexerChain,", id, id);
+                // Add name-based field only for known networks
+                if let Ok(network) = Network::from_network_id(id) {
+                    let name = network.to_string().to_case(Case::Camel);
+                    format!("{}\n  {}: indexerChain,", id_field, name)
+                } else {
+                    id_field
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let indexer_chains_type = format!(
+            r#"/** Strongly-typed record of chain configurations keyed by chain ID. */
+type indexerChains = {{
+{}
+}}"#,
+            indexer_chains_fields
+        );
+
+        let indexer_type = r#"/** Metadata and configuration for the indexer. */
+type indexer = {
+  /** The name of the indexer from config.yaml. */
+  name: string,
+  /** The description of the indexer from config.yaml. */
+  description: option<string>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+}"#;
+
+        // Generate indexer value using Main.getGlobalIndexer
+        let indexer_value = r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#;
+
+        // Generate getChainById function
+        let get_chain_by_id_cases = chain_configs
+            .iter()
+            .map(|chain| {
+                format!(
+                    "  | #{} => indexer.chains.chain{}",
+                    chain.network_config.id, chain.network_config.id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let get_chain_by_id = format!(
+            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {{
+switch chainId {{
+{}
+}}
+}}"#,
+            get_chain_by_id_cases
+        );
+
+        // Combine all parts into indexer_code
+        let indexer_code = format!(
+            "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            contract_modules,
+            chain_id_type,
+            indexer_contract_type,
+            indexer_chain_type,
+            indexer_chains_type,
+            indexer_type,
+            indexer_value,
+            get_chain_by_id,
+        );
+
+        // Add onBlock at the end
+        let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
+
+        // Helper function to convert kebab-case to camelCase
+        let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
+
+        // Helper function to convert chain ID to chain name
+        let chain_id_to_name = |chain_id: u64, ecosystem: &Ecosystem| -> String {
+            match ecosystem {
+                Ecosystem::Evm => Network::from_repr(chain_id)
+                    .map(|n| kebab_to_camel(&n.to_string()))
+                    .unwrap_or_else(|| chain_id.to_string()),
+                Ecosystem::Fuel => {
+                    // For Fuel, use chain ID directly when no proper name exists
+                    chain_id.to_string()
+                }
+                Ecosystem::Svm => {
+                    // For SVM, use chain ID directly when no proper name exists
+                    chain_id.to_string()
+                }
+            }
+        };
+
+        // Generate ecosystem sections only if they have chains
+        let mut ecosystem_parts = Vec::new();
+        let mut fuel_imports = Vec::new();
+        let has_ecosystem = !chain_configs.is_empty();
+
+        // Generate chains for the current ecosystem (only if chains exist)
+        if has_ecosystem {
+            let chains_entries: Vec<String> = chain_configs
+                .iter()
+                .map(|chain_config| {
+                    let chain_name =
+                        chain_id_to_name(chain_config.network_config.id, &cfg.get_ecosystem());
+                    let end_block_str = match chain_config.network_config.end_block {
+                        Some(block) => format!(", endBlock: {}", block),
+                        None => String::new(),
+                    };
+                    let max_reorg_str = match chain_config.network_config.max_reorg_depth {
+                        Some(depth) => format!(", maxReorgDepth: {}", depth),
+                        None => String::new(),
+                    };
+                    format!(
+                        "      \"{}\": {{ id: {}, startBlock: {}{}{} }},",
+                        chain_name,
+                        chain_config.network_config.id,
+                        chain_config.network_config.start_block,
+                        end_block_str,
+                        max_reorg_str
+                    )
+                })
+                .collect();
+
+            let ecosystem_name = match cfg.get_ecosystem() {
+                Ecosystem::Evm => "evm",
+                Ecosystem::Fuel => "fuel",
+                Ecosystem::Svm => "svm",
+            };
+
+            // Generate contracts configuration
+            let contracts_entries: Vec<String> = cfg
+                .contracts
+                .values()
+                .map(|contract| -> Result<String> {
+                    let abi_value = match &contract.abi {
+                        Abi::Evm(abi) => {
+                            // Inline the ABI JSON for EVM
+                            abi.raw.to_string()
+                        }
+                        Abi::Fuel(abi) => {
+                            // Generate import and reference for Fuel
+                            let import_name = format!("{}Abi", contract.name);
+                            // Compute relative path from generated directory to ABI file
+                            let relative_path_buf =
+                                diff_paths(&abi.path_buf, &cfg.parsed_project_paths.generated)
+                                    .ok_or_else(|| {
+                                        anyhow!(
+                                    "Failed to compute relative path from generated to ABI file"
+                                )
+                                    })?;
+                            let relative_path_with_dot =
+                                add_leading_relative_dot(relative_path_buf);
+                            let relative_path = relative_path_with_dot
+                                .to_str()
+                                .ok_or_else(|| anyhow!("Failed converting ABI path to str"))?
+                                .to_string();
+                            fuel_imports.push(format!(
+                                "import {} from \"{}\";",
+                                import_name, relative_path
+                            ));
+                            import_name
+                        }
+                    };
+                    Ok(format!(
+                        "      \"{}\": {{ abi: {} }},",
+                        contract.name, abi_value
+                    ))
+                })
+                .collect::<Result<Vec<String>>>()?;
+
+            let contracts_str = if contracts_entries.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ",\n    contracts: {{\n{}\n    }},",
+                    contracts_entries.join("\n")
+                )
+            };
+
+            // For EVM, always include addressFormat and decoder
+            let evm_options = if cfg.get_ecosystem() == Ecosystem::Evm {
+                let address_format = if cfg.lowercase_addresses {
+                    "lowercase"
+                } else {
+                    "checksum"
+                };
+                let decoder = if cfg.should_use_hypersync_client_decoder {
+                    "hypersync"
+                } else {
+                    "viem"
+                };
+                format!(
+                    "\n    addressFormat: \"{}\",\n    eventDecoder: \"{}\",",
+                    address_format, decoder
+                )
+            } else {
+                String::new()
+            };
+
+            ecosystem_parts.push(format!(
+                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }}{contracts}{evm_options}\n  }},",
+                ecosystem_name = ecosystem_name,
+                chains = chains_entries.join("\n"),
+                contracts = contracts_str,
+                evm_options = evm_options
+            ));
+        }
+
+        // Generate internal.config.ts content
+        let description_str = match &cfg.human_config.get_base_config().description {
+            Some(desc) => format!(",\n  description: \"{}\"", desc.replace('\"', "\\\"")),
+            None => String::new(),
+        };
+
+        let handlers_str = match &cfg.handlers {
+            Some(h) => format!(",\n  handlers: \"{}\"", h),
+            None => String::new(),
+        };
+
+        let multichain_str = match cfg.multichain {
+            crate::config_parsing::human_config::evm::Multichain::Ordered => {
+                ",\n  multichain: \"ordered\"".to_string()
+            }
+            crate::config_parsing::human_config::evm::Multichain::Unordered => String::new(),
+        };
+
+        let full_batch_size_str = match cfg.human_config.get_base_config().full_batch_size {
+            Some(size) => format!(",\n  fullBatchSize: {}", size),
+            None => String::new(),
+        };
+
+        // Only include non-default boolean values
+        let rollback_on_reorg_str = if !cfg.rollback_on_reorg {
+            ",\n  rollbackOnReorg: false".to_string()
+        } else {
+            String::new()
+        };
+
+        let save_full_history_str = if cfg.save_full_history {
+            ",\n  saveFullHistory: true".to_string()
+        } else {
+            String::new()
+        };
+
+        let raw_events_str = if cfg.enable_raw_events {
+            ",\n  rawEvents: true".to_string()
+        } else {
+            String::new()
+        };
+
+        let ecosystem_str = if ecosystem_parts.is_empty() {
+            String::new()
+        } else {
+            ecosystem_parts.join("")
+        };
+
+        // Prepend Fuel imports if any
+        let imports_str = if fuel_imports.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", fuel_imports.join("\n"))
+        };
+
+        let internal_config_ts_code = format!(
+            r#"{imports_str}import type {{ IndexerConfig }} from "envio";
+
+export default {{
+  name: "{name}"{description_str}{handlers_str}{multichain_str}{full_batch_size_str}{rollback_on_reorg_str}{save_full_history_str}{raw_events_str}{ecosystem_str}
+}} as const satisfies IndexerConfig;
+"#,
+            imports_str = imports_str,
+            name = cfg.name,
+            description_str = description_str,
+            handlers_str = handlers_str,
+            multichain_str = multichain_str,
+            full_batch_size_str = full_batch_size_str,
+            rollback_on_reorg_str = rollback_on_reorg_str,
+            save_full_history_str = save_full_history_str,
+            raw_events_str = raw_events_str,
+            ecosystem_str = ecosystem_str,
+        );
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1246,14 +1635,6 @@ type chainId = [{}]"#,
             gql_enums,
             chain_configs,
             persisted_state,
-            is_unordered_multichain_mode: matches!(
-                cfg.multichain,
-                crate::config_parsing::human_config::evm::Multichain::Unordered
-            ),
-            should_rollback_on_reorg: cfg.rollback_on_reorg,
-            should_save_full_history: cfg.save_full_history,
-            enable_raw_events: cfg.enable_raw_events,
-            full_batch_size_code,
             has_multiple_events,
             field_selection: global_field_selection,
             aggregated_field_selection,
@@ -1261,14 +1642,11 @@ type chainId = [{}]"#,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
-            types_code: res_types_code,
-            ts_types_code,
+            indexer_code,
+            internal_config_ts_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
-            lowercase_addresses: cfg.lowercase_addresses,
-            should_use_hypersync_client_decoder: cfg.should_use_hypersync_client_decoder,
-            handlers_path: cfg.handlers.clone(),
         })
     }
 }
@@ -1311,17 +1689,6 @@ mod test {
             .expect("should be able to get project template")
     }
 
-    impl Default for NetworkTemplate {
-        fn default() -> Self {
-            Self {
-                id: 0,
-                max_reorg_depth: 200,
-                start_block: 0,
-                end_block: None,
-            }
-        }
-    }
-
     #[test]
     fn chain_configs_parsed_case_fuel() {
         let address1 =
@@ -1329,7 +1696,6 @@ mod test {
 
         let network1 = NetworkTemplate {
             id: 0,
-            max_reorg_depth: 0,
             ..NetworkTemplate::default()
         };
 
@@ -1342,10 +1708,10 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-            network_config: network1,
-            codegen_contracts: vec![contract1],
-            sources_code: "[HyperFuelSource.make({chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
-        };
+          network_config: network1,
+          codegen_contracts: vec![contract1],
+          sources_code: "[HyperFuelSource.make({chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
+      };
 
         let expected_chain_configs = vec![chain_config_1];
 
@@ -1356,10 +1722,10 @@ mod test {
             "../.".to_string()
         );
         assert_eq!(
-            project_template.relative_path_to_generated_from_root,
-            "./generated".to_string(),
-            "relative_path_to_generated_from_root should start with ./ for Node.js module resolution"
-        );
+          project_template.relative_path_to_generated_from_root,
+          "./generated".to_string(),
+          "relative_path_to_generated_from_root should start with ./ for Node.js module resolution"
+      );
 
         assert_eq!(
             expected_chain_configs[0].network_config,
@@ -1386,10 +1752,10 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-            network_config: network1,
-            codegen_contracts: vec![contract1],
-            sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-        };
+          network_config: network1,
+          codegen_contracts: vec![contract1],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+      };
 
         let expected_chain_configs = vec![chain_config_1];
 
@@ -1423,31 +1789,44 @@ mod test {
         };
 
         let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
-        let contract1 = super::PerNetworkContractTemplate {
+        let contract1_on_chain1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
-            events,
+            events: events.clone(),
             start_block: None,
         };
 
-        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
-        let contract2 = super::PerNetworkContractTemplate {
+        let contract2_on_chain1 = super::PerNetworkContractTemplate {
+            name: String::from("Contract2").to_capitalized_options(),
+            addresses: vec![],
+            events: events.clone(),
+            start_block: None,
+        };
+
+        let contract1_on_chain2 = super::PerNetworkContractTemplate {
+            name: String::from("Contract1").to_capitalized_options(),
+            addresses: vec![],
+            events: events.clone(),
+            start_block: None,
+        };
+
+        let contract2_on_chain2 = super::PerNetworkContractTemplate {
             name: String::from("Contract2").to_capitalized_options(),
             addresses: vec![address2.clone()],
-            events,
+            events: events.clone(),
             start_block: None,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-            network_config: network1,
-            codegen_contracts: vec![contract1],
-            sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-        };
+          network_config: network1,
+          codegen_contracts: vec![contract1_on_chain1, contract2_on_chain1],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+      };
         let chain_config_2 = super::NetworkConfigTemplate {
-            network_config: network2,
-            codegen_contracts: vec![contract2],
-            sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-        };
+          network_config: network2,
+          codegen_contracts: vec![contract1_on_chain2, contract2_on_chain2],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+      };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
 
@@ -1475,10 +1854,10 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-            network_config: network1,
-            codegen_contracts: vec![contract1],
-            sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}], ~lowercaseAddresses=false)".to_string(),
-        };
+          network_config: network1,
+          codegen_contracts: vec![contract1],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}], ~lowercaseAddresses=false)".to_string(),
+      };
 
         let expected_chain_configs = vec![chain_config_1];
 
@@ -1500,18 +1879,18 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-            network_config: network1,
-            codegen_contracts: vec![],
-            sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
-                 ~allEventSignatures=[]->Belt.Array.concatMany, \
-                 ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
-        };
+          network_config: network1,
+          codegen_contracts: vec![],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
+               ~allEventSignatures=[]->Belt.Array.concatMany, \
+               ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+      };
 
         let chain_config_2 = super::NetworkConfigTemplate {
-            network_config: network2,
-            codegen_contracts: vec![],
-            sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
-        };
+          network_config: network2,
+          codegen_contracts: vec![],
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+      };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
         let project_template = get_project_template_helper("config4.yaml");
@@ -1571,18 +1950,18 @@ type transaction = Transaction.t
 
 @genType
 type event = {{
-  /** The parameters or arguments associated with this event. */
-  params: eventArgs,
-  /** The unique identifier of the blockchain network where this event occurred. */
-  chainId: chainId,
-  /** The address of the contract that emitted this event. */
-  srcAddress: Address.t,
-  /** The index of this event's log within the block. */
-  logIndex: int,
-  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
-  transaction: transaction,
-  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
-  block: block,
+/** The parameters or arguments associated with this event. */
+params: eventArgs,
+/** The unique identifier of the blockchain network where this event occurred. */
+chainId: chainId,
+/** The address of the contract that emitted this event. */
+srcAddress: Address.t,
+/** The index of this event's log within the block. */
+logIndex: int,
+/** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+transaction: transaction,
+/** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+block: block,
 }}
 
 @genType
@@ -1597,8 +1976,8 @@ let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
 let handlerRegister: EventRegister.t = EventRegister.make(
-  ~contractName,
-  ~eventName=name,
+~contractName,
+~eventName=name,
 )
 
 @genType
@@ -1607,22 +1986,22 @@ type eventFilter = {{}}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {{
-  let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
-  {{
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
-    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-    convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
-    id,
-  name,
-  contractName,
-  isWildcard: (handlerRegister->EventRegister.isWildcard),
-  handler: handlerRegister->EventRegister.getHandler,
-  contractRegister: handlerRegister->EventRegister.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-  }}
+let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
+{{
+  getEventFiltersOrThrow,
+  filterByAddresses,
+  dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
+  id,
+name,
+contractName,
+isWildcard: (handlerRegister->EventRegister.isWildcard),
+handler: handlerRegister->EventRegister.getHandler,
+contractRegister: handlerRegister->EventRegister.getContractRegister,
+paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+}}
 }}"#
             ),
         }
@@ -1640,11 +2019,11 @@ let register = (): Internal.evmEventConfig => {{
         .unwrap();
 
         assert_eq!(
-            event_template,
-            EventTemplate {
-                name: "NewGravatar".to_string(),
-                params: vec![],
-                module_code: r#"
+          event_template,
+          EventTemplate {
+              name: "NewGravatar".to_string(),
+              params: vec![],
+              module_code: r#"
 let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
 let name = "NewGravatar"
@@ -1659,18 +2038,18 @@ type transaction = Transaction.t
 
 @genType
 type event = {
-  /** The parameters or arguments associated with this event. */
-  params: eventArgs,
-  /** The unique identifier of the blockchain network where this event occurred. */
-  chainId: chainId,
-  /** The address of the contract that emitted this event. */
-  srcAddress: Address.t,
-  /** The index of this event's log within the block. */
-  logIndex: int,
-  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
-  transaction: transaction,
-  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
-  block: block,
+/** The parameters or arguments associated with this event. */
+params: eventArgs,
+/** The unique identifier of the blockchain network where this event occurred. */
+chainId: chainId,
+/** The address of the contract that emitted this event. */
+srcAddress: Address.t,
+/** The index of this event's log within the block. */
+logIndex: int,
+/** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+transaction: transaction,
+/** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+block: block,
 }
 
 @genType
@@ -1685,8 +2064,8 @@ let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 
 let handlerRegister: EventRegister.t = EventRegister.make(
-  ~contractName,
-  ~eventName=name,
+~contractName,
+~eventName=name,
 )
 
 @genType
@@ -1695,25 +2074,25 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
-  {
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
-    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-    convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
-    id,
-  name,
-  contractName,
-  isWildcard: (handlerRegister->EventRegister.isWildcard),
-  handler: handlerRegister->EventRegister.getHandler,
-  contractRegister: handlerRegister->EventRegister.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-  }
+let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
+{
+  getEventFiltersOrThrow,
+  filterByAddresses,
+  dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  id,
+name,
+contractName,
+isWildcard: (handlerRegister->EventRegister.isWildcard),
+handler: handlerRegister->EventRegister.getHandler,
+contractRegister: handlerRegister->EventRegister.getContractRegister,
+paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+}
 }"#.to_string(),
-            }
-        );
+          }
+      );
     }
 
     #[test]
@@ -1734,11 +2113,11 @@ let register = (): Internal.evmEventConfig => {
         .unwrap();
 
         assert_eq!(
-            event_template,
-            EventTemplate {
-                name: "NewGravatar".to_string(),
-                params: vec![],
-                module_code: r#"
+          event_template,
+          EventTemplate {
+              name: "NewGravatar".to_string(),
+              params: vec![],
+              module_code: r#"
 let id = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363_1"
 let sighash = "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
 let name = "NewGravatar"
@@ -1753,18 +2132,18 @@ type transaction = {from: option<Address.t>}
 
 @genType
 type event = {
-  /** The parameters or arguments associated with this event. */
-  params: eventArgs,
-  /** The unique identifier of the blockchain network where this event occurred. */
-  chainId: chainId,
-  /** The address of the contract that emitted this event. */
-  srcAddress: Address.t,
-  /** The index of this event's log within the block. */
-  logIndex: int,
-  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
-  transaction: transaction,
-  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
-  block: block,
+/** The parameters or arguments associated with this event. */
+params: eventArgs,
+/** The unique identifier of the blockchain network where this event occurred. */
+chainId: chainId,
+/** The address of the contract that emitted this event. */
+srcAddress: Address.t,
+/** The index of this event's log within the block. */
+logIndex: int,
+/** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+transaction: transaction,
+/** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+block: block,
 }
 
 @genType
@@ -1779,8 +2158,8 @@ let blockSchema = S.object((_): block => {})
 let transactionSchema = S.object((s): transaction => {from: s.field("from", S.nullable(Address.schema))})
 
 let handlerRegister: EventRegister.t = EventRegister.make(
-  ~contractName,
-  ~eventName=name,
+~contractName,
+~eventName=name,
 )
 
 @genType
@@ -1789,25 +2168,25 @@ type eventFilter = {}
 @genType type eventFilters = Internal.noEventFilters
 
 let register = (): Internal.evmEventConfig => {
-  let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
-  {
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
-    blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-    transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-    convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
-    id,
-  name,
-  contractName,
-  isWildcard: (handlerRegister->EventRegister.isWildcard),
-  handler: handlerRegister->EventRegister.getHandler,
-  contractRegister: handlerRegister->EventRegister.getContractRegister,
-  paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-  }
+let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=handlerRegister->EventRegister.getEventFilters, ~sighash, ~params=[])
+{
+  getEventFiltersOrThrow,
+  filterByAddresses,
+  dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
+  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  id,
+name,
+contractName,
+isWildcard: (handlerRegister->EventRegister.isWildcard),
+handler: handlerRegister->EventRegister.getHandler,
+contractRegister: handlerRegister->EventRegister.getContractRegister,
+paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+}
 }"#.to_string(),
-            }
-        );
+          }
+      );
     }
 
     #[test]
@@ -1834,5 +2213,44 @@ let register = (): Internal.evmEventConfig => {
         );
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
+    }
+
+    #[test]
+    fn internal_config_ts_code_generated_for_evm() {
+        let project_template = get_project_template_helper("config1.yaml");
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
+    }
+
+    #[test]
+    fn internal_config_ts_code_generated_for_fuel() {
+        let project_template = get_project_template_helper("fuel-config.yaml");
+        // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
+        // which differs from the runtime default of true, so it's included
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
+    }
+
+    #[test]
+    fn internal_config_ts_code_with_all_options() {
+        let project_template = get_project_template_helper("config-with-all-options.yaml");
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
+    }
+
+    #[test]
+    fn internal_config_ts_code_omits_default_values() {
+        let project_template = get_project_template_helper("config1.yaml");
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
+    }
+
+    #[test]
+    fn indexer_code_generates_correct_types_and_values() {
+        let project_template = get_project_template_helper("config1.yaml");
+        insta::assert_snapshot!(project_template.indexer_code);
+    }
+
+    #[test]
+    fn indexer_code_multiple_chains() {
+        // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
+        let project_template = get_project_template_helper("config2.yaml");
+        insta::assert_snapshot!(project_template.indexer_code);
     }
 }

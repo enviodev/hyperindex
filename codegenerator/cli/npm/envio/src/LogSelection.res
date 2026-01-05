@@ -84,38 +84,44 @@ let parseEventFiltersOrThrow = {
     }
 
     let parse = (eventFilters: Js.Json.t): array<Internal.topicSelection> => {
-      switch eventFilters {
-      | Array([]) => [%raw(`{}`)]
-      | Array(a) => a
-      | _ => [eventFilters]
-      }->Js.Array2.map(eventFilter => {
-        switch eventFilter {
-        | Object(eventFilter) => {
-            let filterKeys = eventFilter->Js.Dict.keys
-            switch filterKeys {
-            | [] => default
-            | _ => {
-                filterKeys->Js.Array2.forEach(key => {
-                  if params->Js.Array2.includes(key)->not {
-                    // In TS type validation doesn't catch this
-                    // when we have eventFilters as a callback
-                    Js.Exn.raiseError(
-                      `Invalid event filters configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
-                    )
+      if eventFilters === Obj.magic(true) {
+        [default]
+      } else if eventFilters === Obj.magic(false) {
+        []
+      } else {
+        switch eventFilters {
+        | Array([]) => [%raw(`{}`)]
+        | Array(a) => a
+        | _ => [eventFilters]
+        }->Js.Array2.map(eventFilter => {
+          switch eventFilter {
+          | Object(eventFilter) => {
+              let filterKeys = eventFilter->Js.Dict.keys
+              switch filterKeys {
+              | [] => default
+              | _ => {
+                  filterKeys->Js.Array2.forEach(key => {
+                    if params->Js.Array2.includes(key)->not {
+                      // In TS type validation doesn't catch this
+                      // when we have eventFilters as a callback
+                      Js.Exn.raiseError(
+                        `Invalid event filters configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
+                      )
+                    }
+                  })
+                  {
+                    Internal.topic0,
+                    topic1: topic1(eventFilter),
+                    topic2: topic2(eventFilter),
+                    topic3: topic3(eventFilter),
                   }
-                })
-                {
-                  Internal.topic0,
-                  topic1: topic1(eventFilter),
-                  topic2: topic2(eventFilter),
-                  topic3: topic3(eventFilter),
                 }
               }
             }
+          | _ => Js.Exn.raiseError("Invalid event filters configuration. Expected an object")
           }
-        | _ => Js.Exn.raiseError("Invalid event filters configuration. Expected an object")
-        }
-      })
+        })
+      }
     }
 
     let getEventFiltersOrThrow = switch eventFilters {

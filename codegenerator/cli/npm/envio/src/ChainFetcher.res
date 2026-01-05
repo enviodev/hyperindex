@@ -82,7 +82,29 @@ let make = (
         isRegistered
       }
 
-      if shouldBeIncluded {
+      // Check if event has Static([]) filters (from eventFilters: false)
+      // If so, skip it entirely - it should never be fetched
+      let shouldSkip = try {
+        let getEventFiltersOrThrow = (
+          eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+        ).getEventFiltersOrThrow
+
+        // Check for non-evm chains
+        if getEventFiltersOrThrow->Utils.magic {
+          switch getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)) {
+          | Static([]) => true
+          | _ => false
+          }
+        } else {
+          false
+        }
+      } catch {
+      // Can throw when filter is invalid
+      // Don't skip an event in this case. Let it throw in a better place - source code
+      | _ => false
+      }
+
+      if shouldBeIncluded && !shouldSkip {
         eventConfigs->Array.push(eventConfig)
       }
     })
@@ -457,3 +479,5 @@ let getLastKnownValidBlock = async (
 }
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
+
+let isLive = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None

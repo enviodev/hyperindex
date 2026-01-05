@@ -325,7 +325,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     }
 
     let config = Generated.makeGeneratedConfig()
-    let indexer: Indexer.t = {
+    let ctx: Ctx.t = {
       registrations,
       config,
       persistence: Generated.codegenPersistence,
@@ -392,7 +392,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let chainFetcher = ChainFetcher.makeFromConfig(
       config.chainMap->ChainMap.get(processingChain),
       ~config,
-      ~registrations=indexer.registrations,
+      ~registrations=ctx.registrations,
       ~targetBufferSize=5000,
     )
 
@@ -405,7 +405,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
     let loadManager = LoadManager.make()
     let persistence = {
-      ...indexer.persistence,
+      ...ctx.persistence,
       storage: makeMockStorage(mockDb),
       storageStatus: Ready({
         cleanRun: false,
@@ -415,8 +415,8 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         checkpointId: 0.,
       }),
     }
-    let indexer = {
-      ...indexer,
+    let ctx = {
+      ...ctx,
       persistence,
     }
 
@@ -516,12 +516,12 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         ~persistence,
         ~inMemoryStore,
         ~chains,
-        ~config=indexer.config,
+        ~config=ctx.config,
       )
       await batch->EventProcessing.runBatchHandlersOrThrow(
         ~inMemoryStore,
         ~loadManager,
-        ~indexer,
+        ~ctx,
         ~shouldSaveHistory=false,
         ~shouldBenchmark=false,
         ~chains,
