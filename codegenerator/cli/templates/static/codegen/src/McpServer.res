@@ -188,7 +188,48 @@ let handleGetConfig = (_arguments: Js.Json.t, context: toolContext): Promise.t<t
   })
 }
 
-
+let handleDumpEffectCache = (_arguments: Js.Json.t, context: toolContext): Promise.t<toolResult> => {
+  // Call the existing dumpEffectCache method
+  let storage = context.indexerConfig.persistence->Persistence.getInitializedStorageOrThrow
+  
+  storage.dumpEffectCache()
+  ->Promise.then(() => {
+    let resultDict = Js.Dict.empty()
+    resultDict->Js.Dict.set("success", true->Js.Json.boolean)
+    resultDict->Js.Dict.set("message", "Effect cache dumped to .envio/cache directory"->Js.Json.string)
+    resultDict->Js.Dict.set("cachePath", ".envio/cache"->Js.Json.string)
+    
+    Promise.resolve({
+      content: [
+        {
+          type_: "text",
+          text: Js.Json.stringify(resultDict->Js.Json.object_),
+        },
+      ],
+      isError: false,
+    })
+  })
+  ->Promise.catch(error => {
+    let errorMessage = switch error->Js.Exn.asJsExn {
+    | Some(exn) => 
+      switch Js.Exn.message(exn) {
+      | Some(msg) => msg
+      | None => "Unknown error occurred while dumping effect cache"
+      }
+    | None => "Unknown error occurred while dumping effect cache"
+    }
+    
+    Promise.resolve({
+      content: [
+        {
+          type_: "text",
+          text: Js.Json.stringify(makeErrorJson(errorMessage)),
+        },
+      ],
+      isError: true,
+    })
+  })
+}
 
 // Helper to create inputSchema with Zod object schema
 let makeInputSchema = (fields: array<(string, 'a)>): 'a => {
@@ -234,6 +275,15 @@ let createServer = (~context: toolContext): mcpServer => {
       description: "Get indexer runtime configuration including networks, contracts, and settings",
     },
     args => handleGetConfig(args, context),
+  )
+
+  // Register dump_effect_cache tool
+  server->registerTool(
+    "dump_effect_cache",
+    {
+      description: "Export effect cache to disk (.envio/cache directory). Effects cache RPC calls and external data fetches for performance.",
+    },
+    args => handleDumpEffectCache(args, context),
   )
 
   server
