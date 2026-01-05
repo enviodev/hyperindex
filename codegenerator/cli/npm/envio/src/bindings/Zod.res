@@ -2,9 +2,8 @@
 //
 // Zod is used by the MCP Server for input schema validation.
 // It's declared as a peer dependency of @modelcontextprotocol/sdk and is
-// explicitly added to package.json.hbs (version: ^3.25.0) to ensure it's
-// available at runtime. This satisfies the MCP SDK peer dependency requirement
-// of ^3.25 || ^4.0
+// explicitly pinned to version 3.25.76 in package.json.hbs for reproducibility.
+// This satisfies the MCP SDK peer dependency requirement of ^3.25 || ^4.0
 
 type zodSchema<'a>
 
