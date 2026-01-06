@@ -20,7 +20,7 @@ const runWithStrategy = (strategy: string): string => {
     env: {
       ...process.env,
       LOG_STRATEGY: strategy,
-      LOGGING_TEST_RUNNER: "1",
+      ENVIO_TEST_LOGGING_FORMAT: "1",
     },
     cwd: process.cwd(),
   });

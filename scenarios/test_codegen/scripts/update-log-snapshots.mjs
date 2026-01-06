@@ -31,7 +31,7 @@ for (const strategy of strategies) {
     env: {
       ...process.env,
       LOG_STRATEGY: strategy,
-      LOGGING_TEST_RUNNER: "1",
+      ENVIO_TEST_LOGGING_FORMAT: "1",
     },
   });
   const snapshotPath = `${SNAPSHOTS_DIR}/Logging.${strategy}.snap`;

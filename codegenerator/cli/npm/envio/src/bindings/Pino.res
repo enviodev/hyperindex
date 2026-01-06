@@ -138,8 +138,8 @@ module MultiStreamLogger = {
 
   let makeFormatter = logLevels => {
     let customColors = "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray"
-    // Force colors when running in test runner
-    let options = switch NodeJs.Process.process.env->Js.Dict.get("LOGGING_TEST_RUNNER") {
+    // Force colors when running for logs format test
+    let options = switch %raw(`"ENVIO_TEST_LOGGING_FORMAT" in process.env`) {
     | Some(_) => {
         customLevels: logLevels,
         customColors,
