@@ -37,8 +37,6 @@ for (const strategy of strategies) {
       ...process.env,
       LOG_STRATEGY: strategy,
       LOGGING_TEST_RUNNER: "1",
-      // Force colorized log output even when stdout is piped (not a TTY)
-      FORCE_COLOR: "1",
     },
   });
   const snapshotPath = `${SNAPSHOTS_DIR}/Logging.${strategy}.snap`;

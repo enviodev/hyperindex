@@ -137,10 +137,23 @@ module MultiStreamLogger = {
   external prettyFactory: prettyFactoryOpts => string => string = "prettyFactory"
 
   let makeFormatter = logLevels => {
-    prettyFactory({
-      customLevels: logLevels,
-      customColors: "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray",
-    })
+    let customColors = "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray"
+    // Force colors when running in test runner
+    let options = switch NodeJs.Process.process.env->Js.Dict.get("LOGGING_TEST_RUNNER") {
+    | Some(_) => {
+        customLevels: logLevels,
+        customColors,
+        colorize: true,
+      }
+    // For some reason setting colorize as undefined,
+    // makes it behave as false.
+    | None => {
+        customLevels: logLevels,
+        customColors,
+      }
+    }
+
+    prettyFactory(options)
   }
 
   let makeStreams = (~userLogLevel, ~formatter, ~logFile, ~defaultFileLogLevel) => {
