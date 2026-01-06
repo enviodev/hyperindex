@@ -1,5 +1,4 @@
-open RescriptMocha
-
+open Vitest
 open Belt
 open TestHelpers
 
@@ -12,7 +11,7 @@ describe("{{contract.name.capitalized}} contract {{event.name}} event tests", ()
   // Creating mock for {{contract.name.capitalized}} contract {{event.name}} event
   let event = {{event.create_mock_code}};
 
-  Async.it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async () => {
+  Async.it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async t => {
     // Processing the event
     let mockDbUpdated = await {{contract.name.capitalized}}.{{event.name}}.processEvent({
       event,
@@ -33,11 +32,10 @@ describe("{{contract.name.capitalized}} contract {{event.name}} event tests", ()
       {{/each}}
     }
     //Assert the expected {{contract.name.capitalized}} {{event.name}} entity
-    Assert.deepEqual(
+    t.expect(
       actual{{contract.name.capitalized}}{{event.name}},
-      expected{{contract.name.capitalized}}{{event.name}},
       ~message="Actual {{contract.name.capitalized}}_{{event.name}} should be the same as the expected {{contract.name.capitalized}}_{{event.name}}",
-    )
+    ).toEqual(expected{{contract.name.capitalized}}{{event.name}})
   })
 })
     {{/with}}

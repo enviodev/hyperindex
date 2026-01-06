@@ -12,6 +12,7 @@ Previously used Mocha and Chai for user-facing indexer tests. This approach had 
 - Difficult to expose to users since we don't control their environment
 - Snapshot testing support would make configuration even more complex
 - Not flexible enough for a user-controlled setup
+- Requires users to install 5 dependencies instead of 1
 
 Main drivers for change:
 
@@ -21,7 +22,7 @@ Main drivers for change:
 
 ## Alternatives Considered
 
-- **Node.js built-in test runner**: Same configuration complexity issues as Mocha/Chai
+- **Node.js built-in test runner**: Same configuration complexity issues as Mocha/Chai. Also, will require a change when potentially supporting Bun as an alternative runtime.
 - **Ava.js**: Good testing framework, but requires complex setup for TypeScript + ESM
 - **Jest**: Not considered at all - bad ESM support, essentially deprecated for modern projects. Vitest is its successor and does things much better
 

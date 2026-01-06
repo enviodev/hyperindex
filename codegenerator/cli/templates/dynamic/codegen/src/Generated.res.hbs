@@ -27,7 +27,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
     let files = await iterator->Utils.Array.fromAsyncIterator
     // Filter out test and spec files
     files->Js.Array2.filter(file => {
-      !(file->Js.String2.includes(".test.") || file->Js.String2.includes(".spec."))
+      !(file->Js.String2.includes(".test.") || file->Js.String2.includes(".spec.") || file->Js.String2.includes("_test."))
     })
   } catch {
   | exn =>
