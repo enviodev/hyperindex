@@ -5,10 +5,10 @@
   "scripts": {
     "build": "rescript",
     "watch": "rescript -w",
-    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit 'test/**/*.{ts,res.mjs}'",
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit 'test/**/*.{ts,res.mjs}' --ignore 'test/fixtures/**'",
     "test": "rescript && tsc --noEmit && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
-    "test:log": "DEBUG=true npm test",
+    "test:update-log-snapshots": "LOGGING_TEST_RUNNER=1 node scripts/update-log-snapshots.mjs",
     "codegen": "envio codegen",
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",

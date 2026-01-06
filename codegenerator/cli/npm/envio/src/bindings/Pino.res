@@ -132,7 +132,7 @@ module MultiStreamLogger = {
   }
   @module("pino") external destination: destinationOpts => stream = "destination"
 
-  type prettyFactoryOpts = {...options, customColors?: string}
+  type prettyFactoryOpts = {...options, customColors?: string, colorize?: bool}
   @module("pino-pretty")
   external prettyFactory: prettyFactoryOpts => string => string = "prettyFactory"
 

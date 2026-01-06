@@ -1,3 +1,13 @@
+// Guard: only allow execution from test runner
+switch NodeJs.Process.process.env->Js.Dict.get("LOGGING_TEST_RUNNER") {
+| None =>
+  Js.Exn.raiseError(
+    "LogTesting.res should only be run via Logging_test.ts. " ++
+    "Set LOGGING_TEST_RUNNER=1 to run directly.",
+  )
+| Some(_) => ()
+}
+
 open Pino
 open Logging
 
