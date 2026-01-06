@@ -1,4 +1,4 @@
-import assert from "assert";
+import { describe, it, expect } from "vitest";
 import { TestHelpers, type Account } from "generated";
 
 const { MockDb, ERC20, Addresses } = TestHelpers;
@@ -43,21 +43,19 @@ describe("Transfers", () => {
       mockDbAfterTransfer.entities.Account.get(userAddress1)?.balance;
 
     //Assert the expected balance
-    assert.equal(
-      2n,
+    expect(
       account1Balance,
       "Should have subtracted transfer amount 3 from userAddress1 balance 5"
-    );
+    ).toBe(2n);
 
     //Get the balance of userAddress2 after the transfer
     const account2Balance =
       mockDbAfterTransfer.entities.Account.get(userAddress2)?.balance;
 
     //Assert the expected balance
-    assert.equal(
-      3n,
+    expect(
       account2Balance,
       "Should have added transfer amount 3 to userAddress2 balance 0"
-    );
+    ).toBe(3n);
   });
 });

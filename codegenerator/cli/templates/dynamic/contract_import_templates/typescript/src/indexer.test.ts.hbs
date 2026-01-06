@@ -1,6 +1,6 @@
 {{#with imported_contracts.[0] as | contract |}}
     {{#with contract.imported_events.[0] as | event |}}
-import assert from "assert";
+import { describe, it, expect } from "vitest";
 import { 
   TestHelpers,
   type {{contract.name.capitalized}}_{{event.name}}
@@ -38,8 +38,9 @@ describe("{{contract.name.capitalized}} contract {{event.name}} event tests", ()
       {{/each}}
     };
     // Asserting that the entity in the mock database is the same as the expected entity
-    assert.deepEqual(actual{{contract.name.capitalized}}{{event.name}}, expected{{contract.name.capitalized}}{{event.name}}, "Actual {{contract.name.capitalized}}{{event.name}} should be the same as the expected{{contract.name.capitalized}}{{event.name}}");
+    expect(actual{{contract.name.capitalized}}{{event.name}}, "Actual {{contract.name.capitalized}}{{event.name}} should be the same as the expected {{contract.name.capitalized}}{{event.name}}").toEqual(expected{{contract.name.capitalized}}{{event.name}});
   });
 });
     {{/with}}
 {{/with}}
+
