@@ -42,33 +42,40 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
   let makeMultiStreamLogger =
     MultiStreamLogger.make(~userLogLevel, ~defaultFileLogLevel, ~customLevels=logLevels, ...)
 
+  // Empty base disables pid and hostname in logs
+  let base: Js.Json.t = %raw("{}")
+
   switch logStrategy {
   | EcsFile =>
     makeWithOptionsAndTransport(
       {
         ...Pino.ECS.make(),
         customLevels: logLevels,
+        base,
       },
       Transport.make(pinoFile),
     )
-  | EcsConsoleMultistream => makeMultiStreamLogger(~logFile=None, ~options=Some(Pino.ECS.make()))
+  | EcsConsoleMultistream =>
+    makeMultiStreamLogger(~logFile=None, ~options=Some({...Pino.ECS.make(), base}))
   | EcsConsole =>
     make({
       ...Pino.ECS.make(),
       level: userLogLevel,
       customLevels: logLevels,
+      base,
     })
   | FileOnly =>
     makeWithOptionsAndTransport(
       {
         customLevels: logLevels,
         level: defaultFileLogLevel,
+        base,
       },
       Transport.make(pinoFile),
     )
-  | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=None)
-  | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=None)
-  | Both => makeMultiStreamLogger(~logFile=Some(logFilePath), ~options=None)
+  | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=Some({base: base}))
+  | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=Some({base: base}))
+  | Both => makeMultiStreamLogger(~logFile=Some(logFilePath), ~options=Some({base: base}))
   }
 }
 
