@@ -194,7 +194,7 @@ use crate::{
         entity_parsing::{Field, FieldType},
         system_config::{self, Ecosystem, EventKind, SystemConfig},
     },
-    rescript_types::RescriptRecordField,
+    type_schema::RecordField,
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions},
 };
@@ -464,7 +464,7 @@ pub struct Param {
 impl Param {
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
         let js_name = flattened_event_param.event_param.name.to_string();
-        let res_name = RescriptRecordField::to_valid_res_name(&js_name);
+        let res_name = RecordField::to_valid_rescript_name(&js_name);
         Ok(Param {
             res_name,
             js_name,

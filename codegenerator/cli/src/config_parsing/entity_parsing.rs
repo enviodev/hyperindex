@@ -9,7 +9,7 @@ use crate::{
     constants::project_paths::DEFAULT_SCHEMA_PATH,
     hbs_templating::codegen_templates::DerivedFieldTemplate,
     project_paths::{path_utils, ParsedProjectPaths},
-    rescript_types::{RescriptSchemaMode, RescriptTypeIdent},
+    type_schema::{SchemaMode, TypeIdent},
     utils::{text::Capitalize, unique_hashmap},
 };
 use anyhow::{anyhow, Context};
@@ -845,7 +845,7 @@ impl Field {
                     linked_entity: gql_field_type.get_linked_entity(schema)?,
                     is_primary_key: self.is_primary_key(),
                     is_nullable: gql_field_type.is_optional(),
-                    res_schema_code: res_type.to_rescript_schema(&RescriptSchemaMode::ForDb),
+                    res_schema_code: res_type.to_rescript_schema(&SchemaMode::ForDb),
                 }))
             }
         }
@@ -1060,13 +1060,13 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptTypeIdent> {
+    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<TypeIdent> {
         let composed_type_name = match self {
             //Only types in here should be non optional
             Self::NonNullType(field_type) => match field_type.as_ref() {
                 Self::Single(gql_scalar) => gql_scalar.to_rescript_type(schema)?,
                 Self::ListType(field_type) => {
-                    RescriptTypeIdent::Array(Box::new(field_type.to_rescript_type(schema)?))
+                    TypeIdent::Array(Box::new(field_type.to_rescript_type(schema)?))
                 }
                 //This case shouldn't happen, and should recurse without adding any types if so
                 //A double non null would be !! in gql
@@ -1074,11 +1074,11 @@ impl UserDefinedFieldType {
             },
             //If we match this case it missed the non null path entirely and should be optional
             Self::Single(gql_scalar) => {
-                RescriptTypeIdent::Option(Box::new(gql_scalar.to_rescript_type(schema)?))
+                TypeIdent::Option(Box::new(gql_scalar.to_rescript_type(schema)?))
             }
             //If we match this case it missed the non null path entirely and should be optional
-            Self::ListType(field_type) => RescriptTypeIdent::Option(Box::new(
-                RescriptTypeIdent::Array(Box::new(field_type.to_rescript_type(schema)?)),
+            Self::ListType(field_type) => TypeIdent::Option(Box::new(
+                TypeIdent::Array(Box::new(field_type.to_rescript_type(schema)?)),
             )),
         };
         Ok(composed_type_name)
@@ -1290,7 +1290,7 @@ impl FieldType {
         }
     }
 
-    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptTypeIdent> {
+    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<TypeIdent> {
         self.to_user_defined_field_type().to_rescript_type(schema)
     }
 
@@ -1431,21 +1431,21 @@ impl GqlScalar {
         Ok(converted)
     }
 
-    fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptTypeIdent> {
+    fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<TypeIdent> {
         let res_type = match self {
-            GqlScalar::ID => RescriptTypeIdent::ID,
-            GqlScalar::String => RescriptTypeIdent::String,
-            GqlScalar::Int => RescriptTypeIdent::Int,
-            GqlScalar::BigInt(_) => RescriptTypeIdent::BigInt,
-            GqlScalar::BigDecimal(_) => RescriptTypeIdent::BigDecimal,
-            GqlScalar::Float => RescriptTypeIdent::Float,
-            GqlScalar::Bytes => RescriptTypeIdent::String,
-            GqlScalar::Json => RescriptTypeIdent::Json,
-            GqlScalar::Boolean => RescriptTypeIdent::Bool,
-            GqlScalar::Timestamp => RescriptTypeIdent::Timestamp,
+            GqlScalar::ID => TypeIdent::ID,
+            GqlScalar::String => TypeIdent::String,
+            GqlScalar::Int => TypeIdent::Int,
+            GqlScalar::BigInt(_) => TypeIdent::BigInt,
+            GqlScalar::BigDecimal(_) => TypeIdent::BigDecimal,
+            GqlScalar::Float => TypeIdent::Float,
+            GqlScalar::Bytes => TypeIdent::String,
+            GqlScalar::Json => TypeIdent::Json,
+            GqlScalar::Boolean => TypeIdent::Bool,
+            GqlScalar::Timestamp => TypeIdent::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
-                TypeDef::Entity(_) => RescriptTypeIdent::ID,
-                TypeDef::Enum => RescriptTypeIdent::SchemaEnum(name.to_capitalized_options()),
+                TypeDef::Entity(_) => TypeIdent::ID,
+                TypeDef::Enum => TypeIdent::SchemaEnum(name.to_capitalized_options()),
             },
         };
         Ok(res_type)
