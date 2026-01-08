@@ -2,18 +2,17 @@
 source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.internal_config_ts_code
 ---
-import GreeterAbi from "../abis/greeter-abi.json";
 import type { IndexerConfig } from "envio";
 
 export default {
-  name: "Fuel indexer",
-  rollbackOnReorg: false,
-  fuel: {
+  name: "config4",
+  description: "Gravatar for Ethereum",
+  evm: {
     chains: {
-      "0": { id: 0, startBlock: 0 }
+      "ethereumMainnet": { id: 1, startBlock: 0 },
+      "polygon": { id: 137, startBlock: 0 }
     },
-    contracts: {
-      "Greeter": { abi: GreeterAbi }
-    }
+    addressFormat: "checksum",
+    eventDecoder: "hypersync"
   }
 } as const satisfies IndexerConfig;
