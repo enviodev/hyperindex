@@ -12,6 +12,7 @@ import {
 } from "generated";
 import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
+import { createTestIndexer } from "generated";
 
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 
@@ -631,6 +632,24 @@ describe("Use Envio test framework to test event handlers", () => {
 
     await assert.rejects(mockDbInitial.processEvents([event]), {
       message: "This should not be called",
+    });
+  });
+
+  it("createTestIndexer works", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+        },
+      },
+    });
+
+    assert.deepEqual(result, {
+      checkpoints: [],
+      changes: {},
     });
   });
 });

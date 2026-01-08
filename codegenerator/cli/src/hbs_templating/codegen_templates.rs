@@ -1418,6 +1418,34 @@ switch chainId {{
         // Add onBlock at the end
         let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
 
+        // Generate testIndexer types and createTestIndexer
+        let test_indexer_chains_fields = chain_configs
+            .iter()
+            .map(|chain| {
+                let id = chain.network_config.id;
+                format!(
+                    "  @as(\"{}\") chain{}?: Main.testIndexerChainConfig,",
+                    id, id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let test_indexer_code = format!(
+            r#"type testIndexerProcessConfigChains = {{
+{}
+}}
+
+type testIndexerProcessConfig = {{
+  chains: testIndexerProcessConfigChains,
+}}
+
+let createTestIndexer: unit => Main.testIndexer<testIndexerProcessConfig> = Main.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations)"#,
+            test_indexer_chains_fields
+        );
+
+        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_code);
+
         // Helper function to convert kebab-case to camelCase
         let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
 

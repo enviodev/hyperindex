@@ -79,3 +79,14 @@ Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>,
 ) => unit = (
 EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
+
+type testIndexerProcessConfigChains = {
+  @as("1") chain1?: Main.testIndexerChainConfig,
+  @as("2") chain2?: Main.testIndexerChainConfig,
+}
+
+type testIndexerProcessConfig = {
+  chains: testIndexerProcessConfigChains,
+}
+
+let createTestIndexer: unit => Main.testIndexer<testIndexerProcessConfig> = Main.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations)

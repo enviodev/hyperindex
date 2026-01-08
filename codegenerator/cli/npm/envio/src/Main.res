@@ -340,3 +340,29 @@ let start = async (
 
   gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
 }
+
+// ============== Test Indexer API ==============
+
+type testIndexerChainConfig = {
+  startBlock: int,
+  endBlock: int,
+}
+
+type testIndexerProgress = {
+  checkpoints: array<Js.Json.t>,
+  changes: dict<array<Js.Json.t>>,
+}
+
+type testIndexer<'processConfig> = {process: 'processConfig => promise<testIndexerProgress>}
+
+let makeCreateTestIndexer = (~config as _config: Config.t): (unit => testIndexer<'processConfig>) => {
+  () => {
+    process: _processConfig => {
+      // Mock implementation - returns empty progress
+      Promise.resolve({
+        checkpoints: [],
+        changes: Js.Dict.empty(),
+      })
+    },
+  }
+}

@@ -84,6 +84,19 @@ export type Indexer = Global extends {
 
 export type ChainId = {{#if is_evm_ecosystem}}EvmChainId{{/if}}{{#if is_fuel_ecosystem}}FuelChainId{{/if}}{{#if is_svm_ecosystem}}SvmChainId{{/if}}
 
+// ============== Test Indexer Types ==============
+
+import type {
+  TestIndexerFromConfig,
+} from "envio";
+
+/** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
+export type TestIndexer = Global extends {
+  config: infer Config extends IndexerConfig;
+}
+  ? TestIndexerFromConfig<Config>
+  : "The TestIndexer type is not available. Run 'pnpm envio codegen' to generate types";
+
 export type HandlerContext = {
   /**
    * Access the logger instance with event as a context. The logs will be displayed in the console and Envio Hosted Service.

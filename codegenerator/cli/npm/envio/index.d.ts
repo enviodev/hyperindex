@@ -469,3 +469,60 @@ export type IndexerFromConfig<Config extends IndexerConfig> = {
 } & (EcosystemCount<Config> extends 1
   ? SingleEcosystemChains<Config>
   : MultiEcosystemChains<Config>);
+
+// ============== Test Indexer Types ==============
+
+/** Configuration for a single chain in the test indexer. */
+export type TestIndexerChainConfig = {
+  /** The block number to start processing from. */
+  startBlock: number;
+  /** The block number to stop processing at. */
+  endBlock: number;
+};
+
+/** Progress returned after processing blocks with the test indexer. */
+export type TestIndexerProgress = {
+  /** Array of checkpoints processed. */
+  checkpoints: unknown[];
+  /** Entity changes keyed by entity name. */
+  changes: Record<string, unknown[]>;
+};
+
+// Helper to extract chain IDs from config for test indexer
+type TestIndexerChainIds<Config extends IndexerConfig> =
+  HasEvm<Config> extends true
+    ? Config["evm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? Chains[keyof Chains]["id"]
+        : never
+      : never
+    : HasFuel<Config> extends true
+    ? Config["fuel"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? Chains[keyof Chains]["id"]
+        : never
+      : never
+    : HasSvm<Config> extends true
+    ? Config["svm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? Chains[keyof Chains]["id"]
+        : never
+      : never
+    : never;
+
+/** Process configuration for the test indexer, with chains keyed by chain ID. */
+export type TestIndexerProcessConfig<Config extends IndexerConfig> = {
+  /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
+  chains: Partial<Record<TestIndexerChainIds<Config>, TestIndexerChainConfig>>;
+};
+
+/**
+ * Test indexer type resolved from config.
+ * Allows running the indexer for specific block ranges and inspecting results.
+ */
+export type TestIndexerFromConfig<Config extends IndexerConfig> = {
+  /** Process blocks for the specified chains and return progress with checkpoints and changes. */
+  process: (
+    config: TestIndexerProcessConfig<Config>
+  ) => Promise<TestIndexerProgress>;
+};
