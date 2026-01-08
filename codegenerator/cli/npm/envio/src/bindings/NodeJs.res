@@ -81,6 +81,31 @@ module Path = {
   let __dirname = dirname(Url.fileURLToPath(ImportMeta.importMeta.url))
 }
 
+module WorkerThreads = {
+  // Check if we're in the main thread or a worker
+  @module("worker_threads") external isMainThread: bool = "isMainThread"
+
+  // Worker data passed from main thread
+  @module("worker_threads") external workerData: Js.Nullable.t<'a> = "workerData"
+
+  // MessagePort for communication with parent
+  type messagePort
+  @module("worker_threads") external parentPort: Js.Nullable.t<messagePort> = "parentPort"
+  @send external postMessage: (messagePort, 'a) => unit = "postMessage"
+
+  // Worker class for spawning workers
+  type worker
+  type workerOptions = {workerData?: Js.Json.t}
+
+  @new @module("worker_threads")
+  external makeWorker: (string, workerOptions) => worker = "Worker"
+
+  @send external onMessage: (worker, @as("message") _, 'a => unit) => unit = "on"
+  @send external onError: (worker, @as("error") _, exn => unit) => unit = "on"
+  @send external onExit: (worker, @as("exit") _, int => unit) => unit = "on"
+  @send external terminate: worker => promise<int> = "terminate"
+}
+
 module Fs = {
   type writeFileOptions = {
     mode?: int,

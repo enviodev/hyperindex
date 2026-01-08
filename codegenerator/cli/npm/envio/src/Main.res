@@ -355,11 +355,11 @@ type testIndexerProgress = {
 
 type testIndexer<'processConfig> = {process: 'processConfig => promise<testIndexerProgress>}
 
-type testIndexerState = {
-  mutable processInProgress: bool,
-}
+type testIndexerState = {mutable processInProgress: bool}
 
-let makeCreateTestIndexer = (~config as _config: Config.t): (unit => testIndexer<'processConfig>) => {
+let makeCreateTestIndexer = (~config as _config: Config.t): (
+  unit => testIndexer<'processConfig>
+) => {
   () => {
     let state = {processInProgress: false}
     {
