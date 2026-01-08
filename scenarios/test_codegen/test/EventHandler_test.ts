@@ -652,4 +652,64 @@ describe("Use Envio test framework to test event handlers", () => {
       changes: {},
     });
   });
+
+  it("createTestIndexer throws when no chain is defined", () => {
+    const indexer = createTestIndexer();
+
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {},
+        }),
+      {
+        message: "createTestIndexer requires exactly one chain to be defined",
+      }
+    );
+  });
+
+  it("createTestIndexer throws when multiple chains are defined", () => {
+    const indexer = createTestIndexer();
+
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {
+            1: { startBlock: 1, endBlock: 100 },
+            137: { startBlock: 1, endBlock: 100 },
+          },
+        }),
+      {
+        message:
+          "createTestIndexer does not support processing multiple chains at once. Found 2 chains defined",
+      }
+    );
+  });
+
+  it("createTestIndexer throws when process is called while already running", async () => {
+    const indexer = createTestIndexer();
+
+    // Start first process (don't await)
+    const firstProcess = indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // Try to start second process immediately - throws synchronously
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {
+            1: { startBlock: 1, endBlock: 100 },
+          },
+        }),
+      {
+        message:
+          "createTestIndexer process is already running. Only one process call is allowed at a time",
+      }
+    );
+
+    // Clean up first process
+    await firstProcess;
+  });
 });
