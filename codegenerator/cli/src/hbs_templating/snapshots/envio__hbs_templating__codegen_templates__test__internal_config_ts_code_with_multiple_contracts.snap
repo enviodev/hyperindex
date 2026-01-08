@@ -5,13 +5,15 @@ expression: project_template.internal_config_ts_code
 import type { IndexerConfig } from "envio";
 
 export default {
-  name: "config1",
+  name: "config2",
   description: "Gravatar for Ethereum",
   evm: {
     chains: {
-      "ethereumMainnet": { id: 1, startBlock: 0 }
+      "ethereumMainnet": { id: 1, startBlock: 0 },
+      "2": { id: 2, startBlock: 0 }
     },
     contracts: {
+      "Contract2": { abi: [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}] },
       "Contract1": { abi: [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}] }
     },
     addressFormat: "checksum",
