@@ -280,3 +280,19 @@ pub mod benchmark {
         Ok(())
     }
 }
+
+pub mod git {
+    use super::execute_command;
+    use anyhow::{anyhow, Result};
+    use std::path::Path;
+
+    pub async fn init(project_root: &Path) -> Result<()> {
+        let exit = execute_command("git", vec!["init"], project_root).await?;
+
+        if !exit.success() {
+            return Err(anyhow!("Failed to initialize git repository"));
+        }
+
+        Ok(())
+    }
+}
