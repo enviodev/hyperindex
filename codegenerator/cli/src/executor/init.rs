@@ -278,10 +278,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
     }
 
-    // Initialize git repository
-    commands::git::init(&parsed_project_paths.project_root)
-        .await
-        .context("Failed to initialize git repository")?;
+    // Initialize git repository (non-fatal if it fails)
+    if let Err(e) = commands::git::init(&parsed_project_paths.project_root).await {
+        eprintln!("Warning: Failed to initialize git repository: {}", e);
+    }
 
     // If the project directory is not the current directory, print a message for user to cd into it
     if parsed_project_paths.project_root != Path::new(".") {
