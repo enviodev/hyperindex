@@ -157,3 +157,7 @@ export type HandlerContext = {
   }
   {{/each}}
 };
+
+{{#each entities as | entity |}}
+export type {{entity.name.capitalized}} = Entities.{{entity.name.capitalized}}_t;
+{{/each}}

@@ -15,6 +15,9 @@ export type {
 import type { Address } from "./src/Types.ts";
 export type { EffectCaller, Address } from "./src/Types.ts";
 
+/** Utility type to expand/flatten complex types for better IDE display. */
+export type Prettify<T> = { [K in keyof T]: T[K] } & {};
+
 import type {
   effect as Effect,
   effectArgs as EffectArgs,

@@ -34,12 +34,6 @@ type handlerContext = {
   {{/each}}
 }
 
-//Re-exporting types for backwards compatability
-{{#each entities as | entity |}}
-@genType.as("{{entity.name.original}}")
-type {{entity.name.uncapitalized}} = Entities.{{entity.name.capitalized}}.t
-{{/each}}
-
 //*************
 //**CONTRACTS**
 //*************
