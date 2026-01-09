@@ -138,7 +138,7 @@ let makeInitialState = (
       dynamicContracts: [],
     }
   })
-  
+
   {
     cleanRun: true,
     cache: Js.Dict.empty(),
@@ -165,8 +165,7 @@ let makeCreateTestIndexer = (
         }
 
         // Validate chains
-        let chains: Js.Dict.t<chainConfig> =
-          (processConfig->Utils.magic)["chains"]->Utils.magic
+        let chains: Js.Dict.t<chainConfig> = (processConfig->Utils.magic)["chains"]->Utils.magic
         let chainKeys = chains->Js.Dict.keys
 
         switch chainKeys->Array.length {
@@ -221,7 +220,6 @@ let makeCreateTestIndexer = (
             | WriteBatch({updatedEntities}) =>
               store->handleWriteBatch(~updatedEntities)
               Js.Json.null->respond
-
             }
           })
 

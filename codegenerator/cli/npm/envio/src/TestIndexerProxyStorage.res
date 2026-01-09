@@ -7,7 +7,13 @@ type requestId = int
 @tag("type")
 type workerPayload =
   | @as("loadByIds") LoadByIds({tableName: string, ids: array<string>})
-  | @as("loadByField") LoadByField({tableName: string, fieldName: string, fieldValue: Js.Json.t, operator: Persistence.operator})
+  | @as("loadByField")
+  LoadByField({
+      tableName: string,
+      fieldName: string,
+      fieldValue: Js.Json.t,
+      operator: Persistence.operator,
+    })
   | @as("writeBatch") WriteBatch({updatedEntities: array<Persistence.updatedEntity>})
 
 // Main thread -> Worker payloads
@@ -45,7 +51,9 @@ let make = (~parentPort, ~initialState): t => {
   // Set up message listener for responses from main thread
   parentPort->NodeJs.WorkerThreads.onPortMessage((msg: mainMessage) => {
     let idStr = msg.id->Int.toString
-    let {resolve, reject} = switch proxy.pendingRequests->Utils.Dict.dangerouslyGetNonOption(idStr) {
+    let {resolve, reject} = switch proxy.pendingRequests->Utils.Dict.dangerouslyGetNonOption(
+      idStr,
+    ) {
     | Some(pending) => pending
     | None => Js.Exn.raiseError(`TestIndexer: No pending request found for id ${idStr}`)
     }
@@ -75,19 +83,24 @@ let sendRequest = (proxy: t, ~payload: workerPayload): promise<Js.Json.t> => {
 
 let makeStorage = (proxy: t): Persistence.storage => {
   isInitialized: async () => true,
-
   initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?) => {
-    Js.Exn.raiseError("TestIndexer: initialize should not be called. Use resumeInitialState instead.")
+    Js.Exn.raiseError(
+      "TestIndexer: initialize should not be called. Use resumeInitialState instead.",
+    )
   },
-
   resumeInitialState: async () => proxy.initialState,
-
   loadByIdsOrThrow: async (~ids, ~table: Table.table, ~rowsSchema) => {
     let response = await proxy->sendRequest(~payload=LoadByIds({tableName: table.tableName, ids}))
     response->S.parseOrThrow(rowsSchema)
   },
-
-  loadByFieldOrThrow: async (~fieldName, ~fieldSchema, ~fieldValue, ~operator, ~table: Table.table, ~rowsSchema) => {
+  loadByFieldOrThrow: async (
+    ~fieldName,
+    ~fieldSchema,
+    ~fieldValue,
+    ~operator,
+    ~table: Table.table,
+    ~rowsSchema,
+  ) => {
     let response = await proxy->sendRequest(
       ~payload=LoadByField({
         tableName: table.tableName,
@@ -98,12 +111,10 @@ let makeStorage = (proxy: t): Persistence.storage => {
     )
     response->S.parseOrThrow(rowsSchema)
   },
-
   setOrThrow: async (~items as _, ~table as _, ~itemSchema as _) => {
     // Not used anywhere, no-op
     ()
   },
-
   writeBatch: async (
     ~batch as _,
     ~rawEvents as _,
@@ -116,31 +127,27 @@ let makeStorage = (proxy: t): Persistence.storage => {
   ) => {
     let _ = await proxy->sendRequest(~payload=WriteBatch({updatedEntities: updatedEntities}))
   },
-
   setEffectCacheOrThrow: async (~effect as _, ~items as _, ~initialize as _) => (),
-
   dumpEffectCache: async () => (),
-
   executeUnsafe: async _ => Obj.magic(),
-
   hasEntityHistoryRows: async () => false,
-
   setChainMeta: async _ => Obj.magic(),
-
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
-
-  pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) => (),
-
+  pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
+    (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => {
-    Js.Exn.raiseError("TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.")
+    Js.Exn.raiseError(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    )
   },
-
   getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) => {
-    Js.Exn.raiseError("TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.")
+    Js.Exn.raiseError(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    )
   },
-
   getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) => {
-    Js.Exn.raiseError("TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.")
+    Js.Exn.raiseError(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    )
   },
 }
-
