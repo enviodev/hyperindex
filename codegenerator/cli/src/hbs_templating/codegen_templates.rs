@@ -26,8 +26,8 @@ use crate::{
         path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
         ParsedProjectPaths,
     },
-    type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
     template_dirs::TemplateDirs,
+    type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
@@ -161,8 +161,7 @@ impl EntityRecordTypeTemplate {
 
         let type_expr = TypeExpr::Record(record_fields);
         let type_code = type_expr.to_string();
-        let schema_code =
-            type_expr.to_rescript_schema(&"t".to_string(), &SchemaMode::ForDb);
+        let schema_code = type_expr.to_rescript_schema(&"t".to_string(), &SchemaMode::ForDb);
 
         let postgres_fields = entity
             .get_fields()
@@ -690,11 +689,10 @@ let eventSignatures = [{}]
                 )
             }
             Abi::Fuel(abi) => {
-                let all_abi_type_declarations =
-                    abi.to_type_decl_multi().context(format!(
-                        "Failed getting types from the '{}' contract ABI",
-                        contract.name
-                    ))?;
+                let all_abi_type_declarations = abi.to_type_decl_multi().context(format!(
+                    "Failed getting types from the '{}' contract ABI",
+                    contract.name
+                ))?;
 
                 format!(
                   "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
@@ -1046,10 +1044,8 @@ impl FieldSelection {
                 &SchemaMode::ForFieldSelection,
             ),
             block_type: block_expr.to_string(),
-            block_schema: block_expr.to_rescript_schema(
-                &options.block_type_name,
-                &SchemaMode::ForFieldSelection,
-            ),
+            block_schema: block_expr
+                .to_rescript_schema(&options.block_type_name, &SchemaMode::ForFieldSelection),
         }
     }
 
@@ -1422,7 +1418,7 @@ switch chainId {{
             .map(|chain| {
                 let id = chain.network_config.id;
                 format!(
-                    "  @as(\"{}\") chain{}?: Main.testIndexerChainConfig,",
+                    "  @as(\"{}\") chain{}?: TestIndexer.chainConfig,",
                     id, id
                 )
             })
@@ -1438,7 +1434,9 @@ type testIndexerProcessConfig = {{
   chains: testIndexerProcessConfigChains,
 }}
 
-let createTestIndexer: unit => Main.testIndexer<testIndexerProcessConfig> = Main.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations)"#,
+let testIndexerWorkerPath = NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString
+
+let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=testIndexerWorkerPath, ~allEntities=Generated.codegenPersistence.allEntities)"#,
             test_indexer_chains_fields
         );
 

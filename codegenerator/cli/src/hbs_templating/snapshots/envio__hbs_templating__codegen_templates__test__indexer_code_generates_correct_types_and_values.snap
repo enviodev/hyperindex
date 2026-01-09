@@ -72,11 +72,13 @@ EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
 
 type testIndexerProcessConfigChains = {
-  @as("1") chain1?: Main.testIndexerChainConfig,
+  @as("1") chain1?: TestIndexer.chainConfig,
 }
 
 type testIndexerProcessConfig = {
   chains: testIndexerProcessConfigChains,
 }
 
-let createTestIndexer: unit => Main.testIndexer<testIndexerProcessConfig> = Main.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations)
+let testIndexerWorkerPath = NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString
+
+let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=testIndexerWorkerPath, ~allEntities=Generated.codegenPersistence.allEntities)

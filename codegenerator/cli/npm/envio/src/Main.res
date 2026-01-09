@@ -246,12 +246,15 @@ let start = async (
   ~registerAllHandlers: unit => promise<EventRegister.registrations>,
   ~makeGeneratedConfig: unit => Config.t,
   ~persistence: Persistence.t,
+  ~isTest=false,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+  let shouldUseTui =
+    !isTest && !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
   // The most simple check to verify whether we are running in development mode
   // and prevent exposing the console to public, when creating a real deployment.
-  let isDevelopmentMode = Env.Db.password === "testing"
+  // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
+  let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
   let registrations = await registerAllHandlers()
   let config = makeGeneratedConfig()
@@ -265,7 +268,8 @@ let start = async (
   Prometheus.Info.set(~version=envioVersion)
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
-  startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
+  if !isTest {
+    startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
     switch globalGsManagerRef.contents {
     | None => Initializing({})
     | Some(gsManager) => {
@@ -316,6 +320,7 @@ let start = async (
       }
     }
   )
+  }
 
   await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
 
@@ -341,61 +346,3 @@ let start = async (
   gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
 }
 
-// ============== Test Indexer API ==============
-
-type testIndexerChainConfig = {
-  startBlock: int,
-  endBlock: int,
-}
-
-type testIndexerProgress = {
-  checkpoints: array<Js.Json.t>,
-  changes: dict<array<Js.Json.t>>,
-}
-
-type testIndexer<'processConfig> = {process: 'processConfig => promise<testIndexerProgress>}
-
-type testIndexerState = {mutable processInProgress: bool}
-
-let makeCreateTestIndexer = (~config as _config: Config.t): (
-  unit => testIndexer<'processConfig>
-) => {
-  () => {
-    let state = {processInProgress: false}
-    {
-      process: processConfig => {
-        // Check if already processing
-        if state.processInProgress {
-          Js.Exn.raiseError(
-            "createTestIndexer process is already running. Only one process call is allowed at a time",
-          )
-        }
-
-        // Validate chains
-        let chains: Js.Dict.t<testIndexerChainConfig> =
-          (processConfig->Utils.magic)["chains"]->Utils.magic
-        let chainKeys = chains->Js.Dict.keys
-
-        switch chainKeys->Array.length {
-        | 0 => Js.Exn.raiseError("createTestIndexer requires exactly one chain to be defined")
-        | 1 => ()
-        | n =>
-          Js.Exn.raiseError(
-            `createTestIndexer does not support processing multiple chains at once. Found ${n->Int.toString} chains defined`,
-          )
-        }
-
-        state.processInProgress = true
-
-        // Mock implementation
-        Promise.resolve({
-          checkpoints: [],
-          changes: Js.Dict.empty(),
-        })->Promise.thenResolve(result => {
-          state.processInProgress = false
-          result
-        })
-      },
-    }
-  }
-}

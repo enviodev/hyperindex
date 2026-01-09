@@ -92,6 +92,7 @@ module WorkerThreads = {
   type messagePort
   @module("worker_threads") external parentPort: Js.Nullable.t<messagePort> = "parentPort"
   @send external postMessage: (messagePort, 'a) => unit = "postMessage"
+  @send external onPortMessage: (messagePort, @as("message") _, 'a => unit) => unit = "on"
 
   // Worker class for spawning workers
   type worker
@@ -104,6 +105,7 @@ module WorkerThreads = {
   @send external onError: (worker, @as("error") _, exn => unit) => unit = "on"
   @send external onExit: (worker, @as("exit") _, int => unit) => unit = "on"
   @send external terminate: worker => promise<int> = "terminate"
+  @send external workerPostMessage: (worker, 'a) => unit = "postMessage"
 }
 
 module Fs = {
