@@ -312,12 +312,14 @@ impl Contract {
         content.push_str("/*\n");
         content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
         content.push_str(" */\n");
+        content.push_str("\n");
+        content.push_str("open Indexer\n");
 
         // Handler registrations
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "Indexer.{}.{}.handler(async ({{event, context}}) => {{\n",
+                "{}.{}.handler(async ({{event, context}}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -380,7 +382,10 @@ impl Event {
         };
         let int_event_prop_as_string =
             |event_prop: &str| int_as_string(format!("event.{event_prop}"));
-        let chain_id_str = int_event_prop_as_string("chainId");
+        let chain_id_str = match language {
+            Language::ReScript => int_as_string("(event.chainId :> int)".to_string()),
+            Language::TypeScript => "event.chainId".to_string(),
+        };
 
         let block_number_field = match is_fuel {
             true => "block.height",
@@ -730,7 +735,7 @@ mod test {
         const IS_FUEL: bool = true;
         assert_eq!(
             Event::get_entity_id_code(!IS_FUEL, &Language::ReScript),
-            "`${event.chainId->Belt.Int.toString}_${event.block.number->Belt.Int.\
+            "`${(event.chainId :> int)->Belt.Int.toString}_${event.block.number->Belt.Int.\
            toString}_${event.logIndex->Belt.Int.toString}`"
                 .to_string()
         );
