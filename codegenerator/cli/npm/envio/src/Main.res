@@ -246,12 +246,15 @@ let start = async (
   ~registerAllHandlers: unit => promise<EventRegister.registrations>,
   ~makeGeneratedConfig: unit => Config.t,
   ~persistence: Persistence.t,
+  ~isTest=false,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+  let shouldUseTui =
+    !isTest && !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
   // The most simple check to verify whether we are running in development mode
   // and prevent exposing the console to public, when creating a real deployment.
-  let isDevelopmentMode = Env.Db.password === "testing"
+  // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
+  let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
   let registrations = await registerAllHandlers()
   let config = makeGeneratedConfig()
@@ -265,7 +268,8 @@ let start = async (
   Prometheus.Info.set(~version=envioVersion)
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
-  startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
+  if !isTest {
+    startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
     switch globalGsManagerRef.contents {
     | None => Initializing({})
     | Some(gsManager) => {
@@ -316,6 +320,7 @@ let start = async (
       }
     }
   )
+  }
 
   await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
 
@@ -340,3 +345,4 @@ let start = async (
 
   gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
 }
+

@@ -2,6 +2,30 @@ open RescriptMocha
 open Belt
 open TestHelpers
 
+describe("e2e", () => {
+  Async.it("createTestIndexer works", async () => {
+    let testIndexer = Indexer.createTestIndexer()
+
+    let result = await testIndexer.process({
+      chains: {
+        chain1: {
+          startBlock: 1,
+          endBlock: 100,
+        },
+      },
+    })
+
+    Assert.deepEqual(
+      result,
+      {
+        checkpoints: [],
+        changes: Js.Dict.empty(),
+      },
+      ~message="Test Indexer should return the correct result",
+    )
+  })
+})
+
 describe("Transfers", () => {
   //Get mock addresses from helpers
   let userAddress1 = Addresses.mockAddresses[0]->Option.getUnsafe

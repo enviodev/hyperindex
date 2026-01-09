@@ -8,16 +8,16 @@ use itertools::Itertools;
 use serde::Serialize;
 use std::{collections::HashSet, fmt::Display};
 
-pub struct RescriptTypeDeclMulti(Vec<RescriptTypeDecl>);
+pub struct TypeDeclMulti(Vec<TypeDecl>);
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum RescriptSchemaMode {
+pub enum SchemaMode {
     ForDb,
     ForFieldSelection,
 }
 
-impl RescriptTypeDeclMulti {
-    pub fn new(type_declarations: Vec<RescriptTypeDecl>) -> Self {
+impl TypeDeclMulti {
+    pub fn new(type_declarations: Vec<TypeDecl>) -> Self {
         // TODO: validation
         //no duplicates,
         //all named types accounted for? (maybe don't want this)
@@ -25,11 +25,11 @@ impl RescriptTypeDeclMulti {
         Self(type_declarations)
     }
 
-    pub fn to_rescript_schema(&self, mode: &RescriptSchemaMode) -> String {
-        let mut sorted: Vec<RescriptTypeDecl> = vec![];
+    pub fn to_rescript_schema(&self, mode: &SchemaMode) -> String {
+        let mut sorted: Vec<TypeDecl> = vec![];
         let mut registered: HashSet<String> = HashSet::new();
 
-        let type_decls_with_deps: Vec<(RescriptTypeDecl, Vec<String>)> = self
+        let type_decls_with_deps: Vec<(TypeDecl, Vec<String>)> = self
             .0
             .iter()
             .map(|decl| {
@@ -96,21 +96,21 @@ impl RescriptTypeDeclMulti {
     }
 }
 
-impl Display for RescriptTypeDeclMulti {
+impl Display for TypeDeclMulti {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_string_internal())
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct RescriptTypeDecl {
+pub struct TypeDecl {
     pub name: String,
-    pub type_expr: RescriptTypeExpr,
+    pub type_expr: TypeExpr,
     pub parameters: Vec<String>,
 }
 
-impl RescriptTypeDecl {
-    pub fn new(name: String, type_expr: RescriptTypeExpr, parameters: Vec<String>) -> Self {
+impl TypeDecl {
+    pub fn new(name: String, type_expr: TypeExpr, parameters: Vec<String>) -> Self {
         // TODO: name validation
         //validate unique parameters
         Self {
@@ -121,7 +121,7 @@ impl RescriptTypeDecl {
     }
 
     fn get_tag_string_if_expr_is_variant(&self) -> String {
-        if let RescriptTypeExpr::Variant(_) = self.type_expr {
+        if let TypeExpr::Variant(_) = self.type_expr {
             "@tag(\"case\") ".to_string()
         } else {
             "".to_string()
@@ -155,7 +155,7 @@ impl RescriptTypeDecl {
         )
     }
 
-    pub fn to_rescript_schema(&self, type_name: &String, mode: &RescriptSchemaMode) -> String {
+    pub fn to_rescript_schema(&self, type_name: &String, mode: &SchemaMode) -> String {
         if self.parameters.is_empty() {
             self.type_expr.to_rescript_schema(type_name, mode)
         } else {
@@ -199,26 +199,26 @@ impl RescriptTypeDecl {
     }
 }
 
-impl Display for RescriptTypeDecl {
+impl Display for TypeDecl {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_string_internal())
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum RescriptTypeExpr {
-    Identifier(RescriptTypeIdent),
-    Record(Vec<RescriptRecordField>),
-    Variant(Vec<RescriptVariantConstr>),
+pub enum TypeExpr {
+    Identifier(TypeIdent),
+    Record(Vec<RecordField>),
+    Variant(Vec<VariantConstr>),
 }
 
-impl Display for RescriptTypeExpr {
+impl Display for TypeExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_string_internal())
     }
 }
 
-impl RescriptTypeExpr {
+impl TypeExpr {
     fn to_string_internal(&self) -> String {
         match self {
             Self::Identifier(type_ident) => type_ident.to_string(),
@@ -237,7 +237,7 @@ impl RescriptTypeExpr {
         }
     }
 
-    pub fn to_rescript_schema(&self, type_name: &String, mode: &RescriptSchemaMode) -> String {
+    pub fn to_rescript_schema(&self, type_name: &String, mode: &SchemaMode) -> String {
         match self {
             Self::Identifier(type_ident) => type_ident.to_rescript_schema(mode),
             Self::Variant(items) => {
@@ -287,6 +287,41 @@ impl RescriptTypeExpr {
         }
     }
 
+    pub fn to_ts_type_string(&self) -> String {
+        match self {
+            Self::Identifier(type_ident) => type_ident.to_ts_type_string(),
+            Self::Record(fields) => {
+                if fields.is_empty() {
+                    "{}".to_string()
+                } else {
+                    let fields_str = fields
+                        .iter()
+                        .map(|field| {
+                            let field_name = field
+                                .as_name
+                                .as_ref()
+                                .map_or(field.name.as_str(), |name| name.as_str());
+                            format!("{}: {}", field_name, field.type_ident.to_ts_type_string())
+                        })
+                        .collect::<Vec<String>>()
+                        .join("; ");
+                    format!("{{ {} }}", fields_str)
+                }
+            }
+            Self::Variant(constructors) => constructors
+                .iter()
+                .map(|constr| {
+                    format!(
+                        "{{ case: \"{}\"; payload: {} }}",
+                        constr.name,
+                        constr.payload.to_ts_type_string()
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join(" | "),
+        }
+    }
+
     pub fn dependencies(&self) -> Vec<String> {
         match self {
             Self::Identifier(type_ident) => type_ident.dependencies(),
@@ -303,14 +338,14 @@ impl RescriptTypeExpr {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct RescriptRecordField {
+pub struct RecordField {
     pub name: String,
     pub as_name: Option<String>,
-    pub type_ident: RescriptTypeIdent,
+    pub type_ident: TypeIdent,
 }
 
-impl RescriptRecordField {
-    pub fn to_valid_res_name(s: &str) -> String {
+impl RecordField {
+    pub fn to_valid_rescript_name(s: &str) -> String {
         if s.is_empty() {
             return "_".to_string();
         }
@@ -328,8 +363,8 @@ impl RescriptRecordField {
         }
     }
 
-    pub fn new(name: String, type_ident: RescriptTypeIdent) -> Self {
-        let res_name = Self::to_valid_res_name(&name);
+    pub fn new(name: String, type_ident: TypeIdent) -> Self {
+        let res_name = Self::to_valid_rescript_name(&name);
         Self {
             as_name: if res_name == name { None } else { Some(name) },
             name: res_name,
@@ -346,28 +381,28 @@ impl RescriptRecordField {
     }
 }
 
-impl Display for RescriptRecordField {
+impl Display for RecordField {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_string_internal())
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct RescriptVariantConstr {
-    name: String,
-    payload: RescriptTypeIdent, //Not supporting records here but tuples are currently part of
-                                //RescriptTypeIdent
+pub struct VariantConstr {
+    pub name: String,
+    pub payload: TypeIdent, //Not supporting records here but tuples are currently part of
+                            //TypeIdent
 }
 
-impl RescriptVariantConstr {
-    pub fn new(name: String, payload: RescriptTypeIdent) -> Self {
+impl VariantConstr {
+    pub fn new(name: String, payload: TypeIdent) -> Self {
         // TODO: validate uppercase name
         Self { name, payload }
     }
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
-pub enum RescriptTypeIdent {
+pub enum TypeIdent {
     Unit,
     ID,
     Int,
@@ -382,31 +417,31 @@ pub enum RescriptTypeIdent {
     Timestamp,
     //Enums defined in the user's schema
     SchemaEnum(CapitalizedOptions),
-    Array(Box<RescriptTypeIdent>),
-    Option(Box<RescriptTypeIdent>),
+    Array(Box<TypeIdent>),
+    Option(Box<TypeIdent>),
     //Note: tuple is technically an expression not an identifier
     //but it can be inlined and can contain inline tuples in it's parameters
     //so it's best suited here for its purpose
-    Tuple(Vec<RescriptTypeIdent>),
+    Tuple(Vec<TypeIdent>),
     GenericParam(String),
     TypeApplication {
         name: String,
-        type_params: Vec<RescriptTypeIdent>,
+        type_params: Vec<TypeIdent>,
     },
 }
 
-impl RescriptTypeIdent {
+impl TypeIdent {
     //Simply an ergonomic shorthand
-    pub fn get_expr(self) -> RescriptTypeExpr {
-        RescriptTypeExpr::Identifier(self)
+    pub fn get_expr(self) -> TypeExpr {
+        TypeExpr::Identifier(self)
     }
 
     //Simply an ergonomic shorthand
-    pub fn get_ok_expr(self) -> anyhow::Result<RescriptTypeExpr> {
+    pub fn get_ok_expr(self) -> anyhow::Result<TypeExpr> {
         Ok(self.get_expr())
     }
 
-    /// Recursively builds the string representation of the type
+    /// Recursively builds the ReScript string representation of the type
     fn to_string_internal(&self) -> String {
         match self {
             Self::Unit => "unit".to_string(),
@@ -457,15 +492,71 @@ impl RescriptTypeIdent {
         }
     }
 
-    pub fn to_rescript_schema(&self, mode: &RescriptSchemaMode) -> String {
+    /// Recursively builds the TypeScript string representation of the type
+    pub fn to_ts_type_string(&self) -> String {
+        match self {
+            Self::Unit => "undefined".to_string(),
+            Self::Int => "number".to_string(),
+            Self::Float => "number".to_string(),
+            Self::BigInt => "bigint".to_string(),
+            Self::Unknown => "unknown".to_string(),
+            Self::BigDecimal => "BigDecimal".to_string(),
+            Self::Address => "Address".to_string(),
+            Self::String => "string".to_string(),
+            Self::Json => "unknown".to_string(),
+            Self::ID => "string".to_string(),
+            Self::Bool => "boolean".to_string(),
+            Self::Timestamp => "Date".to_string(),
+            Self::Array(inner_type) => {
+                let inner_ts = inner_type.to_ts_type_string();
+                // Wrap in parens if the inner type is a union (Option generates union)
+                if inner_type.is_option() {
+                    format!("({})[]", inner_ts)
+                } else {
+                    format!("{}[]", inner_ts)
+                }
+            }
+            Self::Option(inner_type) => {
+                format!("{} | undefined", inner_type.to_ts_type_string())
+            }
+            Self::Tuple(inner_types) => {
+                let inner_types_str = inner_types
+                    .iter()
+                    .map(|inner_type| inner_type.to_ts_type_string())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                format!("[{}]", inner_types_str)
+            }
+            Self::SchemaEnum(enum_name) => {
+                format!("Enums.{}", &enum_name.capitalized)
+            }
+            Self::GenericParam(name) => name.clone(),
+            Self::TypeApplication {
+                name,
+                type_params: params,
+            } => {
+                if params.is_empty() {
+                    name.clone()
+                } else {
+                    let params_joined = params
+                        .iter()
+                        .map(|p| p.to_ts_type_string())
+                        .join(", ");
+                    format!("{name}<{params_joined}>")
+                }
+            }
+        }
+    }
+
+    pub fn to_rescript_schema(&self, mode: &SchemaMode) -> String {
         match self {
             Self::Unit => "S.literal(%raw(`null`))->S.shape(_ => ())".to_string(),
             Self::Int => "S.int".to_string(),
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
-                RescriptSchemaMode::ForDb => "BigInt.schema".to_string(),
-                RescriptSchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
+                SchemaMode::ForDb => "BigInt.schema".to_string(),
+                SchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
             },
             Self::BigDecimal => "BigDecimal.schema".to_string(),
             Self::Address => "Address.schema".to_string(),
@@ -479,8 +570,8 @@ impl RescriptTypeIdent {
             }
             Self::Option(inner_type) => {
                 let schema = match mode {
-                    RescriptSchemaMode::ForDb => "S.null".to_string(),
-                    RescriptSchemaMode::ForFieldSelection => "S.nullable".to_string(),
+                    SchemaMode::ForDb => "S.null".to_string(),
+                    SchemaMode::ForFieldSelection => "S.nullable".to_string(),
                 };
                 format!("{schema}({})", inner_type.to_rescript_schema(mode))
             }
@@ -694,7 +785,7 @@ impl RescriptTypeIdent {
     }
 }
 
-impl Display for RescriptTypeIdent {
+impl Display for TypeIdent {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_string_internal())
     }
@@ -702,7 +793,7 @@ impl Display for RescriptTypeIdent {
 
 ///Implementation of Serialize allows handlebars get a stringified
 ///version of the string representation of the rescript type
-impl Serialize for RescriptTypeIdent {
+impl Serialize for TypeIdent {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -722,89 +813,83 @@ mod tests {
     #[test]
     fn test_to_rescript_schema() {
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Bool)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::Bool)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.bool".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Int)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::Int)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.int".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Float)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::Float)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.float".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::Unit)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.literal(%raw(`null`))->S.shape(_ => ())".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::BigInt)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "BigInt.schema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt).to_rescript_schema(
+            TypeExpr::Identifier(TypeIdent::BigInt).to_rescript_schema(
                 &"eventArgs".to_string(),
-                &RescriptSchemaMode::ForFieldSelection
+                &SchemaMode::ForFieldSelection
             ),
             "BigInt.nativeSchema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigDecimal)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::BigDecimal)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "BigDecimal.schema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Address)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::Address)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "Address.schema".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::String)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::String)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.string".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::ID)
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::ID)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.string".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::array(RescriptTypeIdent::Int))
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::array(TypeIdent::Int))
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.array(S.int)".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::option(RescriptTypeIdent::BigInt))
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.null(BigInt.schema)".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::option(RescriptTypeIdent::BigInt))
-                .to_rescript_schema(
-                    &"eventArgs".to_string(),
-                    &RescriptSchemaMode::ForFieldSelection
-                ),
+            TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
             "S.nullable(BigInt.nativeSchema)".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Tuple(vec![
-                RescriptTypeIdent::Int,
-                RescriptTypeIdent::Bool
-            ]))
-            .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Identifier(TypeIdent::Tuple(vec![TypeIdent::Int, TypeIdent::Bool]))
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.tuple(s => (s.item(0, S.int), s.item(1, S.bool)))".to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Variant(vec![
-                RescriptVariantConstr::new("ConstrA".to_string(), RescriptTypeIdent::Int),
-                RescriptVariantConstr::new("ConstrB".to_string(), RescriptTypeIdent::Bool),
+            TypeExpr::Variant(vec![
+                VariantConstr::new("ConstrA".to_string(), TypeIdent::Int),
+                VariantConstr::new("ConstrB".to_string(), TypeIdent::Bool),
             ])
-            .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             r#"S.union([S.object((s): eventArgs =>
 {
   s.tag("case", "ConstrA")
@@ -817,27 +902,27 @@ mod tests {
                 .to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Record(vec![
-                RescriptRecordField::new("fieldA".to_string(), RescriptTypeIdent::Int),
-                RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
+            TypeExpr::Record(vec![
+                RecordField::new("fieldA".to_string(), TypeIdent::Int),
+                RecordField::new("fieldB".to_string(), TypeIdent::Bool),
             ])
-            .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.object((s): eventArgs => {fieldA: s.field(\"fieldA\", S.int), fieldB: \
              s.field(\"fieldB\", S.bool)})"
                 .to_string()
         );
         assert_eq!(
-            RescriptTypeExpr::Record(vec![])
-                .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+            TypeExpr::Record(vec![])
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.object((_): eventArgs => {})".to_string()
         );
     }
 
     #[test]
     fn type_decl_to_string_primitive() {
-        let type_decl = RescriptTypeDecl {
+        let type_decl = TypeDecl {
             name: "myBool".to_string(),
-            type_expr: RescriptTypeExpr::Identifier(RescriptTypeIdent::Bool),
+            type_expr: TypeExpr::Identifier(TypeIdent::Bool),
             parameters: vec![],
         };
 
@@ -848,9 +933,9 @@ mod tests {
 
     #[test]
     fn type_decl_to_string_named_ident() {
-        let type_decl = RescriptTypeDecl {
+        let type_decl = TypeDecl {
             name: "myAlias".to_string(),
-            type_expr: RescriptTypeExpr::Identifier(RescriptTypeIdent::TypeApplication {
+            type_expr: TypeExpr::Identifier(TypeIdent::TypeApplication {
                 name: "myCustomType".to_string(),
                 type_params: vec![],
             }),
@@ -864,20 +949,20 @@ mod tests {
 
     #[test]
     fn type_decl_to_string_record() {
-        let type_decl = RescriptTypeDecl::new(
+        let type_decl = TypeDecl::new(
             "myRecord".to_string(),
-            RescriptTypeExpr::Record(vec![
-                RescriptRecordField {
+            TypeExpr::Record(vec![
+                RecordField {
                     name: "reservedWord_".to_string(),
                     as_name: Some("reservedWord".to_string()),
-                    type_ident: RescriptTypeIdent::TypeApplication {
+                    type_ident: TypeIdent::TypeApplication {
                         name: "myCustomType".to_string(),
                         type_params: vec![],
                     },
                 },
-                RescriptRecordField::new(
+                RecordField::new(
                     "myOptBool".to_string(),
-                    RescriptTypeIdent::option(RescriptTypeIdent::Bool),
+                    TypeIdent::option(TypeIdent::Bool),
                 ),
             ]),
             vec![],
@@ -890,15 +975,15 @@ mod tests {
 
     #[test]
     fn type_decl_with_invalid_rescript_field_names_to_string_record() {
-        let type_decl = RescriptTypeDecl::new(
+        let type_decl = TypeDecl::new(
             "myRecord".to_string(),
-            RescriptTypeExpr::Record(vec![
-                RescriptRecordField::new("module".to_string(), RescriptTypeIdent::Bool),
-                RescriptRecordField::new("".to_string(), RescriptTypeIdent::Bool),
-                RescriptRecordField::new("1".to_string(), RescriptTypeIdent::Bool),
-                RescriptRecordField::new("Capitalized".to_string(), RescriptTypeIdent::Bool),
+            TypeExpr::Record(vec![
+                RecordField::new("module".to_string(), TypeIdent::Bool),
+                RecordField::new("".to_string(), TypeIdent::Bool),
+                RecordField::new("1".to_string(), TypeIdent::Bool),
+                RecordField::new("Capitalized".to_string(), TypeIdent::Bool),
                 // Invalid characters in the middle are not handled correctly. Still keep the test to pin the behaviour.
-                RescriptRecordField::new("dashed-field".to_string(), RescriptTypeIdent::Bool),
+                RecordField::new("dashed-field".to_string(), TypeIdent::Bool),
             ]),
             vec![],
         );
@@ -910,28 +995,28 @@ mod tests {
 
     #[test]
     fn type_decl_multi_to_string() {
-        let type_decl_1 = RescriptTypeDecl::new(
+        let type_decl_1 = TypeDecl::new(
             "myRecord".to_string(),
-            RescriptTypeExpr::Record(vec![
-                RescriptRecordField::new(
+            TypeExpr::Record(vec![
+                RecordField::new(
                     "fieldA".to_string(),
-                    RescriptTypeIdent::TypeApplication {
+                    TypeIdent::TypeApplication {
                         name: "myCustomType".to_string(),
                         type_params: vec![],
                     },
                 ),
-                RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
+                RecordField::new("fieldB".to_string(), TypeIdent::Bool),
             ]),
             vec![],
         );
 
-        let type_decl_2 = RescriptTypeDecl::new(
+        let type_decl_2 = TypeDecl::new(
             "myCustomType".to_string(),
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Bool),
+            TypeExpr::Identifier(TypeIdent::Bool),
             vec![],
         );
 
-        let type_decl_multi = RescriptTypeDeclMulti::new(vec![type_decl_1, type_decl_2]);
+        let type_decl_multi = TypeDeclMulti::new(vec![type_decl_1, type_decl_2]);
 
         let expected = "/*Silence warning of label defined in multiple \
                         types*/\n@@warning(\"-30\")\ntype rec myRecord = {fieldA: myCustomType, \
@@ -943,27 +1028,27 @@ mod tests {
 
     #[test]
     fn type_decl_to_string_record_generic() {
-        let my_custom_type_ident = RescriptTypeIdent::TypeApplication {
+        let my_custom_type_ident = TypeIdent::TypeApplication {
             name: "myCustomType".to_string(),
             type_params: vec![],
         };
-        let type_decl = RescriptTypeDecl::new(
+        let type_decl = TypeDecl::new(
             "myRecord".to_string(),
-            RescriptTypeExpr::Record(vec![
-                RescriptRecordField::new("fieldA".to_string(), my_custom_type_ident.clone()),
-                RescriptRecordField::new(
+            TypeExpr::Record(vec![
+                RecordField::new("fieldA".to_string(), my_custom_type_ident.clone()),
+                RecordField::new(
                     "fieldB".to_string(),
-                    RescriptTypeIdent::TypeApplication {
+                    TypeIdent::TypeApplication {
                         name: "myGenericType".to_string(),
                         type_params: vec![
                             my_custom_type_ident.clone(),
-                            RescriptTypeIdent::GenericParam("a".to_string()),
+                            TypeIdent::GenericParam("a".to_string()),
                         ],
                     },
                 ),
-                RescriptRecordField::new(
+                RecordField::new(
                     "fieldC".to_string(),
-                    RescriptTypeIdent::GenericParam("b".to_string()),
+                    TypeIdent::GenericParam("b".to_string()),
                 ),
             ]),
             vec!["a".to_string(), "b".to_string()],
@@ -976,27 +1061,27 @@ mod tests {
 
     #[test]
     fn type_decl_to_string_variant() {
-        let my_custom_type_ident = RescriptTypeIdent::TypeApplication {
+        let my_custom_type_ident = TypeIdent::TypeApplication {
             name: "myCustomType".to_string(),
             type_params: vec![],
         };
-        let type_decl = RescriptTypeDecl::new(
+        let type_decl = TypeDecl::new(
             "myVariant".to_string(),
-            RescriptTypeExpr::Variant(vec![
-                RescriptVariantConstr::new("ConstrA".to_string(), my_custom_type_ident.clone()),
-                RescriptVariantConstr::new(
+            TypeExpr::Variant(vec![
+                VariantConstr::new("ConstrA".to_string(), my_custom_type_ident.clone()),
+                VariantConstr::new(
                     "ConstrB".to_string(),
-                    RescriptTypeIdent::TypeApplication {
+                    TypeIdent::TypeApplication {
                         name: "myGenericType".to_string(),
                         type_params: vec![
                             my_custom_type_ident.clone(),
-                            RescriptTypeIdent::GenericParam("a".to_string()),
+                            TypeIdent::GenericParam("a".to_string()),
                         ],
                     },
                 ),
-                RescriptVariantConstr::new(
+                VariantConstr::new(
                     "ConstrC".to_string(),
-                    RescriptTypeIdent::GenericParam("b".to_string()),
+                    TypeIdent::GenericParam("b".to_string()),
                 ),
             ]),
             vec!["a".to_string(), "b".to_string()],
@@ -1009,39 +1094,39 @@ mod tests {
 
     #[test]
     fn type_decl_multi_variant_to_string() {
-        let my_custom_type_ident = RescriptTypeIdent::TypeApplication {
+        let my_custom_type_ident = TypeIdent::TypeApplication {
             name: "myCustomType".to_string(),
             type_params: vec![],
         };
-        let type_decl_1 = RescriptTypeDecl::new(
+        let type_decl_1 = TypeDecl::new(
             "myVariant".to_string(),
-            RescriptTypeExpr::Variant(vec![
-                RescriptVariantConstr::new("ConstrA".to_string(), my_custom_type_ident.clone()),
-                RescriptVariantConstr::new(
+            TypeExpr::Variant(vec![
+                VariantConstr::new("ConstrA".to_string(), my_custom_type_ident.clone()),
+                VariantConstr::new(
                     "ConstrB".to_string(),
-                    RescriptTypeIdent::GenericParam("a".to_string()),
+                    TypeIdent::GenericParam("a".to_string()),
                 ),
             ]),
             vec!["a".to_string()],
         );
 
-        let type_decl_2 = RescriptTypeDecl::new(
+        let type_decl_2 = TypeDecl::new(
             "myCustomType".to_string(),
-            RescriptTypeExpr::Identifier(RescriptTypeIdent::Bool),
+            TypeExpr::Identifier(TypeIdent::Bool),
             vec![],
         );
 
-        let type_decl_3 = RescriptTypeDecl::new(
+        let type_decl_3 = TypeDecl::new(
             "myVariant2".to_string(),
-            RescriptTypeExpr::Variant(vec![RescriptVariantConstr::new(
+            TypeExpr::Variant(vec![VariantConstr::new(
                 "ConstrC".to_string(),
-                RescriptTypeIdent::Bool,
+                TypeIdent::Bool,
             )]),
             vec![],
         );
 
         let type_decl_multi =
-            RescriptTypeDeclMulti::new(vec![type_decl_1, type_decl_2, type_decl_3]);
+            TypeDeclMulti::new(vec![type_decl_1, type_decl_2, type_decl_3]);
 
         let expected = "/*Silence warning of label defined in multiple \
                         types*/\n@@warning(\"-30\")\n@tag(\"case\") type rec myVariant<'a> = | \
@@ -1055,11 +1140,11 @@ mod tests {
 
     #[test]
     fn test_recursive_type_application_dependencies() {
-        let type19 = RescriptTypeIdent::TypeApplication {
+        let type19 = TypeIdent::TypeApplication {
             name: "type19".to_string(),
-            type_params: vec![RescriptTypeIdent::TypeApplication {
+            type_params: vec![TypeIdent::TypeApplication {
                 name: "type18".to_string(),
-                type_params: vec![RescriptTypeIdent::TypeApplication {
+                type_params: vec![TypeIdent::TypeApplication {
                     name: "type17".to_string(),
                     type_params: vec![],
                 }],
@@ -1075,6 +1160,119 @@ mod tests {
                 "type18".to_string(),
                 "type17".to_string()
             ]
+        );
+    }
+
+    // TypeScript type string tests
+
+    #[test]
+    fn test_to_ts_type_string_primitives() {
+        assert_eq!(TypeIdent::Unit.to_ts_type_string(), "undefined");
+        assert_eq!(TypeIdent::Int.to_ts_type_string(), "number");
+        assert_eq!(TypeIdent::Float.to_ts_type_string(), "number");
+        assert_eq!(TypeIdent::BigInt.to_ts_type_string(), "bigint");
+        assert_eq!(TypeIdent::BigDecimal.to_ts_type_string(), "BigDecimal");
+        assert_eq!(TypeIdent::Address.to_ts_type_string(), "Address");
+        assert_eq!(TypeIdent::String.to_ts_type_string(), "string");
+        assert_eq!(TypeIdent::Json.to_ts_type_string(), "unknown");
+        assert_eq!(TypeIdent::ID.to_ts_type_string(), "string");
+        assert_eq!(TypeIdent::Bool.to_ts_type_string(), "boolean");
+        assert_eq!(TypeIdent::Unknown.to_ts_type_string(), "unknown");
+        assert_eq!(TypeIdent::Timestamp.to_ts_type_string(), "Date");
+    }
+
+    #[test]
+    fn test_to_ts_type_string_containers() {
+        assert_eq!(
+            TypeIdent::array(TypeIdent::Int).to_ts_type_string(),
+            "number[]"
+        );
+        assert_eq!(
+            TypeIdent::option(TypeIdent::String).to_ts_type_string(),
+            "string | undefined"
+        );
+        assert_eq!(
+            TypeIdent::Tuple(vec![TypeIdent::Int, TypeIdent::Bool]).to_ts_type_string(),
+            "[number, boolean]"
+        );
+        // Nested containers
+        assert_eq!(
+            TypeIdent::array(TypeIdent::option(TypeIdent::Int)).to_ts_type_string(),
+            "(number | undefined)[]"
+        );
+    }
+
+    #[test]
+    fn test_to_ts_type_string_schema_enum() {
+        let enum_name = CapitalizedOptions {
+            capitalized: "MyEnum".to_string(),
+            uncapitalized: "myEnum".to_string(),
+            original: "MyEnum".to_string(),
+        };
+        assert_eq!(
+            TypeIdent::SchemaEnum(enum_name).to_ts_type_string(),
+            "Enums.MyEnum"
+        );
+    }
+
+    #[test]
+    fn test_to_ts_type_string_generic_param() {
+        assert_eq!(
+            TypeIdent::GenericParam("T".to_string()).to_ts_type_string(),
+            "T"
+        );
+    }
+
+    #[test]
+    fn test_to_ts_type_string_type_application() {
+        assert_eq!(
+            TypeIdent::TypeApplication {
+                name: "MyType".to_string(),
+                type_params: vec![],
+            }
+            .to_ts_type_string(),
+            "MyType"
+        );
+        assert_eq!(
+            TypeIdent::TypeApplication {
+                name: "MyGeneric".to_string(),
+                type_params: vec![TypeIdent::Int, TypeIdent::String],
+            }
+            .to_ts_type_string(),
+            "MyGeneric<number, string>"
+        );
+    }
+
+    #[test]
+    fn test_to_ts_type_string_record_expr() {
+        assert_eq!(TypeExpr::Record(vec![]).to_ts_type_string(), "{}");
+        assert_eq!(
+            TypeExpr::Record(vec![
+                RecordField::new("fieldA".to_string(), TypeIdent::Int),
+                RecordField::new("fieldB".to_string(), TypeIdent::Bool),
+            ])
+            .to_ts_type_string(),
+            "{ fieldA: number; fieldB: boolean }"
+        );
+    }
+
+    #[test]
+    fn test_to_ts_type_string_variant_expr() {
+        assert_eq!(
+            TypeExpr::Variant(vec![
+                VariantConstr::new("ConstrA".to_string(), TypeIdent::Int),
+                VariantConstr::new("ConstrB".to_string(), TypeIdent::Bool),
+            ])
+            .to_ts_type_string(),
+            "{ case: \"ConstrA\"; payload: number } | { case: \"ConstrB\"; payload: boolean }"
+        );
+    }
+
+    #[test]
+    fn test_to_ts_type_string_identifier_expr() {
+        assert_eq!(
+            TypeExpr::Identifier(TypeIdent::Int).to_ts_type_string(),
+            "number"
         );
     }
 }
