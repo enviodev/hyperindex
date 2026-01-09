@@ -290,7 +290,10 @@ pub mod git {
         let exit = execute_command("git", vec!["init"], project_root).await?;
 
         if !exit.success() {
-            return Err(anyhow!("Failed to initialize git repository"));
+            return Err(anyhow!(
+                "git init exited with code {}",
+                exit.code().unwrap_or(-1)
+            ));
         }
 
         Ok(())
