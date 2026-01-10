@@ -80,13 +80,20 @@ impl FuelInitOption {
     }
 }
 
+/// Result of ecosystem prompt, including the ecosystem and effective language
+/// (language may be overridden if the selected ecosystem doesn't support it)
+struct EcosystemPromptResult {
+    ecosystem: Ecosystem,
+    language: Language,
+}
+
 async fn prompt_ecosystem(
     cli_init_flow: Option<InitFlow>,
-    language: &Language,
-) -> Result<Ecosystem> {
+    language: Language,
+) -> Result<EcosystemPromptResult> {
     // If CLI args provide a specific init flow, use it directly
     if let Some(init_flow) = cli_init_flow {
-        return handle_cli_init_flow(init_flow, language).await;
+        return handle_cli_init_flow(init_flow, &language).await;
     }
 
     // Otherwise, prompt for ecosystem selection
@@ -96,22 +103,46 @@ async fn prompt_ecosystem(
         .context("Failed prompting for blockchain ecosystem")?;
 
     match ecosystem_option {
-        EcosystemOption::Evm => prompt_evm_init_option(language).await,
-        EcosystemOption::Fuel => prompt_fuel_init_option(language).await,
-        EcosystemOption::Svm => prompt_svm_init_option(language),
+        EcosystemOption::Evm => {
+            let ecosystem = prompt_evm_init_option(&language).await?;
+            Ok(EcosystemPromptResult {
+                ecosystem,
+                language,
+            })
+        }
+        EcosystemOption::Fuel => {
+            let ecosystem = prompt_fuel_init_option(&language).await?;
+            Ok(EcosystemPromptResult {
+                ecosystem,
+                language,
+            })
+        }
+        EcosystemOption::Svm => prompt_svm_init_option(&language),
     }
 }
 
 /// Handle init flow provided via CLI arguments
-async fn handle_cli_init_flow(init_flow: InitFlow, language: &Language) -> Result<Ecosystem> {
+async fn handle_cli_init_flow(
+    init_flow: InitFlow,
+    language: &Language,
+) -> Result<EcosystemPromptResult> {
     match init_flow {
         InitFlow::Fuel {
             init_flow: maybe_init_flow,
-        } => handle_fuel_cli_init_flow(maybe_init_flow, language).await,
+        } => {
+            let ecosystem = handle_fuel_cli_init_flow(maybe_init_flow, language).await?;
+            Ok(EcosystemPromptResult {
+                ecosystem,
+                language: language.clone(),
+            })
+        }
         InitFlow::Template(args) => {
             let chosen_template = args.template.unwrap_or(evm::Template::Greeter);
-            Ok(Ecosystem::Evm {
-                init_flow: evm::InitFlow::Template(chosen_template),
+            Ok(EcosystemPromptResult {
+                ecosystem: Ecosystem::Evm {
+                    init_flow: evm::InitFlow::Template(chosen_template),
+                },
+                language: language.clone(),
             })
         }
         InitFlow::SubgraphMigration(args) => {
@@ -121,12 +152,18 @@ async fn handle_cli_init_flow(init_flow: InitFlow, language: &Language) -> Resul
                     .prompt()
                     .context("Prompting user for subgraph id")?,
             };
-            Ok(Ecosystem::Evm {
-                init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
+            Ok(EcosystemPromptResult {
+                ecosystem: Ecosystem::Evm {
+                    init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
+                },
+                language: language.clone(),
             })
         }
-        InitFlow::ContractImport(args) => Ok(Ecosystem::Evm {
-            init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
+        InitFlow::ContractImport(args) => Ok(EcosystemPromptResult {
+            ecosystem: Ecosystem::Evm {
+                init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
+            },
+            language: language.clone(),
         }),
         InitFlow::Svm {
             init_flow: maybe_init_flow,
@@ -154,13 +191,32 @@ async fn handle_fuel_cli_init_flow(
 fn handle_svm_cli_init_flow(
     maybe_init_flow: Option<clap_definitions::svm::InitFlow>,
     language: &Language,
-) -> Result<Ecosystem> {
-    match maybe_init_flow {
-        Some(clap_definitions::svm::InitFlow::Template(args)) => Ok(Ecosystem::Svm {
+) -> Result<EcosystemPromptResult> {
+    // SVM only has template options which aren't available in ReScript
+    let effective_language = if matches!(language, Language::ReScript) {
+        println!(
+            "Note: SVM templates are only available in TypeScript. Creating a TypeScript project."
+        );
+        Language::TypeScript
+    } else {
+        language.clone()
+    };
+
+    let ecosystem = match maybe_init_flow {
+        Some(clap_definitions::svm::InitFlow::Template(args)) => Ecosystem::Svm {
             init_flow: svm_prompts::prompt_template_init_flow(args)?,
-        }),
-        None => prompt_svm_init_option(language),
-    }
+        },
+        None => Ecosystem::Svm {
+            init_flow: crate::init_config::svm::InitFlow::Template(
+                crate::init_config::svm::Template::FeatureBlockHandler,
+            ),
+        },
+    };
+
+    Ok(EcosystemPromptResult {
+        ecosystem,
+        language: effective_language,
+    })
 }
 
 /// Prompt for EVM initialization with flattened options
@@ -228,18 +284,26 @@ async fn prompt_fuel_init_option(language: &Language) -> Result<Ecosystem> {
 /// Prompt for SVM initialization
 /// Since SVM currently only has one option (Block Handler template),
 /// we skip the intermediate prompt and go directly to initialization
-fn prompt_svm_init_option(language: &Language) -> Result<Ecosystem> {
-    // SVM only has template options which aren't supported in ReScript
-    if matches!(language, Language::ReScript) {
-        anyhow::bail!("SVM templates are not available for ReScript. Please use TypeScript or choose a different ecosystem.");
-    }
+fn prompt_svm_init_option(language: &Language) -> Result<EcosystemPromptResult> {
+    // SVM only has template options which aren't available in ReScript
+    let effective_language = if matches!(language, Language::ReScript) {
+        println!(
+            "Note: SVM templates are only available in TypeScript. Creating a TypeScript project."
+        );
+        Language::TypeScript
+    } else {
+        language.clone()
+    };
 
     // SVM currently only has one template option, so we use it directly
     // This avoids unnecessary prompting when there's only one choice
-    Ok(Ecosystem::Svm {
-        init_flow: crate::init_config::svm::InitFlow::Template(
-            crate::init_config::svm::Template::FeatureBlockHandler,
-        ),
+    Ok(EcosystemPromptResult {
+        ecosystem: Ecosystem::Svm {
+            init_flow: crate::init_config::svm::InitFlow::Template(
+                crate::init_config::svm::Template::FeatureBlockHandler,
+            ),
+        },
+        language: effective_language,
     })
 }
 
@@ -284,7 +348,10 @@ pub async fn prompt_missing_init_args(
         None => Language::TypeScript,
     };
 
-    let ecosystem = prompt_ecosystem(init_args.init_commands, &language)
+    let EcosystemPromptResult {
+        ecosystem,
+        language,
+    } = prompt_ecosystem(init_args.init_commands, language)
         .await
         .context("Failed getting template")?;
 
