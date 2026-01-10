@@ -2,36 +2,38 @@
 ///tuples in event params
 mod nested_params {
     use super::*;
+    use alloy_dyn_abi::DynSolType;
+    use crate::config_parsing::abi_compat::EventParam;
     pub type ParamIndex = usize;
 
     ///Recursive Representation of param token. With reference to it's own index
     ///if it is a tuple
     enum NestedEventParam {
-        Param(ethers::abi::EventParam, ParamIndex),
+        Param(EventParam, ParamIndex),
         TupleParam(ParamIndex, Box<NestedEventParam>),
         Tuple(Vec<NestedEventParam>),
     }
 
     impl NestedEventParam {
-        ///Constructs NestedEventParam from an ethers abi EventParam
-        fn from(event_input: ethers::abi::EventParam, param_index: usize) -> Self {
-            if let ParamType::Tuple(param_types) = event_input.kind {
-                //in the tuple case return a Tuple tape with an array of inner
+        ///Constructs NestedEventParam from an EventParam
+        fn from(event_input: EventParam, param_index: usize) -> Self {
+            if let DynSolType::Tuple(param_types) = &event_input.kind {
+                //in the tuple case return a Tuple type with an array of inner
                 //event params
                 Self::Tuple(
                     param_types
-                        .into_iter()
+                        .iter()
                         .enumerate()
                         .map(|(i, p)| {
-                            let event_input = ethers::abi::EventParam {
+                            let inner_event_input = EventParam {
                                 // Keep the same name as the event input name
                                 name: event_input.name.clone(),
-                                kind: p,
+                                kind: p.clone(),
                                 //Tuple fields can't be indexed
                                 indexed: false,
                             };
                             //Recursively get the inner NestedEventParam type
-                            Self::TupleParam(i, Box::new(Self::from(event_input, param_index)))
+                            Self::TupleParam(i, Box::new(Self::from(inner_event_input, param_index)))
                         })
                         .collect(),
                 )
@@ -85,7 +87,7 @@ mod nested_params {
     #[derive(Debug, Clone, PartialEq)]
     pub struct FlattenedEventParam {
         event_param_pos: usize,
-        pub event_param: ethers::abi::EventParam,
+        pub event_param: EventParam,
         pub accessor_indexes: Option<Vec<ParamIndex>>,
     }
 
@@ -146,7 +148,7 @@ mod nested_params {
         #[cfg(test)]
         pub fn new(
             name: &str,
-            kind: ParamType,
+            kind: DynSolType,
             indexed: bool,
             accessor_indexes: Vec<usize>,
             event_param_pos: usize,
@@ -159,7 +161,7 @@ mod nested_params {
 
             FlattenedEventParam {
                 event_param_pos,
-                event_param: ethers::abi::EventParam {
+                event_param: EventParam {
                     name: name.to_string(),
                     kind,
                     indexed,
@@ -175,7 +177,7 @@ mod nested_params {
     ///MyEvent(address myAddress, uint256 myTupleParam_1, uint256 myTupleParam_2)
     ///This representation makes it easy to have single field conversions
     pub fn flatten_event_inputs(
-        event_inputs: Vec<ethers::abi::EventParam>,
+        event_inputs: Vec<EventParam>,
     ) -> Vec<FlattenedEventParam> {
         event_inputs
             .into_iter()
@@ -198,8 +200,8 @@ use crate::{
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions},
 };
+use alloy_dyn_abi::DynSolType;
 use anyhow::{Context, Result};
-use ethers::abi::ParamType;
 use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
 use serde::Serialize;
 use std::{path::Path, vec};
@@ -224,15 +226,30 @@ impl Contract {
         is_fuel: bool,
         language: &Language,
     ) -> Result<Self> {
-        let imported_events = contract
-            .events
-            .iter()
-            .map(|event| Event::from_config_event(event, contract, is_fuel, language))
-            .collect::<Result<_>>()
-            .context(format!(
-                "Failed getting events for contract {}",
+        let mut imported_events = Vec::new();
+
+        for event in &contract.events {
+            match Event::from_config_event(event, contract, is_fuel, language) {
+                Ok(Some(ev)) => imported_events.push(ev),
+                Ok(None) => {
+                    // Event was skipped due to unsupported types - warning already logged
+                }
+                Err(e) => {
+                    // Log warning and skip this event instead of failing the whole import
+                    eprintln!(
+                        "Warning: Skipping event '{}' in contract '{}': {}",
+                        event.name, contract.name, e
+                    );
+                }
+            }
+        }
+
+        if imported_events.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No events could be imported for contract '{}'. All events have unsupported parameter types.",
                 contract.name
-            ))?;
+            ));
+        }
 
         Ok(Contract {
             name: contract.name.to_capitalized_options(),
@@ -423,24 +440,46 @@ impl Event {
         contract: &system_config::Contract,
         is_fuel: bool,
         language: &Language,
-    ) -> Result<Self> {
+    ) -> Result<Option<Self>> {
         let empty_params = vec![];
         let params = match &event.kind {
             EventKind::Params(params) => params,
             EventKind::Fuel(_) => &empty_params,
         };
-        let params = flatten_event_inputs(params.clone())
-            .into_iter()
-            .map(Param::from_event_param)
-            .collect::<Result<_>>()
-            .context(format!("Failed getting params for event {}", event.name))?;
 
-        Ok(Event {
+        // Try to convert each parameter, collecting results and errors
+        let mut converted_params = Vec::new();
+        let mut has_unsupported_types = false;
+
+        for flattened_param in flatten_event_inputs(params.clone()) {
+            match Param::from_event_param(flattened_param.clone()) {
+                Ok(param) => converted_params.push(param),
+                Err(e) => {
+                    // Log warning about the unsupported parameter type
+                    eprintln!(
+                        "Warning: Skipping event '{}' in contract '{}': parameter '{}' has unsupported type - {}",
+                        event.name,
+                        contract.name,
+                        flattened_param.event_param.name,
+                        e
+                    );
+                    has_unsupported_types = true;
+                    break; // Skip this entire event
+                }
+            }
+        }
+
+        // If any parameter has unsupported types, skip the entire event
+        if has_unsupported_types {
+            return Ok(None);
+        }
+
+        Ok(Some(Event {
             name: event.name.to_string(),
             entity_id_from_event_code: Event::get_entity_id_code(is_fuel, language),
             create_mock_code: Event::get_create_mock_code(event, contract, is_fuel, language),
-            params,
-        })
+            params: converted_params,
+        }))
     }
 }
 
@@ -476,7 +515,7 @@ impl Param {
                     "Converting eth event param '{}' to gql scalar",
                     flattened_event_param.event_param.name
                 ))?,
-            is_eth_address: flattened_event_param.event_param.kind == ParamType::Address,
+            is_eth_address: matches!(flattened_event_param.event_param.kind, DynSolType::Address),
         })
     }
 }
@@ -616,7 +655,7 @@ impl AutoSchemaHandlerTemplate {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ethers::abi::EventParam;
+    use crate::config_parsing::abi_compat::EventParam;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -624,20 +663,20 @@ mod test {
         let event_inputs = vec![
             EventParam {
                 name: "user".to_string(),
-                kind: ParamType::Address,
+                kind: DynSolType::Address,
                 indexed: false,
             },
             EventParam {
                 name: "myTupleParam".to_string(),
-                kind: ParamType::Tuple(vec![ParamType::Uint(256), ParamType::Bool]),
+                kind: DynSolType::Tuple(vec![DynSolType::Uint(256), DynSolType::Bool]),
                 indexed: false,
             },
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("user", ParamType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", ParamType::Uint(256), false, vec![0], 1),
-            FlattenedEventParam::new("myTupleParam", ParamType::Bool, false, vec![1], 1),
+            FlattenedEventParam::new("user", DynSolType::Address, false, vec![], 0),
+            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(256), false, vec![0], 1),
+            FlattenedEventParam::new("myTupleParam", DynSolType::Bool, false, vec![1], 1),
         ];
 
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
@@ -662,31 +701,31 @@ mod test {
             EventParam {
                 //nameless param should compute to "_0"
                 name: "".to_string(),
-                kind: ParamType::Address,
+                kind: DynSolType::Address,
                 indexed: false,
             },
             EventParam {
                 name: "myTupleParam".to_string(),
-                kind: ParamType::Tuple(vec![
-                    ParamType::Tuple(vec![ParamType::Uint(8), ParamType::Uint(8)]),
-                    ParamType::Bool,
+                kind: DynSolType::Tuple(vec![
+                    DynSolType::Tuple(vec![DynSolType::Uint(8), DynSolType::Uint(8)]),
+                    DynSolType::Bool,
                 ]),
                 indexed: false,
             },
             EventParam {
                 //param named "id" should compute to "event_id"
                 name: "id".to_string(),
-                kind: ParamType::String,
+                kind: DynSolType::String,
                 indexed: false,
             },
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("", ParamType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 0], 1),
-            FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 1], 1),
-            FlattenedEventParam::new("myTupleParam", ParamType::Bool, false, vec![1], 1),
-            FlattenedEventParam::new("id", ParamType::String, false, vec![], 2),
+            FlattenedEventParam::new("", DynSolType::Address, false, vec![], 0),
+            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(8), false, vec![0, 0], 1),
+            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(8), false, vec![0, 1], 1),
+            FlattenedEventParam::new("myTupleParam", DynSolType::Bool, false, vec![1], 1),
+            FlattenedEventParam::new("id", DynSolType::String, false, vec![], 2),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
         assert_eq!(expected_flat_inputs, actual_flat_inputs);

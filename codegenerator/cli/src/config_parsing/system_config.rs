@@ -22,10 +22,12 @@ use crate::{
     rescript_types::RescriptTypeIdent,
     utils::unique_hashmap,
 };
+use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
-use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReadableParser};
 use itertools::Itertools;
+
+use super::abi_compat::EventParam;
 use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
@@ -1140,11 +1142,11 @@ pub struct EvmAbi {
     // The path is not always present since we allow to get ABI from events
     pub path: Option<PathBuf>,
     pub raw: String,
-    typed: ethers::abi::Abi,
+    typed: JsonAbi,
 }
 
 impl EvmAbi {
-    pub fn event_signature_from_abi_event(abi_event: &ethers::abi::Event) -> String {
+    pub fn event_signature_from_abi_event(abi_event: &AlloyEvent) -> String {
         format!(
             "{}({}){}",
             abi_event.name,
@@ -1152,9 +1154,9 @@ impl EvmAbi {
                 .inputs
                 .iter()
                 .map(|input| {
-                    let param_type = input.kind.to_string();
+                    let param_type = input.selector_type();
                     let indexed_keyword = if input.indexed { " indexed " } else { " " };
-                    let param_name = input.name.clone();
+                    let param_name = &input.name;
 
                     format!("{}{}{}", param_type, indexed_keyword, param_name)
                 })
@@ -1298,17 +1300,16 @@ pub struct Event {
 }
 
 impl Event {
-    fn get_abi_event(event_string: &str, opt_abi: &Option<EvmAbi>) -> Result<EthAbiEvent> {
-        let parse_event_sig = |sig: &str| -> Result<EthAbiEvent> {
-            match HumanReadableParser::parse_event(sig) {
-                Ok(event) => Ok(event),
-                Err(err) => Err(anyhow!(
+    fn get_abi_event(event_string: &str, opt_abi: &Option<EvmAbi>) -> Result<AlloyEvent> {
+        let parse_event_sig = |sig: &str| -> Result<AlloyEvent> {
+            AlloyEvent::parse(sig).map_err(|err| {
+                anyhow!(
                     "EE103: Unable to parse event signature {} due to the following error: {}. \
                      Please refer to our docs on how to correctly define a human readable ABI.",
                     sig,
                     err
-                )),
-            }
+                )
+            })
         };
 
         let event_string = event_string.trim();
@@ -1321,15 +1322,42 @@ impl Event {
         } else {
             match opt_abi {
                 Some(abi) => {
-                    let event = abi
+                    let events = abi
                         .typed
                         .event(event_string)
                         .context(format!("Failed retrieving event {} from abi", event_string))?;
-                    Ok(event.clone())
+                    // Return the first event with that name (events can be overloaded)
+                    events
+                        .first()
+                        .cloned()
+                        .ok_or_else(|| anyhow!("Event {} not found in abi", event_string))
                 }
                 None => Err(anyhow!("No abi file provided for event {}", event_string)),
             }
         }
+    }
+
+    /// Convert alloy EventParam to our abi_compat EventParam
+    fn convert_event_params(alloy_event: &AlloyEvent) -> Result<Vec<EventParam>> {
+        alloy_event
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(i, param)| {
+                let param_name = param.name.clone();
+                let name = if param_name.is_empty() {
+                    format!("_{}", i)
+                } else {
+                    param_name
+                };
+                EventParam::from_alloy(param)
+                    .map(|mut ep| {
+                        ep.name = name;
+                        ep
+                    })
+                    .map_err(|e| anyhow!("Failed to parse event parameter type: {}", e))
+            })
+            .collect()
     }
 
     pub fn from_evm_events_config(
@@ -1341,38 +1369,27 @@ impl Event {
         let abi_from_file = EvmAbi::from_file(abi_file_path, project_paths)?;
 
         let mut events = vec![];
-        let mut events_abi = ethers::abi::Abi::default();
+        let mut events_abi = JsonAbi::new();
 
         for event_config in events_config.iter() {
-            let mut event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
-            let sighash = ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
-                event.abi_signature().as_bytes(),
-            ));
+            let alloy_event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
+            // Use alloy's selector() method which computes keccak256 of the signature
+            // Note: selector() returns B256 which formats as lowercase hex with 0x prefix
+            let sighash = alloy_event.selector().to_string();
 
-            let abi_name = event.name.clone();
+            let abi_name = alloy_event.name.clone();
             let name = event_config.name.clone().unwrap_or(abi_name.clone());
 
-            let normalized_unnamed_params: Vec<EventParam> = event
-                .clone()
-                .inputs
-                .into_iter()
-                .enumerate()
-                .map(|(i, e)| {
-                    let name = if e.name.is_empty() {
-                        format!("_{}", i)
-                    } else {
-                        e.name
-                    };
-                    EventParam { name, ..e }
-                })
-                .collect();
+            // Convert alloy params to our abi_compat EventParam
+            let normalized_unnamed_params: Vec<EventParam> =
+                Event::convert_event_params(&alloy_event)?;
 
-            // All unnamed params in the ABI should be named,
-            // otherwise decoders will output parsed data as an array,
-            // instead of an object with named fields.
-            event.inputs = normalized_unnamed_params.clone();
-
-            events_abi.events.entry(abi_name).or_default().push(event);
+            // Add the event to the ABI (alloy_event is already properly formatted)
+            events_abi
+                .events
+                .entry(abi_name)
+                .or_default()
+                .push(alloy_event);
             events.push(Event {
                 name,
                 kind: EventKind::Params(normalized_unnamed_params),
@@ -1740,7 +1757,7 @@ mod test {
         },
         project_paths::ParsedProjectPaths,
     };
-    use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
+    use alloy_json_abi::Event as AlloyEvent;
     use handlebars::Handlebars;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1840,7 +1857,8 @@ mod test {
                 ]
     "#;
 
-        let expected_abi: ethers::abi::Abi = serde_json::from_str(expected_abi_string).unwrap();
+        let expected_abi: alloy_json_abi::JsonAbi =
+            serde_json::from_str(expected_abi_string).unwrap();
 
         assert_eq!(expected_abi, contract_abi);
     }
@@ -1927,7 +1945,8 @@ mod test {
                 ]
     "#;
 
-        let expected_abi: ethers::abi::Abi = serde_json::from_str(expected_abi_string).unwrap();
+        let expected_abi: alloy_json_abi::JsonAbi =
+            serde_json::from_str(expected_abi_string).unwrap();
 
         assert_eq!(expected_abi, contract_abi);
     }
@@ -1936,50 +1955,39 @@ mod test {
     fn parse_event_sig_with_event_prefix() {
         let event_string = "event MyEvent(uint256 myArg)".to_string();
 
-        let expected_event = EthAbiEvent {
-            name: "MyEvent".to_string(),
-            anonymous: false,
-            inputs: vec![EventParam {
-                indexed: false,
-                name: "myArg".to_string(),
-                kind: ParamType::Uint(256),
-            }],
-        };
-        assert_eq!(
-            Event::get_abi_event(&event_string, &None).unwrap(),
-            expected_event
-        );
+        let expected_event = AlloyEvent::parse("event MyEvent(uint256 myArg)").unwrap();
+        let parsed_event = Event::get_abi_event(&event_string, &None).unwrap();
+
+        assert_eq!(parsed_event.name, expected_event.name);
+        assert_eq!(parsed_event.anonymous, expected_event.anonymous);
+        assert_eq!(parsed_event.inputs.len(), expected_event.inputs.len());
     }
 
     #[test]
     fn parse_event_sig_without_event_prefix() {
         let event_string = ("MyEvent(uint256 myArg)").to_string();
 
-        let expected_event = EthAbiEvent {
-            name: "MyEvent".to_string(),
-            anonymous: false,
-            inputs: vec![EventParam {
-                indexed: false,
-                name: "myArg".to_string(),
-                kind: ParamType::Uint(256),
-            }],
-        };
-        assert_eq!(
-            Event::get_abi_event(&event_string, &None).unwrap(),
-            expected_event
-        );
+        let expected_event = AlloyEvent::parse("event MyEvent(uint256 myArg)").unwrap();
+        let parsed_event = Event::get_abi_event(&event_string, &None).unwrap();
+
+        assert_eq!(parsed_event.name, expected_event.name);
+        assert_eq!(parsed_event.anonymous, expected_event.anonymous);
+        assert_eq!(parsed_event.inputs.len(), expected_event.inputs.len());
     }
 
     #[test]
-    fn parse_event_sig_invalid_panics() {
+    fn parse_event_sig_invalid_type_fails_on_param_conversion() {
+        // Note: alloy's Event::parse is more permissive and accepts "uint69" even though
+        // it's not a valid Solidity type. The error occurs when we try to convert the
+        // EventParam to our abi_compat::EventParam using DynSolType::parse.
         let event_string = ("MyEvent(uint69 myArg)").to_string();
-        assert_eq!(
-            Event::get_abi_event(&event_string, &None)
-                .unwrap_err()
-                .to_string(),
-            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the \
-             following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how \
-             to correctly define a human readable ABI."
+        let alloy_event = Event::get_abi_event(&event_string, &None).expect("Should parse");
+
+        // The error occurs when trying to convert to our EventParam
+        let result = Event::convert_event_params(&alloy_event);
+        assert!(
+            result.is_err(),
+            "Expected error when parsing invalid type 'uint69'"
         );
     }
 

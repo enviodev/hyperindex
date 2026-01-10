@@ -34,7 +34,7 @@ impl Diff {
     pub async fn get() -> Result<Self> {
         let url = "https://chains.hyperquery.xyz/active_chains";
         let response = reqwest::get(url).await?;
-        let chains: Vec<Chain> = response.json().await?;
+        let chains: Vec<Chain> = response.json::<Vec<Chain>>().await?;
 
         let mut api_chain_ids = HashSet::new();
 

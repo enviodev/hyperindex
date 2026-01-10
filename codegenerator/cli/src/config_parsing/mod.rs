@@ -1,3 +1,4 @@
+pub mod abi_compat;
 pub mod chain_helpers;
 pub mod contract_import;
 pub mod entity_parsing;
