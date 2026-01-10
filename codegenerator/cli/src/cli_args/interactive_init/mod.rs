@@ -31,25 +31,47 @@ enum EcosystemOption {
 }
 
 /// Flattened EVM initialization options shown in a single prompt
-#[derive(Clone, Debug, Display, EnumIter)]
+/// Options are prefixed by category for clear organization
+#[derive(Clone, Debug, Display)]
 enum EvmInitOption {
-    #[strum(serialize = "Contract Import - Start from a deployed contract")]
-    ContractImport,
-    #[strum(serialize = "Greeter - Hello World example")]
+    #[strum(serialize = "Contract Import: Block Explorer")]
+    ContractImportExplorer,
+    #[strum(serialize = "Contract Import: Local ABI")]
+    ContractImportLocal,
+    #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
-    #[strum(serialize = "ERC20 - Token transfers")]
+    #[strum(serialize = "Template: ERC20")]
     TemplateErc20,
-    #[strum(serialize = "Factory - Dynamic contract tracking")]
-    TemplateFactory,
+    #[strum(serialize = "Feature: Factory")]
+    FeatureFactory,
+}
+
+impl EvmInitOption {
+    fn all_options() -> Vec<Self> {
+        vec![
+            Self::ContractImportExplorer,
+            Self::ContractImportLocal,
+            Self::TemplateGreeter,
+            Self::TemplateErc20,
+            Self::FeatureFactory,
+        ]
+    }
 }
 
 /// Flattened Fuel initialization options shown in a single prompt
-#[derive(Clone, Debug, Display, EnumIter)]
+/// Options are prefixed by category for clear organization
+#[derive(Clone, Debug, Display)]
 enum FuelInitOption {
-    #[strum(serialize = "Contract Import - Start from a local ABI file")]
-    ContractImport,
-    #[strum(serialize = "Greeter - Hello World example")]
+    #[strum(serialize = "Contract Import: Local ABI")]
+    ContractImportLocal,
+    #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
+}
+
+impl FuelInitOption {
+    fn all_options() -> Vec<Self> {
+        vec![Self::ContractImportLocal, Self::TemplateGreeter]
+    }
 }
 
 async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
@@ -132,15 +154,31 @@ fn handle_svm_cli_init_flow(
 
 /// Prompt for EVM initialization with flattened options
 async fn prompt_evm_init_option() -> Result<Ecosystem> {
-    let options: Vec<EvmInitOption> = EvmInitOption::iter().collect();
+    let options = EvmInitOption::all_options();
     let selected = Select::new("Choose an initialization option", options)
         .prompt()
         .context("Failed prompting for EVM initialization option")?;
 
     match selected {
-        EvmInitOption::ContractImport => Ok(Ecosystem::Evm {
+        EvmInitOption::ContractImportExplorer => Ok(Ecosystem::Evm {
             init_flow: evm_prompts::prompt_contract_import_init_flow(
-                clap_definitions::evm::ContractImportArgs::default(),
+                clap_definitions::evm::ContractImportArgs {
+                    local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Explorer(
+                        clap_definitions::evm::ExplorerImportArgs::default(),
+                    )),
+                    ..Default::default()
+                },
+            )
+            .await?,
+        }),
+        EvmInitOption::ContractImportLocal => Ok(Ecosystem::Evm {
+            init_flow: evm_prompts::prompt_contract_import_init_flow(
+                clap_definitions::evm::ContractImportArgs {
+                    local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Local(
+                        clap_definitions::evm::LocalImportArgs::default(),
+                    )),
+                    ..Default::default()
+                },
             )
             .await?,
         }),
@@ -150,7 +188,7 @@ async fn prompt_evm_init_option() -> Result<Ecosystem> {
         EvmInitOption::TemplateErc20 => Ok(Ecosystem::Evm {
             init_flow: evm::InitFlow::Template(evm::Template::Erc20),
         }),
-        EvmInitOption::TemplateFactory => Ok(Ecosystem::Evm {
+        EvmInitOption::FeatureFactory => Ok(Ecosystem::Evm {
             init_flow: evm::InitFlow::Template(evm::Template::FeatureFactory),
         }),
     }
@@ -158,13 +196,13 @@ async fn prompt_evm_init_option() -> Result<Ecosystem> {
 
 /// Prompt for Fuel initialization with flattened options
 async fn prompt_fuel_init_option() -> Result<Ecosystem> {
-    let options: Vec<FuelInitOption> = FuelInitOption::iter().collect();
+    let options = FuelInitOption::all_options();
     let selected = Select::new("Choose an initialization option", options)
         .prompt()
         .context("Failed prompting for Fuel initialization option")?;
 
     match selected {
-        FuelInitOption::ContractImport => Ok(Ecosystem::Fuel {
+        FuelInitOption::ContractImportLocal => Ok(Ecosystem::Fuel {
             init_flow: fuel_prompts::prompt_contract_import_init_flow(
                 clap_definitions::fuel::ContractImportArgs::default(),
             )
