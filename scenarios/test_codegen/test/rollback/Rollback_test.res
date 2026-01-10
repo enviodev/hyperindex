@@ -297,7 +297,7 @@ describe("E2E rollback tests", () => {
     )
   }
 
-  Async.it("Should re-enter reorg threshold on restart", async () => {
+  Async.it("Should stay in reorg threshold on restart when progress is past threshold", async () => {
     let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -348,9 +348,11 @@ describe("E2E rollback tests", () => {
 
     await Utils.delay(0)
 
+    // After restart, we should still be in reorg threshold because
+    // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
     Assert.deepEqual(
       await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "0", labels: Js.Dict.empty()}],
+      [{value: "1", labels: Js.Dict.empty()}],
     )
 
     Assert.deepEqual(
@@ -365,7 +367,7 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
       None,
-      ~message="Shouldn't immediately enter reorg threshold, since we need to wait for another chain",
+      ~message="Shouldn't immediately query items, since we need to wait for another chain",
     )
 
     sourceMock100.resolveGetHeightOrThrow(300)
@@ -379,7 +381,7 @@ describe("E2E rollback tests", () => {
         "toBlock": None,
         "retry": 0,
       }),
-      ~message="Should enter reorg threshold for the second time and request now to the latest block",
+      ~message="Should continue indexing from where we left off",
     )
 
     sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
