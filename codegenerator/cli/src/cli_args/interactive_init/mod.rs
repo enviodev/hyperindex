@@ -16,7 +16,6 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use inquire::{Select, Text};
-use strum;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
     contains_no_whitespace_validator, is_directory_new_validator,
@@ -87,96 +86,90 @@ struct EcosystemPromptResult {
     language: Language,
 }
 
+/// Main entry point for ecosystem selection.
+/// Handles both CLI args and interactive prompts, applying language overrides as needed.
 async fn prompt_ecosystem(
     cli_init_flow: Option<InitFlow>,
     language: Language,
 ) -> Result<EcosystemPromptResult> {
-    // If CLI args provide a specific init flow, use it directly
-    if let Some(init_flow) = cli_init_flow {
-        return handle_cli_init_flow(init_flow, &language).await;
-    }
+    let ecosystem = match cli_init_flow {
+        Some(init_flow) => get_ecosystem_from_cli(init_flow, &language).await?,
+        None => get_ecosystem_from_prompt(&language).await?,
+    };
 
-    // Otherwise, prompt for ecosystem selection
-    let ecosystem_options = EcosystemOption::iter().collect();
-    let ecosystem_option = Select::new("Choose blockchain ecosystem", ecosystem_options)
-        .prompt()
-        .context("Failed prompting for blockchain ecosystem")?;
+    // Apply language override (e.g., SVM only supports TypeScript)
+    let language = apply_language_override(&ecosystem, language);
 
-    match ecosystem_option {
-        EcosystemOption::Evm => {
-            let ecosystem = prompt_evm_init_option(&language).await?;
-            Ok(EcosystemPromptResult {
-                ecosystem,
-                language,
-            })
-        }
-        EcosystemOption::Fuel => {
-            let ecosystem = prompt_fuel_init_option(&language).await?;
-            Ok(EcosystemPromptResult {
-                ecosystem,
-                language,
-            })
-        }
-        EcosystemOption::Svm => prompt_svm_init_option(&language),
+    Ok(EcosystemPromptResult {
+        ecosystem,
+        language,
+    })
+}
+
+/// Override language if the ecosystem doesn't support it
+fn apply_language_override(ecosystem: &Ecosystem, language: Language) -> Language {
+    if matches!(ecosystem, Ecosystem::Svm { .. }) && matches!(language, Language::ReScript) {
+        println!(
+            "Note: SVM templates are only available in TypeScript. Creating a TypeScript project."
+        );
+        Language::TypeScript
+    } else {
+        language
     }
 }
 
-/// Handle init flow provided via CLI arguments
-async fn handle_cli_init_flow(
-    init_flow: InitFlow,
-    language: &Language,
-) -> Result<EcosystemPromptResult> {
+/// Get ecosystem from CLI arguments
+async fn get_ecosystem_from_cli(init_flow: InitFlow, language: &Language) -> Result<Ecosystem> {
     match init_flow {
-        InitFlow::Fuel {
-            init_flow: maybe_init_flow,
-        } => {
-            let ecosystem = handle_fuel_cli_init_flow(maybe_init_flow, language).await?;
-            Ok(EcosystemPromptResult {
-                ecosystem,
-                language: language.clone(),
-            })
-        }
-        InitFlow::Template(args) => {
-            let chosen_template = args.template.unwrap_or(evm::Template::Greeter);
-            Ok(EcosystemPromptResult {
-                ecosystem: Ecosystem::Evm {
-                    init_flow: evm::InitFlow::Template(chosen_template),
-                },
-                language: language.clone(),
-            })
-        }
+        InitFlow::Fuel { init_flow } => get_fuel_ecosystem(init_flow, language).await,
+        InitFlow::Svm { init_flow } => get_svm_ecosystem(init_flow),
+        InitFlow::Template(args) => Ok(Ecosystem::Evm {
+            init_flow: evm::InitFlow::Template(args.template.unwrap_or(evm::Template::Greeter)),
+        }),
         InitFlow::SubgraphMigration(args) => {
-            let input_subgraph_id = match args.subgraph_id {
+            let subgraph_id = match args.subgraph_id {
                 Some(id) => id,
                 None => Text::new("[BETA VERSION] What is the subgraph ID?")
                     .prompt()
                     .context("Prompting user for subgraph id")?,
             };
-            Ok(EcosystemPromptResult {
-                ecosystem: Ecosystem::Evm {
-                    init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
-                },
-                language: language.clone(),
+            Ok(Ecosystem::Evm {
+                init_flow: evm::InitFlow::SubgraphID(subgraph_id),
             })
         }
-        InitFlow::ContractImport(args) => Ok(EcosystemPromptResult {
-            ecosystem: Ecosystem::Evm {
-                init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
-            },
-            language: language.clone(),
+        InitFlow::ContractImport(args) => Ok(Ecosystem::Evm {
+            init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
         }),
-        InitFlow::Svm {
-            init_flow: maybe_init_flow,
-        } => handle_svm_cli_init_flow(maybe_init_flow, language),
     }
 }
 
-/// Handle Fuel CLI init flow
-async fn handle_fuel_cli_init_flow(
-    maybe_init_flow: Option<clap_definitions::fuel::InitFlow>,
+/// Get ecosystem from interactive prompts
+async fn get_ecosystem_from_prompt(language: &Language) -> Result<Ecosystem> {
+    let ecosystem_option = Select::new(
+        "Choose blockchain ecosystem",
+        EcosystemOption::iter().collect(),
+    )
+    .prompt()
+    .context("Failed prompting for blockchain ecosystem")?;
+
+    match ecosystem_option {
+        EcosystemOption::Evm => prompt_evm_init_option(language).await,
+        EcosystemOption::Fuel => prompt_fuel_init_option(language).await,
+        // SVM only has one template option, skip the selection prompt
+        EcosystemOption::Svm => Ok(Ecosystem::Svm {
+            init_flow: crate::init_config::svm::InitFlow::Template(
+                crate::init_config::svm::Template::FeatureBlockHandler,
+            ),
+        }),
+    }
+}
+
+/// Get Fuel ecosystem from CLI args or prompt
+async fn get_fuel_ecosystem(
+    init_flow: Option<clap_definitions::fuel::InitFlow>,
     language: &Language,
 ) -> Result<Ecosystem> {
-    match maybe_init_flow {
+    match init_flow {
         Some(clap_definitions::fuel::InitFlow::Template(args)) => Ok(Ecosystem::Fuel {
             init_flow: fuel_prompts::prompt_template_init_flow(args)?,
         }),
@@ -187,22 +180,9 @@ async fn handle_fuel_cli_init_flow(
     }
 }
 
-/// Handle SVM CLI init flow
-fn handle_svm_cli_init_flow(
-    maybe_init_flow: Option<clap_definitions::svm::InitFlow>,
-    language: &Language,
-) -> Result<EcosystemPromptResult> {
-    // SVM only has template options which aren't available in ReScript
-    let effective_language = if matches!(language, Language::ReScript) {
-        println!(
-            "Note: SVM templates are only available in TypeScript. Creating a TypeScript project."
-        );
-        Language::TypeScript
-    } else {
-        language.clone()
-    };
-
-    let ecosystem = match maybe_init_flow {
+/// Get SVM ecosystem from CLI args (SVM only has template options)
+fn get_svm_ecosystem(init_flow: Option<clap_definitions::svm::InitFlow>) -> Result<Ecosystem> {
+    Ok(match init_flow {
         Some(clap_definitions::svm::InitFlow::Template(args)) => Ecosystem::Svm {
             init_flow: svm_prompts::prompt_template_init_flow(args)?,
         },
@@ -211,100 +191,65 @@ fn handle_svm_cli_init_flow(
                 crate::init_config::svm::Template::FeatureBlockHandler,
             ),
         },
-    };
-
-    Ok(EcosystemPromptResult {
-        ecosystem,
-        language: effective_language,
     })
 }
 
 /// Prompt for EVM initialization with flattened options
 async fn prompt_evm_init_option(language: &Language) -> Result<Ecosystem> {
-    let options = EvmInitOption::all_options(language);
-    let selected = Select::new("Choose an initialization option", options)
-        .prompt()
-        .context("Failed prompting for EVM initialization option")?;
+    let selected = Select::new(
+        "Choose an initialization option",
+        EvmInitOption::all_options(language),
+    )
+    .prompt()
+    .context("Failed prompting for EVM initialization option")?;
 
-    match selected {
-        EvmInitOption::ContractImportExplorer => Ok(Ecosystem::Evm {
-            init_flow: evm_prompts::prompt_contract_import_init_flow(
-                clap_definitions::evm::ContractImportArgs {
-                    local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Explorer(
-                        clap_definitions::evm::ExplorerImportArgs::default(),
-                    )),
-                    ..Default::default()
-                },
-            )
-            .await?,
-        }),
-        EvmInitOption::ContractImportLocal => Ok(Ecosystem::Evm {
-            init_flow: evm_prompts::prompt_contract_import_init_flow(
-                clap_definitions::evm::ContractImportArgs {
-                    local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Local(
-                        clap_definitions::evm::LocalImportArgs::default(),
-                    )),
-                    ..Default::default()
-                },
-            )
-            .await?,
-        }),
-        EvmInitOption::TemplateGreeter => Ok(Ecosystem::Evm {
-            init_flow: evm::InitFlow::Template(evm::Template::Greeter),
-        }),
-        EvmInitOption::TemplateErc20 => Ok(Ecosystem::Evm {
-            init_flow: evm::InitFlow::Template(evm::Template::Erc20),
-        }),
-        EvmInitOption::FeatureFactory => Ok(Ecosystem::Evm {
-            init_flow: evm::InitFlow::Template(evm::Template::FeatureFactory),
-        }),
-    }
+    let init_flow = match selected {
+        EvmInitOption::ContractImportExplorer => {
+            evm_prompts::prompt_contract_import_init_flow(clap_definitions::evm::ContractImportArgs {
+                local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Explorer(
+                    clap_definitions::evm::ExplorerImportArgs::default(),
+                )),
+                ..Default::default()
+            })
+            .await?
+        }
+        EvmInitOption::ContractImportLocal => {
+            evm_prompts::prompt_contract_import_init_flow(clap_definitions::evm::ContractImportArgs {
+                local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Local(
+                    clap_definitions::evm::LocalImportArgs::default(),
+                )),
+                ..Default::default()
+            })
+            .await?
+        }
+        EvmInitOption::TemplateErc20 => evm::InitFlow::Template(evm::Template::Erc20),
+        EvmInitOption::TemplateGreeter => evm::InitFlow::Template(evm::Template::Greeter),
+        EvmInitOption::FeatureFactory => evm::InitFlow::Template(evm::Template::FeatureFactory),
+    };
+
+    Ok(Ecosystem::Evm { init_flow })
 }
 
 /// Prompt for Fuel initialization with flattened options
 async fn prompt_fuel_init_option(language: &Language) -> Result<Ecosystem> {
-    let options = FuelInitOption::all_options(language);
-    let selected = Select::new("Choose an initialization option", options)
-        .prompt()
-        .context("Failed prompting for Fuel initialization option")?;
+    let selected = Select::new(
+        "Choose an initialization option",
+        FuelInitOption::all_options(language),
+    )
+    .prompt()
+    .context("Failed prompting for Fuel initialization option")?;
 
-    match selected {
-        FuelInitOption::ContractImportLocal => Ok(Ecosystem::Fuel {
-            init_flow: fuel_prompts::prompt_contract_import_init_flow(
+    let init_flow = match selected {
+        FuelInitOption::ContractImportLocal => {
+            fuel_prompts::prompt_contract_import_init_flow(
                 clap_definitions::fuel::ContractImportArgs::default(),
             )
-            .await?,
-        }),
-        FuelInitOption::TemplateGreeter => Ok(Ecosystem::Fuel {
-            init_flow: fuel::InitFlow::Template(fuel::Template::Greeter),
-        }),
-    }
-}
-
-/// Prompt for SVM initialization
-/// Since SVM currently only has one option (Block Handler template),
-/// we skip the intermediate prompt and go directly to initialization
-fn prompt_svm_init_option(language: &Language) -> Result<EcosystemPromptResult> {
-    // SVM only has template options which aren't available in ReScript
-    let effective_language = if matches!(language, Language::ReScript) {
-        println!(
-            "Note: SVM templates are only available in TypeScript. Creating a TypeScript project."
-        );
-        Language::TypeScript
-    } else {
-        language.clone()
+            .await?
+        }
+        FuelInitOption::TemplateGreeter => fuel::InitFlow::Template(fuel::Template::Greeter),
     };
 
-    // SVM currently only has one template option, so we use it directly
-    // This avoids unnecessary prompting when there's only one choice
-    Ok(EcosystemPromptResult {
-        ecosystem: Ecosystem::Svm {
-            init_flow: crate::init_config::svm::InitFlow::Template(
-                crate::init_config::svm::Template::FeatureBlockHandler,
-            ),
-        },
-        language: effective_language,
-    })
+    Ok(Ecosystem::Fuel { init_flow })
 }
 
 #[derive(Debug, Clone, strum::Display, strum::EnumIter, strum::EnumString)]
@@ -314,6 +259,7 @@ enum ApiTokenInput {
     #[strum(serialize = "Add an existing API token")]
     AddExisting,
 }
+
 pub async fn prompt_missing_init_args(
     init_args: InitArgs,
     project_paths: &ProjectPaths,
@@ -323,9 +269,7 @@ pub async fn prompt_missing_init_args(
         None => {
             Text::new("Specify a folder name (ENTER to skip): ")
                 .with_default(DEFAULT_PROJECT_ROOT_PATH)
-                // validate string is valid directory name
                 .with_validator(is_valid_foldername_inquire_validator)
-                // validate the directory doesn't already exist
                 .with_validator(is_directory_new_validator)
                 .with_validator(contains_no_whitespace_validator)
                 .prompt()?
@@ -343,10 +287,7 @@ pub async fn prompt_missing_init_args(
         }
     };
 
-    let language = match init_args.language {
-        Some(args_language) => args_language,
-        None => Language::TypeScript,
-    };
+    let language = init_args.language.unwrap_or(Language::TypeScript);
 
     let EcosystemPromptResult {
         ecosystem,
