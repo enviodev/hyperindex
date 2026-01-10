@@ -1,10 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    clap_definitions::fuel::{
-        ContractImportArgs, InitFlow as ClapInitFlow, LocalImportArgs, LocalOrExplorerImport,
-        TemplateArgs,
-    },
+    clap_definitions::fuel::{ContractImportArgs, LocalImportArgs, LocalOrExplorerImport, TemplateArgs},
     config_parsing::{
         contract_import::converters::normalize_contract_name,
         human_config::fuel::EventConfig,
@@ -20,19 +17,6 @@ use super::shared_prompts::{
     prompt_abi_file_path, prompt_contract_address, prompt_contract_name, prompt_events_selection,
     prompt_template, prompt_to_continue_adding, Contract, SelectItem,
 };
-
-pub fn prompt_init_flow_missing(maybe_init_flow: Option<ClapInitFlow>) -> Result<ClapInitFlow> {
-    let init_flow = match maybe_init_flow {
-        Some(f) => f,
-        None => {
-            let flow_option = ClapInitFlow::iter().collect();
-            Select::new("Choose an initialization option", flow_option)
-                .prompt()
-                .context("Failed prompting for Fuel initialization option")?
-        }
-    };
-    Ok(init_flow)
-}
 
 pub fn prompt_template_init_flow(args: TemplateArgs) -> Result<InitFlow> {
     let chosen_template = match args.template {
