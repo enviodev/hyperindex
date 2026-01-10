@@ -12,11 +12,10 @@ use super::{
 use crate::{
     clap_definitions::InitFlow,
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
-    init_config::{evm, Ecosystem},
+    init_config::{evm, fuel, Ecosystem},
 };
 use anyhow::{Context, Result};
 use inquire::{Select, Text};
-use shared_prompts::prompt_template;
 use strum;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
@@ -31,56 +30,58 @@ enum EcosystemOption {
     Fuel,
 }
 
+/// Flattened EVM initialization options shown in a single prompt
+#[derive(Clone, Debug, Display, EnumIter)]
+enum EvmInitOption {
+    #[strum(serialize = "Contract Import - Start from a deployed contract")]
+    ContractImport,
+    #[strum(serialize = "Greeter - Hello World example")]
+    TemplateGreeter,
+    #[strum(serialize = "ERC20 - Token transfers")]
+    TemplateErc20,
+    #[strum(serialize = "Factory - Dynamic contract tracking")]
+    TemplateFactory,
+}
+
+/// Flattened Fuel initialization options shown in a single prompt
+#[derive(Clone, Debug, Display, EnumIter)]
+enum FuelInitOption {
+    #[strum(serialize = "Contract Import - Start from a local ABI file")]
+    ContractImport,
+    #[strum(serialize = "Greeter - Hello World example")]
+    TemplateGreeter,
+}
+
 async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
-    let init_flow = match cli_init_flow {
-        Some(v) => v,
-        None => {
-            let ecosystem_options = EcosystemOption::iter().collect();
+    // If CLI args provide a specific init flow, use it directly
+    if let Some(init_flow) = cli_init_flow {
+        return handle_cli_init_flow(init_flow).await;
+    }
 
-            let ecosystem_option = Select::new("Choose blockchain ecosystem", ecosystem_options)
-                .prompt()
-                .context("Failed prompting for blockchain ecosystem")?;
+    // Otherwise, prompt for ecosystem selection
+    let ecosystem_options = EcosystemOption::iter().collect();
+    let ecosystem_option = Select::new("Choose blockchain ecosystem", ecosystem_options)
+        .prompt()
+        .context("Failed prompting for blockchain ecosystem")?;
 
-            match ecosystem_option {
-                EcosystemOption::Fuel => InitFlow::Fuel { init_flow: None },
-                EcosystemOption::Svm => InitFlow::Svm { init_flow: None },
-                EcosystemOption::Evm => {
-                    // Start prompt to ask the user which initialization option they want
-                    // Explicitelly build options, since we don't want to include graph migration and other ecosystem selection subcomands
-                    let user_response_options =
-                        clap_definitions::EvmInitFlowInteractive::iter().collect();
+    match ecosystem_option {
+        EcosystemOption::Evm => prompt_evm_init_option().await,
+        EcosystemOption::Fuel => prompt_fuel_init_option().await,
+        EcosystemOption::Svm => prompt_svm_init_option(),
+    }
+}
 
-                    Select::new("Choose an initialization option", user_response_options)
-                        .prompt()
-                        .context("Failed prompting for Evm initialization option")?
-                        .into()
-                }
-            }
-        }
-    };
-
-    let initialization = match init_flow {
+/// Handle init flow provided via CLI arguments
+async fn handle_cli_init_flow(init_flow: InitFlow) -> Result<Ecosystem> {
+    match init_flow {
         InitFlow::Fuel {
             init_flow: maybe_init_flow,
-        } => match fuel_prompts::prompt_init_flow_missing(maybe_init_flow)? {
-            clap_definitions::fuel::InitFlow::Template(args) => Ecosystem::Fuel {
-                init_flow: fuel_prompts::prompt_template_init_flow(args)?,
-            },
-            clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
-                init_flow: fuel_prompts::prompt_contract_import_init_flow(args).await?,
-            },
-        },
+        } => handle_fuel_cli_init_flow(maybe_init_flow).await,
         InitFlow::Template(args) => {
-            let chosen_template = match args.template {
-                Some(template) => template,
-                None => {
-                    let options = evm::Template::iter().collect();
-                    prompt_template(options)?
-                }
-            };
-            Ecosystem::Evm {
+            let chosen_template = args.template.unwrap_or(evm::Template::Greeter);
+            Ok(Ecosystem::Evm {
                 init_flow: evm::InitFlow::Template(chosen_template),
-            }
+            })
         }
         InitFlow::SubgraphMigration(args) => {
             let input_subgraph_id = match args.subgraph_id {
@@ -89,24 +90,103 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
                     .prompt()
                     .context("Prompting user for subgraph id")?,
             };
-            Ecosystem::Evm {
+            Ok(Ecosystem::Evm {
                 init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
-            }
+            })
         }
-
-        InitFlow::ContractImport(args) => Ecosystem::Evm {
+        InitFlow::ContractImport(args) => Ok(Ecosystem::Evm {
             init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
-        },
+        }),
         InitFlow::Svm {
             init_flow: maybe_init_flow,
-        } => match svm_prompts::prompt_init_flow_missing(maybe_init_flow)? {
-            clap_definitions::svm::InitFlow::Template(args) => Ecosystem::Svm {
-                init_flow: svm_prompts::prompt_template_init_flow(args)?,
-            },
-        },
-    };
+        } => handle_svm_cli_init_flow(maybe_init_flow),
+    }
+}
 
-    Ok(initialization)
+/// Handle Fuel CLI init flow
+async fn handle_fuel_cli_init_flow(
+    maybe_init_flow: Option<clap_definitions::fuel::InitFlow>,
+) -> Result<Ecosystem> {
+    match maybe_init_flow {
+        Some(clap_definitions::fuel::InitFlow::Template(args)) => Ok(Ecosystem::Fuel {
+            init_flow: fuel_prompts::prompt_template_init_flow(args)?,
+        }),
+        Some(clap_definitions::fuel::InitFlow::ContractImport(args)) => Ok(Ecosystem::Fuel {
+            init_flow: fuel_prompts::prompt_contract_import_init_flow(args).await?,
+        }),
+        None => prompt_fuel_init_option().await,
+    }
+}
+
+/// Handle SVM CLI init flow
+fn handle_svm_cli_init_flow(
+    maybe_init_flow: Option<clap_definitions::svm::InitFlow>,
+) -> Result<Ecosystem> {
+    match maybe_init_flow {
+        Some(clap_definitions::svm::InitFlow::Template(args)) => Ok(Ecosystem::Svm {
+            init_flow: svm_prompts::prompt_template_init_flow(args)?,
+        }),
+        None => prompt_svm_init_option(),
+    }
+}
+
+/// Prompt for EVM initialization with flattened options
+async fn prompt_evm_init_option() -> Result<Ecosystem> {
+    let options: Vec<EvmInitOption> = EvmInitOption::iter().collect();
+    let selected = Select::new("Choose an initialization option", options)
+        .prompt()
+        .context("Failed prompting for EVM initialization option")?;
+
+    match selected {
+        EvmInitOption::ContractImport => Ok(Ecosystem::Evm {
+            init_flow: evm_prompts::prompt_contract_import_init_flow(
+                clap_definitions::evm::ContractImportArgs::default(),
+            )
+            .await?,
+        }),
+        EvmInitOption::TemplateGreeter => Ok(Ecosystem::Evm {
+            init_flow: evm::InitFlow::Template(evm::Template::Greeter),
+        }),
+        EvmInitOption::TemplateErc20 => Ok(Ecosystem::Evm {
+            init_flow: evm::InitFlow::Template(evm::Template::Erc20),
+        }),
+        EvmInitOption::TemplateFactory => Ok(Ecosystem::Evm {
+            init_flow: evm::InitFlow::Template(evm::Template::FeatureFactory),
+        }),
+    }
+}
+
+/// Prompt for Fuel initialization with flattened options
+async fn prompt_fuel_init_option() -> Result<Ecosystem> {
+    let options: Vec<FuelInitOption> = FuelInitOption::iter().collect();
+    let selected = Select::new("Choose an initialization option", options)
+        .prompt()
+        .context("Failed prompting for Fuel initialization option")?;
+
+    match selected {
+        FuelInitOption::ContractImport => Ok(Ecosystem::Fuel {
+            init_flow: fuel_prompts::prompt_contract_import_init_flow(
+                clap_definitions::fuel::ContractImportArgs::default(),
+            )
+            .await?,
+        }),
+        FuelInitOption::TemplateGreeter => Ok(Ecosystem::Fuel {
+            init_flow: fuel::InitFlow::Template(fuel::Template::Greeter),
+        }),
+    }
+}
+
+/// Prompt for SVM initialization
+/// Since SVM currently only has one option (Block Handler template),
+/// we skip the intermediate prompt and go directly to initialization
+fn prompt_svm_init_option() -> Result<Ecosystem> {
+    // SVM currently only has one template option, so we use it directly
+    // This avoids unnecessary prompting when there's only one choice
+    Ok(Ecosystem::Svm {
+        init_flow: crate::init_config::svm::InitFlow::Template(
+            crate::init_config::svm::Template::FeatureBlockHandler,
+        ),
+    })
 }
 
 #[derive(Debug, Clone, strum::Display, strum::EnumIter, strum::EnumString)]
