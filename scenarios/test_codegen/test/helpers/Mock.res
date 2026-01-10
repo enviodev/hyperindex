@@ -187,7 +187,6 @@ module Storage = {
           implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
         },
         executeUnsafe: _ => Js.Exn.raiseError("Not implemented"),
-        hasEntityHistoryRows: () => Js.Exn.raiseError("Not implemented"),
         setChainMeta: _ => Js.Exn.raiseError("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not implemented"),
         pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
@@ -325,7 +324,6 @@ module Indexer = {
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~registrations,
-      ~persistence,
     )
     let globalState = GlobalState.make(
       ~ctx,

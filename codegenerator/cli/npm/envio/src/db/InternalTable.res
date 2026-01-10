@@ -243,6 +243,7 @@ WHERE "${(#id: field :> string)}" = $1;`
     numEventsProcessed: int,
     progressBlockNumber: int,
     dynamicContracts: array<Internal.indexingContract>,
+    sourceBlockNumber: int,
   }
 
   // FIXME: Using registering_event_block_number for startBlock
@@ -258,6 +259,7 @@ WHERE "${(#id: field :> string)}" = $1;`
 "${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
 "${(#events_processed: field :> string)}" as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
+"${(#source_block: field :> string)}" as "sourceBlockNumber",
 (
   SELECT COALESCE(json_agg(json_build_object(
     'address', "contract_address",
