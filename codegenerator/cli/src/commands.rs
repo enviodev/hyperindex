@@ -187,101 +187,80 @@ pub mod start {
     }
 }
 pub mod docker {
-    use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
     use std::path::Path;
-    use std::sync::OnceLock;
-    use tokio::sync::Mutex;
 
-    /// Represents the available Docker Compose command variant
-    #[derive(Clone, Copy, Debug)]
-    enum ComposeCommand {
-        /// Docker Compose V2 plugin: `docker compose`
-        DockerComposeV2,
-        /// Legacy Docker Compose V1: `docker-compose`
-        DockerComposeV1,
-    }
-
-    /// Cached result of Docker Compose availability check
-    static COMPOSE_COMMAND: OnceLock<Mutex<Option<ComposeCommand>>> = OnceLock::new();
-
-    /// Check which Docker Compose command is available on the system.
-    /// Tries `docker compose` (V2) first, then falls back to `docker-compose` (V1).
-    async fn get_compose_command(current_dir: &Path) -> anyhow::Result<ComposeCommand> {
-        let mutex = COMPOSE_COMMAND.get_or_init(|| Mutex::new(None));
-        let mut cached = mutex.lock().await;
-
-        if let Some(cmd) = *cached {
-            return Ok(cmd);
-        }
-
-        // Try Docker Compose V2 first: `docker compose version`
-        let v2_available = match tokio::process::Command::new("docker")
-            .args(["compose", "version"])
+    /// Try to run a compose command, returning Ok(status) if command executed, Err if command not found
+    async fn try_compose_command(
+        cmd: &str,
+        args: Vec<&str>,
+        current_dir: &Path,
+    ) -> Result<std::process::ExitStatus, ()> {
+        match tokio::process::Command::new(cmd)
+            .args(&args)
             .current_dir(current_dir)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
             .spawn()
         {
-            Ok(mut child) => child.wait().await.map(|s| s.success()).unwrap_or(false),
-            Err(_) => false,
-        };
-
-        if v2_available {
-            *cached = Some(ComposeCommand::DockerComposeV2);
-            return Ok(ComposeCommand::DockerComposeV2);
+            Ok(mut child) => child.wait().await.map_err(|_| ()),
+            Err(_) => Err(()),
         }
-
-        // Fallback: Try legacy Docker Compose V1: `docker-compose version`
-        let v1_available = match tokio::process::Command::new("docker-compose")
-            .arg("version")
-            .current_dir(current_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(mut child) => child.wait().await.map(|s| s.success()).unwrap_or(false),
-            Err(_) => false,
-        };
-
-        if v1_available {
-            *cached = Some(ComposeCommand::DockerComposeV1);
-            return Ok(ComposeCommand::DockerComposeV1);
-        }
-
-        Err(anyhow!(
-            "Docker Compose is not available. Please install Docker Compose:\n\
-             - For Docker Desktop: Docker Compose is included by default\n\
-             - For Docker Engine: Install the compose plugin with:\n\
-             \n\
-             Linux: sudo apt-get install docker-compose-plugin\n\
-             macOS (Homebrew): brew install docker-compose\n\
-             \n\
-             Alternatively, install the standalone docker-compose:\n\
-             https://docs.docker.com/compose/install/"
-        ))
     }
 
-    /// Execute a Docker Compose command with automatic fallback between V2 and V1
+    /// Execute a compose command with automatic fallback.
+    /// Tries docker compose first (happy path), then falls back to alternatives only if needed.
     async fn execute_compose_command(
         args: Vec<&str>,
         current_dir: &Path,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let compose_cmd = get_compose_command(current_dir).await?;
-
-        match compose_cmd {
-            ComposeCommand::DockerComposeV2 => {
-                let mut full_args = vec!["compose"];
-                full_args.extend(args);
-                execute_command("docker", full_args, current_dir).await
-            }
-            ComposeCommand::DockerComposeV1 => {
-                execute_command("docker-compose", args, current_dir).await
+        // Happy path: try docker compose (V2) directly
+        let mut docker_compose_args = vec!["compose"];
+        docker_compose_args.extend(&args);
+        if let Ok(status) = try_compose_command("docker", docker_compose_args, current_dir).await {
+            if status.success() {
+                return Ok(status);
             }
         }
+
+        // Fallback 1: docker-compose (V1)
+        if let Ok(status) = try_compose_command("docker-compose", args.clone(), current_dir).await {
+            if status.success() {
+                return Ok(status);
+            }
+        }
+
+        // Fallback 2: podman compose
+        let mut podman_compose_args = vec!["compose"];
+        podman_compose_args.extend(&args);
+        if let Ok(status) = try_compose_command("podman", podman_compose_args, current_dir).await {
+            if status.success() {
+                return Ok(status);
+            }
+        }
+
+        // Fallback 3: podman-compose
+        if let Ok(status) = try_compose_command("podman-compose", args, current_dir).await {
+            if status.success() {
+                return Ok(status);
+            }
+        }
+
+        Err(anyhow!(
+            "Failed to start local development environment.\n\
+             \n\
+             A container compose tool is required. Supported options:\n\
+             \n\
+             • Docker Compose (recommended)\n\
+               - Docker Desktop (includes Compose): https://docs.docker.com/desktop/\n\
+               - Linux: sudo apt-get install docker-compose-plugin\n\
+               - macOS: brew install docker-compose\n\
+             \n\
+             • Podman Compose\n\
+               - Install: pip install podman-compose\n\
+               - Or with Podman Desktop: https://podman-desktop.io/"
+        ))
     }
 
     pub async fn docker_compose_up_d(
