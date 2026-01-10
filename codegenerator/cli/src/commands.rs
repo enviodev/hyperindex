@@ -189,24 +189,117 @@ pub mod start {
 pub mod docker {
     use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
+    use anyhow::anyhow;
+    use std::path::Path;
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
+
+    /// Represents the available Docker Compose command variant
+    #[derive(Clone, Copy, Debug)]
+    enum ComposeCommand {
+        /// Docker Compose V2 plugin: `docker compose`
+        DockerComposeV2,
+        /// Legacy Docker Compose V1: `docker-compose`
+        DockerComposeV1,
+    }
+
+    /// Cached result of Docker Compose availability check
+    static COMPOSE_COMMAND: OnceLock<Mutex<Option<ComposeCommand>>> = OnceLock::new();
+
+    /// Check which Docker Compose command is available on the system.
+    /// Tries `docker compose` (V2) first, then falls back to `docker-compose` (V1).
+    async fn get_compose_command(current_dir: &Path) -> anyhow::Result<ComposeCommand> {
+        let mutex = COMPOSE_COMMAND.get_or_init(|| Mutex::new(None));
+        let mut cached = mutex.lock().await;
+
+        if let Some(cmd) = *cached {
+            return Ok(cmd);
+        }
+
+        // Try Docker Compose V2 first: `docker compose version`
+        let v2_available = match tokio::process::Command::new("docker")
+            .args(["compose", "version"])
+            .current_dir(current_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => child.wait().await.map(|s| s.success()).unwrap_or(false),
+            Err(_) => false,
+        };
+
+        if v2_available {
+            *cached = Some(ComposeCommand::DockerComposeV2);
+            return Ok(ComposeCommand::DockerComposeV2);
+        }
+
+        // Fallback: Try legacy Docker Compose V1: `docker-compose version`
+        let v1_available = match tokio::process::Command::new("docker-compose")
+            .arg("version")
+            .current_dir(current_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => child.wait().await.map(|s| s.success()).unwrap_or(false),
+            Err(_) => false,
+        };
+
+        if v1_available {
+            *cached = Some(ComposeCommand::DockerComposeV1);
+            return Ok(ComposeCommand::DockerComposeV1);
+        }
+
+        Err(anyhow!(
+            "Docker Compose is not available. Please install Docker Compose:\n\
+             - For Docker Desktop: Docker Compose is included by default\n\
+             - For Docker Engine: Install the compose plugin with:\n\
+             \n\
+             Linux: sudo apt-get install docker-compose-plugin\n\
+             macOS (Homebrew): brew install docker-compose\n\
+             \n\
+             Alternatively, install the standalone docker-compose:\n\
+             https://docs.docker.com/compose/install/"
+        ))
+    }
+
+    /// Execute a Docker Compose command with automatic fallback between V2 and V1
+    async fn execute_compose_command(
+        args: Vec<&str>,
+        current_dir: &Path,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        let compose_cmd = get_compose_command(current_dir).await?;
+
+        match compose_cmd {
+            ComposeCommand::DockerComposeV2 => {
+                let mut full_args = vec!["compose"];
+                full_args.extend(args);
+                execute_command("docker", full_args, current_dir).await
+            }
+            ComposeCommand::DockerComposeV1 => {
+                execute_command("docker-compose", args, current_dir).await
+            }
+        }
+    }
 
     pub async fn docker_compose_up_d(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let cmd = "docker";
-        let args = vec!["compose", "up", "-d"];
+        let args = vec!["up", "-d"];
         let current_dir = &config.parsed_project_paths.generated;
 
-        execute_command(cmd, args, current_dir).await
+        execute_compose_command(args, current_dir).await
     }
+
     pub async fn docker_compose_down_v(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let cmd = "docker";
-        let args = vec!["compose", "down", "-v"];
+        let args = vec!["down", "-v"];
         let current_dir = &config.parsed_project_paths.generated;
 
-        execute_command(cmd, args, current_dir).await
+        execute_compose_command(args, current_dir).await
     }
 }
 
