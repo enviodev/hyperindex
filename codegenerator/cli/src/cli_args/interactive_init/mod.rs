@@ -31,12 +31,11 @@ enum EcosystemOption {
 }
 
 /// Flattened EVM initialization options shown in a single prompt
-/// Options are prefixed by category for clear organization
 #[derive(Clone, Debug, Display)]
 enum EvmInitOption {
-    #[strum(serialize = "Contract Import: Block Explorer")]
+    #[strum(serialize = "From Address - Lookup ABI from block explorer")]
     ContractImportExplorer,
-    #[strum(serialize = "Contract Import: Local ABI")]
+    #[strum(serialize = "From ABI File - Use your own ABI file")]
     ContractImportLocal,
     #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
@@ -59,10 +58,9 @@ impl EvmInitOption {
 }
 
 /// Flattened Fuel initialization options shown in a single prompt
-/// Options are prefixed by category for clear organization
 #[derive(Clone, Debug, Display)]
 enum FuelInitOption {
-    #[strum(serialize = "Contract Import: Local ABI")]
+    #[strum(serialize = "From ABI File - Use your own ABI file")]
     ContractImportLocal,
     #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
