@@ -41,7 +41,7 @@ enum EvmInitOption {
     TemplateErc20,
     #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
-    #[strum(serialize = "Feature: Factory")]
+    #[strum(serialize = "Feature: Factory Contract")]
     FeatureFactory,
 }
 
