@@ -209,15 +209,24 @@ let setUpdatesOrThrow = async (
 
     try {
       // Convert entity updates to ClickHouse row format
-      let values = updates->Js.Array2.map(update => {
-        update.latestChange->convertOrThrow
+      // Important: We iterate over the `history` array, not `latestChange`.
+      // This is consistent with how PgStorage handles updates and correctly
+      // skips rollback diff changes where `shouldSaveHistory=false` results
+      // in an empty history array.
+      let values = []
+      updates->Js.Array2.forEach(update => {
+        update.history->Js.Array2.forEach(change => {
+          values->Js.Array2.push(change->convertOrThrow)->ignore
+        })
       })
 
-      await client->insert({
-        table: tableName,
-        values,
-        format: "JSONEachRow",
-      })
+      if values->Array.length > 0 {
+        await client->insert({
+          table: tableName,
+          values,
+          format: "JSONEachRow",
+        })
+      }
     } catch {
     | exn =>
       raise(
