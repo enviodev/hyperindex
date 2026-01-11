@@ -187,26 +187,98 @@ pub mod start {
     }
 }
 pub mod docker {
-    use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
+    use anyhow::anyhow;
+    use std::path::Path;
+
+    /// Try to run a compose command, returning Ok(status) if command executed, Err if command not found
+    async fn try_compose_command(
+        cmd: &str,
+        args: Vec<&str>,
+        current_dir: &Path,
+    ) -> Result<std::process::ExitStatus, ()> {
+        match tokio::process::Command::new(cmd)
+            .args(&args)
+            .current_dir(current_dir)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(mut child) => child.wait().await.map_err(|_| ()),
+            Err(_) => Err(()),
+        }
+    }
+
+    /// Execute a compose command with automatic fallback.
+    /// Tries docker compose first (happy path), then falls back to alternatives only if needed.
+    async fn execute_compose_command(
+        args: Vec<&str>,
+        current_dir: &Path,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        // Happy path: try docker compose (V2) directly
+        let mut docker_compose_args = vec!["compose"];
+        docker_compose_args.extend(&args);
+        if let Ok(status) = try_compose_command("docker", docker_compose_args, current_dir).await {
+            if status.success() {
+                return Ok(status);
+            }
+        }
+
+        // Fallback 1: docker-compose (V1)
+        if let Ok(status) = try_compose_command("docker-compose", args.clone(), current_dir).await {
+            if status.success() {
+                return Ok(status);
+            }
+        }
+
+        // Fallback 2: podman compose
+        let mut podman_compose_args = vec!["compose"];
+        podman_compose_args.extend(&args);
+        if let Ok(status) = try_compose_command("podman", podman_compose_args, current_dir).await {
+            if status.success() {
+                return Ok(status);
+            }
+        }
+
+        // Fallback 3: podman-compose
+        if let Ok(status) = try_compose_command("podman-compose", args, current_dir).await {
+            if status.success() {
+                return Ok(status);
+            }
+        }
+
+        Err(anyhow!(
+            "Failed to start local development environment.\n\
+             \n\
+             A container compose tool is required. Supported options:\n\
+             \n\
+             • Docker Compose (recommended)\n\
+               - Docker Desktop (includes Compose): https://docs.docker.com/desktop/\n\
+               - Linux: sudo apt-get install docker-compose-plugin\n\
+               - macOS: brew install docker-compose\n\
+             \n\
+             • Podman Compose\n\
+               - Install: pip install podman-compose\n\
+               - Or with Podman Desktop: https://podman-desktop.io/"
+        ))
+    }
 
     pub async fn docker_compose_up_d(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let cmd = "docker";
-        let args = vec!["compose", "up", "-d"];
+        let args = vec!["up", "-d"];
         let current_dir = &config.parsed_project_paths.generated;
 
-        execute_command(cmd, args, current_dir).await
+        execute_compose_command(args, current_dir).await
     }
+
     pub async fn docker_compose_down_v(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let cmd = "docker";
-        let args = vec!["compose", "down", "-v"];
+        let args = vec!["down", "-v"];
         let current_dir = &config.parsed_project_paths.generated;
 
-        execute_command(cmd, args, current_dir).await
+        execute_compose_command(args, current_dir).await
     }
 }
 
