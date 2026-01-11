@@ -23,6 +23,7 @@ type initialChainState = {
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dynamicContracts: array<Internal.indexingContract>,
+  sourceBlockNumber: int,
 }
 
 type initialState = {
@@ -90,8 +91,6 @@ type storage = {
   dumpEffectCache: unit => promise<unit>,
   // Execute raw SQL query
   executeUnsafe: string => promise<unknown>,
-  // Check if entity history has rows
-  hasEntityHistoryRows: unit => promise<bool>,
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
