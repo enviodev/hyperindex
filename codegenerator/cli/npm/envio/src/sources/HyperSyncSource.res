@@ -179,7 +179,15 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  let apiToken = apiToken->Belt.Option.getWithDefault("3dc856dd-b0ea-494f-b27e-017b8b6b7e07")
+  let apiToken = switch apiToken {
+  | Some(token) => token
+  | None =>
+    Js.Exn.raiseError(
+      "An API token is required for using HyperSync as a data-source. " ++
+      "Set the ENVIO_API_TOKEN environment variable in your .env file. " ++
+      "Learn more or get a free API token at: https://envio.dev/app/api-tokens",
+    )
+  }
 
   let client = HyperSyncClient.make(
     ~url=endpointUrl,

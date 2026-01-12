@@ -35,3 +35,4 @@ generated
 logs
 build
 .nyc_output
+.env
