@@ -345,7 +345,12 @@ describe("E2E rollback tests", () => {
 
     sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
     sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
+    sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
+    sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
 
+    // Allow async operations to settle
+    await Utils.delay(0)
+    await Utils.delay(0)
     await Utils.delay(0)
 
     // After restart, we should still be in reorg threshold because
@@ -355,25 +360,15 @@ describe("E2E rollback tests", () => {
       [{value: "1", labels: Js.Dict.empty()}],
     )
 
+    // After restart, both chains have knownHeight from sourceBlockNumber,
+    // so they don't need to call getHeightOrThrow
     Assert.deepEqual(
       sourceMock1337.getHeightOrThrowCalls->Array.length,
-      1,
-      ~message="should have called getHeightOrThrow on restart",
-    )
-    sourceMock1337.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
-
-    Assert.deepEqual(
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-      None,
-      ~message="Shouldn't immediately query items, since we need to wait for another chain",
+      0,
+      ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
     )
 
-    sourceMock100.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
-
+    // Both chains are ready immediately, so chain 1337 should continue fetching
     Assert.deepEqual(
       sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
       Some({
