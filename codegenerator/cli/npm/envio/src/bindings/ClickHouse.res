@@ -209,15 +209,23 @@ let setUpdatesOrThrow = async (
 
     try {
       // Convert entity updates to ClickHouse row format
-      let values = updates->Js.Array2.map(update => {
-        update.latestChange->convertOrThrow
-      })
+      // Filter out updates where history is empty (e.g., rollback diff changes
+      // where shouldSaveHistory=false). This matches PostgreSQL's behavior
+      // which iterates over the history array.
+      let values = updates->Js.Array2.reduce((acc, update) => {
+        if update.history->Array.length > 0 {
+          acc->Js.Array2.push(update.latestChange->convertOrThrow)->ignore
+        }
+        acc
+      }, [])
 
-      await client->insert({
-        table: tableName,
-        values,
-        format: "JSONEachRow",
-      })
+      if values->Array.length > 0 {
+        await client->insert({
+          table: tableName,
+          values,
+          format: "JSONEachRow",
+        })
+      }
     } catch {
     | exn =>
       raise(
