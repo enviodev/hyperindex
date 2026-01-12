@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TestHelpers, type Account } from "generated";
-import { createTestIndexer } from "generated";
+import { TestHelpers, createTestIndexer, type Account } from "generated";
 
 const { MockDb, ERC20, Addresses } = TestHelpers;
 
