@@ -14,7 +14,9 @@ let makeClient = () => {
       ssl: Env.Db.ssl,
       // TODO: think how we want to pipe these logs to pino.
       onnotice: ?(
-        Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())
+        Env.userLogLevel == Some(#warn) || Env.userLogLevel == Some(#error)
+          ? None
+          : Some(_str => ())
       ),
       transform: {undefined: Null},
       max: 2,

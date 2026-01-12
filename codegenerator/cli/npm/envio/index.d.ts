@@ -485,10 +485,8 @@ export type TestIndexerChainConfig = {
 
 /** Progress returned after processing blocks with the test indexer. */
 export type TestIndexerProgress = {
-  /** Array of checkpoints processed. */
-  checkpoints: unknown[];
-  /** Entity changes keyed by entity name. */
-  changes: Record<string, unknown[]>;
+  /** Changes happened during the processing. */
+  changes: unknown[];
 };
 
 // Helper to extract chain IDs from config for test indexer

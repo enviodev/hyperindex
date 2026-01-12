@@ -5,6 +5,7 @@ type logLevelBuiltin = [
   | #warn
   | #error
   | #fatal
+  | #silent
 ]
 @genType
 type logLevelUser = [

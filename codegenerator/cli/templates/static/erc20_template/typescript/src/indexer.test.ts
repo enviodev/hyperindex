@@ -1,7 +1,84 @@
 import { describe, it, expect } from "vitest";
 import { TestHelpers, type Account } from "generated";
+import { createTestIndexer } from "generated";
 
 const { MockDb, ERC20, Addresses } = TestHelpers;
+
+describe("Indexer Testing", () => {
+  it("Should create accounts from ERC20 Transfer events", async () => {
+    const indexer = createTestIndexer();
+
+    expect(
+      await indexer.process({
+        chains: {
+          1: {
+            startBlock: 0,
+            endBlock: 10_861_674,
+          },
+        },
+      }),
+      "Should instantly scan through the chain and find the first mint at block 10_861_674"
+    ).toMatchInlineSnapshot(`
+      {
+        "changes": [
+          {
+            "Account": {
+              "sets": [
+                {
+                  "balance": -1000000000000000000000000000n,
+                  "id": "0x0000000000000000000000000000000000000000",
+                },
+                {
+                  "balance": 1000000000000000000000000000n,
+                  "id": "0x41653c7d61609d856f29355e404f310ec4142cfb",
+                },
+              ],
+            },
+            "block": 10861674,
+            "blockHash": "0x32e4dd857b5b7e756551a00271e44b61dbda0a91db951cf79a3e58adb28f5c09",
+            "chainId": 1,
+            "eventsProcessed": 1,
+          },
+        ],
+      }
+    `);
+
+    expect(
+      await indexer.process({
+        chains: {
+          1: {
+            startBlock: 10_861_766,
+            endBlock: 10_861_766,
+          },
+        },
+      }),
+      "Updates existing account balance on transfer"
+    ).toMatchInlineSnapshot(`
+      {
+        "changes": [
+          {
+            "Account": {
+              "sets": [
+                {
+                  "balance": 999999998000000000000000000n,
+                  "id": "0x41653c7d61609d856f29355e404f310ec4142cfb",
+                },
+                {
+                  "balance": 2000000000000000000n,
+                  "id": "0xe5737257d9406019768167c26f5c6123864cec1e",
+                },
+              ],
+            },
+            "block": 10861766,
+            "blockHash": "0x51a1a8789536990bcca505f514e03d44af25022decb58224108894e981125abd",
+            "chainId": 1,
+            "eventsProcessed": 1,
+          },
+        ],
+      }
+    `);
+  });
+});
 
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", async () => {

@@ -9,32 +9,25 @@ type processResult = {changes: array<unknown>}
 
 type t<'processConfig> = {process: 'processConfig => promise<processResult>}
 
-type state = {mutable processInProgress: bool}
-
 type entityChange = {
   sets: array<unknown>,
   deleted: array<string>,
 }
 
-// Store for entity data: entityName -> id -> entity (as JSON)
-type store = {
+type testIndexerState = {
+  mutable processInProgress: bool,
+  progressBlockByChain: dict<int>,
   entities: dict<dict<Js.Json.t>>,
   entityConfigs: dict<Internal.entityConfig>,
-  changes: array<unknown>,
+  mutable processChanges: array<unknown>,
 }
 
-let makeStore = (~allEntities: array<Internal.entityConfig>): store => {
-  let entities = Js.Dict.empty()
-  let entityConfigs = Js.Dict.empty()
-  allEntities->Array.forEach(entityConfig => {
-    entities->Js.Dict.set(entityConfig.name, Js.Dict.empty())
-    entityConfigs->Js.Dict.set(entityConfig.name, entityConfig)
-  })
-  {entities, entityConfigs, changes: []}
-}
-
-let handleLoadByIds = (store: store, ~tableName: string, ~ids: array<string>): Js.Json.t => {
-  let entityDict = store.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
+let handleLoadByIds = (
+  state: testIndexerState,
+  ~tableName: string,
+  ~ids: array<string>,
+): Js.Json.t => {
+  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
   let results = []
   ids->Array.forEach(id => {
     switch entityDict->Js.Dict.get(id) {
@@ -46,13 +39,13 @@ let handleLoadByIds = (store: store, ~tableName: string, ~ids: array<string>): J
 }
 
 let handleLoadByField = (
-  store: store,
+  state: testIndexerState,
   ~tableName: string,
   ~fieldName: string,
   ~fieldValue: Js.Json.t,
   ~operator: Persistence.operator,
 ): Js.Json.t => {
-  let entityDict = store.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
+  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
   let results = []
 
   entityDict
@@ -82,7 +75,7 @@ let handleLoadByField = (
 }
 
 let handleWriteBatch = (
-  store: store,
+  state: testIndexerState,
   ~updatedEntities: array<TestIndexerProxyStorage.serializableUpdatedEntity>,
   ~checkpointIds: array<float>,
   ~checkpointChainIds: array<int>,
@@ -95,11 +88,11 @@ let handleWriteBatch = (
   let changesByCheckpoint: dict<dict<entityChange>> = Js.Dict.empty()
 
   updatedEntities->Array.forEach(({entityName, updates}) => {
-    let entityDict = switch store.entities->Js.Dict.get(entityName) {
+    let entityDict = switch state.entities->Js.Dict.get(entityName) {
     | Some(dict) => dict
     | None =>
       let dict = Js.Dict.empty()
-      store.entities->Js.Dict.set(entityName, dict)
+      state.entities->Js.Dict.set(entityName, dict)
       dict
     }
 
@@ -126,7 +119,7 @@ let handleWriteBatch = (
           change
         }
         // Parse entity with schema to get typed value
-        let entityConfig = store.entityConfigs->Js.Dict.unsafeGet(entityName)
+        let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(entityName)
         let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
         entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
 
@@ -167,7 +160,10 @@ let handleWriteBatch = (
     | None => () // Skip blockHash when null
     }
     change->Js.Dict.set("chainId", checkpointChainIds->Array.getUnsafe(i)->Utils.magic)
-    change->Js.Dict.set("eventsProcessed", checkpointEventsProcessed->Array.getUnsafe(i)->Utils.magic)
+    change->Js.Dict.set(
+      "eventsProcessed",
+      checkpointEventsProcessed->Array.getUnsafe(i)->Utils.magic,
+    )
 
     // Add entity changes for this checkpoint
     let checkpointKey = checkpointId->Float.toString
@@ -188,7 +184,7 @@ let handleWriteBatch = (
     | None => ()
     }
 
-    store.changes->Array.push(change->Utils.magic)->ignore
+    state.processChanges->Array.push(change->Utils.magic)->ignore
   }
 }
 
@@ -228,13 +224,60 @@ let makeInitialState = (
   }
 }
 
+let validateBlockRange = (
+  ~chainId: string,
+  ~configChain: Config.chain,
+  ~processChainConfig: chainConfig,
+  ~progressBlock: option<int>,
+) => {
+  // Check startBlock >= config.startBlock
+  if processChainConfig.startBlock < configChain.startBlock {
+    Js.Exn.raiseError(
+      `Invalid block range for chain ${chainId}: startBlock (${processChainConfig.startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
+      `Either use startBlock >= ${configChain.startBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
+    )
+  }
+
+  // Check endBlock <= config.endBlock (if defined)
+  switch configChain.endBlock {
+  | Some(configEndBlock) if processChainConfig.endBlock > configEndBlock =>
+    Js.Exn.raiseError(
+      `Invalid block range for chain ${chainId}: endBlock (${processChainConfig.endBlock->Int.toString}) exceeds config.endBlock (${configEndBlock->Int.toString}). ` ++
+      `Either use endBlock <= ${configEndBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
+    )
+  | _ => ()
+  }
+
+  // Check startBlock > progressBlock
+  switch progressBlock {
+  | Some(prevEndBlock) if processChainConfig.startBlock <= prevEndBlock =>
+    Js.Exn.raiseError(
+      `Invalid block range for chain ${chainId}: startBlock (${processChainConfig.startBlock->Int.toString}) must be greater than previously processed endBlock (${prevEndBlock->Int.toString}). ` ++
+      `Either use startBlock > ${prevEndBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
+    )
+  | _ => ()
+  }
+}
+
 let makeCreateTestIndexer = (
   ~config: Config.t,
   ~workerPath: string,
   ~allEntities: array<Internal.entityConfig>,
 ): (unit => t<'processConfig>) => {
   () => {
-    let state = {processInProgress: false}
+    let entities = Js.Dict.empty()
+    let entityConfigs = Js.Dict.empty()
+    allEntities->Array.forEach(entityConfig => {
+      entities->Js.Dict.set(entityConfig.name, Js.Dict.empty())
+      entityConfigs->Js.Dict.set(entityConfig.name, entityConfig)
+    })
+    let state = {
+      processInProgress: false,
+      progressBlockByChain: Js.Dict.empty(),
+      entities,
+      entityConfigs,
+      processChanges: [],
+    }
     {
       process: processConfig => {
         // Check if already processing
@@ -257,8 +300,19 @@ let makeCreateTestIndexer = (
           )
         }
 
-        // Create store for this run
-        let store = makeStore(~allEntities)
+        // Validate block ranges for each chain
+        chainKeys->Array.forEach(chainIdStr => {
+          let chainId = chainIdStr->Int.fromString->Option.getWithDefault(0)
+          let chain = ChainMap.Chain.makeUnsafe(~chainId)
+          let configChain = config.chainMap->ChainMap.get(chain)
+          let processChainConfig = chains->Js.Dict.unsafeGet(chainIdStr)
+          let progressBlock = state.progressBlockByChain->Js.Dict.get(chainIdStr)
+
+          validateBlockRange(~chainId=chainIdStr, ~configChain, ~processChainConfig, ~progressBlock)
+        })
+
+        // Reset processChanges for this run
+        state.processChanges = []
 
         // Create initialState from processConfig chains
         let initialState = makeInitialState(~config, ~processConfigChains=chains)
@@ -292,10 +346,10 @@ let makeCreateTestIndexer = (
               )
 
             switch msg.payload {
-            | LoadByIds({tableName, ids}) => store->handleLoadByIds(~tableName, ~ids)->respond
+            | LoadByIds({tableName, ids}) => state->handleLoadByIds(~tableName, ~ids)->respond
 
             | LoadByField({tableName, fieldName, fieldValue, operator}) =>
-              store->handleLoadByField(~tableName, ~fieldName, ~fieldValue, ~operator)->respond
+              state->handleLoadByField(~tableName, ~fieldName, ~fieldValue, ~operator)->respond
 
             | WriteBatch({
                 updatedEntities,
@@ -305,7 +359,7 @@ let makeCreateTestIndexer = (
                 checkpointBlockHashes,
                 checkpointEventsProcessed,
               }) =>
-              store->handleWriteBatch(
+              state->handleWriteBatch(
                 ~updatedEntities,
                 ~checkpointIds,
                 ~checkpointChainIds,
@@ -328,9 +382,16 @@ let makeCreateTestIndexer = (
             if code !== 0 {
               reject(Js.Exn.raiseError(`Worker exited with code ${code->Int.toString}`))
             } else {
+              // Update progressBlockByChain with processed endBlock for each chain
+              chainKeys->Array.forEach(
+                chainIdStr => {
+                  let processChainConfig = chains->Js.Dict.unsafeGet(chainIdStr)
+                  state.progressBlockByChain->Js.Dict.set(chainIdStr, processChainConfig.endBlock)
+                },
+              )
               // Worker exited successfully (SuccessExit was dispatched in GlobalState)
               resolve({
-                changes: store.changes,
+                changes: state.processChanges,
               })
             }
           })
@@ -366,6 +427,12 @@ let initTestWorker = (
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
     let persistence = makePersistence(~storage)
+
+    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
+    switch Env.userLogLevel {
+    | None => Logging.setLogLevel(#silent)
+    | Some(_) => ()
+    }
 
     Main.start(~registerAllHandlers, ~makeGeneratedConfig, ~persistence, ~isTest=true)->ignore
   | None =>
