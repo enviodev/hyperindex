@@ -3,6 +3,23 @@ open Belt
 // Message types for communication between worker and main thread
 type requestId = int
 
+// Serializable change with entity as JSON (for worker thread messaging)
+@tag("type")
+type serializableChange =
+  | @as("SET") Set({entityId: string, entity: Js.Json.t, checkpointId: float})
+  | @as("DELETE") Delete({entityId: string, checkpointId: float})
+
+type serializableEntityUpdate = {
+  latestChange: serializableChange,
+  history: array<serializableChange>,
+  containsRollbackDiffChange: bool,
+}
+
+type serializableUpdatedEntity = {
+  entityName: string,
+  updates: array<serializableEntityUpdate>,
+}
+
 // Worker -> Main thread payloads
 @tag("type")
 type workerPayload =
@@ -14,7 +31,15 @@ type workerPayload =
       fieldValue: Js.Json.t,
       operator: Persistence.operator,
     })
-  | @as("writeBatch") WriteBatch({updatedEntities: array<Persistence.updatedEntity>})
+  | @as("writeBatch")
+  WriteBatch({
+      updatedEntities: array<serializableUpdatedEntity>,
+      checkpointIds: array<float>,
+      checkpointChainIds: array<int>,
+      checkpointBlockNumbers: array<int>,
+      checkpointBlockHashes: array<Js.Null.t<string>>,
+      checkpointEventsProcessed: array<int>,
+    })
 
 // Main thread -> Worker payloads
 @tag("type")
@@ -116,7 +141,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
     ()
   },
   writeBatch: async (
-    ~batch as _,
+    ~batch,
     ~rawEvents as _,
     ~rollbackTargetCheckpointId as _,
     ~isInReorgThreshold as _,
@@ -125,7 +150,41 @@ let makeStorage = (proxy: t): Persistence.storage => {
     ~updatedEffectsCache as _,
     ~updatedEntities,
   ) => {
-    let _ = await proxy->sendRequest(~payload=WriteBatch({updatedEntities: updatedEntities}))
+    // Encode entities to JSON for serialization across worker boundary
+    let serializableEntities = updatedEntities->Array.map(({
+      entityConfig,
+      updates,
+    }: Persistence.updatedEntity) => {
+      let encodeChange = (change: Change.t<Internal.entity>): serializableChange => {
+        switch change {
+        | Set({entityId, entity, checkpointId}) =>
+          Set({
+            entityId,
+            entity: entity->S.reverseConvertToJsonOrThrow(entityConfig.schema),
+            checkpointId,
+          })
+        | Delete({entityId, checkpointId}) => Delete({entityId, checkpointId})
+        }
+      }
+      {
+        entityName: entityConfig.name,
+        updates: updates->Array.map(update => {
+          latestChange: encodeChange(update.latestChange),
+          history: update.history->Array.map(encodeChange),
+          containsRollbackDiffChange: update.containsRollbackDiffChange,
+        }),
+      }
+    })
+    let _ = await proxy->sendRequest(
+      ~payload=WriteBatch({
+        updatedEntities: serializableEntities,
+        checkpointIds: batch.checkpointIds,
+        checkpointChainIds: batch.checkpointChainIds,
+        checkpointBlockNumbers: batch.checkpointBlockNumbers,
+        checkpointBlockHashes: batch.checkpointBlockHashes,
+        checkpointEventsProcessed: batch.checkpointEventsProcessed,
+      }),
+    )
   },
   setEffectCacheOrThrow: async (~effect as _, ~items as _, ~initialize as _) => (),
   dumpEffectCache: async () => (),

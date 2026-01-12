@@ -5,19 +5,22 @@ type chainConfig = {
   endBlock: int,
 }
 
-type progress = {
-  checkpoints: array<Js.Json.t>,
-  changes: dict<array<Js.Json.t>>,
-}
+type processResult = {changes: array<unknown>}
 
-type t<'processConfig> = {process: 'processConfig => promise<progress>}
+type t<'processConfig> = {process: 'processConfig => promise<processResult>}
 
 type state = {mutable processInProgress: bool}
+
+type entityChange = {
+  sets: array<unknown>,
+  deleted: array<string>,
+}
 
 // Store for entity data: entityName -> id -> entity (as JSON)
 type store = {
   entities: dict<dict<Js.Json.t>>,
   entityConfigs: dict<Internal.entityConfig>,
+  changes: array<unknown>,
 }
 
 let makeStore = (~allEntities: array<Internal.entityConfig>): store => {
@@ -27,7 +30,7 @@ let makeStore = (~allEntities: array<Internal.entityConfig>): store => {
     entities->Js.Dict.set(entityConfig.name, Js.Dict.empty())
     entityConfigs->Js.Dict.set(entityConfig.name, entityConfig)
   })
-  {entities, entityConfigs}
+  {entities, entityConfigs, changes: []}
 }
 
 let handleLoadByIds = (store: store, ~tableName: string, ~ids: array<string>): Js.Json.t => {
@@ -78,38 +81,115 @@ let handleLoadByField = (
   results->Js.Json.array
 }
 
-let handleWriteBatch = (store: store, ~updatedEntities: array<Persistence.updatedEntity>): unit => {
-  updatedEntities->Array.forEach(({entityConfig, updates}) => {
-    let entityDict = switch store.entities->Js.Dict.get(entityConfig.name) {
+let handleWriteBatch = (
+  store: store,
+  ~updatedEntities: array<TestIndexerProxyStorage.serializableUpdatedEntity>,
+  ~checkpointIds: array<float>,
+  ~checkpointChainIds: array<int>,
+  ~checkpointBlockNumbers: array<int>,
+  ~checkpointBlockHashes: array<Js.Null.t<string>>,
+  ~checkpointEventsProcessed: array<int>,
+): unit => {
+  // Group entity changes by checkpointId
+  // checkpointId -> entityName -> entityChange
+  let changesByCheckpoint: dict<dict<entityChange>> = Js.Dict.empty()
+
+  updatedEntities->Array.forEach(({entityName, updates}) => {
+    let entityDict = switch store.entities->Js.Dict.get(entityName) {
     | Some(dict) => dict
     | None =>
       let dict = Js.Dict.empty()
-      store.entities->Js.Dict.set(entityConfig.name, dict)
+      store.entities->Js.Dict.set(entityName, dict)
       dict
     }
 
     updates->Array.forEach(update => {
       switch update.latestChange {
-      | Change.Set({entityId, entity}) =>
-        let json = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-        entityDict->Js.Dict.set(entityId, json)
-      | Change.Delete({entityId}) => Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
+      | Set({entityId, entity, checkpointId}) =>
+        // Update entities dict for load operations
+        entityDict->Js.Dict.set(entityId, entity)
+
+        // Track change by checkpoint
+        let checkpointKey = checkpointId->Float.toString
+        let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+        | Some(changes) => changes
+        | None =>
+          let changes = Js.Dict.empty()
+          changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
+          changes
+        }
+        let entityChange = switch entityChanges->Js.Dict.get(entityName) {
+        | Some(change) => change
+        | None =>
+          let change = {sets: [], deleted: []}
+          entityChanges->Js.Dict.set(entityName, change)
+          change
+        }
+        // Parse entity with schema to get typed value
+        let entityConfig = store.entityConfigs->Js.Dict.unsafeGet(entityName)
+        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
+        entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
+
+      | Delete({entityId, checkpointId}) =>
+        // Update entities dict for load operations
+        Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
+
+        // Track change by checkpoint
+        let checkpointKey = checkpointId->Float.toString
+        let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+        | Some(changes) => changes
+        | None =>
+          let changes = Js.Dict.empty()
+          changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
+          changes
+        }
+        let entityChange = switch entityChanges->Js.Dict.get(entityName) {
+        | Some(change) => change
+        | None =>
+          let change = {sets: [], deleted: []}
+          entityChanges->Js.Dict.set(entityName, change)
+          change
+        }
+        entityChange.deleted->Array.push(entityId)->ignore
       }
     })
   })
-}
 
-let extractChanges = (store: store): dict<array<Js.Json.t>> => {
-  let changes = Js.Dict.empty()
-  store.entities
-  ->Js.Dict.entries
-  ->Array.forEach(((entityName, entityDict)) => {
-    let values = entityDict->Js.Dict.values
-    if values->Array.length > 0 {
-      changes->Js.Dict.set(entityName, values)
+  // Build combined checkpoint + entity changes objects
+  for i in 0 to checkpointIds->Array.length - 1 {
+    let checkpointId = checkpointIds->Array.getUnsafe(i)
+    let change: dict<unknown> = Js.Dict.empty()
+
+    // Add checkpoint metadata
+    change->Js.Dict.set("block", checkpointBlockNumbers->Array.getUnsafe(i)->Utils.magic)
+    switch checkpointBlockHashes->Array.getUnsafe(i)->Js.Null.toOption {
+    | Some(hash) => change->Js.Dict.set("blockHash", hash->Utils.magic)
+    | None => () // Skip blockHash when null
     }
-  })
-  changes
+    change->Js.Dict.set("chainId", checkpointChainIds->Array.getUnsafe(i)->Utils.magic)
+    change->Js.Dict.set("eventsProcessed", checkpointEventsProcessed->Array.getUnsafe(i)->Utils.magic)
+
+    // Add entity changes for this checkpoint
+    let checkpointKey = checkpointId->Float.toString
+    switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+    | Some(entityChanges) =>
+      entityChanges
+      ->Js.Dict.entries
+      ->Array.forEach(((entityName, {sets, deleted})) => {
+        let entityObj: dict<unknown> = Js.Dict.empty()
+        if sets->Array.length > 0 {
+          entityObj->Js.Dict.set("sets", sets->Utils.magic)
+        }
+        if deleted->Array.length > 0 {
+          entityObj->Js.Dict.set("deleted", deleted->Utils.magic)
+        }
+        change->Js.Dict.set(entityName, entityObj->Utils.magic)
+      })
+    | None => ()
+    }
+
+    store.changes->Array.push(change->Utils.magic)->ignore
+  }
 }
 
 let makeInitialState = (
@@ -217,8 +297,22 @@ let makeCreateTestIndexer = (
             | LoadByField({tableName, fieldName, fieldValue, operator}) =>
               store->handleLoadByField(~tableName, ~fieldName, ~fieldValue, ~operator)->respond
 
-            | WriteBatch({updatedEntities}) =>
-              store->handleWriteBatch(~updatedEntities)
+            | WriteBatch({
+                updatedEntities,
+                checkpointIds,
+                checkpointChainIds,
+                checkpointBlockNumbers,
+                checkpointBlockHashes,
+                checkpointEventsProcessed,
+              }) =>
+              store->handleWriteBatch(
+                ~updatedEntities,
+                ~checkpointIds,
+                ~checkpointChainIds,
+                ~checkpointBlockNumbers,
+                ~checkpointBlockHashes,
+                ~checkpointEventsProcessed,
+              )
               Js.Json.null->respond
             }
           })
@@ -235,10 +329,8 @@ let makeCreateTestIndexer = (
               reject(Js.Exn.raiseError(`Worker exited with code ${code->Int.toString}`))
             } else {
               // Worker exited successfully (SuccessExit was dispatched in GlobalState)
-              let changes = store->extractChanges
               resolve({
-                checkpoints: [],
-                changes,
+                changes: store.changes,
               })
             }
           })
