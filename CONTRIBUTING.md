@@ -18,7 +18,7 @@ By submitting a Pull Request or making any contribution to this project, you aut
 
 Install prerequisite tools:
 
-1. Node.js (install v18) https://nodejs.org/en
+1. Node.js v22+ (v24 recommended) https://nodejs.org/en
    (Recommended to use a node manager like fnm or nvm)
 2. pnpm
 

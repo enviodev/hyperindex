@@ -33,7 +33,7 @@ UniswapV3Factory.PoolCreated.contractRegister(({ event, context }) => {
 
 Before running the indexer locally, make sure you have the following installed:
 
-- **[Node.js 22+](https://nodejs.org/en/download/)**
+- **[Node.js v22+ (v24 recommended)](https://nodejs.org/en/download/)**
 - **[pnpm](https://pnpm.io/installation)**
 - **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**
 

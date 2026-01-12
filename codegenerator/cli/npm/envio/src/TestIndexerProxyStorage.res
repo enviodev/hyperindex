@@ -86,7 +86,7 @@ let make = (~parentPort, ~initialState): t => {
 
     switch msg.payload {
     | Response({data}) => resolve(data)
-    | Error({message}) => reject(Js.Exn.raiseError(message))
+    | Error({message}) => reject(Utils.Error.make(message))
     }
   })
 
@@ -151,10 +151,9 @@ let makeStorage = (proxy: t): Persistence.storage => {
     ~updatedEntities,
   ) => {
     // Encode entities to JSON for serialization across worker boundary
-    let serializableEntities = updatedEntities->Array.map(({
-      entityConfig,
-      updates,
-    }: Persistence.updatedEntity) => {
+    let serializableEntities = updatedEntities->Array.map((
+      {entityConfig, updates}: Persistence.updatedEntity,
+    ) => {
       let encodeChange = (change: Change.t<Internal.entity>): serializableChange => {
         switch change {
         | Set({entityId, entity, checkpointId}) =>
