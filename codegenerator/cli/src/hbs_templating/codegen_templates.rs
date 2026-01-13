@@ -1459,7 +1459,7 @@ switch chainId {{
                         None => String::new(),
                     };
                     format!(
-                        "      \"{}\": {{ id: {}, startBlock: {}{}{} }},",
+                        "      \"{}\": {{ id: {}, startBlock: {}{}{} }}",
                         chain_name,
                         chain_config.network_config.id,
                         chain_config.network_config.start_block,
@@ -1477,8 +1477,8 @@ switch chainId {{
 
             // Generate contracts configuration
             let contracts_entries: Vec<String> = cfg
-                .contracts
-                .values()
+                .get_contracts()
+                .iter()
                 .map(|contract| -> Result<String> {
                     let abi_value = match &contract.abi {
                         Abi::Evm(abi) => {
@@ -1510,7 +1510,7 @@ switch chainId {{
                         }
                     };
                     Ok(format!(
-                        "      \"{}\": {{ abi: {} }},",
+                        "      \"{}\": {{ abi: {} }}",
                         contract.name, abi_value
                     ))
                 })
@@ -1520,8 +1520,8 @@ switch chainId {{
                 String::new()
             } else {
                 format!(
-                    ",\n    contracts: {{\n{}\n    }},",
-                    contracts_entries.join("\n")
+                    ",\n    contracts: {{\n{}\n    }}",
+                    contracts_entries.join(",\n")
                 )
             };
 
@@ -1538,7 +1538,7 @@ switch chainId {{
                     "viem"
                 };
                 format!(
-                    "\n    addressFormat: \"{}\",\n    eventDecoder: \"{}\",",
+                    ",\n    addressFormat: \"{}\",\n    eventDecoder: \"{}\"",
                     address_format, decoder
                 )
             } else {
@@ -1546,9 +1546,9 @@ switch chainId {{
             };
 
             ecosystem_parts.push(format!(
-                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }}{contracts}{evm_options}\n  }},",
+                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }}{contracts}{evm_options}\n  }}",
                 ecosystem_name = ecosystem_name,
-                chains = chains_entries.join("\n"),
+                chains = chains_entries.join(",\n"),
                 contracts = contracts_str,
                 evm_options = evm_options
             ));
@@ -2238,6 +2238,21 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     #[test]
     fn internal_config_ts_code_omits_default_values() {
         let project_template = get_project_template_helper("config1.yaml");
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
+    }
+
+    #[test]
+    fn internal_config_ts_code_with_no_contracts() {
+        // config4.yaml has empty contracts array - tests that comma is properly
+        // placed before addressFormat when contracts section is omitted
+        let project_template = get_project_template_helper("config4.yaml");
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
+    }
+
+    #[test]
+    fn internal_config_ts_code_with_multiple_contracts() {
+        // config2.yaml has two contracts - tests comma separation between contracts
+        let project_template = get_project_template_helper("config2.yaml");
         insta::assert_snapshot!(project_template.internal_config_ts_code);
     }
 
