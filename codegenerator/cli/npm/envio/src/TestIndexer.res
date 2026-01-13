@@ -43,54 +43,6 @@ let handleLoadByIds = (
   results->Js.Json.array
 }
 
-// Parse JSON field value to match the entity's field type for proper comparison
-// This is needed because bigint/BigDecimal are serialized as strings in JSON
-let parseJsonFieldValue = (jsonValue: Js.Json.t, entityFieldValue: TableIndices.FieldValue.t): TableIndices.FieldValue.t => {
-  switch entityFieldValue {
-  | Some(BigInt(_)) =>
-    // Entity field is bigint, parse JSON string as bigint
-    switch jsonValue->Js.Json.decodeString {
-    | Some(str) =>
-      switch BigInt.fromString(str) {
-      | Some(bi) => Some(BigInt(bi))
-      | None => None
-      }
-    | None => None
-    }
-  | Some(BigDecimal(_)) =>
-    // Entity field is BigDecimal, parse JSON string as BigDecimal
-    switch jsonValue->Js.Json.decodeString {
-    | Some(str) =>
-      switch BigDecimal.fromString(str) {
-      | Some(bd) => Some(BigDecimal(bd))
-      | None => None
-      }
-    | None => None
-    }
-  | Some(Int(_)) =>
-    switch jsonValue->Js.Json.decodeNumber {
-    | Some(n) => Some(Int(n->Belt.Float.toInt))
-    | None => None
-    }
-  | Some(Bool(_)) =>
-    switch jsonValue->Js.Json.decodeBoolean {
-    | Some(b) => Some(Bool(b))
-    | None => None
-    }
-  | Some(String(_)) =>
-    switch jsonValue->Js.Json.decodeString {
-    | Some(s) => Some(String(s))
-    | None => None
-    }
-  | Some(Array(_)) =>
-    // For arrays, just use identity cast since comparison is complex
-    TableIndices.FieldValue.castFrom(jsonValue)
-  | None =>
-    // If entity field is None (null/undefined), the JSON should be null too
-    None
-  }
-}
-
 let handleLoadByField = (
   state: testIndexerState,
   ~tableName: string,
@@ -102,7 +54,17 @@ let handleLoadByField = (
   let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(tableName)
   let results = []
 
-  // Get field values from entities and compare using TableIndices.FieldValue logic
+  // Get the field schema from the entity's table to properly parse the JSON field value
+  let fieldSchema = switch entityConfig.table->Table.getFieldByName(fieldName) {
+  | Some(Table.Field({fieldSchema})) => fieldSchema
+  | _ => Js.Exn.raiseError(`Field ${fieldName} not found in entity ${tableName}`)
+  }
+
+  // Parse JSON field value to typed value using the field's schema
+  let parsedFieldValue =
+    fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
+
+  // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
   // This properly handles bigint and BigDecimal comparisons
   entityDict
   ->Js.Dict.values
@@ -111,8 +73,6 @@ let handleLoadByField = (
     let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
     switch entityAsDict->Js.Dict.get(fieldName) {
     | Some(entityFieldValue) => {
-        // Parse JSON fieldValue to match the entity's field type
-        let parsedFieldValue = parseJsonFieldValue(fieldValue, entityFieldValue)
         let matches = switch operator {
         | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
         | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
