@@ -15,12 +15,12 @@ export default {
   rawEvents: true,
   evm: {
     chains: {
-      "ethereumMainnet": { id: 1, startBlock: 0 },
+      "ethereumMainnet": { id: 1, startBlock: 0 }
     },
     contracts: {
-      "Contract1": { abi: [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}] },
+      "Contract1": { abi: [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}] }
     },
     addressFormat: "checksum",
-    eventDecoder: "hypersync",
-  },
+    eventDecoder: "hypersync"
+  }
 } as const satisfies IndexerConfig;
