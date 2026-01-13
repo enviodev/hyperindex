@@ -325,7 +325,10 @@ let makeCreateTestIndexer = (
           }
           let workerData = workerDataObj->Js.Json.serializeExn->Js.Json.parseExn
           let worker = try {
-            NodeJs.WorkerThreads.makeWorker(workerPath, {workerData: workerData})
+            NodeJs.WorkerThreads.makeWorker(
+              workerPath,
+              {workerData: workerData, execArgv: NodeJs.Process.process.execArgv},
+            )
           } catch {
           | exn =>
             reject(exn->Utils.magic)
@@ -380,7 +383,7 @@ let makeCreateTestIndexer = (
           worker->NodeJs.WorkerThreads.onExit(code => {
             state.processInProgress = false
             if code !== 0 {
-              reject(Js.Exn.raiseError(`Worker exited with code ${code->Int.toString}`))
+              reject(Utils.Error.make(`Worker exited with code ${code->Int.toString}`))
             } else {
               // Update progressBlockByChain with processed endBlock for each chain
               chainKeys->Array.forEach(

@@ -36,7 +36,7 @@ module Util = {
 }
 
 module Process = {
-  type t = {env: Js.Dict.t<string>}
+  type t = {env: Js.Dict.t<string>, execArgv: array<string>}
   @module external process: t = "process"
 }
 
@@ -96,7 +96,7 @@ module WorkerThreads = {
 
   // Worker class for spawning workers
   type worker
-  type workerOptions = {workerData?: Js.Json.t}
+  type workerOptions = {workerData?: Js.Json.t, execArgv?: array<string>}
 
   @new @module("worker_threads")
   external makeWorker: (string, workerOptions) => worker = "Worker"
