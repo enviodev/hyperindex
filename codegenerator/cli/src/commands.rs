@@ -286,7 +286,21 @@ pub mod git {
     use anyhow::{anyhow, Result};
     use std::path::Path;
 
+    /// Check if the given path is inside a git repository
+    async fn is_inside_git_repo(path: &Path) -> bool {
+        execute_command("git", vec!["rev-parse", "--is-inside-work-tree"], path)
+            .await
+            .map(|exit| exit.success())
+            .unwrap_or(false)
+    }
+
+    /// Initialize a git repository if not already inside one
     pub async fn init(project_root: &Path) -> Result<()> {
+        // Skip if already inside a git repository
+        if is_inside_git_repo(project_root).await {
+            return Ok(());
+        }
+
         let exit = execute_command("git", vec!["init"], project_root).await?;
 
         if !exit.success() {
