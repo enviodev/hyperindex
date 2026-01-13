@@ -36,6 +36,84 @@ use ethers::abi::EventParam;
 use pathdiff::diff_paths;
 use serde::Serialize;
 
+// ============== Internal Config JSON Types ==============
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalConfigJson<'a> {
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handlers: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    multichain: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    full_batch_size: Option<u64>,
+    #[serde(skip_serializing_if = "is_true")]
+    rollback_on_reorg: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    save_full_history: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    raw_events: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evm: Option<InternalEvmConfig<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fuel: Option<InternalFuelConfig<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    svm: Option<InternalSvmConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalEvmConfig<'a> {
+    chains: std::collections::BTreeMap<String, InternalChainConfig>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
+    address_format: &'a str,
+    event_decoder: &'a str,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalFuelConfig<'a> {
+    chains: std::collections::BTreeMap<String, InternalChainConfig>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalSvmConfig {
+    chains: std::collections::BTreeMap<String, InternalChainConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalChainConfig {
+    id: u64,
+    start_block: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_reorg_depth: Option<i32>,
+}
+
+#[derive(Serialize, Debug)]
+struct InternalContractConfig {
+    abi: Box<serde_json::value::RawValue>,
+}
+
+// ============== Template Types ==============
+
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
     pub res_name: String,
@@ -1115,7 +1193,8 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    internal_config_ts_code: String,
+    internal_config_json_code: String,
+    envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
@@ -1460,195 +1539,216 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
             }
         };
 
-        // Generate ecosystem sections only if they have chains
-        let mut ecosystem_parts = Vec::new();
-        let mut fuel_imports = Vec::new();
-        let has_ecosystem = !chain_configs.is_empty();
-
-        // Generate chains for the current ecosystem (only if chains exist)
-        if has_ecosystem {
-            let chains_entries: Vec<String> = chain_configs
+        // Generate internal.config.json content using serde
+        let internal_config_json_code = {
+            // Build chains map
+            let chains: std::collections::BTreeMap<String, InternalChainConfig> = chain_configs
                 .iter()
                 .map(|chain_config| {
                     let chain_name =
                         chain_id_to_name(chain_config.network_config.id, &cfg.get_ecosystem());
-                    let end_block_str = match chain_config.network_config.end_block {
-                        Some(block) => format!(", endBlock: {}", block),
-                        None => String::new(),
-                    };
-                    let max_reorg_str = match chain_config.network_config.max_reorg_depth {
-                        Some(depth) => format!(", maxReorgDepth: {}", depth),
-                        None => String::new(),
-                    };
-                    format!(
-                        "      \"{}\": {{ id: {}, startBlock: {}{}{} }},",
+                    (
                         chain_name,
-                        chain_config.network_config.id,
-                        chain_config.network_config.start_block,
-                        end_block_str,
-                        max_reorg_str
+                        InternalChainConfig {
+                            id: chain_config.network_config.id,
+                            start_block: chain_config.network_config.start_block,
+                            end_block: chain_config.network_config.end_block,
+                            max_reorg_depth: chain_config.network_config.max_reorg_depth,
+                        },
                     )
                 })
                 .collect();
 
-            let ecosystem_name = match cfg.get_ecosystem() {
-                Ecosystem::Evm => "evm",
-                Ecosystem::Fuel => "fuel",
-                Ecosystem::Svm => "svm",
-            };
-
-            // Generate contracts configuration
-            let contracts_entries: Vec<String> = cfg
+            // Build contracts map
+            let contracts: std::collections::BTreeMap<&str, InternalContractConfig> = cfg
                 .contracts
                 .values()
-                .map(|contract| -> Result<String> {
-                    let abi_value = match &contract.abi {
-                        Abi::Evm(abi) => {
-                            // Inline the ABI JSON for EVM
-                            abi.raw.to_string()
-                        }
-                        Abi::Fuel(abi) => {
-                            // Generate import and reference for Fuel
-                            let import_name = format!("{}Abi", contract.name);
-                            // Compute relative path from generated directory to ABI file
-                            let relative_path_buf =
-                                diff_paths(&abi.path_buf, &cfg.parsed_project_paths.generated)
-                                    .ok_or_else(|| {
-                                        anyhow!(
-                                    "Failed to compute relative path from generated to ABI file"
-                                )
-                                    })?;
-                            let relative_path_with_dot =
-                                add_leading_relative_dot(relative_path_buf);
-                            let relative_path = relative_path_with_dot
-                                .to_str()
-                                .ok_or_else(|| anyhow!("Failed converting ABI path to str"))?
-                                .to_string();
-                            fuel_imports.push(format!(
-                                "import {} from \"{}\";",
-                                import_name, relative_path
-                            ));
-                            import_name
-                        }
+                .map(|contract| -> Result<(&str, InternalContractConfig)> {
+                    // Parse and re-serialize compactly to ensure one-liner format
+                    let abi_str = match &contract.abi {
+                        Abi::Evm(abi) => &abi.raw,
+                        Abi::Fuel(abi) => &abi.raw,
                     };
-                    Ok(format!(
-                        "      \"{}\": {{ abi: {} }},",
-                        contract.name, abi_value
-                    ))
+                    let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
+                    let abi_compact = serde_json::to_string(&abi_value)?;
+                    let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
+                    Ok((contract.name.as_str(), InternalContractConfig { abi: abi_raw }))
                 })
-                .collect::<Result<Vec<String>>>()?;
+                .collect::<Result<_>>()?;
 
-            let contracts_str = if contracts_entries.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    ",\n    contracts: {{\n{}\n    }},",
-                    contracts_entries.join("\n")
-                )
+            // Build ecosystem config
+            let (evm, fuel, svm) = match cfg.get_ecosystem() {
+                Ecosystem::Evm => (
+                    Some(InternalEvmConfig {
+                        chains,
+                        contracts,
+                        address_format: if cfg.lowercase_addresses {
+                            "lowercase"
+                        } else {
+                            "checksum"
+                        },
+                        event_decoder: if cfg.should_use_hypersync_client_decoder {
+                            "hypersync"
+                        } else {
+                            "viem"
+                        },
+                    }),
+                    None,
+                    None,
+                ),
+                Ecosystem::Fuel => (
+                    None,
+                    Some(InternalFuelConfig { chains, contracts }),
+                    None,
+                ),
+                Ecosystem::Svm => (None, None, Some(InternalSvmConfig { chains })),
             };
 
-            // For EVM, always include addressFormat and decoder
-            let evm_options = if cfg.get_ecosystem() == Ecosystem::Evm {
-                let address_format = if cfg.lowercase_addresses {
-                    "lowercase"
-                } else {
-                    "checksum"
-                };
-                let decoder = if cfg.should_use_hypersync_client_decoder {
-                    "hypersync"
-                } else {
-                    "viem"
-                };
-                format!(
-                    "\n    addressFormat: \"{}\",\n    eventDecoder: \"{}\",",
-                    address_format, decoder
-                )
-            } else {
-                String::new()
+            // Build multichain value
+            let multichain = match cfg.multichain {
+                crate::config_parsing::human_config::evm::Multichain::Ordered => Some("ordered"),
+                crate::config_parsing::human_config::evm::Multichain::Unordered => None,
             };
 
-            ecosystem_parts.push(format!(
-                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }}{contracts}{evm_options}\n  }},",
-                ecosystem_name = ecosystem_name,
-                chains = chains_entries.join("\n"),
-                contracts = contracts_str,
-                evm_options = evm_options
-            ));
-        }
+            let config = InternalConfigJson {
+                name: &cfg.name,
+                description: cfg
+                    .human_config
+                    .get_base_config()
+                    .description
+                    .as_deref(),
+                handlers: cfg.handlers.as_deref(),
+                multichain,
+                full_batch_size: cfg.human_config.get_base_config().full_batch_size,
+                rollback_on_reorg: cfg.rollback_on_reorg,
+                save_full_history: cfg.save_full_history,
+                raw_events: cfg.enable_raw_events,
+                evm,
+                fuel,
+                svm,
+            };
 
-        // Generate internal.config.ts content
-        let description_str = match &cfg.human_config.get_base_config().description {
-            Some(desc) => format!(",\n  description: \"{}\"", desc.replace('\"', "\\\"")),
-            None => String::new(),
+            serde_json::to_string_pretty(&config)? + "\n"
         };
 
-        let handlers_str = match &cfg.handlers {
-            Some(h) => format!(",\n  handlers: \"{}\"", h),
-            None => String::new(),
+        // Generate envio.d.ts content (type declarations only)
+        // Always export all ecosystem types, even when empty
+        let envio_dts_code = {
+            let mut parts = Vec::new();
+
+            // Generate EvmChains type
+            let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+                chain_configs
+                    .iter()
+                    .map(|chain_config| {
+                        let chain_name =
+                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Evm);
+                        format!(
+                            "  \"{}\": {{ id: {} }};",
+                            chain_name, chain_config.network_config.id
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if evm_chains_entries.is_empty() {
+                "export type EvmChains = {};".to_string()
+            } else {
+                format!(
+                    "export type EvmChains = {{\n{}\n}};",
+                    evm_chains_entries.join("\n")
+                )
+            });
+
+            // Generate EvmContracts type
+            let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+                cfg.contracts
+                    .keys()
+                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if evm_contracts_entries.is_empty() {
+                "export type EvmContracts = {};".to_string()
+            } else {
+                format!(
+                    "export type EvmContracts = {{\n{}\n}};",
+                    evm_contracts_entries.join("\n")
+                )
+            });
+
+            // Generate FuelChains type
+            let fuel_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
+                chain_configs
+                    .iter()
+                    .map(|chain_config| {
+                        let chain_name =
+                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Fuel);
+                        format!(
+                            "  \"{}\": {{ id: {} }};",
+                            chain_name, chain_config.network_config.id
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if fuel_chains_entries.is_empty() {
+                "export type FuelChains = {};".to_string()
+            } else {
+                format!(
+                    "export type FuelChains = {{\n{}\n}};",
+                    fuel_chains_entries.join("\n")
+                )
+            });
+
+            // Generate FuelContracts type
+            let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
+                cfg.contracts
+                    .keys()
+                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if fuel_contracts_entries.is_empty() {
+                "export type FuelContracts = {};".to_string()
+            } else {
+                format!(
+                    "export type FuelContracts = {{\n{}\n}};",
+                    fuel_contracts_entries.join("\n")
+                )
+            });
+
+            // Generate SvmChains type
+            let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
+                chain_configs
+                    .iter()
+                    .map(|chain_config| {
+                        let chain_name =
+                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Svm);
+                        format!(
+                            "  \"{}\": {{ id: {} }};",
+                            chain_name, chain_config.network_config.id
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if svm_chains_entries.is_empty() {
+                "export type SvmChains = {};".to_string()
+            } else {
+                format!(
+                    "export type SvmChains = {{\n{}\n}};",
+                    svm_chains_entries.join("\n")
+                )
+            });
+
+            parts.join("\n")
         };
-
-        let multichain_str = match cfg.multichain {
-            crate::config_parsing::human_config::evm::Multichain::Ordered => {
-                ",\n  multichain: \"ordered\"".to_string()
-            }
-            crate::config_parsing::human_config::evm::Multichain::Unordered => String::new(),
-        };
-
-        let full_batch_size_str = match cfg.human_config.get_base_config().full_batch_size {
-            Some(size) => format!(",\n  fullBatchSize: {}", size),
-            None => String::new(),
-        };
-
-        // Only include non-default boolean values
-        let rollback_on_reorg_str = if !cfg.rollback_on_reorg {
-            ",\n  rollbackOnReorg: false".to_string()
-        } else {
-            String::new()
-        };
-
-        let save_full_history_str = if cfg.save_full_history {
-            ",\n  saveFullHistory: true".to_string()
-        } else {
-            String::new()
-        };
-
-        let raw_events_str = if cfg.enable_raw_events {
-            ",\n  rawEvents: true".to_string()
-        } else {
-            String::new()
-        };
-
-        let ecosystem_str = if ecosystem_parts.is_empty() {
-            String::new()
-        } else {
-            ecosystem_parts.join("")
-        };
-
-        // Prepend Fuel imports if any
-        let imports_str = if fuel_imports.is_empty() {
-            String::new()
-        } else {
-            format!("{}\n", fuel_imports.join("\n"))
-        };
-
-        let internal_config_ts_code = format!(
-            r#"{imports_str}import type {{ IndexerConfig }} from "envio";
-
-export default {{
-  name: "{name}"{description_str}{handlers_str}{multichain_str}{full_batch_size_str}{rollback_on_reorg_str}{save_full_history_str}{raw_events_str}{ecosystem_str}
-}} as const satisfies IndexerConfig;
-"#,
-            imports_str = imports_str,
-            name = cfg.name,
-            description_str = description_str,
-            handlers_str = handlers_str,
-            multichain_str = multichain_str,
-            full_batch_size_str = full_batch_size_str,
-            rollback_on_reorg_str = rollback_on_reorg_str,
-            save_full_history_str = save_full_history_str,
-            raw_events_str = raw_events_str,
-            ecosystem_str = ecosystem_str,
-        );
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1665,7 +1765,8 @@ export default {{
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            internal_config_ts_code,
+            internal_config_json_code,
+            envio_dts_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
@@ -2238,29 +2339,41 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     }
 
     #[test]
-    fn internal_config_ts_code_generated_for_evm() {
+    fn internal_config_json_code_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_generated_for_fuel() {
+    fn internal_config_json_code_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
         // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
         // which differs from the runtime default of true, so it's included
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_with_all_options() {
+    fn internal_config_json_code_with_all_options() {
         let project_template = get_project_template_helper("config-with-all-options.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_omits_default_values() {
+    fn internal_config_json_code_omits_default_values() {
         let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
+    }
+
+    #[test]
+    fn envio_dts_code_generated_for_evm() {
+        let project_template = get_project_template_helper("config1.yaml");
+        insta::assert_snapshot!(project_template.envio_dts_code);
+    }
+
+    #[test]
+    fn envio_dts_code_generated_for_fuel() {
+        let project_template = get_project_template_helper("fuel-config.yaml");
+        insta::assert_snapshot!(project_template.envio_dts_code);
     }
 
     #[test]

@@ -325,10 +325,7 @@ let makeCreateTestIndexer = (
           }
           let workerData = workerDataObj->Js.Json.serializeExn->Js.Json.parseExn
           let worker = try {
-            NodeJs.WorkerThreads.makeWorker(
-              workerPath,
-              {workerData: workerData, execArgv: NodeJs.Process.process.execArgv},
-            )
+            NodeJs.WorkerThreads.makeWorker(workerPath, {workerData: workerData})
           } catch {
           | exn =>
             reject(exn->Utils.magic)

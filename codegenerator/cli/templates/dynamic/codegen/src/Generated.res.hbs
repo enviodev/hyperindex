@@ -1,5 +1,4 @@
-@module("../internal.config.ts")
-external internalConfigJson: Js.Json.t = "default"
+@@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
@@ -87,7 +86,7 @@ let makeGeneratedConfig = () => {
   ]
 
   Config.fromPublic(
-    internalConfigJson,
+    %raw(`internalConfigJson`),
     ~codegenChains,
     ~userEntities=Entities.userEntities,
   )

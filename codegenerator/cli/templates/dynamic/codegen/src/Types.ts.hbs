@@ -2,87 +2,80 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller, IndexerConfig } from "envio";
+import type { Logger, IndexerFromConfig, EffectCaller } from "envio";
 import type * as Entities from "./db/Entities.gen.ts";
-import type config from "../internal.config.ts";
+import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains } from "../envio.d.ts";
 
-{{!-- 
-TODO: Create envio-env.d.ts at the root of the project
-when we completely get rid of codegen
-declare module "envio" {
-  interface Global {
-    config: typeof config;
-  }
-} --}}
-interface Global {
-  config: typeof config;
-}
-
-// Helper to extract config from Global if it exists
-type GlobalIndexerConfig = Global extends { config: infer C } ? C : never;
+// Utility type to check if an object type is empty
+type IsEmptyObject<T> = keyof T extends never ? true : false;
 
 /** Union of all configured EVM chain names. */
-export type EvmChainName = GlobalIndexerConfig extends { evm: infer Evm }
-  ? Evm extends {
-      chains: Record<infer K extends string, any>;
-    }
-    ? K
-    : "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
+export type EvmChainName = IsEmptyObject<EvmChains> extends true
+  ? "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
+  : keyof EvmChains;
 
 /** Union of all configured EVM chain IDs. */
-export type EvmChainId = GlobalIndexerConfig extends { evm: infer Evm }
-  ? Evm extends {
-      chains: Record<string, { id: infer T extends number }>;
-    }
-    ? T
-    : "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
+export type EvmChainId = IsEmptyObject<EvmChains> extends true
+  ? "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
+  : EvmChains[keyof EvmChains]["id"];
+
+/** Union of all configured EVM contract names. */
+export type EvmContractName = IsEmptyObject<EvmContracts> extends true
+  ? "EvmContractName is not available. Configure EVM contracts in config.yaml and run 'pnpm envio codegen'"
+  : keyof EvmContracts;
 
 /** Union of all configured Fuel chain names. */
-export type FuelChainName = GlobalIndexerConfig extends { fuel: infer Fuel }
-  ? Fuel extends {
-      chains: Record<infer K extends string, any>;
-    }
-    ? K
-    : "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
-  : "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
+export type FuelChainName = IsEmptyObject<FuelChains> extends true
+  ? "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+  : keyof FuelChains;
 
 /** Union of all configured Fuel chain IDs. */
-export type FuelChainId = GlobalIndexerConfig extends { fuel: infer Fuel }
-  ? Fuel extends {
-      chains: Record<string, { id: infer T extends number }>;
-    }
-    ? T
-    : "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
-  : "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
+export type FuelChainId = IsEmptyObject<FuelChains> extends true
+  ? "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
+  : FuelChains[keyof FuelChains]["id"];
+
+/** Union of all configured Fuel contract names. */
+export type FuelContractName = IsEmptyObject<FuelContracts> extends true
+  ? "FuelContractName is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+  : keyof FuelContracts;
 
 /** Union of all configured SVM chain names. */
-export type SvmChainName = GlobalIndexerConfig extends { svm: infer Svm }
-  ? Svm extends {
-      chains: Record<infer K extends string, any>;
-    }
-    ? K
-    : "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
+export type SvmChainName = IsEmptyObject<SvmChains> extends true
+  ? "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+  : keyof SvmChains;
 
 /** Union of all configured SVM chain IDs. */
-export type SvmChainId = GlobalIndexerConfig extends { svm: infer Svm }
-  ? Svm extends {
-      chains: Record<string, { id: infer T extends number }>;
-    }
-    ? T
-    : "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
-  : "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";
+export type SvmChainId = IsEmptyObject<SvmChains> extends true
+  ? "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
+  : SvmChains[keyof SvmChains]["id"];
+
+// Construct config type from generated types
+type Config = (IsEmptyObject<EvmChains> extends true
+  ? {}
+  : {
+      evm: { chains: EvmChains; contracts: EvmContracts };
+    }) &
+  (IsEmptyObject<FuelChains> extends true
+    ? {}
+    : {
+        fuel: { chains: FuelChains; contracts: FuelContracts };
+      }) &
+  (IsEmptyObject<SvmChains> extends true
+    ? {}
+    : {
+        svm: { chains: SvmChains };
+      });
 
 /** The indexer type. */
-export type Indexer = Global extends {
-  config: infer Config extends IndexerConfig;
-}
-  ? IndexerFromConfig<Config>
-  : "The Indexer type is not available. Run 'pnpm envio codegen' to generate types";
+export type Indexer = IndexerFromConfig<Config>;
 
-export type ChainId = {{#if is_evm_ecosystem}}EvmChainId{{/if}}{{#if is_fuel_ecosystem}}FuelChainId{{/if}}{{#if is_svm_ecosystem}}SvmChainId{{/if}}
+export type ChainId = IsEmptyObject<EvmChains> extends false
+  ? EvmChains[keyof EvmChains]["id"]
+  : IsEmptyObject<FuelChains> extends false
+  ? FuelChains[keyof FuelChains]["id"]
+  : IsEmptyObject<SvmChains> extends false
+  ? SvmChains[keyof SvmChains]["id"]
+  : "ChainId is not available. Configure chains in config.yaml and run 'pnpm envio codegen'";
 
 // ============== Test Indexer Types ==============
 
@@ -91,11 +84,7 @@ import type {
 } from "envio";
 
 /** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
-export type TestIndexer = Global extends {
-  config: infer Config extends IndexerConfig;
-}
-  ? TestIndexerFromConfig<Config>
-  : "The TestIndexer type is not available. Run 'pnpm envio codegen' to generate types";
+export type TestIndexer = TestIndexerFromConfig<Config>;
 
 export type HandlerContext = {
   /**

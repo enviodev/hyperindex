@@ -1,0 +1,13 @@
+---
+source: cli/src/hbs_templating/codegen_templates.rs
+expression: project_template.envio_dts_code
+---
+export type EvmChains = {};
+export type EvmContracts = {};
+export type FuelChains = {
+  "0": { id: 0 };
+};
+export type FuelContracts = {
+  "Greeter": {};
+};
+export type SvmChains = {};
