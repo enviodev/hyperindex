@@ -154,7 +154,7 @@ pub mod codegen {
 pub mod start {
     use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
-    use anyhow::anyhow;
+    use anyhow::{anyhow, Context};
 
     pub async fn start_indexer(
         config: &SystemConfig,
@@ -169,14 +169,28 @@ pub mod start {
                 );
             }
         }
-        let cmd = "npm";
-        let args = vec!["run", "start"];
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.generated).await?;
+
+        let current_dir = &config.parsed_project_paths.project_root;
+
+        // Run tsc --noEmit first
+        let tsc_exit = execute_command("tsc", vec!["--noEmit"], current_dir).await?;
+        if !tsc_exit.success() {
+            return Err(anyhow!("TypeScript type checking failed"));
+        }
+
+        // Run node with tsx and the index file
+        let generated = &config.parsed_project_paths.generated;
+        let tsx_path = generated.join("node_modules/tsx/dist/esm/index.mjs");
+        let index_path = generated.join("src/Index.res.mjs");
+        let import_arg = tsx_path.to_str().context("Invalid tsx path")?;
+        let index_arg = index_path.to_str().context("Invalid index path")?;
+        let args = vec!["--no-warnings", "--import", import_arg, index_arg];
+        let exit = execute_command("node", args, current_dir).await?;
 
         if !exit.success() {
             return Err(anyhow!(
                 "Indexer crashed. For more details see the error logs above the TUI. Can't find \
-                 them? Restart the indexer with the 'TUI_OFF=true pnpm start' command."
+                 them? Restart the indexer with the 'TUI_OFF=true envio start' command."
             ));
         }
         println!(
@@ -338,9 +352,17 @@ pub mod db_migrate {
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let args = vec!["db-up"];
-        let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let generated = &config.parsed_project_paths.generated;
+        let tsx_path = generated.join("node_modules/tsx/dist/esm/index.mjs");
+        let migrations_path = generated.join("src/db/Migrations.res.mjs");
+        let import_arg = tsx_path.to_str().context("Invalid tsx path")?;
+        let eval_code = format!(
+            "import(\"{}\").then(m => m.runUpMigrations(true))",
+            migrations_path.to_str().context("Invalid migrations path")?
+        );
+        let args = vec!["--import", import_arg, "-e", &eval_code];
+        let current_dir = &config.parsed_project_paths.project_root;
+        let exit = execute_command("node", args, current_dir).await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -354,18 +376,34 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        let args = vec!["db-down"];
-        let current_dir = &config.parsed_project_paths.generated;
-        execute_command("pnpm", args, current_dir).await
+        let generated = &config.parsed_project_paths.generated;
+        let tsx_path = generated.join("node_modules/tsx/dist/esm/index.mjs");
+        let migrations_path = generated.join("src/db/Migrations.res.mjs");
+        let import_arg = tsx_path.to_str().context("Invalid tsx path")?;
+        let eval_code = format!(
+            "import(\"{}\").then(m => m.runDownMigrations(true))",
+            migrations_path.to_str().context("Invalid migrations path")?
+        );
+        let args = vec!["--import", import_arg, "-e", &eval_code];
+        let current_dir = &config.parsed_project_paths.project_root;
+        execute_command("node", args, current_dir).await
     }
 
     pub async fn run_db_setup(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let args = vec!["db-setup"];
-        let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let generated = &config.parsed_project_paths.generated;
+        let tsx_path = generated.join("node_modules/tsx/dist/esm/index.mjs");
+        let migrations_path = generated.join("src/db/Migrations.res.mjs");
+        let import_arg = tsx_path.to_str().context("Invalid tsx path")?;
+        let eval_code = format!(
+            "import(\"{}\").then(m => m.runUpMigrations(true, true))",
+            migrations_path.to_str().context("Invalid migrations path")?
+        );
+        let args = vec!["--import", import_arg, "-e", &eval_code];
+        let current_dir = &config.parsed_project_paths.project_root;
+        let exit = execute_command("node", args, current_dir).await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -382,12 +420,20 @@ pub mod db_migrate {
 pub mod benchmark {
     use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
-    use anyhow::{anyhow, Result};
+    use anyhow::{anyhow, Context, Result};
 
     pub async fn print_summary(config: &SystemConfig) -> Result<()> {
-        let args = vec!["print-benchmark-summary"];
-        let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let generated = &config.parsed_project_paths.generated;
+        let tsx_path = generated.join("node_modules/tsx/dist/esm/index.mjs");
+        let benchmark_path = generated.join("src/Benchmark.res.mjs");
+        let import_arg = tsx_path.to_str().context("Invalid tsx path")?;
+        let eval_code = format!(
+            "import(\"{}\").then(m => m.Summary.printSummary())",
+            benchmark_path.to_str().context("Invalid benchmark path")?
+        );
+        let args = vec!["--import", import_arg, "-e", &eval_code];
+        let current_dir = &config.parsed_project_paths.project_root;
+        let exit = execute_command("node", args, current_dir).await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed printing benchmark summary"));
