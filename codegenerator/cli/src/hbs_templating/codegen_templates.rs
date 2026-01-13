@@ -1477,8 +1477,8 @@ switch chainId {{
 
             // Generate contracts configuration
             let contracts_entries: Vec<String> = cfg
-                .contracts
-                .values()
+                .get_contracts()
+                .iter()
                 .map(|contract| -> Result<String> {
                     let abi_value = match &contract.abi {
                         Abi::Evm(abi) => {
