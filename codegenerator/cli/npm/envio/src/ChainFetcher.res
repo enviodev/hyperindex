@@ -40,6 +40,7 @@ let make = (
   ~isInReorgThreshold,
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
+  ~knownHeight=0,
 ): t => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -177,7 +178,7 @@ let make = (
     ~endBlock,
     ~eventConfigs,
     ~targetBufferSize,
-    ~knownHeight=0, // FIXME: Get it from db or fetch before creating FetchState
+    ~knownHeight,
     ~chainId=chainConfig.id,
     // FIXME: Shouldn't set with full history
     ~blockLag=Pervasives.max(
@@ -287,6 +288,7 @@ let makeFromDbState = async (
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
+    ~knownHeight=resumedChainState.sourceBlockNumber,
   )
 }
 
