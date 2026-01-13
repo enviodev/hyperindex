@@ -99,9 +99,6 @@ impl EthereumEventParam<'_> {
                 }
                 // Handle Function type (not commonly used in events, but supported by alloy)
                 DynSolType::Function => value_encoder("TopicFilter.castToHexUnsafe"),
-                // Catch-all for any other types that might be added in future alloy versions
-                #[allow(unreachable_patterns)]
-                _ => value_encoder("TopicFilter.castToHexUnsafe"),
             }
         }
         match rec(self.abi_type, IsNestedType(false)) {
@@ -155,9 +152,6 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
 
             RescriptTypeIdent::Tuple(rescript_types)
         }
-        // Catch-all for any other types that might be added in future alloy versions
-        #[allow(unreachable_patterns)]
-        _ => RescriptTypeIdent::String,
     }
 }
 

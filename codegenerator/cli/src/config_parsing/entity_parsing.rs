@@ -1153,7 +1153,15 @@ impl UserDefinedFieldType {
                     DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
                         Err(anyhow!("Unhandled contract import type 'array of array'"))?
                     }
-                    _ => (),
+                    // Explicitly allow all supported inner types
+                    DynSolType::Bool
+                    | DynSolType::Int(_)
+                    | DynSolType::Uint(_)
+                    | DynSolType::FixedBytes(_)
+                    | DynSolType::Address
+                    | DynSolType::Function
+                    | DynSolType::Bytes
+                    | DynSolType::String => (),
                 }
                 let inner_type = Self::from_dyn_sol_type(inner)
                     .context("Unhandled contract import nested type in array")?;
@@ -1166,8 +1174,6 @@ impl UserDefinedFieldType {
             {
                 Err(anyhow!("Unhandled contract import type 'tuple'"))
             }
-            #[allow(unreachable_patterns)]
-            _ => Err(anyhow!("Unhandled contract import type")),
         }
     }
 
