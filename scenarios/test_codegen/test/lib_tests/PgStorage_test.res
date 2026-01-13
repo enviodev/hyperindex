@@ -733,6 +733,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
 "ready_at" as "timestampCaughtUpToHeadOrEndblock",
 "events_processed" as "numEventsProcessed",
 "progress_block" as "progressBlockNumber",
+"source_block" as "sourceBlockNumber",
 (
   SELECT COALESCE(json_agg(json_build_object(
     'address', "contract_address",
