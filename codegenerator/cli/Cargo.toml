@@ -47,6 +47,7 @@ dotenvy = { git = "https://github.com/enviodev/dotenvy", rev = "e2da110668572cf2
 
 [dev-dependencies]
 tempdir = "0.3"
+tempfile = "3.14"
 paste = "1.0.12"
 tracing-subscriber = "0.3.17"
 pretty_assertions = "1.4.0"

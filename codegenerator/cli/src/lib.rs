@@ -8,6 +8,7 @@ mod evm;
 pub mod executor;
 mod fuel;
 mod hbs_templating;
+pub mod package_manager;
 mod persisted_state;
 mod project_paths;
 mod rescript_types;

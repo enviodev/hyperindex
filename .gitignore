@@ -6,6 +6,9 @@ target
 *.swp
 .pnpm-store
 
+# Claude Code session files
+.claude/
+
 #All generated code for scenarios
 scenarios/**/*.bs.js
 scenarios/**/*.res.js

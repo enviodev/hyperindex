@@ -77,6 +77,10 @@ Initialize an indexer with one of the initialization options
   Possible values: `typescript`, `rescript`
 
 * `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
+* `-p`, `--package-manager <PACKAGE_MANAGER>` — The package manager to use (npm, yarn, pnpm, bun). Auto-detected from lockfiles if not specified
+
+  Possible values: `npm`, `yarn`, `pnpm`, `bun`
+
 
 
 
