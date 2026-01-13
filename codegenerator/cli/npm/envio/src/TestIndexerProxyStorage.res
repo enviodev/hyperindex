@@ -188,7 +188,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
   setEffectCacheOrThrow: async (~effect as _, ~items as _, ~initialize as _) => (),
   dumpEffectCache: async () => (),
   executeUnsafe: async _ => Obj.magic(),
-  hasEntityHistoryRows: async () => false,
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
   pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>

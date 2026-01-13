@@ -206,6 +206,7 @@ let makeInitialState = (
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,
       endBlock: Some(processChainConfig.endBlock),
+      sourceBlockNumber: processChainConfig.endBlock,
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
       numEventsProcessed: 0,
