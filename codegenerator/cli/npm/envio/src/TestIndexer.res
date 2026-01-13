@@ -17,7 +17,8 @@ type entityChange = {
 type testIndexerState = {
   mutable processInProgress: bool,
   progressBlockByChain: dict<int>,
-  entities: dict<dict<Js.Json.t>>,
+  // Store decoded entities (not JSON) for proper comparison operations
+  entities: dict<dict<Internal.entity>>,
   entityConfigs: dict<Internal.entityConfig>,
   mutable processChanges: array<unknown>,
 }
@@ -28,14 +29,66 @@ let handleLoadByIds = (
   ~ids: array<string>,
 ): Js.Json.t => {
   let entityDict = state.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
+  let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(tableName)
   let results = []
   ids->Array.forEach(id => {
     switch entityDict->Js.Dict.get(id) {
-    | Some(entity) => results->Array.push(entity)->ignore
+    | Some(entity) =>
+      // Serialize entity back to JSON for worker thread
+      let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
+      results->Array.push(jsonEntity)->ignore
     | None => ()
     }
   })
   results->Js.Json.array
+}
+
+// Parse JSON field value to match the entity's field type for proper comparison
+// This is needed because bigint/BigDecimal are serialized as strings in JSON
+let parseJsonFieldValue = (jsonValue: Js.Json.t, entityFieldValue: TableIndices.FieldValue.t): TableIndices.FieldValue.t => {
+  switch entityFieldValue {
+  | Some(BigInt(_)) =>
+    // Entity field is bigint, parse JSON string as bigint
+    switch jsonValue->Js.Json.decodeString {
+    | Some(str) =>
+      switch BigInt.fromString(str) {
+      | Some(bi) => Some(BigInt(bi))
+      | None => None
+      }
+    | None => None
+    }
+  | Some(BigDecimal(_)) =>
+    // Entity field is BigDecimal, parse JSON string as BigDecimal
+    switch jsonValue->Js.Json.decodeString {
+    | Some(str) =>
+      switch BigDecimal.fromString(str) {
+      | Some(bd) => Some(BigDecimal(bd))
+      | None => None
+      }
+    | None => None
+    }
+  | Some(Int(_)) =>
+    switch jsonValue->Js.Json.decodeNumber {
+    | Some(n) => Some(Int(n->Belt.Float.toInt))
+    | None => None
+    }
+  | Some(Bool(_)) =>
+    switch jsonValue->Js.Json.decodeBoolean {
+    | Some(b) => Some(Bool(b))
+    | None => None
+    }
+  | Some(String(_)) =>
+    switch jsonValue->Js.Json.decodeString {
+    | Some(s) => Some(String(s))
+    | None => None
+    }
+  | Some(Array(_)) =>
+    // For arrays, just use identity cast since comparison is complex
+    TableIndices.FieldValue.castFrom(jsonValue)
+  | None =>
+    // If entity field is None (null/undefined), the JSON should be null too
+    None
+  }
 }
 
 let handleLoadByField = (
@@ -46,26 +99,30 @@ let handleLoadByField = (
   ~operator: Persistence.operator,
 ): Js.Json.t => {
   let entityDict = state.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
+  let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(tableName)
   let results = []
 
+  // Get field values from entities and compare using TableIndices.FieldValue logic
+  // This properly handles bigint and BigDecimal comparisons
   entityDict
   ->Js.Dict.values
   ->Array.forEach(entity => {
-    // Get the field value from the entity
-    switch entity->Js.Json.decodeObject {
-    | Some(obj) =>
-      switch obj->Js.Dict.get(fieldName) {
-      | Some(entityFieldValue) => {
-          let matches = switch operator {
-          | #"=" => entityFieldValue == fieldValue
-          | #">" => entityFieldValue > fieldValue
-          | #"<" => entityFieldValue < fieldValue
-          }
-          if matches {
-            results->Array.push(entity)->ignore
-          }
+    // Cast entity to dict of field values (same approach as InMemoryTable)
+    let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
+    switch entityAsDict->Js.Dict.get(fieldName) {
+    | Some(entityFieldValue) => {
+        // Parse JSON fieldValue to match the entity's field type
+        let parsedFieldValue = parseJsonFieldValue(fieldValue, entityFieldValue)
+        let matches = switch operator {
+        | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
+        | #">" => entityFieldValue->TableIndices.FieldValue.gt(parsedFieldValue)
+        | #"<" => entityFieldValue->TableIndices.FieldValue.lt(parsedFieldValue)
         }
-      | None => ()
+        if matches {
+          // Serialize entity back to JSON for worker thread
+          let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
+          results->Array.push(jsonEntity)->ignore
+        }
       }
     | None => ()
     }
@@ -95,12 +152,17 @@ let handleWriteBatch = (
       state.entities->Js.Dict.set(entityName, dict)
       dict
     }
+    let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(entityName)
 
     updates->Array.forEach(update => {
       switch update.latestChange {
       | Set({entityId, entity, checkpointId}) =>
-        // Update entities dict for load operations
-        entityDict->Js.Dict.set(entityId, entity)
+        // Parse entity immediately to store decoded values for proper comparisons
+        // (bigint/BigDecimal need actual values, not JSON strings)
+        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
+
+        // Update entities dict with parsed entity for load operations
+        entityDict->Js.Dict.set(entityId, parsedEntity)
 
         // Track change by checkpoint
         let checkpointKey = checkpointId->Float.toString
@@ -118,9 +180,6 @@ let handleWriteBatch = (
           entityChanges->Js.Dict.set(entityName, change)
           change
         }
-        // Parse entity with schema to get typed value
-        let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(entityName)
-        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
         entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
 
       | Delete({entityId, checkpointId}) =>
