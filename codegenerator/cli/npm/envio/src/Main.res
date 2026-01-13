@@ -332,7 +332,6 @@ let start = async (
     ~initialState=ctx.persistence->Persistence.getInitializedState,
     ~config=ctx.config,
     ~registrations=ctx.registrations,
-    ~persistence=ctx.persistence,
   )
   let globalState = GlobalState.make(~ctx, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
   let gsManager = globalState->GlobalStateManager.make

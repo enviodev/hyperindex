@@ -1496,10 +1496,7 @@ switch chainId {{
             .iter()
             .map(|chain| {
                 let id = chain.network_config.id;
-                format!(
-                    "  @as(\"{}\") chain{}?: TestIndexer.chainConfig,",
-                    id, id
-                )
+                format!("  @as(\"{}\") chain{}?: TestIndexer.chainConfig,", id, id)
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1572,7 +1569,10 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                     let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
                     let abi_compact = serde_json::to_string(&abi_value)?;
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
-                    Ok((contract.name.as_str(), InternalContractConfig { abi: abi_raw }))
+                    Ok((
+                        contract.name.as_str(),
+                        InternalContractConfig { abi: abi_raw },
+                    ))
                 })
                 .collect::<Result<_>>()?;
 
@@ -1596,11 +1596,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                     None,
                     None,
                 ),
-                Ecosystem::Fuel => (
-                    None,
-                    Some(InternalFuelConfig { chains, contracts }),
-                    None,
-                ),
+                Ecosystem::Fuel => (None, Some(InternalFuelConfig { chains, contracts }), None),
                 Ecosystem::Svm => (None, None, Some(InternalSvmConfig { chains })),
             };
 
@@ -1612,11 +1608,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
 
             let config = InternalConfigJson {
                 name: &cfg.name,
-                description: cfg
-                    .human_config
-                    .get_base_config()
-                    .description
-                    .as_deref(),
+                description: cfg.human_config.get_base_config().description.as_deref(),
                 handlers: cfg.handlers.as_deref(),
                 multichain,
                 full_batch_size: cfg.human_config.get_base_config().full_batch_size,
@@ -2374,6 +2366,21 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     fn envio_dts_code_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
         insta::assert_snapshot!(project_template.envio_dts_code);
+    }
+
+    #[test]
+    fn internal_config_ts_code_with_no_contracts() {
+        // config4.yaml has empty contracts array - tests that comma is properly
+        // placed before addressFormat when contracts section is omitted
+        let project_template = get_project_template_helper("config4.yaml");
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
+    }
+
+    #[test]
+    fn internal_config_ts_code_with_multiple_contracts() {
+        // config2.yaml has two contracts - tests comma separation between contracts
+        let project_template = get_project_template_helper("config2.yaml");
+        insta::assert_snapshot!(project_template.internal_config_ts_code);
     }
 
     #[test]

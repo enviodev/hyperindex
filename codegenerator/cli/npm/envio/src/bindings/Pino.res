@@ -133,15 +133,28 @@ module MultiStreamLogger = {
   }
   @module("pino") external destination: destinationOpts => stream = "destination"
 
-  type prettyFactoryOpts = {...options, customColors?: string}
+  type prettyFactoryOpts = {...options, customColors?: string, colorize?: bool}
   @module("pino-pretty")
   external prettyFactory: prettyFactoryOpts => string => string = "prettyFactory"
 
   let makeFormatter = logLevels => {
-    prettyFactory({
-      customLevels: logLevels,
-      customColors: "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray",
-    })
+    let customColors = "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray"
+    // Force colors when running for logs format test
+    let options = switch %raw(`"ENVIO_TEST_LOGGING_FORMAT" in process.env`) {
+    | Some(_) => {
+        customLevels: logLevels,
+        customColors,
+        colorize: true,
+      }
+    // For some reason setting colorize as undefined,
+    // makes it behave as false.
+    | None => {
+        customLevels: logLevels,
+        customColors,
+      }
+    }
+
+    prettyFactory(options)
   }
 
   let makeStreams = (~userLogLevel, ~formatter, ~logFile, ~defaultFileLogLevel) => {

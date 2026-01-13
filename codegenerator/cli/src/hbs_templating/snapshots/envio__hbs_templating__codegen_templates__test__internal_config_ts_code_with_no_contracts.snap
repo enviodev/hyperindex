@@ -1,0 +1,18 @@
+---
+source: cli/src/hbs_templating/codegen_templates.rs
+expression: project_template.internal_config_ts_code
+---
+import type { IndexerConfig } from "envio";
+
+export default {
+  name: "config4",
+  description: "Gravatar for Ethereum",
+  evm: {
+    chains: {
+      "ethereumMainnet": { id: 1, startBlock: 0 },
+      "polygon": { id: 137, startBlock: 0 }
+    },
+    addressFormat: "checksum",
+    eventDecoder: "hypersync"
+  }
+} as const satisfies IndexerConfig;
