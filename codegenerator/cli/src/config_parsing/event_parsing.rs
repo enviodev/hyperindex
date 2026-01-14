@@ -97,8 +97,9 @@ impl EthereumEventParam<'_> {
                         .as_str(),
                     )
                 }
-                // Handle Function type (not commonly used in events, but supported by alloy)
-                DynSolType::Function => value_encoder("TopicFilter.castToHexUnsafe"),
+                DynSolType::Function => {
+                    panic!("Unsupported event parameter type 'function'")
+                }
             }
         }
         match rec(self.abi_type, IsNestedType(false)) {
@@ -119,7 +120,9 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
         DynSolType::Bytes => RescriptTypeIdent::String,
         DynSolType::String => RescriptTypeIdent::String,
         DynSolType::FixedBytes(_) => RescriptTypeIdent::String,
-        DynSolType::Function => RescriptTypeIdent::String,
+        DynSolType::Function => {
+            panic!("Unsupported event parameter type 'function'")
+        }
         DynSolType::Array(abi_type) => {
             let sub_param = EthereumEventParam {
                 abi_type,

@@ -510,7 +510,7 @@ impl Param {
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
-            graphql_type: FieldType::from_ethabi_type(&flattened_event_param.event_param.kind)
+            graphql_type: FieldType::from_dyn_sol_type(&flattened_event_param.event_param.kind)
                 .context(format!(
                     "Converting eth event param '{}' to gql scalar",
                     flattened_event_param.event_param.name

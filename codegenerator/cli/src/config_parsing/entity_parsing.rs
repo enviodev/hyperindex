@@ -1140,10 +1140,10 @@ impl UserDefinedFieldType {
             DynSolType::Address
             | DynSolType::Bytes
             | DynSolType::String
-            | DynSolType::FixedBytes(_)
-            | DynSolType::Function => {
+            | DynSolType::FixedBytes(_) => {
                 Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::String))))
             }
+            DynSolType::Function => Err(anyhow!("Unsupported contract import type 'function'")),
             DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
                 // Validate no nested arrays or tuples
                 match inner.as_ref() {
@@ -1159,9 +1159,11 @@ impl UserDefinedFieldType {
                     | DynSolType::Uint(_)
                     | DynSolType::FixedBytes(_)
                     | DynSolType::Address
-                    | DynSolType::Function
                     | DynSolType::Bytes
                     | DynSolType::String => (),
+                    DynSolType::Function => {
+                        Err(anyhow!("Unsupported contract import type 'function'"))?
+                    }
                 }
                 let inner_type = Self::from_dyn_sol_type(inner)
                     .context("Unhandled contract import nested type in array")?;
@@ -1175,11 +1177,6 @@ impl UserDefinedFieldType {
                 Err(anyhow!("Unhandled contract import type 'tuple'"))
             }
         }
-    }
-
-    /// Alias for backwards compatibility
-    pub fn from_ethabi_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
-        Self::from_dyn_sol_type(sol_type)
     }
 }
 
@@ -1331,11 +1328,6 @@ impl FieldType {
             field_type: UserDefinedFieldType::from_dyn_sol_type(sol_type)?,
             has_indexed_directive: false,
         })
-    }
-
-    /// Alias for backwards compatibility
-    pub fn from_ethabi_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
-        Self::from_dyn_sol_type(sol_type)
     }
 }
 
