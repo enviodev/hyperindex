@@ -61,8 +61,7 @@ let handleLoadByField = (
   }
 
   // Parse JSON field value to typed value using the field's schema
-  let parsedFieldValue =
-    fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
+  let parsedFieldValue = fieldValue->S.convertOrThrow(fieldSchema)->TableIndices.FieldValue.castFrom
 
   // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
   // This properly handles bigint and BigDecimal comparisons
@@ -344,8 +343,16 @@ let makeCreateTestIndexer = (
             "initialState": initialState->Utils.magic,
           }
           let workerData = workerDataObj->Js.Json.serializeExn->Js.Json.parseExn
+          // Resolve tsx path using import.meta.resolve for proper pnpm support
+          let tsxPath = NodeJs.ImportMeta.resolve("tsx/esm")->NodeJs.Url.fileURLToPathFromString
           let worker = try {
-            NodeJs.WorkerThreads.makeWorker(workerPath, {workerData: workerData})
+            NodeJs.WorkerThreads.makeWorker(
+              workerPath,
+              {
+                workerData,
+                execArgv: ["--import", tsxPath],
+              },
+            )
           } catch {
           | exn =>
             reject(exn->Utils.magic)

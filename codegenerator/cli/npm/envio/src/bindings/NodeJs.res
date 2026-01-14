@@ -59,11 +59,14 @@ module ChildProcess = {
 module Url = {
   type t
   @module("url") external fileURLToPath: t => string = "fileURLToPath"
+  @module("url") external fileURLToPathFromString: string => string = "fileURLToPath"
 }
 
 module ImportMeta = {
   type t = {url: Url.t}
   @val external importMeta: t = "import.meta"
+  // Resolve module specifier to file:// URL
+  @val external resolve: string => string = "import.meta.resolve"
 }
 
 module Path = {
@@ -77,8 +80,8 @@ module Path = {
 
   external toString: t => string = "%identity"
 
-  // ESM-compatible __dirname replacement
-  let __dirname = dirname(Url.fileURLToPath(ImportMeta.importMeta.url))
+  // ESM-compatible __dirname replacement - accepts importMeta from calling file
+  let getDirname = (importMeta: ImportMeta.t) => dirname(Url.fileURLToPath(importMeta.url))
 }
 
 module WorkerThreads = {
