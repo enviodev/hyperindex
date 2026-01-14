@@ -114,54 +114,65 @@ let handleWriteBatch = (
     let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(entityName)
 
     updates->Array.forEach(update => {
-      switch update.latestChange {
-      | Set({entityId, entity, checkpointId}) =>
-        // Parse entity immediately to store decoded values for proper comparisons
-        // (bigint/BigDecimal need actual values, not JSON strings)
-        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
+      // Helper to process a single change (Set or Delete)
+      let processChange = (change: TestIndexerProxyStorage.serializableChange) => {
+        switch change {
+        | Set({entityId, entity, checkpointId}) =>
+          // Parse entity immediately to store decoded values for proper comparisons
+          // (bigint/BigDecimal need actual values, not JSON strings)
+          let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
 
-        // Update entities dict with parsed entity for load operations
-        entityDict->Js.Dict.set(entityId, parsedEntity)
+          // Update entities dict with parsed entity for load operations
+          entityDict->Js.Dict.set(entityId, parsedEntity)
 
-        // Track change by checkpoint
-        let checkpointKey = checkpointId->Float.toString
-        let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
-        | Some(changes) => changes
-        | None =>
-          let changes = Js.Dict.empty()
-          changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
-          changes
-        }
-        let entityChange = switch entityChanges->Js.Dict.get(entityName) {
-        | Some(change) => change
-        | None =>
-          let change = {sets: [], deleted: []}
-          entityChanges->Js.Dict.set(entityName, change)
-          change
-        }
-        entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
+          // Track change by checkpoint
+          let checkpointKey = checkpointId->Float.toString
+          let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+          | Some(changes) => changes
+          | None =>
+            let changes = Js.Dict.empty()
+            changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
+            changes
+          }
+          let entityChange = switch entityChanges->Js.Dict.get(entityName) {
+          | Some(change) => change
+          | None =>
+            let change = {sets: [], deleted: []}
+            entityChanges->Js.Dict.set(entityName, change)
+            change
+          }
+          entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
 
-      | Delete({entityId, checkpointId}) =>
-        // Update entities dict for load operations
-        Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
+        | Delete({entityId, checkpointId}) =>
+          // Update entities dict for load operations
+          Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
 
-        // Track change by checkpoint
-        let checkpointKey = checkpointId->Float.toString
-        let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
-        | Some(changes) => changes
-        | None =>
-          let changes = Js.Dict.empty()
-          changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
-          changes
+          // Track change by checkpoint
+          let checkpointKey = checkpointId->Float.toString
+          let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+          | Some(changes) => changes
+          | None =>
+            let changes = Js.Dict.empty()
+            changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
+            changes
+          }
+          let entityChange = switch entityChanges->Js.Dict.get(entityName) {
+          | Some(change) => change
+          | None =>
+            let change = {sets: [], deleted: []}
+            entityChanges->Js.Dict.set(entityName, change)
+            change
+          }
+          entityChange.deleted->Array.push(entityId)->ignore
         }
-        let entityChange = switch entityChanges->Js.Dict.get(entityName) {
-        | Some(change) => change
-        | None =>
-          let change = {sets: [], deleted: []}
-          entityChanges->Js.Dict.set(entityName, change)
-          change
-        }
-        entityChange.deleted->Array.push(entityId)->ignore
+      }
+
+      // Iterate over all history entries (mirroring PgStorage.res behavior)
+      update.history->Array.forEach(processChange)
+
+      // Also include latestChange if history is empty (fallback for backwards compatibility)
+      if update.history->Array.length === 0 {
+        processChange(update.latestChange)
       }
     })
   })
