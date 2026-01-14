@@ -4,6 +4,16 @@ external magic: 'a => 'b = "%identity"
 
 @val external importPath: string => promise<unknown> = "import"
 
+// Resolves a path using import.meta.resolve and then imports it.
+// This is needed for dynamic imports in worker threads where tsx loader
+// needs an absolute file URL to properly handle TypeScript files.
+let importPathResolved: string => promise<unknown> = %raw(`
+  async (path) => {
+    const resolvedPath = import.meta.resolve(path);
+    return import(resolvedPath);
+  }
+`)
+
 @val
 external importPathWithJson: (
   string,

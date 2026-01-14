@@ -5,7 +5,8 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
   | None => ()
   | Some(handlerPath) =>
     try {
-      let _ = await Utils.importPath(handlerPath)
+      // Use importPathResolved to ensure proper path resolution in worker threads
+      let _ = await Utils.importPathResolved(handlerPath)
     } catch {
     | exn =>
       Logging.errorWithExn(exn, `Failed to load handler file for contract ${contractName}: ${handlerPath}`)
@@ -40,9 +41,10 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   // Since srcPattern is relative to project root,
   // and we import relative to the module (Generated.res)
   // We need to prepend additional "../" and {{relative_path_to_root_from_generated}} to the file path
+  // Use importPathResolved to ensure proper path resolution in worker threads
   let _ = await handlerFiles
     ->Js.Array2.map(file => {
-      Utils.importPath("../{{relative_path_to_root_from_generated}}/" ++ file)
+      Utils.importPathResolved("../{{relative_path_to_root_from_generated}}/" ++ file)
       ->Promise.catch(exn => {
         Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
         Js.Exn.raiseError(
