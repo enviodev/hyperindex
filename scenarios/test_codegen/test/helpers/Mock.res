@@ -260,6 +260,12 @@ module Indexer = {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
 
+    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
+    switch Env.userLogLevel {
+    | None => Logging.setLogLevel(#silent)
+    | Some(_) => ()
+    }
+
     let registrations = await Generated.registerAllHandlers()
 
     let config = {

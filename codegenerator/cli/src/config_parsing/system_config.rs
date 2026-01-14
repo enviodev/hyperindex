@@ -19,7 +19,7 @@ use crate::{
     evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
-    rescript_types::RescriptTypeIdent,
+    type_schema::TypeIdent,
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
@@ -1276,7 +1276,7 @@ impl Contract {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum FuelEventKind {
-    LogData(RescriptTypeIdent),
+    LogData(TypeIdent),
     Mint,
     Burn,
     Transfer,
@@ -1504,7 +1504,7 @@ impl Event {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelectedField {
     pub name: String,
-    pub data_type: RescriptTypeIdent,
+    pub data_type: TypeIdent,
 }
 
 impl PartialOrd for SelectedField {
@@ -1541,20 +1541,20 @@ impl FieldSelection {
         Self::new(
             vec![SelectedField {
                 name: "id".to_string(),
-                data_type: RescriptTypeIdent::String,
+                data_type: TypeIdent::String,
             }],
             vec![
                 SelectedField {
                     name: "id".to_string(),
-                    data_type: RescriptTypeIdent::String,
+                    data_type: TypeIdent::String,
                 },
                 SelectedField {
                     name: "height".to_string(),
-                    data_type: RescriptTypeIdent::Int,
+                    data_type: TypeIdent::Int,
                 },
                 SelectedField {
                     name: "time".to_string(),
-                    data_type: RescriptTypeIdent::Int,
+                    data_type: TypeIdent::Int,
                 },
             ],
         )
@@ -1622,19 +1622,19 @@ impl FieldSelection {
         let mut selected_block_fields = vec![
             SelectedField {
                 name: "number".to_string(),
-                data_type: RescriptTypeIdent::Int,
+                data_type: TypeIdent::Int,
             },
             SelectedField {
                 name: "timestamp".to_string(),
-                data_type: RescriptTypeIdent::Int,
+                data_type: TypeIdent::Int,
             },
             SelectedField {
                 name: "hash".to_string(),
-                data_type: RescriptTypeIdent::String,
+                data_type: TypeIdent::String,
             },
         ];
 
-        type Res = RescriptTypeIdent;
+        type Res = TypeIdent;
         type Block = BlockField;
         type Tx = TransactionField;
 

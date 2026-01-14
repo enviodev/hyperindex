@@ -1,6 +1,6 @@
 ## Envio ERC20 Template
 
-*Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all [Envio](https://envio.dev) indexer features*
+_Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all [Envio](https://envio.dev) indexer features_
 
 ### Run
 
@@ -18,6 +18,6 @@ pnpm codegen
 
 ### Pre-requisites
 
-- [Node.js (use v18 or newer)](https://nodejs.org/en/download/current)
+- [Node.js v22+ (v24 recommended)](https://nodejs.org/en/download/current)
 - [pnpm (use v8 or newer)](https://pnpm.io/installation)
 - [Docker](https://www.docker.com/products/docker-desktop/) or [Podman](https://podman.io/)

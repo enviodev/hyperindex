@@ -1,4 +1,4 @@
-import assert from "assert";
+import { describe, it, expect } from "vitest";
 import { TestHelpers, type User } from "generated";
 
 const { MockDb, Greeter, Addresses } = TestHelpers;
@@ -13,9 +13,9 @@ describe("Greeter template tests", () => {
     const greeting = "Hi there";
 
     // Creating a mock event
-    const mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
-      greeting: greeting,
-      user: userAddress,
+    const mockNewGreetingEvent = Greeter.NewGreeting.mockData({
+      greeting: { value: greeting },
+      user: { bits: userAddress },
     });
 
     // Processing the mock event on the mock database
@@ -36,7 +36,7 @@ describe("Greeter template tests", () => {
     const actualUserEntity = updatedMockDb.entities.User.get(userAddress);
 
     // Asserting that the entity in the mock database is the same as the expected entity
-    assert.deepEqual(expectedUserEntity, actualUserEntity);
+    expect(actualUserEntity).toEqual(expectedUserEntity);
   });
 
   it("2 Greetings from the same users results in that user having a greeter count of 2", async () => {
@@ -45,18 +45,17 @@ describe("Greeter template tests", () => {
     // Initializing values for mock event
     const userAddress = Addresses.defaultAddress;
     const greeting = "Hi there";
-    const greetingAgain = "Oh hello again";
 
     // Creating a mock event
-    const mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
-      greeting: greeting,
-      user: userAddress,
+    const mockNewGreetingEvent = Greeter.NewGreeting.mockData({
+      greeting: { value: greeting },
+      user: { bits: userAddress },
     });
 
     // Creating a mock event
-    const mockNewGreetingEvent2 = Greeter.NewGreeting.createMockEvent({
-      greeting: greetingAgain,
-      user: userAddress,
+    const mockNewGreetingEvent2 = Greeter.NewGreeting.mockData({
+      greeting: { value: greeting },
+      user: { bits: userAddress },
     });
 
     // Processing the mock event on the mock database
@@ -75,7 +74,7 @@ describe("Greeter template tests", () => {
     const actualUserEntity = updatedMockDb2.entities.User.get(userAddress);
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    assert.equal(2, actualUserEntity?.numberOfGreetings);
+    expect(actualUserEntity?.numberOfGreetings).toBe(2);
   });
 
   it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", async () => {
@@ -87,15 +86,15 @@ describe("Greeter template tests", () => {
     const greetingAgain = "Oh hello again";
 
     // Creating a mock event
-    const mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
-      greeting: greeting,
-      user: userAddress,
+    const mockNewGreetingEvent = Greeter.NewGreeting.mockData({
+      greeting: { value: greeting },
+      user: { bits: userAddress },
     });
 
     // Creating a mock event
-    const mockNewGreetingEvent2 = Greeter.NewGreeting.createMockEvent({
-      greeting: greetingAgain,
-      user: userAddress,
+    const mockNewGreetingEvent2 = Greeter.NewGreeting.mockData({
+      greeting: { value: greetingAgain },
+      user: { bits: userAddress },
     });
 
     // Processing the mock event on the mock database
@@ -116,6 +115,7 @@ describe("Greeter template tests", () => {
     const expectedGreeting: string = greetingAgain;
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    assert.equal(expectedGreeting, actualUserEntity?.latestGreeting);
+    expect(actualUserEntity?.latestGreeting).toBe(expectedGreeting);
   });
 });
+

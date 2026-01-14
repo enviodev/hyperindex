@@ -4,10 +4,7 @@ use itertools::Itertools;
 use std::{collections::HashMap, fs, path::PathBuf};
 
 use crate::{
-    rescript_types::{
-        RescriptRecordField, RescriptTypeDecl, RescriptTypeDeclMulti, RescriptTypeExpr,
-        RescriptTypeIdent, RescriptVariantConstr,
-    },
+    type_schema::{RecordField, TypeDecl, TypeDeclMulti, TypeExpr, TypeIdent, VariantConstr},
     utils::text::Capitalize,
 };
 
@@ -19,7 +16,7 @@ pub const CALL_EVENT_NAME: &str = "Call";
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuelType {
     pub id: usize,
-    pub rescript_type_decl: RescriptTypeDecl,
+    pub type_decl: TypeDecl,
     pub abi_type_field: String,
 }
 
@@ -61,7 +58,7 @@ pub struct FuelLog {
     pub id: String,
     pub logged_type: FuelType,
     pub event_name: String,
-    pub data_type: RescriptTypeIdent,
+    pub data_type: TypeIdent,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,11 +109,11 @@ impl FuelAbi {
 
         let get_unknown_res_type_ident = |type_field: &str| {
             println!("Unhandled type_field \"{}\" in abi", type_field);
-            RescriptTypeIdent::Unknown
+            TypeIdent::Unknown
         };
 
         let get_unknown_res_type_expr =
-            |type_field| RescriptTypeExpr::Identifier(get_unknown_res_type_ident(type_field));
+            |type_field| TypeExpr::Identifier(get_unknown_res_type_ident(type_field));
 
         program
             .types
@@ -147,7 +144,7 @@ impl FuelAbi {
                 fn unified_type_application_to_type_ident(
                     unified_type_application: &UnifiedTypeApplication,
                     generic_param_name_map: &HashMap<usize, String>,
-                ) -> RescriptTypeIdent {
+                ) -> TypeIdent {
                     let type_ident_name = mk_type_id_name(&unified_type_application.type_id);
 
                     match &unified_type_application.type_arguments {
@@ -158,13 +155,13 @@ impl FuelAbi {
                             .map_or(
                                 //If the type_id is not a defined generic type it is
                                 //a named type
-                                RescriptTypeIdent::TypeApplication {
+                                TypeIdent::TypeApplication {
                                     name: type_ident_name,
                                     type_params: vec![],
                                 },
                                 //if the type_id is in the generic_param_name_map
                                 //it is a generic param
-                                RescriptTypeIdent::GenericParam,
+                                TypeIdent::GenericParam,
                             ),
                         //When there are type arguments it is a generic type
                         Some(typ_args) => {
@@ -181,12 +178,12 @@ impl FuelAbi {
                                         //if the type_id is in the generic_param_name_map
                                         //it is a generic param
                                         |generic_name| {
-                                            RescriptTypeIdent::GenericParam(generic_name)
+                                            TypeIdent::GenericParam(generic_name)
                                         },
                                     )
                                 })
                                 .collect();
-                            RescriptTypeIdent::TypeApplication {
+                            TypeIdent::TypeApplication {
                                 name: type_ident_name,
                                 type_params,
                             }
@@ -216,8 +213,8 @@ impl FuelAbi {
                         .collect::<Result<Vec<_>>>()
                 };
 
-                let type_expr: Result<RescriptTypeExpr> = {
-                    use RescriptTypeIdent::*;
+                let type_expr: Result<TypeExpr> = {
+                    use TypeIdent::*;
                     match abi_type_decl.type_field.as_str() {
                         "()" => Unit.get_ok_expr(),
                         "bool" => Bool.get_ok_expr(), //Note this is represented as 0 or 1
@@ -251,10 +248,10 @@ impl FuelAbi {
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
-                                    RescriptRecordField::new(name, type_ident)
+                                    RecordField::new(name, type_ident)
                                 })
                                 .collect();
-                            Ok(RescriptTypeExpr::Record(record_fields))
+                            Ok(TypeExpr::Record(record_fields))
                         }
                         type_field if type_field.starts_with("enum ") => {
                             let constructors = get_components_name_and_type_ident()
@@ -264,10 +261,10 @@ impl FuelAbi {
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
-                                    RescriptVariantConstr::new(name, type_ident)
+                                    VariantConstr::new(name, type_ident)
                                 })
                                 .collect();
-                            Ok(RescriptTypeExpr::Variant(constructors))
+                            Ok(TypeExpr::Variant(constructors))
                         }
                         type_field if type_field.starts_with("(_,") => {
                             let tuple_types = get_components_name_and_type_ident()
@@ -279,7 +276,7 @@ impl FuelAbi {
                                 .map(|(_name, type_ident)| type_ident)
                                 .collect();
 
-                            RescriptTypeIdent::Tuple(tuple_types).get_ok_expr()
+                            TypeIdent::Tuple(tuple_types).get_ok_expr()
                         }
                         type_field if type_field.starts_with("[_;") => {
                             let components =
@@ -323,7 +320,7 @@ impl FuelAbi {
                 Ok(Some(FuelType {
                     id: abi_type_decl.type_id,
                     abi_type_field: abi_type_decl.type_field.clone(),
-                    rescript_type_decl: RescriptTypeDecl::new(name, type_expr?, type_params),
+                    type_decl: TypeDecl::new(name, type_expr?, type_params),
                 }))
             })
             .collect::<Result<Vec<Option<FuelType>>>>()
@@ -341,12 +338,12 @@ impl FuelAbi {
     fn get_type_application(
         abi_application: &UnifiedTypeApplication,
         types: &HashMap<usize, FuelType>,
-    ) -> Result<RescriptTypeIdent> {
+    ) -> Result<TypeIdent> {
         let fuel_type = types
             .get(&abi_application.type_id)
             .context("Failed to get logged type")?;
-        Ok(RescriptTypeIdent::TypeApplication {
-            name: fuel_type.rescript_type_decl.name.clone(),
+        Ok(TypeIdent::TypeApplication {
+            name: fuel_type.type_decl.name.clone(),
             type_params: match &abi_application.type_arguments {
                 Some(vec) => vec
                     .iter()
@@ -472,14 +469,14 @@ impl FuelAbi {
         self.logs.values().cloned().collect()
     }
 
-    pub fn to_rescript_type_decl_multi(&self) -> Result<RescriptTypeDeclMulti> {
+    pub fn to_type_decl_multi(&self) -> Result<TypeDeclMulti> {
         let type_declerations = self
             .types
             .values()
             .sorted_by_key(|t| t.id)
-            .map(|t| t.rescript_type_decl.clone())
+            .map(|t| t.type_decl.clone())
             .collect();
 
-        Ok(RescriptTypeDeclMulti::new(type_declerations))
+        Ok(TypeDeclMulti::new(type_declerations))
     }
 }

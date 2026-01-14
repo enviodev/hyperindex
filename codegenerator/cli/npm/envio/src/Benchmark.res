@@ -216,7 +216,7 @@ let throttler = Throttler.make(
   ~logger=Logging.createChild(~params={"context": "Benchmarking framework"}),
 )
 let cacheFileName = "BenchmarkCache.json"
-let cacheFilePath = NodeJs.Path.join(NodeJs.Path.__dirname, cacheFileName)
+let cacheFilePath = NodeJs.Path.join(NodeJs.Path.getDirname(NodeJs.ImportMeta.importMeta), cacheFileName)
 
 let saveToCacheFile = if (
   Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSaveJsonFile

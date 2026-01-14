@@ -26,10 +26,8 @@ use crate::{
         path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
         ParsedProjectPaths,
     },
-    rescript_types::{
-        RescriptRecordField, RescriptSchemaMode, RescriptTypeExpr, RescriptTypeIdent,
-    },
     template_dirs::TemplateDirs,
+    type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
@@ -37,6 +35,84 @@ use convert_case::{Case, Casing};
 use ethers::abi::EventParam;
 use pathdiff::diff_paths;
 use serde::Serialize;
+
+// ============== Internal Config JSON Types ==============
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalConfigJson<'a> {
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handlers: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    multichain: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    full_batch_size: Option<u64>,
+    #[serde(skip_serializing_if = "is_true")]
+    rollback_on_reorg: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    save_full_history: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    raw_events: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evm: Option<InternalEvmConfig<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fuel: Option<InternalFuelConfig<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    svm: Option<InternalSvmConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalEvmConfig<'a> {
+    chains: std::collections::BTreeMap<String, InternalChainConfig>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
+    address_format: &'a str,
+    event_decoder: &'a str,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalFuelConfig<'a> {
+    chains: std::collections::BTreeMap<String, InternalChainConfig>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalSvmConfig {
+    chains: std::collections::BTreeMap<String, InternalChainConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalChainConfig {
+    id: u64,
+    start_block: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_reorg_depth: Option<i32>,
+}
+
+#[derive(Serialize, Debug)]
+struct InternalContractConfig {
+    abi: Box<serde_json::value::RawValue>,
+}
+
+// ============== Template Types ==============
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
@@ -75,7 +151,7 @@ impl GraphQlEnumTypeTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub res_type: RescriptTypeIdent,
+    pub res_type: TypeIdent,
     pub is_entity_field: bool,
     pub is_indexed_field: bool,
     ///Used to determine if you can run a where
@@ -85,7 +161,7 @@ pub struct EntityParamTypeTemplate {
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let res_type: RescriptTypeIdent = field
+        let res_type: TypeIdent = field
             .field_type
             .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?;
@@ -141,7 +217,7 @@ impl EntityRecordTypeTemplate {
             ))?;
 
         // Build record fields for type/schema generation
-        let record_fields: Vec<RescriptRecordField> = entity
+        let record_fields: Vec<RecordField> = entity
             .get_fields()
             .iter()
             .filter(|f| !f.field_type.is_derived_from())
@@ -153,7 +229,7 @@ impl EntityRecordTypeTemplate {
                     field.name.uncapitalize()
                 };
                 let res_type = field.field_type.to_rescript_type(&config.schema)?;
-                Ok(RescriptRecordField::new(field_name, res_type))
+                Ok(RecordField::new(field_name, res_type))
             })
             .collect::<Result<_>>()
             .context(format!(
@@ -161,10 +237,9 @@ impl EntityRecordTypeTemplate {
                 entity.name
             ))?;
 
-        let type_expr = RescriptTypeExpr::Record(record_fields);
+        let type_expr = TypeExpr::Record(record_fields);
         let type_code = type_expr.to_string();
-        let schema_code =
-            type_expr.to_rescript_schema(&"t".to_string(), &RescriptSchemaMode::ForDb);
+        let schema_code = type_expr.to_rescript_schema(&"t".to_string(), &SchemaMode::ForDb);
 
         let postgres_fields = entity
             .get_fields()
@@ -401,7 +476,7 @@ impl EventTemplate {
                 format!(
                     "@as(\"{}\") {}?: SingleOrMultiple.t<{}>",
                     param.name,
-                    RescriptRecordField::to_valid_res_name(&param.name),
+                    RecordField::to_valid_rescript_name(&param.name),
                     abi_to_rescript_type(&param.into())
                 )
             })
@@ -424,7 +499,7 @@ impl EventTemplate {
                 .fold(String::new(), |mut output, (i, param)| {
                     let param = EthereumEventParam::from(param);
                     let topic_number = i + 1;
-                    let param_name = RescriptRecordField::to_valid_res_name(param.name);
+                    let param_name = RecordField::to_valid_rescript_name(param.name);
                     let topic_encoder = param.get_topic_encoder();
                     let nested_type_flags = match param.get_nested_type_depth() {
                         depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
@@ -468,7 +543,7 @@ impl EventTemplate {
             code.push_str(&format!(
                 "{}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
                toUnderlying->Utils.magic, ",
-                RescriptRecordField::to_valid_res_name(&param.name),
+                RecordField::to_valid_rescript_name(&param.name),
                 index
             ));
         }
@@ -477,7 +552,7 @@ impl EventTemplate {
             code.push_str(&format!(
                 "{}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
                toUnderlying->Utils.magic, ",
-                RescriptRecordField::to_valid_res_name(&param.name),
+                RecordField::to_valid_rescript_name(&param.name),
                 index
             ));
         }
@@ -548,24 +623,24 @@ impl EventTemplate {
                         let res_type = abi_to_rescript_type(&input.into());
                         let js_name = input.name.to_string();
                         EventParamTypeTemplate {
-                            res_name: RescriptRecordField::to_valid_res_name(&js_name),
+                            res_name: RecordField::to_valid_rescript_name(&js_name),
                             js_name,
                             default_value_rescript: res_type.get_default_value_rescript(),
                             default_value_non_rescript: res_type.get_default_value_non_rescript(),
                             res_type: res_type.to_string(),
-                            is_eth_address: res_type == RescriptTypeIdent::Address,
+                            is_eth_address: res_type == TypeIdent::Address,
                         }
                     })
                     .collect::<Vec<_>>();
 
                 let data_type_expr = if params.is_empty() {
-                    RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit)
+                    TypeExpr::Identifier(TypeIdent::Unit)
                 } else {
-                    RescriptTypeExpr::Record(
+                    TypeExpr::Record(
                         params
                             .iter()
                             .map(|p| {
-                                RescriptRecordField::new(
+                                RecordField::new(
                                     p.name.to_string(),
                                     abi_to_rescript_type(&p.into()),
                                 )
@@ -583,7 +658,7 @@ impl EventTemplate {
                     data_type: data_type_expr.to_string(),
                     parse_event_filters_code: Self::generate_parse_event_filters_code(params),
                     params_raw_event_schema: data_type_expr
-                        .to_rescript_schema(&"eventArgs".to_string(), &RescriptSchemaMode::ForDb),
+                        .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
@@ -609,7 +684,7 @@ impl EventTemplate {
                             data_type: type_indent.to_string(),
                             params_raw_event_schema: format!(
                                 "{}->Utils.Schema.coerceToJsonPgType",
-                                type_indent.to_rescript_schema(&RescriptSchemaMode::ForDb)
+                                type_indent.to_rescript_schema(&SchemaMode::ForDb)
                             ),
                             convert_hyper_sync_event_args_code:
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
@@ -692,11 +767,10 @@ let eventSignatures = [{}]
                 )
             }
             Abi::Fuel(abi) => {
-                let all_abi_type_declarations =
-                    abi.to_rescript_type_decl_multi().context(format!(
-                        "Failed getting types from the '{}' contract ABI",
-                        contract.name
-                    ))?;
+                let all_abi_type_declarations = abi.to_type_decl_multi().context(format!(
+                    "Failed getting types from the '{}' contract ABI",
+                    contract.name
+                ))?;
 
                 format!(
                   "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
@@ -705,7 +779,7 @@ let eventSignatures = [{}]
                   // we need to remember that abi might contain ` and we should escape it
                   abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations,
-                    all_abi_type_declarations.to_rescript_schema(&RescriptSchemaMode::ForDb)
+                    all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
                 )
             }
         };
@@ -1005,7 +1079,7 @@ impl FieldSelection {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
         for field in options.block_fields.into_iter() {
-            let res_name = RescriptRecordField::to_valid_res_name(&field.name);
+            let res_name = RecordField::to_valid_rescript_name(&field.name);
             let name: CaseOptions = field.name.into();
 
             block_field_templates.push(SelectedFieldTemplate {
@@ -1015,14 +1089,14 @@ impl FieldSelection {
                 res_type: field.data_type.to_string(),
             });
 
-            let record_field = RescriptRecordField::new(name.camel, field.data_type);
+            let record_field = RecordField::new(name.camel, field.data_type);
             all_block_fields.push(record_field.clone());
         }
 
         let mut transaction_field_templates = vec![];
         let mut all_transaction_fields = vec![];
         for field in options.transaction_fields.into_iter() {
-            let res_name = RescriptRecordField::to_valid_res_name(&field.name);
+            let res_name = RecordField::to_valid_rescript_name(&field.name);
             let name: CaseOptions = field.name.into();
 
             transaction_field_templates.push(SelectedFieldTemplate {
@@ -1032,12 +1106,12 @@ impl FieldSelection {
                 res_type: field.data_type.to_string(),
             });
 
-            let record_field = RescriptRecordField::new(name.camel, field.data_type);
+            let record_field = RecordField::new(name.camel, field.data_type);
             all_transaction_fields.push(record_field);
         }
 
-        let block_expr = RescriptTypeExpr::Record(all_block_fields);
-        let transaction_expr = RescriptTypeExpr::Record(all_transaction_fields);
+        let block_expr = TypeExpr::Record(all_block_fields);
+        let transaction_expr = TypeExpr::Record(all_transaction_fields);
 
         Self {
             transaction_fields: transaction_field_templates,
@@ -1045,13 +1119,11 @@ impl FieldSelection {
             transaction_type: transaction_expr.to_string(),
             transaction_schema: transaction_expr.to_rescript_schema(
                 &options.transaction_type_name,
-                &RescriptSchemaMode::ForFieldSelection,
+                &SchemaMode::ForFieldSelection,
             ),
             block_type: block_expr.to_string(),
-            block_schema: block_expr.to_rescript_schema(
-                &options.block_type_name,
-                &RescriptSchemaMode::ForFieldSelection,
-            ),
+            block_schema: block_expr
+                .to_rescript_schema(&options.block_type_name, &SchemaMode::ForFieldSelection),
         }
     }
 
@@ -1121,7 +1193,8 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    internal_config_ts_code: String,
+    internal_config_json_code: String,
+    envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     relative_path_to_generated_from_root: String,
@@ -1418,6 +1491,31 @@ switch chainId {{
         // Add onBlock at the end
         let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
 
+        // Generate testIndexer types and createTestIndexer
+        let test_indexer_chains_fields = chain_configs
+            .iter()
+            .map(|chain| {
+                let id = chain.network_config.id;
+                format!("  @as(\"{}\") chain{}?: TestIndexer.chainConfig,", id, id)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let test_indexer_code = format!(
+            r#"type testIndexerProcessConfigChains = {{
+{}
+}}
+
+type testIndexerProcessConfig = {{
+  chains: testIndexerProcessConfigChains,
+}}
+
+let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)"#,
+            test_indexer_chains_fields
+        );
+
+        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_code);
+
         // Helper function to convert kebab-case to camelCase
         let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
 
@@ -1438,195 +1536,211 @@ switch chainId {{
             }
         };
 
-        // Generate ecosystem sections only if they have chains
-        let mut ecosystem_parts = Vec::new();
-        let mut fuel_imports = Vec::new();
-        let has_ecosystem = !chain_configs.is_empty();
-
-        // Generate chains for the current ecosystem (only if chains exist)
-        if has_ecosystem {
-            let chains_entries: Vec<String> = chain_configs
+        // Generate internal.config.json content using serde
+        let internal_config_json_code = {
+            // Build chains map
+            let chains: std::collections::BTreeMap<String, InternalChainConfig> = chain_configs
                 .iter()
                 .map(|chain_config| {
                     let chain_name =
                         chain_id_to_name(chain_config.network_config.id, &cfg.get_ecosystem());
-                    let end_block_str = match chain_config.network_config.end_block {
-                        Some(block) => format!(", endBlock: {}", block),
-                        None => String::new(),
-                    };
-                    let max_reorg_str = match chain_config.network_config.max_reorg_depth {
-                        Some(depth) => format!(", maxReorgDepth: {}", depth),
-                        None => String::new(),
-                    };
-                    format!(
-                        "      \"{}\": {{ id: {}, startBlock: {}{}{} }}",
+                    (
                         chain_name,
-                        chain_config.network_config.id,
-                        chain_config.network_config.start_block,
-                        end_block_str,
-                        max_reorg_str
+                        InternalChainConfig {
+                            id: chain_config.network_config.id,
+                            start_block: chain_config.network_config.start_block,
+                            end_block: chain_config.network_config.end_block,
+                            max_reorg_depth: chain_config.network_config.max_reorg_depth,
+                        },
                     )
                 })
                 .collect();
 
-            let ecosystem_name = match cfg.get_ecosystem() {
-                Ecosystem::Evm => "evm",
-                Ecosystem::Fuel => "fuel",
-                Ecosystem::Svm => "svm",
-            };
-
-            // Generate contracts configuration
-            let contracts_entries: Vec<String> = cfg
-                .get_contracts()
-                .iter()
-                .map(|contract| -> Result<String> {
-                    let abi_value = match &contract.abi {
-                        Abi::Evm(abi) => {
-                            // Inline the ABI JSON for EVM
-                            abi.raw.to_string()
-                        }
-                        Abi::Fuel(abi) => {
-                            // Generate import and reference for Fuel
-                            let import_name = format!("{}Abi", contract.name);
-                            // Compute relative path from generated directory to ABI file
-                            let relative_path_buf =
-                                diff_paths(&abi.path_buf, &cfg.parsed_project_paths.generated)
-                                    .ok_or_else(|| {
-                                        anyhow!(
-                                    "Failed to compute relative path from generated to ABI file"
-                                )
-                                    })?;
-                            let relative_path_with_dot =
-                                add_leading_relative_dot(relative_path_buf);
-                            let relative_path = relative_path_with_dot
-                                .to_str()
-                                .ok_or_else(|| anyhow!("Failed converting ABI path to str"))?
-                                .to_string();
-                            fuel_imports.push(format!(
-                                "import {} from \"{}\";",
-                                import_name, relative_path
-                            ));
-                            import_name
-                        }
+            // Build contracts map
+            let contracts: std::collections::BTreeMap<&str, InternalContractConfig> = cfg
+                .contracts
+                .values()
+                .map(|contract| -> Result<(&str, InternalContractConfig)> {
+                    // Parse and re-serialize compactly to ensure one-liner format
+                    let abi_str = match &contract.abi {
+                        Abi::Evm(abi) => &abi.raw,
+                        Abi::Fuel(abi) => &abi.raw,
                     };
-                    Ok(format!(
-                        "      \"{}\": {{ abi: {} }}",
-                        contract.name, abi_value
+                    let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
+                    let abi_compact = serde_json::to_string(&abi_value)?;
+                    let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
+                    Ok((
+                        contract.name.as_str(),
+                        InternalContractConfig { abi: abi_raw },
                     ))
                 })
-                .collect::<Result<Vec<String>>>()?;
+                .collect::<Result<_>>()?;
 
-            let contracts_str = if contracts_entries.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    ",\n    contracts: {{\n{}\n    }}",
-                    contracts_entries.join(",\n")
-                )
+            // Build ecosystem config
+            let (evm, fuel, svm) = match cfg.get_ecosystem() {
+                Ecosystem::Evm => (
+                    Some(InternalEvmConfig {
+                        chains,
+                        contracts,
+                        address_format: if cfg.lowercase_addresses {
+                            "lowercase"
+                        } else {
+                            "checksum"
+                        },
+                        event_decoder: if cfg.should_use_hypersync_client_decoder {
+                            "hypersync"
+                        } else {
+                            "viem"
+                        },
+                    }),
+                    None,
+                    None,
+                ),
+                Ecosystem::Fuel => (None, Some(InternalFuelConfig { chains, contracts }), None),
+                Ecosystem::Svm => (None, None, Some(InternalSvmConfig { chains })),
             };
 
-            // For EVM, always include addressFormat and decoder
-            let evm_options = if cfg.get_ecosystem() == Ecosystem::Evm {
-                let address_format = if cfg.lowercase_addresses {
-                    "lowercase"
-                } else {
-                    "checksum"
-                };
-                let decoder = if cfg.should_use_hypersync_client_decoder {
-                    "hypersync"
-                } else {
-                    "viem"
-                };
-                format!(
-                    ",\n    addressFormat: \"{}\",\n    eventDecoder: \"{}\"",
-                    address_format, decoder
-                )
-            } else {
-                String::new()
+            // Build multichain value
+            let multichain = match cfg.multichain {
+                crate::config_parsing::human_config::evm::Multichain::Ordered => Some("ordered"),
+                crate::config_parsing::human_config::evm::Multichain::Unordered => None,
             };
 
-            ecosystem_parts.push(format!(
-                ",\n  {ecosystem_name}: {{\n    chains: {{\n{chains}\n    }}{contracts}{evm_options}\n  }}",
-                ecosystem_name = ecosystem_name,
-                chains = chains_entries.join(",\n"),
-                contracts = contracts_str,
-                evm_options = evm_options
-            ));
-        }
+            let config = InternalConfigJson {
+                name: &cfg.name,
+                description: cfg.human_config.get_base_config().description.as_deref(),
+                handlers: cfg.handlers.as_deref(),
+                multichain,
+                full_batch_size: cfg.human_config.get_base_config().full_batch_size,
+                rollback_on_reorg: cfg.rollback_on_reorg,
+                save_full_history: cfg.save_full_history,
+                raw_events: cfg.enable_raw_events,
+                evm,
+                fuel,
+                svm,
+            };
 
-        // Generate internal.config.ts content
-        let description_str = match &cfg.human_config.get_base_config().description {
-            Some(desc) => format!(",\n  description: \"{}\"", desc.replace('\"', "\\\"")),
-            None => String::new(),
+            serde_json::to_string_pretty(&config)? + "\n"
         };
 
-        let handlers_str = match &cfg.handlers {
-            Some(h) => format!(",\n  handlers: \"{}\"", h),
-            None => String::new(),
+        // Generate envio.d.ts content (type declarations only)
+        // Always export all ecosystem types, even when empty
+        let envio_dts_code = {
+            let mut parts = Vec::new();
+
+            // Generate EvmChains type
+            let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+                chain_configs
+                    .iter()
+                    .map(|chain_config| {
+                        let chain_name =
+                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Evm);
+                        format!(
+                            "  \"{}\": {{ id: {} }};",
+                            chain_name, chain_config.network_config.id
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if evm_chains_entries.is_empty() {
+                "export type EvmChains = {};".to_string()
+            } else {
+                format!(
+                    "export type EvmChains = {{\n{}\n}};",
+                    evm_chains_entries.join("\n")
+                )
+            });
+
+            // Generate EvmContracts type
+            let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+                cfg.contracts
+                    .keys()
+                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if evm_contracts_entries.is_empty() {
+                "export type EvmContracts = {};".to_string()
+            } else {
+                format!(
+                    "export type EvmContracts = {{\n{}\n}};",
+                    evm_contracts_entries.join("\n")
+                )
+            });
+
+            // Generate FuelChains type
+            let fuel_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
+                chain_configs
+                    .iter()
+                    .map(|chain_config| {
+                        let chain_name =
+                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Fuel);
+                        format!(
+                            "  \"{}\": {{ id: {} }};",
+                            chain_name, chain_config.network_config.id
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if fuel_chains_entries.is_empty() {
+                "export type FuelChains = {};".to_string()
+            } else {
+                format!(
+                    "export type FuelChains = {{\n{}\n}};",
+                    fuel_chains_entries.join("\n")
+                )
+            });
+
+            // Generate FuelContracts type
+            let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
+                cfg.contracts
+                    .keys()
+                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if fuel_contracts_entries.is_empty() {
+                "export type FuelContracts = {};".to_string()
+            } else {
+                format!(
+                    "export type FuelContracts = {{\n{}\n}};",
+                    fuel_contracts_entries.join("\n")
+                )
+            });
+
+            // Generate SvmChains type
+            let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
+                chain_configs
+                    .iter()
+                    .map(|chain_config| {
+                        let chain_name =
+                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Svm);
+                        format!(
+                            "  \"{}\": {{ id: {} }};",
+                            chain_name, chain_config.network_config.id
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if svm_chains_entries.is_empty() {
+                "export type SvmChains = {};".to_string()
+            } else {
+                format!(
+                    "export type SvmChains = {{\n{}\n}};",
+                    svm_chains_entries.join("\n")
+                )
+            });
+
+            parts.join("\n")
         };
-
-        let multichain_str = match cfg.multichain {
-            crate::config_parsing::human_config::evm::Multichain::Ordered => {
-                ",\n  multichain: \"ordered\"".to_string()
-            }
-            crate::config_parsing::human_config::evm::Multichain::Unordered => String::new(),
-        };
-
-        let full_batch_size_str = match cfg.human_config.get_base_config().full_batch_size {
-            Some(size) => format!(",\n  fullBatchSize: {}", size),
-            None => String::new(),
-        };
-
-        // Only include non-default boolean values
-        let rollback_on_reorg_str = if !cfg.rollback_on_reorg {
-            ",\n  rollbackOnReorg: false".to_string()
-        } else {
-            String::new()
-        };
-
-        let save_full_history_str = if cfg.save_full_history {
-            ",\n  saveFullHistory: true".to_string()
-        } else {
-            String::new()
-        };
-
-        let raw_events_str = if cfg.enable_raw_events {
-            ",\n  rawEvents: true".to_string()
-        } else {
-            String::new()
-        };
-
-        let ecosystem_str = if ecosystem_parts.is_empty() {
-            String::new()
-        } else {
-            ecosystem_parts.join("")
-        };
-
-        // Prepend Fuel imports if any
-        let imports_str = if fuel_imports.is_empty() {
-            String::new()
-        } else {
-            format!("{}\n", fuel_imports.join("\n"))
-        };
-
-        let internal_config_ts_code = format!(
-            r#"{imports_str}import type {{ IndexerConfig }} from "envio";
-
-export default {{
-  name: "{name}"{description_str}{handlers_str}{multichain_str}{full_batch_size_str}{rollback_on_reorg_str}{save_full_history_str}{raw_events_str}{ecosystem_str}
-}} as const satisfies IndexerConfig;
-"#,
-            imports_str = imports_str,
-            name = cfg.name,
-            description_str = description_str,
-            handlers_str = handlers_str,
-            multichain_str = multichain_str,
-            full_batch_size_str = full_batch_size_str,
-            rollback_on_reorg_str = rollback_on_reorg_str,
-            save_full_history_str = save_full_history_str,
-            raw_events_str = raw_events_str,
-            ecosystem_str = ecosystem_str,
-        );
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
@@ -1643,7 +1757,8 @@ export default {{
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            internal_config_ts_code,
+            internal_config_json_code,
+            envio_dts_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             relative_path_to_generated_from_root,
@@ -1905,15 +2020,15 @@ mod test {
         get_project_template_helper("config5.yaml");
     }
 
-    const RESCRIPT_BIG_INT_TYPE: RescriptTypeIdent = RescriptTypeIdent::BigInt;
-    const RESCRIPT_ADDRESS_TYPE: RescriptTypeIdent = RescriptTypeIdent::Address;
-    const RESCRIPT_STRING_TYPE: RescriptTypeIdent = RescriptTypeIdent::String;
+    const RESCRIPT_BIG_INT_TYPE: TypeIdent = TypeIdent::BigInt;
+    const RESCRIPT_ADDRESS_TYPE: TypeIdent = TypeIdent::Address;
+    const RESCRIPT_STRING_TYPE: TypeIdent = TypeIdent::String;
 
     impl EventParamTypeTemplate {
-        fn new(name: &str, res_type: RescriptTypeIdent) -> Self {
+        fn new(name: &str, res_type: TypeIdent) -> Self {
             let js_name = name.to_string();
             Self {
-                res_name: RescriptRecordField::to_valid_res_name(&js_name),
+                res_name: RecordField::to_valid_rescript_name(&js_name),
                 js_name,
                 res_type: res_type.to_string(),
                 default_value_rescript: res_type.get_default_value_rescript(),
@@ -2106,7 +2221,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
                 block_fields: vec![],
                 transaction_fields: vec![SelectedField {
                     name: "from".to_string(),
-                    data_type: RescriptTypeIdent::option(RescriptTypeIdent::Address),
+                    data_type: TypeIdent::option(TypeIdent::Address),
                 }],
             }),
         })
@@ -2216,44 +2331,56 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     }
 
     #[test]
-    fn internal_config_ts_code_generated_for_evm() {
+    fn internal_config_json_code_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_generated_for_fuel() {
+    fn internal_config_json_code_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
         // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
         // which differs from the runtime default of true, so it's included
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_with_all_options() {
+    fn internal_config_json_code_with_all_options() {
         let project_template = get_project_template_helper("config-with-all-options.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_omits_default_values() {
+    fn internal_config_json_code_omits_default_values() {
         let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_with_no_contracts() {
+    fn envio_dts_code_generated_for_evm() {
+        let project_template = get_project_template_helper("config1.yaml");
+        insta::assert_snapshot!(project_template.envio_dts_code);
+    }
+
+    #[test]
+    fn envio_dts_code_generated_for_fuel() {
+        let project_template = get_project_template_helper("fuel-config.yaml");
+        insta::assert_snapshot!(project_template.envio_dts_code);
+    }
+
+    #[test]
+    fn internal_config_json_code_with_no_contracts() {
         // config4.yaml has empty contracts array - tests that comma is properly
         // placed before addressFormat when contracts section is omitted
         let project_template = get_project_template_helper("config4.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_with_multiple_contracts() {
+    fn internal_config_json_code_with_multiple_contracts() {
         // config2.yaml has two contracts - tests comma separation between contracts
         let project_template = get_project_template_helper("config2.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]

@@ -1,17 +1,8 @@
-
 // Loads the .env from the root working directory
 %%raw(`import 'dotenv/config'`)
 
-%%private(
-  let envSafe = EnvSafe.make()
+%%private(let envSafe = EnvSafe.make())
 
-  let getLogLevelConfig = (name, ~default): Pino.logLevel =>
-    envSafe->EnvSafe.get(
-      name,
-      S.enum([#trace, #debug, #info, #warn, #error, #fatal, #udebug, #uinfo, #uwarn, #uerror]),
-      ~fallback=default,
-    )
-)
 // resets the timestampCaughtUpToHeadOrEndblock after a restart when true
 let updateSyncTimeOnRestart =
   envSafe->EnvSafe.get("UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
@@ -34,9 +25,22 @@ let serverPort =
 
 let tuiOffEnvVar = envSafe->EnvSafe.get("TUI_OFF", S.bool, ~fallback=false)
 
+let logLevelSchema = S.enum([
+  #trace,
+  #debug,
+  #info,
+  #warn,
+  #error,
+  #fatal,
+  #udebug,
+  #uinfo,
+  #uwarn,
+  #uerror,
+  #silent,
+])
 let logFilePath = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/envio.log")
-let userLogLevel = getLogLevelConfig("LOG_LEVEL", ~default=#info)
-let defaultFileLogLevel = getLogLevelConfig("FILE_LOG_LEVEL", ~default=#trace)
+let userLogLevel = envSafe->EnvSafe.get("LOG_LEVEL", S.option(logLevelSchema))
+let defaultFileLogLevel = envSafe->EnvSafe.get("FILE_LOG_LEVEL", logLevelSchema, ~fallback=#trace)
 
 let prodEnvioAppUrl = "https://envio.dev"
 let envioAppUrl = envSafe->EnvSafe.get("ENVIO_APP", S.string, ~fallback=prodEnvioAppUrl)
@@ -121,7 +125,12 @@ let logStrategy =
   )
 
 Logging.setLogger(
-  Logging.makeLogger(~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel),
+  Logging.makeLogger(
+    ~logStrategy,
+    ~logFilePath,
+    ~defaultFileLogLevel,
+    ~userLogLevel=userLogLevel->Belt.Option.getWithDefault(#info),
+  ),
 )
 
 module Db = {

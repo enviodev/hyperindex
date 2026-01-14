@@ -15,6 +15,9 @@ export type {
 import type { Address } from "./src/Types.ts";
 export type { EffectCaller, Address } from "./src/Types.ts";
 
+/** Utility type to expand/flatten complex types for better IDE display. */
+export type Prettify<T> = { [K in keyof T]: T[K] } & {};
+
 import type {
   effect as Effect,
   effectArgs as EffectArgs,
@@ -162,9 +165,10 @@ export interface Global {}
 
 /**
  * Shape of the indexer configuration.
- * Used as a constraint for IndexerFromConfig to allow usage without codegen.
+ * Will be used internally for defineConfig.
+ * Currently should match the internal.config.json structure.
  */
-export type IndexerConfig = {
+type IndexerConfig = {
   /** The indexer name. */
   name: string;
   /** The indexer description. */
@@ -336,6 +340,19 @@ type SvmChain<Id extends number = number> = {
 
 // ============== Indexer Type ==============
 
+/** Minimal type constraint for IndexerFromConfig to allow usage without full IndexerConfig. */
+type IndexerConfigTypes = {
+  evm?: {
+    chains: Record<string, { id: number }>;
+    contracts?: Record<string, {}>;
+  };
+  fuel?: {
+    chains: Record<string, { id: number }>;
+    contracts?: Record<string, {}>;
+  };
+  svm?: { chains: Record<string, { id: number }> };
+};
+
 // Helper: Check if ecosystem is configured in a given config
 type HasEvm<Config> = "evm" extends keyof Config ? true : false;
 type HasFuel<Config> = "fuel" extends keyof Config ? true : false;
@@ -351,7 +368,7 @@ type EcosystemTuple<Config> = [
 type EcosystemCount<Config> = EcosystemTuple<Config>["length"];
 
 // EVM ecosystem type
-type EvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
+type EvmEcosystem<Config extends IndexerConfigTypes> =
   "evm" extends keyof Config
     ? Config["evm"] extends {
         chains: infer Chains;
@@ -379,7 +396,7 @@ type EvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
     : never;
 
 // Fuel ecosystem type
-type FuelEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
+type FuelEcosystem<Config extends IndexerConfigTypes> =
   "fuel" extends keyof Config
     ? Config["fuel"] extends {
         chains: infer Chains;
@@ -407,7 +424,7 @@ type FuelEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
     : never;
 
 // SVM ecosystem type
-type SvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
+type SvmEcosystem<Config extends IndexerConfigTypes> =
   "svm" extends keyof Config
     ? Config["svm"] extends { chains: infer Chains }
       ? Chains extends Record<string, { id: number }>
@@ -426,7 +443,7 @@ type SvmEcosystem<Config extends IndexerConfig /*= GlobalIndexerConfig*/> =
     : never;
 
 // Single ecosystem chains (flattened at root level)
-type SingleEcosystemChains<Config extends IndexerConfig> =
+type SingleEcosystemChains<Config extends IndexerConfigTypes> =
   HasEvm<Config> extends true
     ? EvmEcosystem<Config>
     : HasFuel<Config> extends true
@@ -436,7 +453,7 @@ type SingleEcosystemChains<Config extends IndexerConfig> =
     : {};
 
 // Multi-ecosystem chains (namespaced by ecosystem)
-type MultiEcosystemChains<Config extends IndexerConfig> =
+type MultiEcosystemChains<Config extends IndexerConfigTypes> =
   (HasEvm<Config> extends true
     ? {
         /** EVM ecosystem configuration. */
@@ -461,11 +478,70 @@ type MultiEcosystemChains<Config extends IndexerConfig> =
  * - Single ecosystem: chains are at the root level.
  * - Multiple ecosystems: chains are namespaced by ecosystem (evm, fuel, svm).
  */
-export type IndexerFromConfig<Config extends IndexerConfig> = {
-  /** The indexer name from config.yaml. */
-  readonly name: Config["name"];
-  /** The indexer description from config.yaml. */
-  readonly description: string | undefined;
-} & (EcosystemCount<Config> extends 1
-  ? SingleEcosystemChains<Config>
-  : MultiEcosystemChains<Config>);
+export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
+  {
+    /** The indexer name from config.yaml. */
+    readonly name: string;
+    /** The indexer description from config.yaml. */
+    readonly description: string | undefined;
+  } & (EcosystemCount<Config> extends 1
+    ? SingleEcosystemChains<Config>
+    : MultiEcosystemChains<Config>)
+>;
+
+// ============== Test Indexer Types ==============
+
+/** Configuration for a single chain in the test indexer. */
+export type TestIndexerChainConfig = {
+  /** The block number to start processing from. */
+  startBlock: number;
+  /** The block number to stop processing at. */
+  endBlock: number;
+};
+
+/** Progress returned after processing blocks with the test indexer. */
+export type TestIndexerProcessResult = {
+  /** Changes happened during the processing. */
+  changes: unknown[];
+};
+
+// Helper to extract chain IDs from config for test indexer
+type TestIndexerChainIds<Config extends IndexerConfigTypes> =
+  HasEvm<Config> extends true
+    ? Config["evm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? Chains[keyof Chains]["id"]
+        : never
+      : never
+    : HasFuel<Config> extends true
+    ? Config["fuel"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? Chains[keyof Chains]["id"]
+        : never
+      : never
+    : HasSvm<Config> extends true
+    ? Config["svm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? Chains[keyof Chains]["id"]
+        : never
+      : never
+    : never;
+
+/** Process configuration for the test indexer, with chains keyed by chain ID. */
+export type TestIndexerProcessConfig<Config extends IndexerConfigTypes> = {
+  /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
+  chains: {
+    [K in TestIndexerChainIds<Config>]?: TestIndexerChainConfig;
+  };
+};
+
+/**
+ * Test indexer type resolved from config.
+ * Allows running the indexer for specific block ranges and inspecting results.
+ */
+export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
+  /** Process blocks for the specified chains and return progress with checkpoints and changes. */
+  process: (
+    config: Prettify<TestIndexerProcessConfig<Config>>
+  ) => Promise<TestIndexerProcessResult>;
+};
