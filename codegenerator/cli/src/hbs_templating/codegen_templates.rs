@@ -2369,18 +2369,18 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     }
 
     #[test]
-    fn internal_config_ts_code_with_no_contracts() {
+    fn internal_config_json_code_with_no_contracts() {
         // config4.yaml has empty contracts array - tests that comma is properly
         // placed before addressFormat when contracts section is omitted
         let project_template = get_project_template_helper("config4.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]
-    fn internal_config_ts_code_with_multiple_contracts() {
+    fn internal_config_json_code_with_multiple_contracts() {
         // config2.yaml has two contracts - tests comma separation between contracts
         let project_template = get_project_template_helper("config2.yaml");
-        insta::assert_snapshot!(project_template.internal_config_ts_code);
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
     #[test]

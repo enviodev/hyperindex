@@ -312,7 +312,7 @@ impl Contract {
         content.push_str("/*\n");
         content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
         content.push_str(" */\n");
-        content.push_str("\n");
+        content.push('\n');
         content.push_str("open Indexer\n");
 
         // Handler registrations
