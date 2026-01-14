@@ -182,9 +182,8 @@ let setEventOptions = (t: t, ~eventOptions, ~logger=Logging.getLogger()) => {
     | Some(existingValue) =>
       if (
         existingValue.wildcard !== value.wildcard ||
-          // Use JSON.stringify for deep equality of eventFilters
-          Js.Json.stringify(existingValue.eventFilters->Utils.magic) !==
-            Js.Json.stringify(value.eventFilters->Utils.magic)
+          // TODO: Can improve the check by using deepEqual
+          existingValue.eventFilters !== value.eventFilters
       ) {
         let eventNamespace = {contractName: t.contractName, eventName: t.eventName}
         DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
