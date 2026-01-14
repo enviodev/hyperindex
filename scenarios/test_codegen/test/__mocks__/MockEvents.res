@@ -67,7 +67,6 @@ let tx1: Types.Transaction.t = {
 let newGravatarLog1: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar1,
   chainId: 54321,
-  // TODO: this should be an address type
   srcAddress: "0xabc0000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   logIndex: 11,
   transaction: tx1,
