@@ -1179,6 +1179,8 @@ struct SelectedFieldTemplate {
 #[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
+    /// Docker-safe name for container/volume naming (lowercase with hyphens)
+    docker_project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
@@ -1742,8 +1744,12 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
             parts.join("\n")
         };
 
+        // Convert project name to Docker-safe format (lowercase, hyphens instead of underscores)
+        let docker_project_name = cfg.name.to_lowercase().replace('_', "-");
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
+            docker_project_name,
             codegen_contracts,
             entities,
             gql_enums,
