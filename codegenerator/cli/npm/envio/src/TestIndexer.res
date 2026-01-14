@@ -343,14 +343,11 @@ let makeCreateTestIndexer = (
             "initialState": initialState->Utils.magic,
           }
           let workerData = workerDataObj->Js.Json.serializeExn->Js.Json.parseExn
-          // Resolve tsx path using import.meta.resolve for proper pnpm support
-          let tsxPath = NodeJs.ImportMeta.resolve("tsx/esm")->NodeJs.Url.fileURLToPathFromString
           let worker = try {
             NodeJs.WorkerThreads.makeWorker(
               workerPath,
               {
-                workerData,
-                execArgv: ["--import", tsxPath],
+                workerData: workerData,
               },
             )
           } catch {

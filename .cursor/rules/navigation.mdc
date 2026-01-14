@@ -6,8 +6,6 @@ alwaysApply: true
 
 # Always
 
-- Sacrifice grammar for the sake of concision
-- List any unresolved questions at the end, if any
 - Use `pnpm` over `npm`/`npx`
 - Always use single assert to check the whole value instead of multiple asserts for every field.
 
