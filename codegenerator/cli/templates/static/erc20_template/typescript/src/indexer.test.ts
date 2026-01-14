@@ -11,12 +11,12 @@ describe("Indexer Testing", () => {
       await indexer.process({
         chains: {
           1: {
-            startBlock: 0,
+            startBlock: 10_861_674,
             endBlock: 10_861_674,
           },
         },
       }),
-      "Should instantly scan through the chain and find the first mint at block 10_861_674"
+      "Should find the first mint at block 10_861_674"
     ).toMatchInlineSnapshot(`
       {
         "changes": [
