@@ -108,8 +108,11 @@ struct InternalChainConfig {
 }
 
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct InternalContractConfig {
     abi: Box<serde_json::value::RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler: Option<String>,
 }
 
 // ============== Template Types ==============
@@ -1571,7 +1574,10 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
                     Ok((
                         contract.name.as_str(),
-                        InternalContractConfig { abi: abi_raw },
+                        InternalContractConfig {
+                            abi: abi_raw,
+                            handler: contract.handler_path.clone(),
+                        },
                     ))
                 })
                 .collect::<Result<_>>()?;

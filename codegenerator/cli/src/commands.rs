@@ -155,6 +155,7 @@ pub mod start {
     use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
+    use pathdiff::diff_paths;
 
     pub async fn start_indexer(
         config: &SystemConfig,
@@ -169,14 +170,32 @@ pub mod start {
                 );
             }
         }
-        let cmd = "npm";
-        let args = vec!["run", "start"];
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.generated).await?;
+
+        // Compute the relative path from project root to generated directory
+        let relative_generated = diff_paths(
+            &config.parsed_project_paths.generated,
+            &config.parsed_project_paths.project_root,
+        )
+        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
+
+        // Build the tsx import path and index path relative to project root
+        let tsx_import = format!(
+            "./{}/node_modules/envio/tsx-register.mjs",
+            relative_generated.display()
+        );
+        let index_path = format!("./{}/src/Index.res.mjs", relative_generated.display());
+
+        let cmd = "node";
+        let args = vec!["--no-warnings", "--import", &tsx_import, &index_path];
+
+        // Run from project root to ensure proper cwd for handlers
+        let exit =
+            execute_command(cmd, args, &config.parsed_project_paths.project_root).await?;
 
         if !exit.success() {
             return Err(anyhow!(
                 "Indexer crashed. For more details see the error logs above the TUI. Can't find \
-                 them? Restart the indexer with the 'TUI_OFF=true pnpm start' command."
+                 them? Restart the indexer with the 'TUI_OFF=true envio start' command."
             ));
         }
         println!(
@@ -333,14 +352,25 @@ pub mod db_migrate {
 
     use super::execute_command;
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
+    use pathdiff::diff_paths;
 
     pub async fn run_up_migrations(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let args = vec!["db-up"];
-        let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let relative_generated = diff_paths(
+            &config.parsed_project_paths.generated,
+            &config.parsed_project_paths.project_root,
+        )
+        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
+
+        let migration_script = format!(
+            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))",
+            relative_generated.display()
+        );
+        let args = vec!["-e", &migration_script];
+        let current_dir = &config.parsed_project_paths.project_root;
+        let exit = execute_command("node", args, current_dir).await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -354,18 +384,38 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        let args = vec!["db-down"];
-        let current_dir = &config.parsed_project_paths.generated;
-        execute_command("pnpm", args, current_dir).await
+        let relative_generated = diff_paths(
+            &config.parsed_project_paths.generated,
+            &config.parsed_project_paths.project_root,
+        )
+        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
+
+        let migration_script = format!(
+            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))",
+            relative_generated.display()
+        );
+        let args = vec!["-e", &migration_script];
+        let current_dir = &config.parsed_project_paths.project_root;
+        execute_command("node", args, current_dir).await
     }
 
     pub async fn run_db_setup(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let args = vec!["db-setup"];
-        let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let relative_generated = diff_paths(
+            &config.parsed_project_paths.generated,
+            &config.parsed_project_paths.project_root,
+        )
+        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
+
+        let migration_script = format!(
+            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))",
+            relative_generated.display()
+        );
+        let args = vec!["-e", &migration_script];
+        let current_dir = &config.parsed_project_paths.project_root;
+        let exit = execute_command("node", args, current_dir).await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -383,11 +433,22 @@ pub mod benchmark {
     use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::{anyhow, Result};
+    use pathdiff::diff_paths;
 
     pub async fn print_summary(config: &SystemConfig) -> Result<()> {
-        let args = vec!["print-benchmark-summary"];
-        let current_dir = &config.parsed_project_paths.generated;
-        let exit = execute_command("pnpm", args, current_dir).await?;
+        let relative_generated = diff_paths(
+            &config.parsed_project_paths.generated,
+            &config.parsed_project_paths.project_root,
+        )
+        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
+
+        let benchmark_script = format!(
+            "import(\"./{}/src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())",
+            relative_generated.display()
+        );
+        let args = vec!["-e", &benchmark_script];
+        let current_dir = &config.parsed_project_paths.project_root;
+        let exit = execute_command("node", args, current_dir).await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed printing benchmark summary"));
