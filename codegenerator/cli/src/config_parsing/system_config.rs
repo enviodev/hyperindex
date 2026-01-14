@@ -1350,12 +1350,10 @@ impl Event {
                 } else {
                     param_name
                 };
-                EventParam::from_alloy(param)
-                    .map(|mut ep| {
-                        ep.name = name;
-                        ep
-                    })
-                    .map_err(|e| anyhow!("Failed to parse event parameter type: {}", e))
+                EventParam::try_from_alloy(param).map(|mut ep| {
+                    ep.name = name;
+                    ep
+                })
             })
             .collect()
     }

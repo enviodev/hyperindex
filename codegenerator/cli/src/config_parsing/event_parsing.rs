@@ -98,7 +98,7 @@ impl EthereumEventParam<'_> {
                     )
                 }
                 DynSolType::Function => {
-                    panic!("Unsupported event parameter type 'function'")
+                    unreachable!("Function type should be filtered out before reaching here")
                 }
             }
         }
@@ -121,7 +121,7 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
         DynSolType::String => TypeIdent::String,
         DynSolType::FixedBytes(_) => TypeIdent::String,
         DynSolType::Function => {
-            panic!("Unsupported event parameter type 'function'")
+            unreachable!("Function type should be filtered out before reaching here")
         }
         DynSolType::Array(abi_type) => {
             let sub_param = EthereumEventParam {

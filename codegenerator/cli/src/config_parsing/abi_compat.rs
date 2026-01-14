@@ -6,6 +6,7 @@
 
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::{Event as AlloyEvent, EventParam as AlloyEventParam};
+use anyhow::{anyhow, Context, Result};
 use std::str::FromStr;
 
 /// A wrapper around an event parameter that provides a similar API to the old ethers EventParam.
@@ -26,9 +27,14 @@ impl EventParam {
     /// Create a new EventParam from alloy's EventParam.
     ///
     /// This parses the type string into a DynSolType.
-    pub fn from_alloy(param: &AlloyEventParam) -> Result<Self, alloy_dyn_abi::Error> {
+    pub fn try_from_alloy(param: &AlloyEventParam) -> Result<Self> {
         let type_str = param.selector_type();
-        let kind = DynSolType::parse(&type_str)?;
+        let kind = DynSolType::parse(&type_str).with_context(|| {
+            format!(
+                "Failed to parse type '{}' for parameter '{}'",
+                type_str, param.name
+            )
+        })?;
         Ok(EventParam {
             name: param.name.clone(),
             kind,
@@ -48,9 +54,11 @@ impl EventParam {
 
 /// Parse an event signature string (e.g., "event Transfer(address indexed from, address indexed to, uint256 value)")
 /// into an Event struct.
-pub fn parse_event(sig: &str) -> Result<Event, String> {
-    let alloy_event = AlloyEvent::parse(sig).map_err(|e| e.to_string())?;
-    Ok(Event::from_alloy(&alloy_event))
+pub fn parse_event(sig: &str) -> Result<Event> {
+    let alloy_event =
+        AlloyEvent::parse(sig).map_err(|e| anyhow!("Failed to parse event signature: {}", e))?;
+    Event::try_from_alloy(&alloy_event)
+        .with_context(|| format!("Failed to convert event '{}'", alloy_event.name))
 }
 
 /// An event with parsed parameters.
@@ -65,38 +73,16 @@ pub struct Event {
 }
 
 impl Event {
-    /// Create an Event from alloy's Event.
-    ///
-    /// Note: This will skip parameters that fail to parse and log a warning.
-    pub fn from_alloy(event: &AlloyEvent) -> Self {
-        let inputs: Vec<EventParam> = event
+    /// Create an Event from alloy's Event, returning an error if any parameter fails to parse.
+    pub fn try_from_alloy(event: &AlloyEvent) -> Result<Self> {
+        let inputs: Result<Vec<EventParam>> = event
             .inputs
             .iter()
-            .filter_map(|param| match EventParam::from_alloy(param) {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to parse event parameter '{}' type '{}': {}",
-                        param.name,
-                        param.selector_type(),
-                        e
-                    );
-                    None
-                }
+            .map(|param| {
+                EventParam::try_from_alloy(param)
+                    .with_context(|| format!("in event '{}'", event.name))
             })
             .collect();
-
-        Event {
-            name: event.name.clone(),
-            inputs,
-            anonymous: event.anonymous,
-        }
-    }
-
-    /// Create an Event from alloy's Event, returning an error if any parameter fails to parse.
-    pub fn try_from_alloy(event: &AlloyEvent) -> Result<Self, alloy_dyn_abi::Error> {
-        let inputs: Result<Vec<EventParam>, _> =
-            event.inputs.iter().map(EventParam::from_alloy).collect();
 
         Ok(Event {
             name: event.name.clone(),
@@ -109,8 +95,9 @@ impl Event {
 /// Parse an event parameter from a type string.
 ///
 /// Example: "uint256" -> DynSolType::Uint(256)
-pub fn parse_param_type(type_str: &str) -> Result<DynSolType, alloy_dyn_abi::Error> {
+pub fn parse_param_type(type_str: &str) -> Result<DynSolType> {
     DynSolType::from_str(type_str)
+        .with_context(|| format!("Failed to parse parameter type '{}'", type_str))
 }
 
 #[cfg(test)]
