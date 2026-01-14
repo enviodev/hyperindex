@@ -2,9 +2,20 @@ use crate::{config_parsing::chain_helpers::HypersyncNetwork, evm::address::Addre
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
 
-/// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores.
+/// Maximum length for contract names.
+/// Entity names are formed as `{contract_name}_{event_name}` and must be <= 63 chars.
+/// Limiting contract names to 30 chars leaves 32 chars for event names + 1 for separator.
+pub const MAX_CONTRACT_NAME_LENGTH: usize = 30;
+
+/// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores,
+/// and truncating to MAX_CONTRACT_NAME_LENGTH if necessary.
 pub fn normalize_contract_name(name: String) -> String {
-    name.replace([' ', '-', '.'], "_")
+    let normalized = name.replace([' ', '-', '.'], "_");
+    if normalized.len() > MAX_CONTRACT_NAME_LENGTH {
+        normalized[..MAX_CONTRACT_NAME_LENGTH].to_string()
+    } else {
+        normalized
+    }
 }
 
 ///The hierarchy is based on how you would add items to
@@ -160,5 +171,22 @@ mod tests {
             normalize_contract_name("Valid_Contract_Name".to_string()),
             "Valid_Contract_Name"
         );
+    }
+
+    #[test]
+    fn test_normalize_contract_name_truncation() {
+        // Long names are truncated to MAX_CONTRACT_NAME_LENGTH
+        let long_name = "InitializableImmutableAdminUpgradeabilityProxy".to_string();
+        let result = normalize_contract_name(long_name);
+        assert_eq!(result.len(), MAX_CONTRACT_NAME_LENGTH);
+        assert_eq!(result, "InitializableImmutableAdminUp");
+
+        // Names at exactly MAX_CONTRACT_NAME_LENGTH are preserved
+        let exact_name = "A".repeat(MAX_CONTRACT_NAME_LENGTH);
+        assert_eq!(normalize_contract_name(exact_name.clone()), exact_name);
+
+        // Names shorter than MAX_CONTRACT_NAME_LENGTH are preserved
+        let short_name = "ShortName".to_string();
+        assert_eq!(normalize_contract_name(short_name.clone()), short_name);
     }
 }
