@@ -6,6 +6,7 @@ open Utils.UnsafeIntOperators
 type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
+  progressBlockTimestamp: option<int>,
   totalEventsProcessed: int,
   fetchState: FetchState.t,
   isProgressAtHeadWhenBatchCreated: bool,
@@ -96,6 +97,7 @@ let getProgressedChainsById = {
   let getChainAfterBatchIfProgressed = (
     ~chainBeforeBatch: chainBeforeBatch,
     ~progressBlockNumberAfterBatch,
+    ~progressBlockTimestampAfterBatch,
     ~fetchStateAfterBatch,
     ~batchSize,
   ) => {
@@ -108,6 +110,7 @@ let getProgressedChainsById = {
           {
             batchSize,
             progressBlockNumber: progressBlockNumberAfterBatch,
+            progressBlockTimestamp: progressBlockTimestampAfterBatch,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed + batchSize,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
@@ -124,6 +127,7 @@ let getProgressedChainsById = {
     ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
     ~batchSizePerChain: dict<int>,
     ~progressBlockNumberPerChain: dict<int>,
+    ~progressBlockTimestampPerChain: dict<int>,
   ) => {
     let progressedChainsById = Js.Dict.empty()
 
@@ -135,17 +139,19 @@ let getProgressedChainsById = {
     ->ChainMap.values
     ->Array.forEachU(chainBeforeBatch => {
       let fetchState = chainBeforeBatch.fetchState
+      let chainIdStr = fetchState.chainId->Int.toString
 
       let progressBlockNumberAfterBatch = switch progressBlockNumberPerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->Int.toString,
+        chainIdStr,
       ) {
       | Some(progressBlockNumber) => progressBlockNumber
       | None => chainBeforeBatch.progressBlockNumber
       }
 
-      switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->Int.toString,
-      ) {
+      let progressBlockTimestampAfterBatch =
+        progressBlockTimestampPerChain->Utils.Dict.dangerouslyGetNonOption(chainIdStr)
+
+      switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(chainIdStr) {
       | Some(batchSize) =>
         let leftItems = fetchState.buffer->Js.Array2.sliceFrom(batchSize)
         getChainAfterBatchIfProgressed(
@@ -153,6 +159,7 @@ let getProgressedChainsById = {
           ~batchSize,
           ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
           ~progressBlockNumberAfterBatch,
+          ~progressBlockTimestampAfterBatch,
         )
       // Skip not affected chains
       | None =>
@@ -161,6 +168,7 @@ let getProgressedChainsById = {
           ~batchSize=0,
           ~fetchStateAfterBatch=chainBeforeBatch.fetchState,
           ~progressBlockNumberAfterBatch,
+          ~progressBlockTimestampAfterBatch,
         )
       } {
       | Some(progressedChain) =>
@@ -223,6 +231,7 @@ let prepareOrderedBatch = (
   let prevCheckpointId = ref(checkpointIdBeforeBatch)
   let mutBatchSizePerChain = Js.Dict.empty()
   let mutProgressBlockNumberPerChain = Js.Dict.empty()
+  let mutProgressBlockTimestampPerChain = Js.Dict.empty()
 
   let fetchStates = chainsBeforeBatch->ChainMap.map(chainBeforeBatch => chainBeforeBatch.fetchState)
 
@@ -262,6 +271,14 @@ let prepareOrderedBatch = (
         if newItemsCount > 0 {
           let item0 = fetchState.buffer->Array.getUnsafe(itemsCountBefore)
           let blockNumber = item0->Internal.getItemBlockNumber
+
+          // Extract timestamp from the first item if it's an Event
+          // (Block handlers not supported in ordered mode, so this is always an Event)
+          switch item0 {
+          | Internal.Event({timestamp}) =>
+            mutProgressBlockTimestampPerChain->Utils.Dict.setByInt(fetchState.chainId, timestamp)
+          | Internal.Block(_) => ()
+          }
 
           prevCheckpointId :=
             addReorgCheckpoints(
@@ -314,7 +331,16 @@ let prepareOrderedBatch = (
           )
           mutProgressBlockNumberPerChain->Utils.Dict.setByInt(fetchState.chainId, blockNumber)
         } else {
-          let blockNumberAfterBatch = fetchState->FetchState.bufferBlockNumber
+          let bufferBlock = fetchState->FetchState.bufferBlock
+          let blockNumberAfterBatch = bufferBlock.blockNumber
+
+          // Use buffer block timestamp if available (non-zero)
+          if bufferBlock.blockTimestamp > 0 {
+            mutProgressBlockTimestampPerChain->Utils.Dict.setByInt(
+              fetchState.chainId,
+              bufferBlock.blockTimestamp,
+            )
+          }
 
           prevCheckpointId :=
             addReorgCheckpoints(
@@ -351,6 +377,7 @@ let prepareOrderedBatch = (
       ~chainsBeforeBatch,
       ~batchSizePerChain=mutBatchSizePerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
+      ~progressBlockTimestampPerChain=mutProgressBlockTimestampPerChain,
     ),
     checkpointIds,
     checkpointChainIds,
@@ -378,6 +405,7 @@ let prepareUnorderedBatch = (
   let prevCheckpointId = ref(checkpointIdBeforeBatch)
   let mutBatchSizePerChain = Js.Dict.empty()
   let mutProgressBlockNumberPerChain = Js.Dict.empty()
+  let mutProgressBlockTimestampPerChain = Js.Dict.empty()
 
   let items = []
   let checkpointIds = []
@@ -400,10 +428,17 @@ let prepareUnorderedBatch = (
       chainsBeforeBatch->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=fetchState.chainId))
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
+    let lastEventTimestamp = ref(None)
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
         let item = fetchState.buffer->Belt.Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
+
+        // Track timestamp from Event items (Block items don't have timestamps)
+        switch item {
+        | Internal.Event({timestamp}) => lastEventTimestamp := Some(timestamp)
+        | Internal.Block(_) => ()
+        }
 
         // Every new block we should create a new checkpoint
         if blockNumber !== prevBlockNumber.contents {
@@ -448,8 +483,24 @@ let prepareUnorderedBatch = (
         items->Js.Array2.push(item)->ignore
       }
 
+      // Set the timestamp from the last event in this chain's batch
+      switch lastEventTimestamp.contents {
+      | Some(timestamp) =>
+        mutProgressBlockTimestampPerChain->Utils.Dict.setByInt(fetchState.chainId, timestamp)
+      | None => ()
+      }
+
       totalBatchSize := totalBatchSize.contents + chainBatchSize
       mutBatchSizePerChain->Utils.Dict.setByInt(fetchState.chainId, chainBatchSize)
+    } else {
+      // No items in batch, use buffer block timestamp if available
+      let bufferBlock = fetchState->FetchState.bufferBlock
+      if bufferBlock.blockTimestamp > 0 {
+        mutProgressBlockTimestampPerChain->Utils.Dict.setByInt(
+          fetchState.chainId,
+          bufferBlock.blockTimestamp,
+        )
+      }
     }
 
     let progressBlockNumberAfterBatch =
@@ -484,6 +535,7 @@ let prepareUnorderedBatch = (
       ~chainsBeforeBatch,
       ~batchSizePerChain=mutBatchSizePerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
+      ~progressBlockTimestampPerChain=mutProgressBlockTimestampPerChain,
     ),
     checkpointIds,
     checkpointChainIds,

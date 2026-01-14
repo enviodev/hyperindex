@@ -73,6 +73,7 @@ module DynamicContractRegistry = {
 module Chains = {
   type progressFields = [
     | #progress_block
+    | #progress_block_timestamp
     | #events_processed
   ]
 
@@ -99,6 +100,7 @@ module Chains = {
     #first_event_block,
     #buffer_block,
     #progress_block,
+    #progress_block_timestamp,
     #ready_at,
     #events_processed,
     #_is_hyper_sync,
@@ -121,6 +123,7 @@ module Chains = {
     @as("end_block") endBlock: Js.null<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("progress_block") progressBlockNumber: int,
+    @as("progress_block_timestamp") progressBlockTimestamp: Js.null<int>,
     @as("events_processed") numEventsProcessed: int,
     ...metaFields,
   }
@@ -157,6 +160,13 @@ module Chains = {
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
+      // Timestamp of the fully processed block (nullable - might not always be present)
+      mkField(
+        (#progress_block_timestamp: field :> string),
+        Int32,
+        ~fieldSchema=S.null(S.int),
+        ~isNullable,
+      ),
       // TODO: Should deprecate after changing the ETA calculation logic
       mkField((#_num_batches_fetched: field :> string), Int32, ~fieldSchema=S.int),
     ],
@@ -173,6 +183,7 @@ module Chains = {
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
       progressBlockNumber: -1,
+      progressBlockTimestamp: Js.Null.empty,
       isHyperSync: false,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
@@ -279,7 +290,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
     ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
 
-  let progressFields: array<progressFields> = [#progress_block, #events_processed]
+  let progressFields: array<progressFields> = [#progress_block, #progress_block_timestamp, #events_processed]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
@@ -320,6 +331,7 @@ WHERE "id" = $1;`
   type progressedChain = {
     chainId: int,
     progressBlockNumber: int,
+    progressBlockTimestamp: option<int>,
     totalEventsProcessed: int,
   }
 
@@ -340,6 +352,8 @@ WHERE "id" = $1;`
         ->Js.Array2.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
+          | #progress_block_timestamp =>
+            data.progressBlockTimestamp->Js.Null.fromOption->(Utils.magic: Js.null<int> => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
           },
         )
@@ -608,12 +622,13 @@ module Views = {
   let chainMetadataViewName = "chain_metadata"
 
   let makeMetaViewQuery = (~pgSchema) => {
-    `CREATE VIEW "${pgSchema}"."${metaViewName}" AS 
-SELECT 
+    `CREATE VIEW "${pgSchema}"."${metaViewName}" AS
+SELECT
   "${(#id: Chains.field :> string)}" AS "chainId",
-  "${(#start_block: Chains.field :> string)}" AS "startBlock", 
+  "${(#start_block: Chains.field :> string)}" AS "startBlock",
   "${(#end_block: Chains.field :> string)}" AS "endBlock",
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
+  "${(#progress_block_timestamp: Chains.field :> string)}" AS "progressBlockTimestamp",
   "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
   "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
