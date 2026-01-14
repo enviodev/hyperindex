@@ -1024,7 +1024,10 @@ impl DataSource {
             Some(EventDecoder::Viem) => false,
         };
         let hypersync_endpoint_url = match &network.hypersync_config {
-            Some(config) => Some(config.url.to_string()),
+            Some(config) => {
+                hypersync_endpoints::validate_hypersync_url(&config.url)?;
+                Some(config.url.to_string())
+            }
             None => hypersync_endpoints::get_default_hypersync_endpoint(network.id).ok(),
         };
         let raw_rpcs = match (network.rpc_config, network.rpc) {
@@ -2045,7 +2048,7 @@ mod test {
         let network = EvmChain {
             id: 1,
             hypersync_config: Some(HypersyncConfig {
-                url: "https://somechain.hypersync.xyz//".to_string(),
+                url: "https://1.hypersync.xyz//".to_string(),
             }),
             rpc_config: None,
             rpc: None,
@@ -2061,7 +2064,7 @@ mod test {
             sync_source,
             DataSource::Evm {
                 main: MainEvmDataSource::HyperSync {
-                    hypersync_endpoint_url: "https://somechain.hypersync.xyz".to_string(),
+                    hypersync_endpoint_url: "https://1.hypersync.xyz".to_string(),
                 },
                 is_client_decoder: true,
                 rpcs: vec![],
