@@ -18,8 +18,7 @@ describe("e2e", () => {
     Assert.deepEqual(
       result,
       {
-        checkpoints: [],
-        changes: Js.Dict.empty(),
+        changes: [],
       },
       ~message="Test Indexer should return the correct result",
     )
