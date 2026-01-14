@@ -61,8 +61,11 @@ module DynamicContractRegistry = {
 
   external castToInternal: t => Internal.entity = "%identity"
 
+  let description = None
+
   let config = {
     name,
+    description,
     index,
     schema,
     rowsSchema,

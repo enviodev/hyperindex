@@ -255,12 +255,13 @@ impl Schema {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GraphQLEnum {
     pub name: String,
+    pub description: Option<String>,
     pub values: Vec<String>,
 }
 
 impl GraphQLEnum {
-    pub fn new(name: String, values: Vec<String>) -> anyhow::Result<Self> {
-        Self { name, values }.valididate()
+    pub fn new(name: String, description: Option<String>, values: Vec<String>) -> anyhow::Result<Self> {
+        Self { name, description, values }.valididate()
     }
 
     fn valididate(self) -> anyhow::Result<Self> {
@@ -309,18 +310,20 @@ impl GraphQLEnum {
     }
     fn from_enum(enm: &EnumType<String>) -> anyhow::Result<Self> {
         let name = enm.name.clone();
+        let description = enm.description.clone();
         let values = enm
             .values
             .iter()
             .map(|value| value.name.clone())
             .collect::<Vec<String>>();
-        Self::new(name, values)
+        Self::new(name, description, values)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entity {
     pub name: String,
+    pub description: Option<String>,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
 }
@@ -328,6 +331,7 @@ pub struct Entity {
 impl Entity {
     fn new(
         name: &str,
+        description: Option<String>,
         fields: Vec<Field>,
         multi_field_indexes: Vec<MultiFieldIndex>,
     ) -> anyhow::Result<Self> {
@@ -379,6 +383,7 @@ impl Entity {
 
         Ok(Self {
             name: name.to_string(),
+            description,
             fields,
             multi_field_indexes,
         })
@@ -386,6 +391,7 @@ impl Entity {
 
     fn from_object(obj: &ObjectType<String>) -> anyhow::Result<Self> {
         let name = &obj.name;
+        let description = obj.description.clone();
 
         let has_id = obj.fields.iter().any(|field| field.name == "id");
         if !has_id {
@@ -438,7 +444,7 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let entity = Self::new(name, fields, multi_field_indexes)
+        let entity = Self::new(name, description, fields, multi_field_indexes)
             .context(format!("Failed constructing entity {name}",))?;
 
         // Here, store indexed information somewhere within your entity structure or handle them accordingly
@@ -552,6 +558,7 @@ fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Field {
     pub name: String,
+    pub description: Option<String>,
     pub field_type: FieldType,
 }
 
@@ -735,6 +742,7 @@ impl Field {
 
         Ok(Field {
             name: field.name.clone(),
+            description: field.description.clone(),
             field_type,
         })
     }
@@ -839,6 +847,7 @@ impl Field {
 
                 Ok(Some(PGField {
                     field_name: self.name.clone(),
+                    description: self.description.clone(),
                     field_type: gql_field_type.to_underlying_postgres_primitive(schema)?,
                     is_array: gql_field_type.is_array(),
                     is_index: self.is_indexed_field(entity),
@@ -1731,7 +1740,7 @@ type TestEntity {
     #[test]
     fn gql_type_to_rescript_type_entity() {
         let test_entity_string = String::from("TestEntity");
-        let test_entity = Entity::new(&test_entity_string, vec![], vec![]).unwrap();
+        let test_entity = Entity::new(&test_entity_string, None, vec![], vec![]).unwrap();
         let schema = Schema::new(vec![test_entity], vec![]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
             .to_rescript_type(&schema)
@@ -1743,7 +1752,7 @@ type TestEntity {
     #[test]
     fn gql_type_to_rescript_type_enum() {
         let name = String::from("TestEnum");
-        let test_enum = GraphQLEnum::new(name.clone(), vec![]).unwrap();
+        let test_enum = GraphQLEnum::new(name.clone(), None, vec![]).unwrap();
         let schema = Schema::new(vec![], vec![test_enum]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(name))
             .to_rescript_type(&schema)
@@ -1820,7 +1829,7 @@ type TestEntity {
     #[test]
     fn gql_enum_type_to_pgprimitive() {
         let name = String::from("TestEnum");
-        let test_enum = GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()]).unwrap();
+        let test_enum = GraphQLEnum::new(name.clone(), None, vec!["TEST_VALUE".to_string()]).unwrap();
         let field_type =
             get_field_type_helper_with_additional("TestEnum!", vec![test_enum.clone()]);
         let schema = Schema::new(vec![], vec![test_enum]).unwrap();
@@ -2463,5 +2472,106 @@ type TestEntity {
         // Verify field content
         let name_field = entity.get_field("name").unwrap();
         assert_eq!(name_field.name, "name");
+    }
+
+    #[test]
+    fn test_entity_description_parsing() {
+        let schema_str = r#"
+"""
+A test entity for tracking user accounts.
+"""
+type TestEntity {
+  id: ID!
+  name: String!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+
+        assert!(entity.description.is_some());
+        assert_eq!(
+            entity.description.as_ref().unwrap().trim(),
+            "A test entity for tracking user accounts."
+        );
+    }
+
+    #[test]
+    fn test_field_description_parsing() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  "The name of the user"
+  name: String!
+  """
+  The user's balance in the account.
+  This is tracked in wei.
+  """
+  balance: BigInt!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+
+        let name_field = entity.get_field("name").unwrap();
+        assert!(name_field.description.is_some());
+        assert_eq!(
+            name_field.description.as_ref().unwrap(),
+            "The name of the user"
+        );
+
+        let balance_field = entity.get_field("balance").unwrap();
+        assert!(balance_field.description.is_some());
+        assert!(balance_field
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("balance"));
+    }
+
+    #[test]
+    fn test_enum_description_parsing() {
+        let schema_str = r#"
+"""
+Status of a user account.
+"""
+enum Status {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+type TestEntity {
+  id: ID!
+  status: Status!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let status_enum = schema.enums.get("Status").unwrap();
+
+        assert!(status_enum.description.is_some());
+        assert_eq!(
+            status_enum.description.as_ref().unwrap().trim(),
+            "Status of a user account."
+        );
+    }
+
+    #[test]
+    fn test_no_description_returns_none() {
+        let schema_str = r#"
+type TestEntity {
+  id: ID!
+  name: String!
+}
+        "#;
+        let gql_doc = setup_document(schema_str).unwrap();
+        let schema = Schema::from_document(gql_doc).unwrap();
+        let entity = schema.entities.get("TestEntity").unwrap();
+
+        assert!(entity.description.is_none());
+        let name_field = entity.get_field("name").unwrap();
+        assert!(name_field.description.is_none());
     }
 }

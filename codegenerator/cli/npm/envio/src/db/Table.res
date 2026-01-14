@@ -42,6 +42,7 @@ type field = {
   isIndex: bool,
   linkedEntity: option<string>,
   defaultValue: option<string>,
+  description: option<string>,
 }
 
 type derivedFromField = {
@@ -62,6 +63,7 @@ let mkField = (
   ~isPrimaryKey=false,
   ~isIndex=false,
   ~linkedEntity=?,
+  ~description=?,
 ) =>
   {
     fieldName,
@@ -73,6 +75,7 @@ let mkField = (
     isIndex,
     linkedEntity,
     defaultValue: default,
+    description,
   }->Field
 
 let mkDerivedFromField = (fieldName, ~derivedFromEntity, ~derivedFromField) =>

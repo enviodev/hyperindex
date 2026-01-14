@@ -127,6 +127,7 @@ pub struct EventParamTypeTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
+    pub description: Option<String>,
     pub params: Vec<CapitalizedOptions>,
 }
 
@@ -143,6 +144,7 @@ impl GraphQlEnumTypeTemplate {
             ))?;
         Ok(GraphQlEnumTypeTemplate {
             name: gql_enum.name.to_capitalized_options(),
+            description: gql_enum.description.clone(),
             params,
         })
     }
@@ -151,6 +153,7 @@ impl GraphQlEnumTypeTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
+    pub description: Option<String>,
     pub res_type: TypeIdent,
     pub is_entity_field: bool,
     pub is_indexed_field: bool,
@@ -177,6 +180,7 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
+            description: field.description.clone(),
             res_type,
             is_entity_field,
             is_indexed_field,
@@ -195,6 +199,7 @@ pub struct DerivedFieldTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
+    pub description: Option<String>,
     pub type_code: String,
     pub schema_code: String,
     pub postgres_fields: Vec<field_types::Field>,
@@ -260,6 +265,7 @@ impl EntityRecordTypeTemplate {
 
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
+            description: entity.description.clone(),
             postgres_fields,
             type_code,
             schema_code,

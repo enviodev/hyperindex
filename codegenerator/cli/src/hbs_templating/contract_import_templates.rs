@@ -490,6 +490,7 @@ impl From<Param> for Field {
     fn from(val: Param) -> Self {
         Field {
             name: val.entity_key.original,
+            description: None,
             field_type: val.graphql_type,
         }
     }

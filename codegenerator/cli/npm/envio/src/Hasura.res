@@ -191,6 +191,37 @@ let createSelectPermissionOperation = (
   }
 }
 
+let createTableCustomizationOperation = (
+  ~pgSchema,
+  ~tableName: string,
+  ~tableDescription: option<string>,
+  ~columnDescriptions: array<(string, string)>,
+): bulkOperation => {
+  // Build column_config object with comments for each column that has a description
+  let columnConfig = Js.Dict.empty()
+  columnDescriptions->Js.Array2.forEach(((columnName, description)) => {
+    columnConfig->Js.Dict.set(columnName, {"comment": description}->Obj.magic)
+  })
+
+  let tableComment = tableDescription->Belt.Option.getWithDefault("")
+
+  {
+    \"type": "pg_set_table_customization",
+    args: {
+      "table": {
+        "schema": pgSchema,
+        "name": tableName,
+      },
+      "source": "default",
+      "configuration": {
+        "custom_name": tableName,
+        "comment": tableComment,
+        "column_config": columnConfig,
+      },
+    }->Obj.magic,
+  }
+}
+
 let createEntityRelationshipOperation = (
   ~pgSchema,
   ~tableName: string,
@@ -348,6 +379,36 @@ let trackDatabase = async (
       )
       ->ignore
     })
+
+    // Add table customization for comments/descriptions
+    let columnDescriptions =
+      entityConfig.table.fields
+      ->Belt.Array.keepMap(fieldOrDerived =>
+        switch fieldOrDerived {
+        | Table.Field(field) =>
+          switch field.description {
+          | Some(desc) =>
+            let dbFieldName = field->Table.getDbFieldName
+            Some((dbFieldName, desc))
+          | None => None
+          }
+        | Table.DerivedFrom(_) => None
+        }
+      )
+
+    // Only add customization if there's a table description or any column descriptions
+    if entityConfig.description->Belt.Option.isSome || columnDescriptions->Js.Array2.length > 0 {
+      allOperations
+      ->Js.Array2.push(
+        createTableCustomizationOperation(
+          ~pgSchema,
+          ~tableName,
+          ~tableDescription=entityConfig.description,
+          ~columnDescriptions,
+        ),
+      )
+      ->ignore
+    }
   })
 
   await executeBulkKeepGoing(~endpoint, ~auth, ~operations=allOperations)

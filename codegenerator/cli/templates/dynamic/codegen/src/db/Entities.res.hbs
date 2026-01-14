@@ -6,6 +6,7 @@ module type Entity = {
   type t
   let index: int
   let name: string
+  let description: option<string>
   let schema: S.t<t>
   let rowsSchema: S.t<array<t>>
   let table: Table.table
@@ -30,6 +31,7 @@ let isIndex = true
 
 module {{entity.name.capitalized}} = {
   let name = "{{entity.name.capitalized}}"
+  let description = {{#if entity.description}}Some("{{entity.description}}"){{else}}None{{/if}}
   let index = {{@index}}
   @genType
   type t = {{{entity.type_code}}}
@@ -50,7 +52,7 @@ module {{entity.name.capitalized}} = {
     ~fields=[
   {{#each entity.postgres_fields as | pg_field |}}
       mkField(
-      "{{pg_field.field_name}}", 
+      "{{pg_field.field_name}}",
       {{pg_field.field_type}},
       ~fieldSchema={{pg_field.res_schema_code}},
       {{!--Cleaner readability if the flags are not applied when not needed but it could be inlined--}}
@@ -59,6 +61,7 @@ module {{entity.name.capitalized}} = {
       {{#if pg_field.is_array}}~isArray,{{/if}}
       {{#if pg_field.is_index}}~isIndex,{{/if}}
       {{#if pg_field.linked_entity}}~linkedEntity="{{pg_field.linked_entity}}",{{/if}}
+      {{#if pg_field.description}}~description="{{pg_field.description}}",{{/if}}
       ),
   {{/each}}
   {{#each entity.derived_fields as | derived_field |}}
