@@ -164,25 +164,25 @@ describe("Async linked entity loaders", () => {
     // Initializing values for mock db
     let messageFromC = "Hi there I was in C originally"
     // mockDbInitial->Testhelpers.MockDb.
-    let c: Types.c = {
+    let c: Entities.C.t = {
       id: "hasStringToCopy",
       stringThatIsMirroredToA: messageFromC,
       a_id: "",
     }
-    let b: Types.b = {
+    let b: Entities.B.t = {
       id: "hasC",
       c_id: Some(c.id),
     }
-    let a: Types.a = {
+    let a: Entities.A.t = {
       id: EventHandlers.aIdWithGrandChildC,
       b_id: b.id,
       optionalStringToTestLinkedEntities: None,
     }
-    let bNoC: Types.b = {
+    let bNoC: Entities.B.t = {
       id: "noC",
       c_id: None,
     }
-    let aNoGrandchild: Types.a = {
+    let aNoGrandchild: Entities.A.t = {
       id: EventHandlers.aIdWithNoGrandChildC,
       b_id: bNoC.id,
       optionalStringToTestLinkedEntities: None,

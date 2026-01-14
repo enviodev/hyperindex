@@ -187,26 +187,142 @@ pub mod start {
     }
 }
 pub mod docker {
-    use super::execute_command;
     use crate::config_parsing::system_config::SystemConfig;
+    use anyhow::anyhow;
+    use std::io::ErrorKind;
+    use std::path::Path;
+
+    /// Result of trying to run a compose command
+    enum RunResult {
+        /// Command ran and exited with given status (output was visible to user)
+        Exited(std::process::ExitStatus),
+        /// Command binary not found
+        NotFound,
+        /// Other error spawning command
+        SpawnError,
+    }
+
+    /// Try to run a compose command with visible output
+    async fn run_compose(
+        cmd: &str,
+        compose_args: &[&str],
+        current_dir: &Path,
+        is_plugin: bool,
+    ) -> RunResult {
+        let args: Vec<&str> = if is_plugin {
+            let mut v = vec!["compose"];
+            v.extend(compose_args);
+            v
+        } else {
+            compose_args.to_vec()
+        };
+
+        match tokio::process::Command::new(cmd)
+            .args(&args)
+            .current_dir(current_dir)
+            .stdin(std::process::Stdio::null())
+            // stdout/stderr inherited - user sees output
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(mut child) => match child.wait().await {
+                Ok(status) => RunResult::Exited(status),
+                Err(_) => RunResult::SpawnError,
+            },
+            Err(e) if e.kind() == ErrorKind::NotFound => RunResult::NotFound,
+            Err(_) => RunResult::SpawnError,
+        }
+    }
+
+    /// Check if compose plugin is available (silent, for fallback decisions)
+    async fn has_compose_plugin(cmd: &str, is_plugin: bool) -> bool {
+        let args: &[&str] = if is_plugin {
+            &["compose", "version"]
+        } else {
+            &["version"]
+        };
+
+        match tokio::process::Command::new(cmd)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => child.wait().await.map(|s| s.success()).unwrap_or(false),
+            Err(_) => false,
+        }
+    }
+
+    /// Execute a compose command with automatic fallback.
+    /// Tries docker compose first (happy path), then falls back to alternatives only if unavailable.
+    async fn execute_compose_command(
+        args: Vec<&str>,
+        current_dir: &Path,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        // Tools to try in order: (command, is_plugin)
+        let tools: &[(&str, bool)] = &[
+            ("docker", true),          // docker compose (V2)
+            ("docker-compose", false), // docker-compose (V1)
+            ("podman", true),          // podman compose
+            ("podman-compose", false), // podman-compose
+        ];
+
+        for &(cmd, is_plugin) in tools {
+            match run_compose(cmd, &args, current_dir, is_plugin).await {
+                RunResult::Exited(status) if status.success() => {
+                    return Ok(status);
+                }
+                RunResult::Exited(status) => {
+                    // Command ran but failed - check if compose is actually available
+                    // If yes, this is a real error (user already saw output) - return it
+                    // If no, the failure was due to missing compose plugin - try fallback
+                    if has_compose_plugin(cmd, is_plugin).await {
+                        return Ok(status);
+                    }
+                    // Compose not available, try next tool
+                }
+                RunResult::NotFound => {
+                    // Binary not found, try next tool
+                }
+                RunResult::SpawnError => {
+                    // Other spawn error (permissions, etc.), try next tool
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "Failed to start local development environment.\n\
+             \n\
+             A container compose tool is required. Supported options:\n\
+             \n\
+             • Docker Compose (recommended)\n\
+               - Docker Desktop (includes Compose): https://docs.docker.com/desktop/\n\
+               - Linux: sudo apt-get install docker-compose-plugin\n\
+               - macOS: brew install docker-compose\n\
+             \n\
+             • Podman Compose\n\
+               - Install: pip install podman-compose\n\
+               - Or with Podman Desktop: https://podman-desktop.io/"
+        ))
+    }
 
     pub async fn docker_compose_up_d(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let cmd = "docker";
-        let args = vec!["compose", "up", "-d"];
+        let args = vec!["up", "-d"];
         let current_dir = &config.parsed_project_paths.generated;
 
-        execute_command(cmd, args, current_dir).await
+        execute_compose_command(args, current_dir).await
     }
+
     pub async fn docker_compose_down_v(
         config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        let cmd = "docker";
-        let args = vec!["compose", "down", "-v"];
+        let args = vec!["down", "-v"];
         let current_dir = &config.parsed_project_paths.generated;
 
-        execute_command(cmd, args, current_dir).await
+        execute_compose_command(args, current_dir).await
     }
 }
 
@@ -275,6 +391,39 @@ pub mod benchmark {
 
         if !exit.success() {
             return Err(anyhow!("Failed printing benchmark summary"));
+        }
+
+        Ok(())
+    }
+}
+
+pub mod git {
+    use super::execute_command;
+    use anyhow::{anyhow, Result};
+    use std::path::Path;
+
+    /// Check if the given path is inside a git repository
+    async fn is_inside_git_repo(path: &Path) -> bool {
+        execute_command("git", vec!["rev-parse", "--is-inside-work-tree"], path)
+            .await
+            .map(|exit| exit.success())
+            .unwrap_or(false)
+    }
+
+    /// Initialize a git repository if not already inside one
+    pub async fn init(project_root: &Path) -> Result<()> {
+        // Skip if already inside a git repository
+        if is_inside_git_repo(project_root).await {
+            return Ok(());
+        }
+
+        let exit = execute_command("git", vec!["init"], project_root).await?;
+
+        if !exit.success() {
+            return Err(anyhow!(
+                "git init exited with code {}",
+                exit.code().unwrap_or(-1)
+            ));
         }
 
         Ok(())

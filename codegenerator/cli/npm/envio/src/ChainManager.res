@@ -7,6 +7,13 @@ type t = {
   isInReorgThreshold: bool,
 }
 
+// Check if progress is past the reorg threshold (safe block).
+// A chain is in reorg threshold when progressBlockNumber > sourceBlockNumber - maxReorgDepth.
+// This matches the logic in InternalTable.Checkpoints.makeGetReorgCheckpointsQuery.
+let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~maxReorgDepth) => {
+  maxReorgDepth > 0 && progressBlockNumber > sourceBlockNumber - maxReorgDepth
+}
+
 let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {
   let targetBatchesInBuffer = 3
   switch Env.targetBufferSize {
@@ -37,22 +44,18 @@ let makeFromDbState = async (
   ~initialState: Persistence.initialState,
   ~config: Config.t,
   ~registrations,
-  ~persistence: Persistence.t,
 ): t => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
   } else {
-    // TODO: Move to Persistence.initialState
-    // Since now it's possible not to have rows in the history table
-    // even after the indexer started saving history (entered reorg threshold),
-    // This rows check might incorrectly return false for recovering the isInReorgThreshold option.
-    // But this is not a problem. There's no history anyways, and the indexer will be able to
-    // correctly calculate isInReorgThreshold as it starts.
-    let hasStartedSavingHistory = await persistence.storage.hasEntityHistoryRows()
-
-    //If we have started saving history, continue to save history
-    //as regardless of whether we are still in a reorg threshold
-    hasStartedSavingHistory
+    // Check if any chain is in reorg threshold by comparing progress with sourceBlock - maxReorgDepth.
+    initialState.chains->Array.some(chain =>
+      isProgressInReorgThreshold(
+        ~progressBlockNumber=chain.progressBlockNumber,
+        ~sourceBlockNumber=chain.sourceBlockNumber,
+        ~maxReorgDepth=chain.maxReorgDepth,
+      )
+    )
   }
 
   let targetBufferSize = calculateTargetBufferSize(

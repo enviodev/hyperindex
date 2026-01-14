@@ -2179,8 +2179,6 @@ describe("FetchState unit tests for specific cases", () => {
       )
       ->Result.getExn
 
-    Js.log(updatedFetchState)
-
     Assert.deepEqual(
       updatedFetchState->getEarliestEvent,
       NoItem({

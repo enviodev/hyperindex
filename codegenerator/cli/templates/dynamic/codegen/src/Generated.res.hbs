@@ -1,12 +1,11 @@
-@module("../internal.config.ts")
-external internalConfigJson: Js.Json.t = "default"
+@@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
   | None => ()
   | Some(handlerPath) =>
     try {
-      let _ = await Utils.importPath(handlerPath)
+      let _ = await Utils.importPath(NodeJs.ImportMeta.resolve(handlerPath))
     } catch {
     | exn =>
       Logging.errorWithExn(exn, `Failed to load handler file for contract ${contractName}: ${handlerPath}`)
@@ -24,7 +23,11 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
   let handlerFiles = try {
     let iterator = await globIterator(srcPattern)
-    await iterator->Utils.Array.fromAsyncIterator
+    let files = await iterator->Utils.Array.fromAsyncIterator
+    // Filter out test and spec files
+    files->Js.Array2.filter(file => {
+      !(file->Js.String2.includes(".test.") || file->Js.String2.includes(".spec.") || file->Js.String2.includes("_test."))
+    })
   } catch {
   | exn =>
     Js.Exn.raiseError(
@@ -39,7 +42,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   // We need to prepend additional "../" and {{relative_path_to_root_from_generated}} to the file path
   let _ = await handlerFiles
     ->Js.Array2.map(file => {
-      Utils.importPath("../{{relative_path_to_root_from_generated}}/" ++ file)
+      Utils.importPath(NodeJs.ImportMeta.resolve("../{{relative_path_to_root_from_generated}}/" ++ file))
       ->Promise.catch(exn => {
         Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
         Js.Exn.raiseError(
@@ -83,7 +86,7 @@ let makeGeneratedConfig = () => {
   ]
 
   Config.fromPublic(
-    internalConfigJson,
+    %raw(`internalConfigJson`),
     ~codegenChains,
     ~userEntities=Entities.userEntities,
   )

@@ -246,15 +246,22 @@ let start = async (
   ~registerAllHandlers: unit => promise<EventRegister.registrations>,
   ~makeGeneratedConfig: unit => Config.t,
   ~persistence: Persistence.t,
+  ~isTest=false,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
+  let shouldUseTui = !isTest && !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
   // The most simple check to verify whether we are running in development mode
   // and prevent exposing the console to public, when creating a real deployment.
-  let isDevelopmentMode = Env.Db.password === "testing"
+  // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
+  let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
   let registrations = await registerAllHandlers()
   let config = makeGeneratedConfig()
+  let config = if isTest {
+    {...config, shouldRollbackOnReorg: false}
+  } else {
+    config
+  }
   let ctx = {
     Ctx.registrations,
     config,
@@ -265,57 +272,59 @@ let start = async (
   Prometheus.Info.set(~version=envioVersion)
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
-  startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
-    switch globalGsManagerRef.contents {
-    | None => Initializing({})
-    | Some(gsManager) => {
-        let state = gsManager->GlobalStateManager.getState
-        let chains =
-          state.chainManager.chainFetchers
-          ->ChainMap.values
-          ->Array.map(cf => {
-            let {fetchState} = cf
-            let latestFetchedBlockNumber = Pervasives.max(
-              FetchState.bufferBlockNumber(fetchState),
-              0,
-            )
-            let knownHeight =
-              cf->ChainFetcher.hasProcessedToEndblock
-                ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
-                : cf.fetchState.knownHeight
+  if !isTest {
+    startServer(~ctx, ~isDevelopmentMode, ~getState=() =>
+      switch globalGsManagerRef.contents {
+      | None => Initializing({})
+      | Some(gsManager) => {
+          let state = gsManager->GlobalStateManager.getState
+          let chains =
+            state.chainManager.chainFetchers
+            ->ChainMap.values
+            ->Array.map(cf => {
+              let {fetchState} = cf
+              let latestFetchedBlockNumber = Pervasives.max(
+                FetchState.bufferBlockNumber(fetchState),
+                0,
+              )
+              let knownHeight =
+                cf->ChainFetcher.hasProcessedToEndblock
+                  ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+                  : cf.fetchState.knownHeight
 
-            {
-              chainId: cf.chainConfig.id->Js.Int.toFloat,
-              poweredByHyperSync: (
-                cf.sourceManager->SourceManager.getActiveSource
-              ).poweredByHyperSync,
-              latestFetchedBlockNumber,
-              knownHeight,
-              numBatchesFetched: cf.numBatchesFetched,
-              endBlock: cf.fetchState.endBlock,
-              firstEventBlockNumber: cf.firstEventBlockNumber,
-              latestProcessedBlock: cf.committedProgressBlockNumber === -1
-                ? None
-                : Some(cf.committedProgressBlockNumber),
-              timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
-              numEventsProcessed: cf.numEventsProcessed,
-              numAddresses: cf.fetchState->FetchState.numAddresses,
-            }
+              {
+                chainId: cf.chainConfig.id->Js.Int.toFloat,
+                poweredByHyperSync: (
+                  cf.sourceManager->SourceManager.getActiveSource
+                ).poweredByHyperSync,
+                latestFetchedBlockNumber,
+                knownHeight,
+                numBatchesFetched: cf.numBatchesFetched,
+                endBlock: cf.fetchState.endBlock,
+                firstEventBlockNumber: cf.firstEventBlockNumber,
+                latestProcessedBlock: cf.committedProgressBlockNumber === -1
+                  ? None
+                  : Some(cf.committedProgressBlockNumber),
+                timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
+                numEventsProcessed: cf.numEventsProcessed,
+                numAddresses: cf.fetchState->FetchState.numAddresses,
+              }
+            })
+          Active({
+            envioVersion,
+            chains,
+            indexerStartTime: state.indexerStartTime,
+            isPreRegisteringDynamicContracts: false,
+            rollbackOnReorg: ctx.config.shouldRollbackOnReorg,
+            isUnorderedMultichainMode: switch ctx.config.multichain {
+            | Unordered => true
+            | Ordered => false
+            },
           })
-        Active({
-          envioVersion,
-          chains,
-          indexerStartTime: state.indexerStartTime,
-          isPreRegisteringDynamicContracts: false,
-          rollbackOnReorg: ctx.config.shouldRollbackOnReorg,
-          isUnorderedMultichainMode: switch ctx.config.multichain {
-          | Unordered => true
-          | Ordered => false
-          },
-        })
+        }
       }
-    }
-  )
+    )
+  }
 
   await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
 
@@ -323,7 +332,6 @@ let start = async (
     ~initialState=ctx.persistence->Persistence.getInitializedState,
     ~config=ctx.config,
     ~registrations=ctx.registrations,
-    ~persistence=ctx.persistence,
   )
   let globalState = GlobalState.make(~ctx, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
   let gsManager = globalState->GlobalStateManager.make

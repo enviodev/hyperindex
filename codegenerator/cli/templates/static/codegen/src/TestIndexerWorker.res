@@ -1,0 +1,17 @@
+// Worker entry point for test indexer
+// This file runs in a worker thread when createTestIndexer().process() is called
+
+// Register tsx loader for TypeScript handler imports
+// This must happen before any TypeScript files are dynamically imported
+@@directive("import { register } from 'tsx/esm/api'; register();")
+
+TestIndexer.initTestWorker(
+  ~registerAllHandlers=Generated.registerAllHandlers,
+  ~makeGeneratedConfig=Generated.makeGeneratedConfig,
+  ~makePersistence=(~storage) =>
+    Persistence.make(
+      ~userEntities=Entities.userEntities,
+      ~allEnums=Enums.allEnums,
+      ~storage,
+    ),
+)

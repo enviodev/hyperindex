@@ -1,7 +1,7 @@
 use alloy_dyn_abi::DynSolType;
 
 use crate::config_parsing::abi_compat::EventParam;
-use crate::rescript_types::RescriptTypeIdent;
+use crate::type_schema::TypeIdent;
 
 pub struct EthereumEventParam<'a> {
     pub name: &'a str,
@@ -111,15 +111,15 @@ impl EthereumEventParam<'_> {
     }
 }
 
-pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
+pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
     match &param.abi_type {
-        DynSolType::Uint(_) => RescriptTypeIdent::BigInt,
-        DynSolType::Int(_) => RescriptTypeIdent::BigInt,
-        DynSolType::Bool => RescriptTypeIdent::Bool,
-        DynSolType::Address => RescriptTypeIdent::Address,
-        DynSolType::Bytes => RescriptTypeIdent::String,
-        DynSolType::String => RescriptTypeIdent::String,
-        DynSolType::FixedBytes(_) => RescriptTypeIdent::String,
+        DynSolType::Uint(_) => TypeIdent::BigInt,
+        DynSolType::Int(_) => TypeIdent::BigInt,
+        DynSolType::Bool => TypeIdent::Bool,
+        DynSolType::Address => TypeIdent::Address,
+        DynSolType::Bytes => TypeIdent::String,
+        DynSolType::String => TypeIdent::String,
+        DynSolType::FixedBytes(_) => TypeIdent::String,
         DynSolType::Function => {
             panic!("Unsupported event parameter type 'function'")
         }
@@ -128,7 +128,7 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
                 abi_type,
                 name: param.name,
             };
-            RescriptTypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
+            TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
         DynSolType::FixedArray(abi_type, _) => {
             let sub_param = EthereumEventParam {
@@ -136,10 +136,10 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
                 name: param.name,
             };
 
-            RescriptTypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
+            TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
         DynSolType::Tuple(abi_types) => {
-            let rescript_types: Vec<RescriptTypeIdent> = abi_types
+            let rescript_types: Vec<TypeIdent> = abi_types
                 .iter()
                 .map(|abi_type| {
                     let ethereum_param = EthereumEventParam {
@@ -153,7 +153,7 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
                 })
                 .collect();
 
-            RescriptTypeIdent::Tuple(rescript_types)
+            TypeIdent::Tuple(rescript_types)
         }
     }
 }

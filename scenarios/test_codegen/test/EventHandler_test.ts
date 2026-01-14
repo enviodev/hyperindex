@@ -12,6 +12,7 @@ import {
 } from "generated";
 import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
+import { createTestIndexer } from "generated";
 
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 
@@ -632,5 +633,125 @@ describe("Use Envio test framework to test event handlers", () => {
     await assert.rejects(mockDbInitial.processEvents([event]), {
       message: "This should not be called",
     });
+  });
+
+  it("createTestIndexer works", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+        },
+      },
+    });
+
+    assert.deepEqual(result, {
+      changes: [],
+    });
+  });
+
+  it("createTestIndexer throws when no chain is defined", () => {
+    const indexer = createTestIndexer();
+
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {},
+        }),
+      {
+        message: "createTestIndexer requires exactly one chain to be defined",
+      }
+    );
+  });
+
+  it("createTestIndexer throws when multiple chains are defined", () => {
+    const indexer = createTestIndexer();
+
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {
+            1: { startBlock: 1, endBlock: 100 },
+            137: { startBlock: 1, endBlock: 100 },
+          },
+        }),
+      {
+        message:
+          "createTestIndexer does not support processing multiple chains at once. Found 2 chains defined",
+      }
+    );
+  });
+
+  it("createTestIndexer throws when process is called while already running", async () => {
+    const indexer = createTestIndexer();
+
+    // Start first process (don't await)
+    const firstProcess = indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // Try to start second process immediately - throws synchronously
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {
+            1: { startBlock: 1, endBlock: 100 },
+          },
+        }),
+      {
+        message:
+          "createTestIndexer process is already running. Only one process call is allowed at a time",
+      }
+    );
+
+    // Clean up first process
+    await firstProcess;
+  });
+
+  it("createTestIndexer throws when startBlock is less than config.startBlock", () => {
+    const indexer = createTestIndexer();
+
+    // Chain 1 has start_block: 1 in config.yaml
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {
+            1: { startBlock: 0, endBlock: 100 },
+          },
+        }),
+      {
+        message:
+          "Invalid block range for chain 1: startBlock (0) is less than config.startBlock (1). Either use startBlock >= 1 or create a new test indexer with createTestIndexer().",
+      }
+    );
+  });
+
+  it("createTestIndexer throws when startBlock overlaps with previously processed blocks", async () => {
+    const indexer = createTestIndexer();
+
+    // First process: blocks 1-100
+    await indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // Second process with startBlock <= 100 should throw
+    assert.throws(
+      () =>
+        indexer.process({
+          chains: {
+            1: { startBlock: 50, endBlock: 150 },
+          },
+        }),
+      {
+        message:
+          "Invalid block range for chain 1: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer().",
+      }
+    );
   });
 });

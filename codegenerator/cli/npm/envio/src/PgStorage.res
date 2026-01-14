@@ -14,7 +14,9 @@ let makeClient = () => {
       ssl: Env.Db.ssl,
       // TODO: think how we want to pipe these logs to pino.
       onnotice: ?(
-        Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())
+        Env.userLogLevel == Some(#warn) || Env.userLogLevel == Some(#error)
+          ? None
+          : Some(_str => ())
       ),
       transform: {undefined: Null},
       max: 2,
@@ -1245,6 +1247,7 @@ let make = (
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
         dynamicContracts: [],
+        sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     }
@@ -1447,6 +1450,7 @@ let make = (
           numEventsProcessed: rawInitialState.numEventsProcessed,
           progressBlockNumber: rawInitialState.progressBlockNumber,
           dynamicContracts: rawInitialState.dynamicContracts,
+          sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
       sql
@@ -1475,37 +1479,6 @@ let make = (
   }
 
   let executeUnsafe = query => sql->Postgres.unsafe(query)
-
-  let hasEntityHistoryRows = async () => {
-    // Query for all entity history tables (they have the prefix "envio_history_")
-    let historyTables = await sql->Postgres.unsafe(
-      `SELECT table_name FROM information_schema.tables 
-       WHERE table_schema = '${pgSchema}' 
-       AND table_name LIKE 'envio_history_%';`,
-    )
-
-    if historyTables->Utils.Array.isEmpty {
-      false
-    } else {
-      // Check if any of these tables have rows
-      let checks =
-        await historyTables
-        ->Belt.Array.map(async (table: {"table_name": string}) => {
-          try {
-            let query = `SELECT EXISTS(SELECT 1 FROM "${pgSchema}"."${table["table_name"]}" LIMIT 1);`
-            let result: array<{"exists": bool}> = (await sql->Postgres.unsafe(query))->Utils.magic
-            switch result {
-            | [row] => row["exists"]
-            | _ => false
-            }
-          } catch {
-          | _ => false
-          }
-        })
-        ->Promise.all
-      checks->Belt.Array.some(v => v)
-    }
-  }
 
   let setChainMeta = chainsData =>
     InternalTable.Chains.setMeta(sql, ~pgSchema, ~chainsData)->Promise.thenResolve(_ =>
@@ -1613,7 +1586,6 @@ let make = (
     setEffectCacheOrThrow,
     dumpEffectCache,
     executeUnsafe,
-    hasEntityHistoryRows,
     setChainMeta,
     pruneStaleCheckpoints,
     pruneStaleEntityHistory,

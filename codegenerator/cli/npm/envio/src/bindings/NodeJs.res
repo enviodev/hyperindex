@@ -36,7 +36,7 @@ module Util = {
 }
 
 module Process = {
-  type t = {env: Js.Dict.t<string>}
+  type t = {env: Js.Dict.t<string>, execArgv: array<string>}
   @module external process: t = "process"
 }
 
@@ -59,11 +59,14 @@ module ChildProcess = {
 module Url = {
   type t
   @module("url") external fileURLToPath: t => string = "fileURLToPath"
+  @module("url") external fileURLToPathFromString: string => string = "fileURLToPath"
 }
 
 module ImportMeta = {
   type t = {url: Url.t}
   @val external importMeta: t = "import.meta"
+  // Resolve module specifier to file:// URL
+  @val external resolve: string => string = "import.meta.resolve"
 }
 
 module Path = {
@@ -77,8 +80,35 @@ module Path = {
 
   external toString: t => string = "%identity"
 
-  // ESM-compatible __dirname replacement
-  let __dirname = dirname(Url.fileURLToPath(ImportMeta.importMeta.url))
+  // ESM-compatible __dirname replacement - accepts importMeta from calling file
+  let getDirname = (importMeta: ImportMeta.t) => dirname(Url.fileURLToPath(importMeta.url))
+}
+
+module WorkerThreads = {
+  // Check if we're in the main thread or a worker
+  @module("worker_threads") external isMainThread: bool = "isMainThread"
+
+  // Worker data passed from main thread
+  @module("worker_threads") external workerData: Js.Nullable.t<'a> = "workerData"
+
+  // MessagePort for communication with parent
+  type messagePort
+  @module("worker_threads") external parentPort: Js.Nullable.t<messagePort> = "parentPort"
+  @send external postMessage: (messagePort, 'a) => unit = "postMessage"
+  @send external onPortMessage: (messagePort, @as("message") _, 'a => unit) => unit = "on"
+
+  // Worker class for spawning workers
+  type worker
+  type workerOptions = {workerData?: Js.Json.t, execArgv?: array<string>}
+
+  @new @module("worker_threads")
+  external makeWorker: (string, workerOptions) => worker = "Worker"
+
+  @send external onMessage: (worker, @as("message") _, 'a => unit) => unit = "on"
+  @send external onError: (worker, @as("error") _, exn => unit) => unit = "on"
+  @send external onExit: (worker, @as("exit") _, int => unit) => unit = "on"
+  @send external terminate: worker => promise<int> = "terminate"
+  @send external workerPostMessage: (worker, 'a) => unit = "postMessage"
 }
 
 module Fs = {

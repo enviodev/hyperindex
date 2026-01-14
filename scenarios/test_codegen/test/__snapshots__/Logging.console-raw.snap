@@ -1,0 +1,185 @@
+[HH:MM:SS.mmm] [32mINFO[39m: [36m##Current log level: info[39m
+
+[HH:MM:SS.mmm] [32mINFO[39m: [36mThis is an info message.[39m
+
+[HH:MM:SS.mmm] [33mWARN[39m: [36mThis is a warning message.[39m
+
+[HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [41mFATAL[49m:
+    [35m0[39m: "This is a fatal message."
+    [35m1[39m: "another"
+
+[HH:MM:SS.mmm] [32mINFO[39m: [36m##Current log level: debug[39m
+
+[HH:MM:SS.mmm] [32mINFO[39m: [36mThis is an info message.[39m
+
+[HH:MM:SS.mmm] [33mWARN[39m: [36mThis is a warning message.[39m
+
+[HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [41mFATAL[49m: [36mThis is a fatal message.[39m
+
+[HH:MM:SS.mmm] [32mINFO[39m: [36m##Current log level: info[39m
+
+[HH:MM:SS.mmm] [32mINFO[39m: [36mThis is an info message.[39m
+
+[HH:MM:SS.mmm] [33mWARN[39m: [36mThis is a warning message.[39m
+
+[HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [41mFATAL[49m: [36mThis is a fatal message.[39m
+
+[HH:MM:SS.mmm] [44mUDEBUG[49m: [36mThis is a user debug message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs debug"
+
+[HH:MM:SS.mmm] [42mUINFO[49m: [36mThis is a user info message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs debug"
+
+[HH:MM:SS.mmm] [43mUWARN[49m: [36mThis is a user warn message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs debug"
+
+[HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs debug"
+
+[HH:MM:SS.mmm] [42mUINFO[49m: [36mThis is a user info message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs info"
+
+[HH:MM:SS.mmm] [43mUWARN[49m: [36mThis is a user warn message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs info"
+    [35mtype[39m: "warn"
+    [35mdata[39m: {
+      "blockHash": "0x123"
+    }
+
+[HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs info"
+
+[HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error with exception.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [43mUWARN[49m: [36mThis is a user warn message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs warn"
+
+[HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs warn"
+
+[HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
+    [35mcontractName[39m: "Gravatar"
+    [35meventName[39m: "NewGravatar"
+    [35mchainId[39m: 1337
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs error"
+
+[HH:MM:SS.mmm] [33mWARN[39m: [36mThis is a warning message.[39m
+
+[HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [41mFATAL[49m: [36mThis is a fatal message.[39m
+
+[HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong/1",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [41mFATAL[49m: [36mThis is a fatal message.[39m
+
+[HH:MM:SS.mmm] [41mFATAL[49m:
+    [35mthis[39m: "is"
+    [35ma[39m: "fatal"
+    [35mmessage[39m: "object"
+    [35mwith[39m: {
+      "nested": "objects",
+      "and": {
+        "arrays": [
+          "of",
+          "things"
+        ]
+      },
+      "additionally": {
+        "numbers": 0.5654
+      }
+    }
+

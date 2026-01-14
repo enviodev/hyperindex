@@ -25,7 +25,7 @@ Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let () = await context.effect(noopEffect, ())
 
   let gravatarSize: Enums.GravatarSize.t = SMALL
-  let gravatarObject: Types.gravatar = {
+  let gravatarObject: Entities.Gravatar.t = {
     id: event.params.id->BigInt.toString,
     owner_id: event.params.owner->Address.toString,
     displayName: event.params.displayName,

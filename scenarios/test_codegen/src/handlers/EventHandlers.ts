@@ -138,7 +138,6 @@ expectType<
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 Gravatar.CustomSelection.handler(async ({ event, context }) => {
-  console.log("AAAA", event.transaction.hash);
   if (0) {
     const _ = await context.effect(noopEffect, undefined);
     context.log.error("There's an error");
