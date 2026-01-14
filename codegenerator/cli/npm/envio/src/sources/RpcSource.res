@@ -512,8 +512,8 @@ let make = (
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
-          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. Retrying with exponential backoff (base delay: ${(am._baseRetryDelayMillis / 1000)
-              ->Belt.Int.toString}s). It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
           "metadata": {
@@ -540,8 +540,8 @@ let make = (
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
-          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. Retrying with exponential backoff (base delay: ${(am._baseRetryDelayMillis / 1000)
-              ->Belt.Int.toString}s). It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
           "metadata": {
