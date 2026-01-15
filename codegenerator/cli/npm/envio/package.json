@@ -50,7 +50,6 @@
   },
   "files": [
     "local-bin.mjs",
-    "tsx-register.mjs",
     "evm.schema.json",
     "fuel.schema.json",
     "rescript.json",
