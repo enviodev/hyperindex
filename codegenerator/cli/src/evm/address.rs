@@ -1,19 +1,19 @@
+use alloy_primitives::Address as AlloyAddress;
 use anyhow::{Context, Error, Result};
-use ethers::{types::H160, utils::to_checksum};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Address(H160);
+pub struct Address(AlloyAddress);
 
 impl<'de> Deserialize<'de> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Address, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        // Deserialize the inner H160 type and wrap it in the Address struct
-        let h160 = H160::deserialize(deserializer)?;
-        Ok(Address(h160))
+        // Deserialize the inner AlloyAddress type and wrap it in the Address struct
+        let address = AlloyAddress::deserialize(deserializer)?;
+        Ok(Address(address))
     }
 }
 
@@ -33,10 +33,10 @@ impl Address {
     }
 
     pub fn to_checksum_hex_string(&self) -> String {
-        to_checksum(&self.0, None)
+        self.0.to_checksum(None)
     }
 
-    pub fn as_h160(&self) -> &H160 {
+    pub fn as_alloy_address(&self) -> &AlloyAddress {
         &self.0
     }
 }
@@ -52,8 +52,8 @@ impl FromStr for Address {
     }
 }
 
-impl From<H160> for Address {
-    fn from(address: H160) -> Self {
+impl From<AlloyAddress> for Address {
+    fn from(address: AlloyAddress) -> Self {
         Self(address)
     }
 }

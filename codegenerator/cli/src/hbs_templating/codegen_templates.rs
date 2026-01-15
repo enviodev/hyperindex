@@ -32,8 +32,9 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use convert_case::{Case, Casing};
-use ethers::abi::EventParam;
 use pathdiff::diff_paths;
+
+use crate::config_parsing::abi_compat::EventParam;
 use serde::Serialize;
 
 // ============== Internal Config JSON Types ==============
