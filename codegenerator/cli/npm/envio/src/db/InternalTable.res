@@ -314,7 +314,11 @@ WHERE "id" = $1;`
       promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise.all(promises)
+    // Use allSettledThenThrow to ensure all queries complete (releasing their
+    // connections back to the pool) before returning or throwing an error.
+    // Using Promise.all would fail fast and leave other queries running,
+    // potentially exhausting the connection pool.
+    Promise.allSettledThenThrow(promises)
   }
 
   type progressedChain = {
@@ -349,7 +353,9 @@ WHERE "id" = $1;`
       promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise.all(promises)->Promise.ignoreValue
+    // Use allSettledThenThrow to ensure all queries complete (releasing their
+    // connections back to the pool) before returning or throwing an error.
+    Promise.allSettledThenThrow(promises)->Promise.ignoreValue
   }
 }
 
