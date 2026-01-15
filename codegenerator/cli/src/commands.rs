@@ -1,6 +1,13 @@
 use anyhow::Context;
 use std::path::Path;
 
+/// Convert a path to a JS-compatible string with forward slashes.
+/// PathBuf::display() emits platform-specific separators (backslashes on Windows)
+/// which break JS imports. This helper ensures forward slashes for JS paths.
+fn to_js_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 async fn execute_command(
     cmd: &str,
     args: Vec<&str>,
@@ -178,7 +185,7 @@ pub mod start {
         )
         .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
 
-        let index_path = format!("./{}/src/Index.res.mjs", relative_generated.display());
+        let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
 
         let cmd = "node";
         let args = vec!["--no-warnings", &index_path];
@@ -361,7 +368,7 @@ pub mod db_migrate {
 
         let migration_script = format!(
             "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))",
-            relative_generated.display()
+            to_js_path(&relative_generated)
         );
         let args = vec!["-e", &migration_script];
         let current_dir = &config.parsed_project_paths.project_root;
@@ -387,7 +394,7 @@ pub mod db_migrate {
 
         let migration_script = format!(
             "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))",
-            relative_generated.display()
+            to_js_path(&relative_generated)
         );
         let args = vec!["-e", &migration_script];
         let current_dir = &config.parsed_project_paths.project_root;
@@ -406,7 +413,7 @@ pub mod db_migrate {
 
         let migration_script = format!(
             "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))",
-            relative_generated.display()
+            to_js_path(&relative_generated)
         );
         let args = vec!["-e", &migration_script];
         let current_dir = &config.parsed_project_paths.project_root;
@@ -439,7 +446,7 @@ pub mod benchmark {
 
         let benchmark_script = format!(
             "import(\"./{}/src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())",
-            relative_generated.display()
+            to_js_path(&relative_generated)
         );
         let args = vec!["-e", &benchmark_script];
         let current_dir = &config.parsed_project_paths.project_root;
