@@ -1,7 +1,15 @@
 @module("node:fs/promises")
 external globIterator: string => Utils.asyncIterator<string> = "glob"
 
-let registerTsx = () => NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
+// Register tsx for TypeScript handler support
+// Wrapped in try-catch because if tsx is already loaded via --import (e.g., in tests),
+// calling module.register again will throw an error
+let registerTsx = () =>
+  try {
+    NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
+  } catch {
+  | _ => () // tsx already loaded, ignore
+  }
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
