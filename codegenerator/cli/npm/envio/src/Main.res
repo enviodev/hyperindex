@@ -243,7 +243,6 @@ type process
 type mainArgs = Yargs.parsedArgs<args>
 
 let start = async (
-  ~registerAllHandlers: unit => promise<EventRegister.registrations>,
   ~makeGeneratedConfig: unit => Config.t,
   ~persistence: Persistence.t,
   ~isTest=false,
@@ -255,7 +254,9 @@ let start = async (
   // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
   let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
-  let registrations = await registerAllHandlers()
+  // Register all handlers first, then get the config with registrations
+  let configWithoutRegistrations = makeGeneratedConfig()
+  let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
   let config = makeGeneratedConfig()
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}

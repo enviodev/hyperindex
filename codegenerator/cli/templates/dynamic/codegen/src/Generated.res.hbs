@@ -1,58 +1,5 @@
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
 
-let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
-  switch handler {
-  | None => ()
-  | Some(handlerPath) =>
-    try {
-      let _ = await Utils.importPath(NodeJs.ImportMeta.resolve(handlerPath))
-    } catch {
-    | exn =>
-      Logging.errorWithExn(exn, `Failed to load handler file for contract ${contractName}: ${handlerPath}`)
-      Js.Exn.raiseError(
-        `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
-      )
-    }
-  }
-}
-
-@module("node:fs/promises") external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
-
-let autoLoadFromSrcHandlers = async (~handlers: string) => {
-  // Relative to cwd (project root)
-  let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
-  let handlerFiles = try {
-    let iterator = await globIterator(srcPattern)
-    let files = await iterator->Utils.Array.fromAsyncIterator
-    // Filter out test and spec files
-    files->Js.Array2.filter(file => {
-      !(file->Js.String2.includes(".test.") || file->Js.String2.includes(".spec.") || file->Js.String2.includes("_test."))
-    })
-  } catch {
-  | exn =>
-    Js.Exn.raiseError(
-      `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js >=22 version. Error: ${exn
-          ->Utils.prettifyExn
-          ->Obj.magic}`,
-    )
-  }
-
-  // Since srcPattern is relative to project root,
-  // and we import relative to the module (Generated.res)
-  // We need to prepend additional "../" and {{relative_path_to_root_from_generated}} to the file path
-  let _ = await handlerFiles
-    ->Js.Array2.map(file => {
-      Utils.importPath(NodeJs.ImportMeta.resolve("../{{relative_path_to_root_from_generated}}/" ++ file))
-      ->Promise.catch(exn => {
-        Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
-        Js.Exn.raiseError(
-          `Failed to auto-load handler file: ${file}`,
-        )
-      })
-    })
-    ->Promise.all
-}
-
 let makeGeneratedConfig = () => {
   let codegenChains = [
     {{#each chain_configs as | chain_config |}}
@@ -92,29 +39,8 @@ let makeGeneratedConfig = () => {
   )
 }
 
+// Config without handler registration - used by tests, migrations, etc.
 let configWithoutRegistrations = makeGeneratedConfig()
-
-let registerAllHandlers = async () => {
-  EventRegister.startRegistration(
-    ~ecosystem=configWithoutRegistrations.ecosystem,
-    ~multichain=configWithoutRegistrations.multichain,
-  )
-
-  // Auto-load all .js files from src/handlers directory
-  await autoLoadFromSrcHandlers(~handlers=configWithoutRegistrations.handlers)
-
-  // Load contract-specific handlers (existing behavior)
-  let _ = await [
-    {{#each codegen_contracts as |contract|}}
-    registerContractHandlers(
-      ~contractName="{{contract.name.capitalized}}",
-      ~handler={{#if contract.handler}}Some(`../${Path.relativePathToRootFromGenerated}/{{contract.handler}}`){{else}}None{{/if}},
-    ),
-    {{/each}}
-  ]->Promise.all
-
-  EventRegister.finishRegistration()
-}
 
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema

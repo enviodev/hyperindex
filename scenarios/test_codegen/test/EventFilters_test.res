@@ -1,6 +1,6 @@
 open RescriptMocha
 
-let _ = await Generated.registerAllHandlers()
+let _ = await HandlerLoader.registerAllHandlers(~config=Generated.configWithoutRegistrations)
 
 // Test types:
 let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Types.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
