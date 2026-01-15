@@ -776,11 +776,6 @@ let make = (
       await logs
       ->Belt.Array.keepMap(log => {
         let topic0 = log.topics->Js.Array2.unsafe_get(0)
-        let routedAddress = if lowercaseAddresses {
-          log.address->Address.Evm.fromAddressLowercaseOrThrow
-        } else {
-          log.address
-        }
 
         switch eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
@@ -788,7 +783,7 @@ let make = (
             ~topicCount=log.topics->Array.length,
           ),
           ~indexingContracts,
-          ~contractAddress=routedAddress,
+          ~contractAddress=log.address,
           ~blockNumber=log.blockNumber,
         ) {
         | None => None //ignore events that aren't registered
@@ -851,7 +846,7 @@ let make = (
                     block: block->(
                       Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
                     ),
-                    srcAddress: routedAddress,
+                    srcAddress: log.address,
                     logIndex: log.logIndex,
                   }->Internal.fromGenericEvent,
                 })
