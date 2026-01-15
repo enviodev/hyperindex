@@ -1,5 +1,5 @@
 @module("node:fs/promises")
-external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
+external globIterator: string => Utils.asyncIterator<string> = "glob"
 
 // tsx registration for TypeScript handler support
 @module("node:module")
@@ -30,7 +30,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   // Relative to cwd (project root)
   let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
   let handlerFiles = try {
-    let iterator = await globIterator(srcPattern)
+    let iterator = globIterator(srcPattern)
     let files = await iterator->Utils.Array.fromAsyncIterator
     // Filter out test and spec files
     files->Js.Array2.filter(file => {
