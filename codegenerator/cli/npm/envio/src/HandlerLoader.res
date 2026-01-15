@@ -1,13 +1,7 @@
 @module("node:fs/promises")
 external globIterator: string => Utils.asyncIterator<string> = "glob"
 
-// tsx registration for TypeScript handler support
-@module("node:module")
-external register: (string, string) => unit = "register"
-
-let importMetaUrl: string = %raw(`import.meta.url`)
-
-let registerTsx = () => register("tsx/esm", importMetaUrl)
+let registerTsx = () => NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {

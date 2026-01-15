@@ -65,8 +65,15 @@ module Url = {
 module ImportMeta = {
   type t = {url: Url.t}
   @val external importMeta: t = "import.meta"
+  // Get import.meta.url as string for module registration
+  @val external url: string = "import.meta.url"
   // Resolve module specifier to file:// URL
   @val external resolve: string => string = "import.meta.resolve"
+}
+
+module Module = {
+  // Register ESM loader hooks (e.g., for TypeScript support via tsx)
+  @module("node:module") external register: (string, string) => unit = "register"
 }
 
 module Path = {
