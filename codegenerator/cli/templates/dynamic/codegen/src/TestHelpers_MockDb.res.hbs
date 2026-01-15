@@ -42,8 +42,6 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     }
   `)
 
-let config = Generated.makeGeneratedConfig()
-
 /**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
 to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
