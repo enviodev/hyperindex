@@ -1,5 +1,9 @@
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
 
+// Handler loading params - extracted from config without building full config
+// These are used to load handlers BEFORE creating the full config
+let handlerLoadingParams = Config.getHandlerLoadingParams(%raw(`internalConfigJson`))
+
 let makeGeneratedConfig = () => {
   let codegenChains = [
     {{#each chain_configs as | chain_config |}}
@@ -42,8 +46,18 @@ let makeGeneratedConfig = () => {
 // Config without handler registration - used by tests, migrations, etc.
 let configWithoutRegistrations = makeGeneratedConfig()
 
-// Register all handlers - used by tests that need handlers registered
-let registerAllHandlers = () => HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
+// Register all handlers and return the config with registrations
+// Must be called BEFORE using the config for indexing
+let registerAllHandlers = async () => {
+  await HandlerLoader.registerAllHandlers(
+    ~ecosystem=handlerLoadingParams.ecosystem,
+    ~multichain=handlerLoadingParams.multichain,
+    ~handlers=handlerLoadingParams.handlers,
+    ~contractHandlers=handlerLoadingParams.contractHandlers,
+  )
+  // Return fresh config after handlers are registered
+  makeGeneratedConfig()
+}
 
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema

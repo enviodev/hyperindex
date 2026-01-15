@@ -316,11 +316,12 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   } else {
     let itemsWithContractRegister = []
 
-    let config = Generated.makeGeneratedConfig()
-    let registrations = if EventRegister.isPendingRegistration() {
-      EventRegister.finishRegistration()
+    let (config, registrations) = if EventRegister.isPendingRegistration() {
+      let registrations = EventRegister.finishRegistration()
+      (Generated.makeGeneratedConfig(), registrations)
     } else {
-      await HandlerLoader.registerAllHandlers(~config)
+      let config = await Generated.registerAllHandlers()
+      (config, EventRegister.getRegistrations())
     }
     let ctx: Ctx.t = {
       registrations,

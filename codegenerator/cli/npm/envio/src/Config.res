@@ -334,6 +334,65 @@ let fromPublic = (
   }
 }
 
+// Handler loading params - extracted from publicConfig without building full config
+// Used to load handlers BEFORE creating the full config (so event registrations are captured)
+type handlerLoadingParams = {
+  ecosystem: Ecosystem.t,
+  multichain: multichain,
+  handlers: string,
+  contractHandlers: array<contractHandler>,
+}
+
+let getHandlerLoadingParams = (publicConfigJson: Js.Json.t) => {
+  let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
+  | S.Raised(exn) =>
+    Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->Utils.magic}`)
+  }
+
+  // Determine ecosystem
+  let (ecosystemName, publicContractsConfig) = switch (
+    publicConfig["evm"],
+    publicConfig["fuel"],
+    publicConfig["svm"],
+  ) {
+  | (Some(ecosystemConfig), None, None) => (Ecosystem.Evm, ecosystemConfig["contracts"])
+  | (None, Some(ecosystemConfig), None) => (Ecosystem.Fuel, ecosystemConfig["contracts"])
+  | (None, None, Some(ecosystemConfig)) => (Ecosystem.Svm, ecosystemConfig["contracts"])
+  | (None, None, None) =>
+    Js.Exn.raiseError("Invalid indexer config: No ecosystem configured (evm, fuel, or svm)")
+  | _ =>
+    Js.Exn.raiseError(
+      "Invalid indexer config: Multiple ecosystems are not supported for a single indexer",
+    )
+  }
+
+  let ecosystem = switch ecosystemName {
+  | Ecosystem.Evm => Evm.ecosystem
+  | Ecosystem.Fuel => Fuel.ecosystem
+  | Ecosystem.Svm => Svm.ecosystem
+  }
+
+  let contractHandlers = switch publicContractsConfig {
+  | Some(contractsDict) =>
+    contractsDict
+    ->Js.Dict.entries
+    ->Js.Array2.map(((contractName, contractConfig)) => {
+      {
+        name: contractName,
+        handler: contractConfig["handler"],
+      }
+    })
+  | None => []
+  }
+
+  {
+    ecosystem,
+    multichain: publicConfig["multichain"]->Option.getWithDefault(Unordered),
+    handlers: publicConfig["handlers"]->Option.getWithDefault("src/handlers"),
+    contractHandlers,
+  }
+}
+
 let shouldSaveHistory = (config, ~isInReorgThreshold) =>
   config.shouldSaveFullHistory || (config.shouldRollbackOnReorg && isInReorgThreshold)
 

@@ -67,20 +67,24 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
     ->Promise.all
 }
 
-let registerAllHandlers = async (~config: Config.t) => {
+// Register all handlers - must be called BEFORE creating the config
+// so that event registrations are captured in the config
+let registerAllHandlers = async (
+  ~ecosystem: Ecosystem.t,
+  ~multichain: Config.multichain,
+  ~handlers: string,
+  ~contractHandlers: array<Config.contractHandler>,
+) => {
   // Register tsx for TypeScript handler support before loading any handlers
   registerTsx()
 
-  EventRegister.startRegistration(
-    ~ecosystem=config.ecosystem,
-    ~multichain=config.multichain,
-  )
+  EventRegister.startRegistration(~ecosystem, ~multichain)
 
   // Auto-load all .js files from src/handlers directory
-  await autoLoadFromSrcHandlers(~handlers=config.handlers)
+  await autoLoadFromSrcHandlers(~handlers)
 
   // Load contract-specific handlers
-  let _ = await config.contractHandlers
+  let _ = await contractHandlers
     ->Js.Array2.map(({name, handler}) => {
       registerContractHandlers(~contractName=name, ~handler)
     })

@@ -2,7 +2,7 @@
 // This file runs in a worker thread when createTestIndexer().process() is called
 
 TestIndexer.initTestWorker(
-  ~makeGeneratedConfig=Generated.makeGeneratedConfig,
+  ~registerAllHandlers=Generated.registerAllHandlers,
   ~makePersistence=(~storage) =>
     Persistence.make(
       ~userEntities=Entities.userEntities,

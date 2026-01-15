@@ -442,7 +442,7 @@ type workerData = {
 }
 
 let initTestWorker = (
-  ~makeGeneratedConfig: unit => Config.t,
+  ~registerAllHandlers: unit => promise<Config.t>,
   ~makePersistence: (~storage: Persistence.storage) => Persistence.t,
 ) => {
   if NodeJs.WorkerThreads.isMainThread {
@@ -468,7 +468,7 @@ let initTestWorker = (
     | Some(_) => ()
     }
 
-    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true)->ignore
+    Main.start(~registerAllHandlers, ~persistence, ~isTest=true)->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

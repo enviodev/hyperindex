@@ -6,6 +6,7 @@ type registrations = {
 let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Config.multichain) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: unit => registrations
+let getRegistrations: unit => registrations
 
 type t
 let make: (~contractName: string, ~eventName: string) => t
