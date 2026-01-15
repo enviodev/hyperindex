@@ -66,16 +66,6 @@ let finishRegistration = () => {
   }
 }
 
-let getRegistrations = () => {
-  switch activeRegistration.contents {
-  | Some(r) if r.finished => r.registrations
-  | Some(_) =>
-    Js.Exn.raiseError("The indexer has not finished registering handlers yet.")
-  | None =>
-    Js.Exn.raiseError("The indexer has not started registering handlers.")
-  }
-}
-
 let isPendingRegistration = () => {
   switch activeRegistration.contents {
   | Some(r) => !r.finished

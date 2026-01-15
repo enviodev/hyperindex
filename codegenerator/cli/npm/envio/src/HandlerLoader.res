@@ -4,12 +4,11 @@ external globIterator: string => Utils.asyncIterator<string> = "glob"
 // Register tsx for TypeScript handler support
 // Wrapped in try-catch because if tsx is already loaded via --import (e.g., in tests),
 // calling module.register again will throw an error
-let registerTsx = () =>
-  try {
-    NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
-  } catch {
-  | _ => () // tsx already loaded, ignore
-  }
+try {
+  NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
+} catch {
+| _ => () // tsx already loaded, ignore
+}
 
 // Convert a relative path to a file:// URL for dynamic import
 // Paths are resolved relative to process.cwd() (project root)
@@ -26,10 +25,11 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
       let _ = await Utils.importPath(toImportUrl(handlerPath))
     } catch {
     | exn =>
-      Logging.errorWithExn(exn, `Failed to load handler file for contract ${contractName}: ${handlerPath}`)
-      Js.Exn.raiseError(
+      Logging.errorWithExn(
+        exn,
         `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
       )
+      Js.Exn.raiseError(`Failed to load handler file for contract ${contractName}: ${handlerPath}`)
     }
   }
 }
@@ -42,26 +42,28 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
     let files = await iterator->Utils.Array.fromAsyncIterator
     // Filter out test and spec files
     files->Js.Array2.filter(file => {
-      !(file->Js.String2.includes(".test.") || file->Js.String2.includes(".spec.") || file->Js.String2.includes("_test."))
+      !(
+        file->Js.String2.includes(".test.") ||
+        file->Js.String2.includes(".spec.") ||
+        file->Js.String2.includes("_test.")
+      )
     })
   } catch {
   | exn =>
     Js.Exn.raiseError(
       `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js >=22 version. Error: ${exn
-          ->Utils.prettifyExn
-          ->Obj.magic}`,
+        ->Utils.prettifyExn
+        ->Obj.magic}`,
     )
   }
 
   // Import handler files using absolute file:// URLs resolved from cwd
-  let _ = await handlerFiles
+  let _ =
+    await handlerFiles
     ->Js.Array2.map(file => {
-      Utils.importPath(toImportUrl(file))
-      ->Promise.catch(exn => {
+      Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
         Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
-        Js.Exn.raiseError(
-          `Failed to auto-load handler file: ${file}`,
-        )
+        Js.Exn.raiseError(`Failed to auto-load handler file: ${file}`)
       })
     })
     ->Promise.all
@@ -70,16 +72,14 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // Register all handlers - must be called BEFORE creating the final config
 // so that event registrations are captured in the config
 let registerAllHandlers = async (~config: Config.t) => {
-  // Register tsx for TypeScript handler support before loading any handlers
-  registerTsx()
-
   EventRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
 
   // Auto-load all .js files from src/handlers directory
   await autoLoadFromSrcHandlers(~handlers=config.handlers)
 
   // Load contract-specific handlers
-  let _ = await config.contractHandlers
+  let _ =
+    await config.contractHandlers
     ->Js.Array2.map(({name, handler}) => {
       registerContractHandlers(~contractName=name, ~handler)
     })

@@ -42,6 +42,8 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     }
   `)
 
+let config = Generated.configWithoutRegistrations
+
 /**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
 to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
@@ -316,13 +318,13 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   } else {
     let itemsWithContractRegister = []
 
-    let (config, registrations) = if EventRegister.isPendingRegistration() {
-      let registrations = EventRegister.finishRegistration()
-      (Generated.makeGeneratedConfig(), registrations)
+    let registrations = if EventRegister.isPendingRegistration() {
+      EventRegister.finishRegistration()
     } else {
-      let config = await Generated.registerAllHandlers()
-      (config, EventRegister.getRegistrations())
+      await HandlerLoader.registerAllHandlers(~config)
     }
+
+    let config = Generated.makeGeneratedConfig()
     let ctx: Ctx.t = {
       registrations,
       config,
