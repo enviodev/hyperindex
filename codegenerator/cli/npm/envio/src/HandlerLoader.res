@@ -11,12 +11,19 @@ let registerTsx = () =>
   | _ => () // tsx already loaded, ignore
   }
 
+// Convert a relative path to a file:// URL for dynamic import
+// Paths are resolved relative to process.cwd() (project root)
+let toImportUrl = (relativePath: string) => {
+  let absolutePath = NodeJs.Path.resolve([NodeJs.Process.cwd(), relativePath])->NodeJs.Path.toString
+  NodeJs.Url.pathToFileURL(absolutePath)->NodeJs.Url.toString
+}
+
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
   | None => ()
   | Some(handlerPath) =>
     try {
-      let _ = await Utils.importPath(NodeJs.ImportMeta.resolve(handlerPath))
+      let _ = await Utils.importPath(toImportUrl(handlerPath))
     } catch {
     | exn =>
       Logging.errorWithExn(exn, `Failed to load handler file for contract ${contractName}: ${handlerPath}`)
@@ -46,11 +53,10 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
     )
   }
 
-  // Since srcPattern is relative to project root,
-  // we import using the file path directly (cwd is project root)
+  // Import handler files using absolute file:// URLs resolved from cwd
   let _ = await handlerFiles
     ->Js.Array2.map(file => {
-      Utils.importPath(NodeJs.ImportMeta.resolve("./" ++ file))
+      Utils.importPath(toImportUrl(file))
       ->Promise.catch(exn => {
         Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
         Js.Exn.raiseError(

@@ -38,6 +38,7 @@ module Util = {
 module Process = {
   type t = {env: Js.Dict.t<string>, execArgv: array<string>}
   @module external process: t = "process"
+  @module("process") external cwd: unit => string = "cwd"
 }
 
 module ChildProcess = {
@@ -60,6 +61,9 @@ module Url = {
   type t
   @module("url") external fileURLToPath: t => string = "fileURLToPath"
   @module("url") external fileURLToPathFromString: string => string = "fileURLToPath"
+  // Convert a file path to a file:// URL string (for dynamic imports)
+  @module("url") external pathToFileURL: string => t = "pathToFileURL"
+  @send external toString: t => string = "toString"
 }
 
 module ImportMeta = {
