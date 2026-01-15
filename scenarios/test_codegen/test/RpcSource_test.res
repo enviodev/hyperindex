@@ -33,7 +33,6 @@ describe("RpcSource - name", () => {
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       allEventSignatures: [],
-      shouldUseHypersyncClientDecoder: false,
       lowercaseAddresses: false,
     })
     Assert.equal(source.name, "RPC (eth.rpc.hypersync.xyz)")
@@ -50,7 +49,6 @@ describe("RpcSource - getHeightOrThrow", () => {
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       allEventSignatures: ["a", "b", "c"],
-      shouldUseHypersyncClientDecoder: true,
       lowercaseAddresses: false,
     })
     let height = await source.getHeightOrThrow()
