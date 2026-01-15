@@ -23,13 +23,14 @@ use crate::{
     evm::{abi::AbiOrNestedAbi, address::Address},
     init_config::evm::{ContractImportSelection, InitFlow},
 };
+use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{Context, Result};
 use inquire::{validator::Validation, CustomType, Select, Text};
 use serde::{Deserialize, Serialize};
 use std::{env, fmt, path::PathBuf};
 use strum::IntoEnumIterator;
 
-fn prompt_abi_events_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<ethers::abi::Event>> {
+fn prompt_abi_events_selection(events: Vec<AlloyEvent>) -> Result<Vec<AlloyEvent>> {
     prompt_events_selection(
         events
             .into_iter()
@@ -60,7 +61,7 @@ impl ContractImportArgs {
             .get_abi()
             .context("Failed getting parsed abi")?;
 
-        let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
+        let mut abi_events: Vec<AlloyEvent> = parsed_abi.events().cloned().collect();
         if !args_with_flags.all_events {
             abi_events = prompt_abi_events_selection(abi_events)?;
         }
@@ -121,7 +122,7 @@ impl ContractImportArgs {
             }
         };
 
-        let mut abi_events: Vec<ethers::abi::Event> = contract_data.abi.events().cloned().collect();
+        let mut abi_events: Vec<AlloyEvent> = contract_data.abi.events().cloned().collect();
         if !self.all_events {
             abi_events = prompt_abi_events_selection(abi_events)?;
         }
@@ -342,7 +343,7 @@ impl ExplorerImportArgs {
 }
 
 impl LocalImportArgs {
-    fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
+    fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<JsonAbi> {
         let abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",
             abi_path,
@@ -377,7 +378,7 @@ impl LocalImportArgs {
     }
 
     ///Get the file path for the abi and parse it into an abi
-    fn get_abi(&self) -> Result<ethers::abi::Abi> {
+    fn get_abi(&self) -> Result<JsonAbi> {
         let abi_path_string = self.get_abi_path_string()?;
 
         let mut parsed_abi = Self::parse_contract_abi(PathBuf::from(abi_path_string))

@@ -1,17 +1,18 @@
-use ethers::abi::{EventParam as EthAbiEventParam, ParamType as EthAbiParamType};
+use alloy_dyn_abi::DynSolType;
 
+use crate::config_parsing::abi_compat::EventParam;
 use crate::type_schema::TypeIdent;
 
 pub struct EthereumEventParam<'a> {
     pub name: &'a str,
-    abi_type: &'a EthAbiParamType,
+    abi_type: &'a DynSolType,
 }
 
-impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
-    fn from(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
+impl<'a> From<&'a EventParam> for EthereumEventParam<'a> {
+    fn from(abi_param: &'a EventParam) -> EthereumEventParam<'a> {
         EthereumEventParam {
-            name: &abi_type.name,
-            abi_type: &abi_type.kind,
+            name: &abi_param.name,
+            abi_type: &abi_param.kind,
         }
     }
 }
@@ -23,13 +24,13 @@ impl EthereumEventParam<'_> {
     /// Tuple depth is only calculated on the first element of the tuple
     /// as this corrisponds with the check on SingleOrMultiple in the rescript code
     pub fn get_nested_type_depth(&self) -> usize {
-        fn rec(param: &EthAbiParamType, accum: usize) -> usize {
+        fn rec(param: &DynSolType, accum: usize) -> usize {
             match param {
-                EthAbiParamType::Tuple(params) => match params.first() {
+                DynSolType::Tuple(params) => match params.first() {
                     Some(p) => rec(p, accum + 1),
                     None => accum,
                 },
-                EthAbiParamType::Array(p) | EthAbiParamType::FixedArray(p, _) => rec(p, accum + 1),
+                DynSolType::Array(p) | DynSolType::FixedArray(p, _) => rec(p, accum + 1),
                 _ => accum,
             }
         }
@@ -39,7 +40,7 @@ impl EthereumEventParam<'_> {
     pub fn get_topic_encoder(&self) -> String {
         struct IsValueEncoder(bool);
         struct IsNestedType(bool);
-        fn rec(param: &EthAbiParamType, is_nested_type: IsNestedType) -> (String, IsValueEncoder) {
+        fn rec(param: &DynSolType, is_nested_type: IsNestedType) -> (String, IsValueEncoder) {
             fn value_encoder(encoder: &str) -> (String, IsValueEncoder) {
                 (encoder.to_string(), IsValueEncoder(true))
             }
@@ -47,7 +48,7 @@ impl EthereumEventParam<'_> {
                 (encoder.to_string(), IsValueEncoder(false))
             }
             match &param {
-                EthAbiParamType::String | EthAbiParamType::Bytes if !is_nested_type.0 => {
+                DynSolType::String | DynSolType::Bytes if !is_nested_type.0 => {
                     //In the case of a string or bytes param we simply create a keccak256 hash of the value
                     //unless it is a nested type inside a tuple or array
                     non_value_encoder("TopicFilter.castToHexUnsafe")
@@ -56,18 +57,18 @@ impl EthereumEventParam<'_> {
                 // they should already be passed to event filters as a hex
                 // NOTE: This is tested only for the bytes32 type
                 // Might need to keccak256 for bigger size or pad for smaller size
-                EthAbiParamType::FixedBytes(_) if !is_nested_type.0 => {
+                DynSolType::FixedBytes(_) if !is_nested_type.0 => {
                     value_encoder("TopicFilter.castToHexUnsafe")
                 }
-                EthAbiParamType::Address => value_encoder("TopicFilter.fromAddress"),
-                EthAbiParamType::Uint(_size) => value_encoder("TopicFilter.fromBigInt"),
-                EthAbiParamType::Int(_size) => value_encoder("TopicFilter.fromSignedBigInt"),
-                EthAbiParamType::Bytes | EthAbiParamType::FixedBytes(_) => {
+                DynSolType::Address => value_encoder("TopicFilter.fromAddress"),
+                DynSolType::Uint(_) => value_encoder("TopicFilter.fromBigInt"),
+                DynSolType::Int(_) => value_encoder("TopicFilter.fromSignedBigInt"),
+                DynSolType::Bytes | DynSolType::FixedBytes(_) => {
                     value_encoder("TopicFilter.fromBytes")
                 }
-                EthAbiParamType::Bool => value_encoder("TopicFilter.fromBool"),
-                EthAbiParamType::String => value_encoder("TopicFilter.fromString"),
-                EthAbiParamType::Tuple(params) => {
+                DynSolType::Bool => value_encoder("TopicFilter.fromBool"),
+                DynSolType::String => value_encoder("TopicFilter.fromString"),
+                DynSolType::Tuple(params) => {
                     //TODO: test for nested tuples
                     let tuple_arg = "tuple";
                     let params_applied = params
@@ -87,7 +88,7 @@ impl EthereumEventParam<'_> {
                         format!("({tuple_arg}) => TopicFilter.concat([{params_applied}])").as_str(),
                     )
                 }
-                EthAbiParamType::Array(p) | EthAbiParamType::FixedArray(p, _) => {
+                DynSolType::Array(p) | DynSolType::FixedArray(p, _) => {
                     let (param_encoder, _) = rec(p, IsNestedType(true));
                     non_value_encoder(
                         format!(
@@ -95,6 +96,9 @@ impl EthereumEventParam<'_> {
                         )
                         .as_str(),
                     )
+                }
+                DynSolType::Function => {
+                    unreachable!("Function type should be filtered out before reaching here")
                 }
             }
         }
@@ -109,21 +113,24 @@ impl EthereumEventParam<'_> {
 
 pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
     match &param.abi_type {
-        EthAbiParamType::Uint(_size) => TypeIdent::BigInt,
-        EthAbiParamType::Int(_size) => TypeIdent::BigInt,
-        EthAbiParamType::Bool => TypeIdent::Bool,
-        EthAbiParamType::Address => TypeIdent::Address,
-        EthAbiParamType::Bytes => TypeIdent::String,
-        EthAbiParamType::String => TypeIdent::String,
-        EthAbiParamType::FixedBytes(_) => TypeIdent::String,
-        EthAbiParamType::Array(abi_type) => {
+        DynSolType::Uint(_) => TypeIdent::BigInt,
+        DynSolType::Int(_) => TypeIdent::BigInt,
+        DynSolType::Bool => TypeIdent::Bool,
+        DynSolType::Address => TypeIdent::Address,
+        DynSolType::Bytes => TypeIdent::String,
+        DynSolType::String => TypeIdent::String,
+        DynSolType::FixedBytes(_) => TypeIdent::String,
+        DynSolType::Function => {
+            unreachable!("Function type should be filtered out before reaching here")
+        }
+        DynSolType::Array(abi_type) => {
             let sub_param = EthereumEventParam {
                 abi_type,
                 name: param.name,
             };
             TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
-        EthAbiParamType::FixedArray(abi_type, _) => {
+        DynSolType::FixedArray(abi_type, _) => {
             let sub_param = EthereumEventParam {
                 abi_type,
                 name: param.name,
@@ -131,7 +138,7 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
 
             TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
-        EthAbiParamType::Tuple(abi_types) => {
+        DynSolType::Tuple(abi_types) => {
             let rescript_types: Vec<TypeIdent> = abi_types
                 .iter()
                 .map(|abi_type| {
@@ -153,16 +160,14 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
 
 #[cfg(test)]
 mod tests {
-    //TODO: Recreate these tests where the converters are used
-
-    use ethers::abi::{HumanReadableParser, ParamType};
-
     use super::{abi_to_rescript_type, EthereumEventParam};
+    use crate::config_parsing::abi_compat;
+    use alloy_dyn_abi::DynSolType;
 
     #[test]
     fn test_record_type_array() {
-        let array_string_type = ParamType::Array(Box::new(ParamType::String));
-        let param = super::EthereumEventParam {
+        let array_string_type = DynSolType::Array(Box::new(DynSolType::String));
+        let param = EthereumEventParam {
             abi_type: &array_string_type,
             name: "myArray",
         };
@@ -177,8 +182,8 @@ mod tests {
 
     #[test]
     fn test_record_type_fixed_array() {
-        let array_fixed_arr_type = ParamType::FixedArray(Box::new(ParamType::String), 1);
-        let param = super::EthereumEventParam {
+        let array_fixed_arr_type = DynSolType::FixedArray(Box::new(DynSolType::String), 1);
+        let param = EthereumEventParam {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
         };
@@ -192,8 +197,8 @@ mod tests {
 
     #[test]
     fn test_record_type_tuple() {
-        let tuple_type = ParamType::Tuple(vec![ParamType::String, ParamType::Uint(256)]);
-        let param = super::EthereumEventParam {
+        let tuple_type = DynSolType::Tuple(vec![DynSolType::String, DynSolType::Uint(256)]);
+        let param = EthereumEventParam {
             abi_type: &tuple_type,
             name: "myArrayFixed",
         };
@@ -208,7 +213,7 @@ mod tests {
 
     #[test]
     fn test_abi_default_rescript_int() {
-        let event = HumanReadableParser::parse_event(
+        let event = abi_compat::parse_event(
             "event MyEvent(address user, uint256 amount, (bool, address) myTuple, bytes[] myArr)",
         )
         .expect("parsing event");

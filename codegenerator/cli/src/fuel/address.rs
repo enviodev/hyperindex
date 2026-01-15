@@ -1,19 +1,19 @@
+use alloy_primitives::B256;
 use anyhow::{Context, Error, Result};
-use ethers::{abi::AbiEncode, types::H256};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Address(H256);
+pub struct Address(B256);
 
 impl<'de> Deserialize<'de> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Address, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        // Deserialize the inner H256 type and wrap it in the Address struct
-        let h256 = H256::deserialize(deserializer)?;
-        Ok(Address(h256))
+        // Deserialize the inner B256 type and wrap it in the Address struct
+        let b256 = B256::deserialize(deserializer)?;
+        Ok(Address(b256))
     }
 }
 
@@ -32,7 +32,7 @@ impl Address {
         address.parse()
     }
 
-    pub fn as_h256(&self) -> &H256 {
+    pub fn as_b256(&self) -> &B256 {
         &self.0
     }
 }
@@ -48,15 +48,16 @@ impl FromStr for Address {
     }
 }
 
-impl From<H256> for Address {
-    fn from(address: H256) -> Self {
+impl From<B256> for Address {
+    fn from(address: B256) -> Self {
         Self(address)
     }
 }
 
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_h256().encode_hex())
+        // B256 Display outputs as 0x-prefixed lowercase hex
+        write!(f, "{}", self.0)
     }
 }
 
