@@ -3,6 +3,19 @@
 /* eslint-disable */
 /* tslint:disable */
 
-import type {Sql as $$sql} from 'postgres';
+import type postgres from 'postgres';
 
-export type sql = $$sql;
+// Fix: TypeScript's Omit doesn't preserve call signatures, so TransactionSql
+// loses the ability to be called as a tagged template or helper function.
+// We augment the module to restore these signatures.
+declare module 'postgres' {
+  interface TransactionSql<TTypes extends Record<string, unknown> = {}> {
+    <T, K extends readonly any[]>(first: T, ...rest: K): any;
+    <T extends readonly (object | undefined)[] = postgres.Row[]>(
+      template: TemplateStringsArray,
+      ...parameters: readonly any[]
+    ): postgres.PendingQuery<T>;
+  }
+}
+
+export type sql = postgres.Sql;
