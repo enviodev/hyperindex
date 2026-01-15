@@ -39,10 +39,6 @@ let makeGeneratedConfig = () => {
   )
 }
 
-let configWithoutRegistrations = makeGeneratedConfig()
-
-let registerAllHandlers = () => HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
-
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema
 let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
