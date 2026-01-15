@@ -42,6 +42,9 @@ let makeGeneratedConfig = () => {
 // Config without handler registration - used by tests, migrations, etc.
 let configWithoutRegistrations = makeGeneratedConfig()
 
+// Register all handlers - used by tests that need handlers registered
+let registerAllHandlers = () => HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
+
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema
 let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {

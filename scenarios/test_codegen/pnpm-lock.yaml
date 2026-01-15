@@ -98,7 +98,7 @@ importers:
         specifier: 3.3.1
         version: 3.3.1
       envio:
-        specifier: file:/Users/dzakh/code/envio/hyperindex/codegenerator/target/debug/envio/../../../cli/npm/envio
+        specifier: file:/home/user/hyperindex/codegenerator/target/release/envio/../../../cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio(react-dom@19.2.3(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
       ethers:
         specifier: 6.8.0
