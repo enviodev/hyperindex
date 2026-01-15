@@ -1,9 +1,10 @@
+use alloy_json_abi::JsonAbi;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum AbiOrNestedAbi {
-    Abi(ethers::abi::Abi),
+    Abi(JsonAbi),
     // This is a case for Hardhat or Foundry generated ABI files
-    NestedAbi { abi: ethers::abi::Abi },
+    NestedAbi { abi: JsonAbi },
 }

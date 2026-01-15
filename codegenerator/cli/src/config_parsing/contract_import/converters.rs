@@ -1,4 +1,5 @@
 use crate::{config_parsing::chain_helpers::HypersyncNetwork, evm::address::Address};
+use alloy_json_abi::Event;
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
 
@@ -26,14 +27,14 @@ pub fn normalize_contract_name(name: String) -> String {
 pub struct SelectedContract {
     pub name: String,
     pub chains: Vec<ContractImportNetworkSelection>,
-    pub events: Vec<ethers::abi::Event>,
+    pub events: Vec<Event>,
 }
 
 impl SelectedContract {
     pub fn new(
         name: String,
         network_selection: ContractImportNetworkSelection,
-        events: Vec<ethers::abi::Event>,
+        events: Vec<Event>,
     ) -> Self {
         Self {
             name: normalize_contract_name(name),

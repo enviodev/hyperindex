@@ -6,13 +6,14 @@ use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::NetworkWithExplorer, evm::address::Address,
 };
+use alloy_json_abi::JsonAbi;
 use anyhow::{anyhow, Context};
 use async_recursion::async_recursion;
 use serde::Deserialize;
 use tokio::time::Duration;
 
 pub struct ContractData {
-    pub abi: ethers::abi::Abi,
+    pub abi: JsonAbi,
     pub name: Option<String>,
 }
 
@@ -63,13 +64,13 @@ pub async fn contract_import(
     };
 
     let contract_import_response: ContractImportResponse = response
-        .json()
+        .json::<ContractImportResponse>()
         .await
         .context("Failed to parse Contract Import response")?;
 
     match contract_import_response {
         ContractImportResponse::Contract { name, abi } => {
-            let mut abi: ethers::abi::Contract =
+            let mut abi: JsonAbi =
                 serde_json::from_str(&abi).context("Failed parsing contract ABI")?;
 
             abi.events = filter_duplicate_events(abi.events);

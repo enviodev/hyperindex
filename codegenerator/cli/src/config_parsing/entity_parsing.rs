@@ -12,8 +12,8 @@ use crate::{
     type_schema::{SchemaMode, TypeIdent},
     utils::{text::Capitalize, unique_hashmap},
 };
+use alloy_dyn_abi::DynSolType;
 use anyhow::{anyhow, Context};
-use ethers::abi::ethabi::ParamType as EthAbiParamType;
 use graphql_parser::schema::{
     Definition, Directive, Document, EnumType, Field as ObjField, ObjectType, Type as ObjType,
     TypeDefinition, Value,
@@ -1129,39 +1129,50 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn from_ethabi_type(abi_type: &EthAbiParamType) -> anyhow::Result<Self> {
-        match abi_type {
-            EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => Ok(Self::NonNullType(
-                Box::new(Self::Single(GqlScalar::BigInt(None))),
-            )),
-            EthAbiParamType::Bool => Ok(Self::NonNullType(Box::new(Self::Single(
-                GqlScalar::Boolean,
-            )))),
-            EthAbiParamType::Address
-            | EthAbiParamType::Bytes
-            | EthAbiParamType::String
-            | EthAbiParamType::FixedBytes(_) => {
+    pub fn from_dyn_sol_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
+        match sol_type {
+            DynSolType::Uint(_) | DynSolType::Int(_) => Ok(Self::NonNullType(Box::new(
+                Self::Single(GqlScalar::BigInt(None)),
+            ))),
+            DynSolType::Bool => {
+                Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Boolean))))
+            }
+            DynSolType::Address
+            | DynSolType::Bytes
+            | DynSolType::String
+            | DynSolType::FixedBytes(_) => {
                 Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::String))))
             }
-            EthAbiParamType::Array(abi_type) | EthAbiParamType::FixedArray(abi_type, _) => {
-                //Validate no nested arrays or
-                match abi_type.as_ref() {
-                    EthAbiParamType::Tuple(_) => {
+            DynSolType::Function => Err(anyhow!("Unsupported contract import type 'function'")),
+            DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
+                // Validate no nested arrays or tuples
+                match inner.as_ref() {
+                    DynSolType::Tuple(_) => {
                         Err(anyhow!("Unhandled contract import type 'array of tuple'"))?
                     }
-                    EthAbiParamType::Array(_) => {
+                    DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
                         Err(anyhow!("Unhandled contract import type 'array of array'"))?
                     }
-                    _ => (),
+                    // Explicitly allow all supported inner types
+                    DynSolType::Bool
+                    | DynSolType::Int(_)
+                    | DynSolType::Uint(_)
+                    | DynSolType::FixedBytes(_)
+                    | DynSolType::Address
+                    | DynSolType::Bytes
+                    | DynSolType::String => (),
+                    DynSolType::Function => {
+                        Err(anyhow!("Unsupported contract import type 'function'"))?
+                    }
                 }
-                let inner_type = Self::from_ethabi_type(abi_type)
+                let inner_type = Self::from_dyn_sol_type(inner)
                     .context("Unhandled contract import nested type in array")?;
                 Ok(Self::NonNullType(Box::new(Self::ListType(Box::new(
                     inner_type,
                 )))))
             }
-            EthAbiParamType::Tuple(_abi_types) =>
-            //This case should be flattened out unless it is nested inside an array
+            DynSolType::Tuple(_) =>
+            // This case should be flattened out unless it is nested inside an array
             {
                 Err(anyhow!("Unhandled contract import type 'tuple'"))
             }
@@ -1312,9 +1323,9 @@ impl FieldType {
         }
     }
 
-    pub fn from_ethabi_type(abi_type: &EthAbiParamType) -> anyhow::Result<Self> {
+    pub fn from_dyn_sol_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
         Ok(Self::RegularField {
-            field_type: UserDefinedFieldType::from_ethabi_type(abi_type)?,
+            field_type: UserDefinedFieldType::from_dyn_sol_type(sol_type)?,
             has_indexed_directive: false,
         })
     }
@@ -1527,7 +1538,7 @@ type TestEntity {
         let parsed_entity = Entity::from_object(&first_entity_schema);
 
         assert!(parsed_entity.is_err());
-        let err_message = format!("{:?}", parsed_entity.unwrap_err());
+        let err_message = parsed_entity.unwrap_err().to_string();
         assert_eq!(
             err_message,
             "No 'id' field found on entity TestEntity. Please add an 'id' field to your entity."

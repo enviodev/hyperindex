@@ -1,6 +1,6 @@
 services:
   envio-postgres:
-    image: postgres:17.5
+    image: postgres:18.1
     restart: always
     ports:
       - "${ENVIO_PG_PORT:-5433}:5432"
