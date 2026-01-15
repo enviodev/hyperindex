@@ -178,15 +178,10 @@ pub mod start {
         )
         .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
 
-        // Build the tsx import path and index path relative to project root
-        let tsx_import = format!(
-            "./{}/node_modules/envio/tsx-register.mjs",
-            relative_generated.display()
-        );
         let index_path = format!("./{}/src/Index.res.mjs", relative_generated.display());
 
         let cmd = "node";
-        let args = vec!["--no-warnings", "--import", &tsx_import, &index_path];
+        let args = vec!["--no-warnings", &index_path];
 
         // Run from project root to ensure proper cwd for handlers
         let exit =

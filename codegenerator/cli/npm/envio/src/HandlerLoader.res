@@ -1,3 +1,6 @@
+// Register tsx for TypeScript handler support before loading any handlers
+@@directive("import '../tsx-register.mjs'")
+
 @module("node:fs/promises")
 external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
 

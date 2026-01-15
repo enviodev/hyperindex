@@ -1,3 +1,5 @@
-// This file is used to register tsx for TypeScript handler support
-// It's imported via node --import flag when starting the indexer
-import "tsx/esm";
+// This file registers tsx for TypeScript handler support at runtime
+import { register } from "node:module";
+import { pathToFileURL } from "node:url";
+
+register("tsx/esm", pathToFileURL("./"));
