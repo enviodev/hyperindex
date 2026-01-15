@@ -14,8 +14,13 @@ Does NOT queue scheduled functions but rather overwrites them
 
 The logger will be used to log any errors that occur in the scheduled
 functions.
+
+Optional executionTimeoutMillis can be set to specify how long to wait
+for a scheduled function to complete before timing out. Default is 30 seconds.
+If a function times out, the Throttler continues processing new scheduled
+functions instead of being stuck forever.
 */
-let make: (~intervalMillis: int, ~logger: Pino.t) => t
+let make: (~intervalMillis: int, ~logger: Pino.t, ~executionTimeoutMillis: int=?) => t
 
 /**
 Schedules a function to be run on a throttler, overwriting any

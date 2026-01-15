@@ -110,4 +110,81 @@ describe("Throttler", () => {
       )
     },
   )
+
+  Async.it(
+    "Continues processing after a task times out (does not get stuck)",
+    async () => {
+      // Use a very short timeout for testing
+      let throttler = Throttler.make(
+        ~intervalMillis=10,
+        ~logger=Logging.getLogger(),
+        ~executionTimeoutMillis=50,
+      )
+      let actionsCalled = []
+
+      // Schedule a task that will take longer than the timeout
+      throttler->Throttler.schedule(
+        async () => {
+          // This will take 100ms, but timeout is 50ms
+          await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+          actionsCalled->Js.Array2.push(1)->ignore
+        },
+      )
+
+      // Wait for the timeout to trigger
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=60)
+
+      // Schedule another task - this should work even after the timeout
+      throttler->Throttler.schedule(
+        async () => {
+          actionsCalled->Js.Array2.push(2)->ignore
+        },
+      )
+
+      // Wait for the second task to execute
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=15)
+
+      // The first task should not have completed (timed out),
+      // but the second should have been processed
+      Assert.deepEqual(
+        actionsCalled,
+        [2],
+        ~message="Throttler should continue processing after a timeout",
+      )
+    },
+  )
+
+  Async.it(
+    "Continues processing after a task throws an exception",
+    async () => {
+      let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
+      let actionsCalled = []
+
+      // Schedule a task that throws
+      throttler->Throttler.schedule(
+        async () => {
+          Js.Exn.raiseError("Test error")
+        },
+      )
+
+      // Wait for the failing task to complete
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=5)
+
+      // Schedule another task - this should work even after the exception
+      throttler->Throttler.schedule(
+        async () => {
+          actionsCalled->Js.Array2.push(1)->ignore
+        },
+      )
+
+      // Wait for the second task to execute
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=15)
+
+      Assert.deepEqual(
+        actionsCalled,
+        [1],
+        ~message="Throttler should continue processing after an exception",
+      )
+    },
+  )
 })
