@@ -1,6 +1,15 @@
 @module("node:fs/promises")
 external globIterator: string => promise<Utils.asyncIterator<string>> = "glob"
 
+// tsx registration for TypeScript handler support
+@module("node:module")
+external register: (string, {..}) => unit = "register"
+
+@module("node:url")
+external pathToFileURL: string => {..} = "pathToFileURL"
+
+let registerTsx = () => register("tsx/esm", pathToFileURL("./"))
+
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
   | None => ()
@@ -52,6 +61,9 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 }
 
 let registerAllHandlers = async (~config: Config.t) => {
+  // Register tsx for TypeScript handler support before loading any handlers
+  registerTsx()
+
   EventRegister.startRegistration(
     ~ecosystem=config.ecosystem,
     ~multichain=config.multichain,
