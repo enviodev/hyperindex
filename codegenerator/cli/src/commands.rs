@@ -159,7 +159,7 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::execute_command;
+    use super::{execute_command, to_js_path};
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
     use pathdiff::diff_paths;
@@ -352,7 +352,7 @@ pub mod db_migrate {
 
     use std::process::ExitStatus;
 
-    use super::execute_command;
+    use super::{execute_command, to_js_path};
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
     use pathdiff::diff_paths;
 
@@ -432,7 +432,7 @@ pub mod db_migrate {
 }
 
 pub mod benchmark {
-    use super::execute_command;
+    use super::{execute_command, to_js_path};
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::{anyhow, Result};
     use pathdiff::diff_paths;
