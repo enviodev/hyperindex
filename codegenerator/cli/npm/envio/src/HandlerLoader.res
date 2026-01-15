@@ -3,12 +3,11 @@ external globIterator: string => Utils.asyncIterator<string> = "glob"
 
 // tsx registration for TypeScript handler support
 @module("node:module")
-external register: (string, {..}) => unit = "register"
+external register: (string, string) => unit = "register"
 
-@module("node:url")
-external pathToFileURL: string => {..} = "pathToFileURL"
+let importMetaUrl: string = %raw(`import.meta.url`)
 
-let registerTsx = () => register("tsx/esm", pathToFileURL("./"))
+let registerTsx = () => register("tsx/esm", importMetaUrl)
 
 let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
   switch handler {
