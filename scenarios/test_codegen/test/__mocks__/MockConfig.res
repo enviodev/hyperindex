@@ -47,7 +47,6 @@ let mockChainConfig: Config.chain = {
   sources: [
     RpcSource.make({
       chain: chain1337,
-      contracts: evmContracts,
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({
         initialBlockInterval: 10000,
