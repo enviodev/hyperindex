@@ -1,22 +1,80 @@
 # TheGraph to Envio HyperIndex Migration Guide
 
-Migrate from TheGraph subgraph indexer to Envio HyperIndex indexer.
+Migrate from TheGraph subgraph indexer to Envio HyperIndex indexer using Test-Driven Development.
+
+## Before Starting
+
+**Ask the user for:**
+1. **Subgraph GraphQL endpoint** (e.g., `https://api.thegraph.com/subgraphs/name/org/subgraph`)
+2. **Chain ID and contract addresses**
+3. **Block range for testing** (pick blocks with representative events)
+
+The subgraph GraphQL is the **source of truth** - use it to verify HyperIndex produces identical data.
 
 **Prerequisites:**
 - Subgraph folder in workspace
 - Node.js v22+ (v24 recommended)
 - pnpm package manager
-- Docker installed
-
-**Whitelist these commands:**
-- `pnpm codegen`
-- `pnpm tsc --noEmit`
-- `TUI_OFF=true pnpm dev`
 
 **Reference Documentation:**
 - Envio: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
 - Example (Uniswap v4): https://github.com/enviodev/uniswap-v4-indexer
-- Example (Safe): https://github.com/enviodev/safe-analysis-indexer
+
+---
+
+## TDD Migration Flow
+
+Instead of constantly running `pnpm dev` and `tsc`, use the **HyperIndex Testing Framework**:
+
+1. **Query subgraph** for expected entity state at specific blocks
+2. **Write test** that processes those blocks and asserts expected output
+3. **Implement handler** until test passes
+4. **Repeat** for each handler
+
+```typescript
+// test/migration.test.ts
+import { describe, it, expect } from "vitest";
+import { createTestIndexer } from "generated";
+
+describe("Migration Verification", () => {
+  it("Should match subgraph data for Factory.PairCreated", async () => {
+    const indexer = createTestIndexer();
+
+    // Process specific block range
+    const result = await indexer.process({
+      chains: {
+        1: {
+          startBlock: 10_000_000,
+          endBlock: 10_000_100,
+        },
+      },
+    });
+
+    // Verify against subgraph data (queried beforehand)
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "changes": [
+          {
+            "Pair": {
+              "sets": [
+                {
+                  "id": "1-0x...",
+                  "token0_id": "0x...",
+                  "token1_id": "0x...",
+                },
+              ],
+            },
+            "block": 10000050,
+            "chainId": 1,
+          },
+        ],
+      }
+    `);
+  });
+});
+```
+
+**Run tests:** `pnpm test`
 
 ---
 
@@ -34,37 +92,59 @@ Migrate from TheGraph subgraph indexer to Envio HyperIndex indexer.
 
 ---
 
-## Multichain Support
-
-- Prefix all entity IDs: `${event.chainId}-${originalId}`
-- Never hardcode `chainId = 1` - use `event.chainId`
-- Chain-specific Bundle IDs: `${chainId}-1`
-
----
-
 ## Migration Steps
 
-### Step 1: Clear Boilerplate Code
+### Step 1: Setup & Query Subgraph
 
-Replace generated handlers with empty skeletons:
+**Query subgraph for sample data:**
 
-```typescript
-// BEFORE (boilerplate):
-Contract.EventName.handler(async ({ event, context }) => {
-  const entity: EventEntity = {
-    id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
-    field1: event.params.field1,
-  };
-  context.EventEntity.set(entity);
-});
-
-// AFTER (skeleton):
-Contract.EventName.handler(async ({ event, context }) => {
-  // TODO: Implement from subgraph
-});
+```graphql
+# Get entities at specific block
+{
+  pairs(first: 10, block: { number: 10000000 }) {
+    id
+    token0 { id symbol decimals }
+    token1 { id symbol decimals }
+    reserve0
+    reserve1
+  }
+}
 ```
 
-**Validate:** `pnpm codegen && pnpm tsc --noEmit`
+**Create test file with expected data:**
+
+```typescript
+// test/pairs.test.ts
+import { describe, it, expect } from "vitest";
+import { createTestIndexer } from "generated";
+
+describe("Pair entity migration", () => {
+  it("Should create Pair entities matching subgraph", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1: { startBlock: 10_008_355, endBlock: 10_008_355 },
+      },
+    });
+
+    // Expected data from subgraph query
+    expect(result.changes).toContainEqual(
+      expect.objectContaining({
+        Pair: {
+          sets: expect.arrayContaining([
+            expect.objectContaining({
+              id: "1-0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
+              token0_id: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+              token1_id: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            }),
+          ]),
+        },
+      })
+    );
+  });
+});
+```
 
 ---
 
@@ -125,6 +205,9 @@ src/
 ├── handlers/
 │   ├── factory.ts
 │   └── pair.ts
+test/
+├── factory.test.ts
+└── pair.test.ts
 ```
 
 Update `config.yaml`:
@@ -145,8 +228,6 @@ chains:
           - 0xFactoryAddress
 ```
 
-**Validate:** `pnpm codegen && pnpm tsc --noEmit`
-
 ---
 
 ### Step 4: Register Dynamic Contracts
@@ -166,38 +247,102 @@ Factory.PairCreated.handler(async ({ event, context }) => {
 
 Remove `address` field from dynamic contracts in `config.yaml`.
 
-**Validate:** `pnpm codegen && TUI_OFF=true pnpm dev`
+**Write test first:**
+
+```typescript
+it("Should register dynamic Pair contracts", async () => {
+  const indexer = createTestIndexer();
+
+  const result = await indexer.process({
+    chains: {
+      1: { startBlock: 10_000_835, endBlock: 10_000_835 },
+    },
+  });
+
+  // Verify Pair was created
+  expect(result.changes[0].Pair?.sets).toHaveLength(1);
+});
+```
 
 ---
 
-### Step 5: Implement Handlers
+### Step 5: Implement Handlers (TDD)
 
-**Order:**
-1. **5a: Helper functions** (no entity dependencies)
-2. **5b: Simple handlers** (direct parameter mapping)
-3. **5c: Moderate handlers** (calls helpers, straightforward logic)
-4. **5d: Complex handlers** (multiple entities, RPC calls)
+For each handler:
 
-**Validate after each:** `pnpm codegen && pnpm tsc --noEmit && TUI_OFF=true pnpm dev`
+1. **Query subgraph** for expected state at test block
+2. **Write failing test** with expected data
+3. **Implement handler** until test passes
+4. **Snapshot the result** for regression testing
+
+**Example TDD cycle:**
+
+```typescript
+// 1. Query subgraph at block 10861674 for Token entities
+// 2. Write test:
+it("Should create Token on first Transfer", async () => {
+  const indexer = createTestIndexer();
+
+  expect(
+    await indexer.process({
+      chains: {
+        1: { startBlock: 10_861_674, endBlock: 10_861_674 },
+      },
+    })
+  ).toMatchInlineSnapshot(`
+    {
+      "changes": [
+        {
+          "Token": {
+            "sets": [
+              {
+                "id": "1-0x...",
+                "symbol": "UNI",
+                "decimals": 18n,
+                "totalSupply": 1000000000000000000000000000n,
+              },
+            ],
+          },
+          "block": 10861674,
+          "chainId": 1,
+        },
+      ],
+    }
+  `);
+});
+
+// 3. Implement handler until test passes
+// 4. Run: pnpm test
+```
+
+**Order of implementation:**
+1. Helper functions (no entity dependencies)
+2. Simple handlers (direct parameter mapping)
+3. Moderate handlers (calls helpers)
+4. Complex handlers (multiple entities, RPC calls)
 
 ---
 
 ### Step 6: Final Verification
 
-1. Compare each handler to subgraph implementation
-2. Verify all edge cases handled
-3. Ensure no TODOs remain
-4. Run full validation
+**Compare full block range against subgraph:**
 
----
+```typescript
+it("Should match subgraph for full block range", async () => {
+  const indexer = createTestIndexer();
 
-### Step 7: Environment Variables
+  const result = await indexer.process({
+    chains: {
+      1: { startBlock: 10_000_000, endBlock: 10_100_000 },
+    },
+  });
 
-```bash
-grep -r "process.env\." src/
+  // Query subgraph for same range and compare key metrics
+  // - Total entity counts
+  // - Specific entity values
+  // - Aggregate calculations
+});
 ```
-
-Document all in `.env.example`.
 
 ---
 
@@ -313,30 +458,13 @@ Contract.Event.handler(async ({ event, context }) => {
 });
 ```
 
-**Preload note:** Handlers run twice (parallel preload, then sequential). Use `context.effect()` or `!context.isPreload` check.
-
 ---
 
-## BigDecimal Precision
+## Multichain Support
 
-**Maintain precision from original subgraph:**
-
-```typescript
-import { BigDecimal } from "generated";
-
-export const ZERO_BI = BigInt(0);
-export const ONE_BI = BigInt(1);
-export const ZERO_BD = new BigDecimal(0);
-export const ONE_BD = new BigDecimal(1);
-
-// WRONG:
-const value = Number(amount) / Math.pow(10, decimals);
-
-// CORRECT:
-const value = new BigDecimal(amount.toString()).div(
-  exponentToBigDecimal(decimals)
-);
-```
+- Prefix all entity IDs: `${event.chainId}-${originalId}`
+- Never hardcode `chainId = 1` - use `event.chainId`
+- Chain-specific Bundle IDs: `${chainId}-1`
 
 ---
 
@@ -386,21 +514,10 @@ Note: `context.Entity.set()` is synchronous - no await needed.
 
 ---
 
-## Validation Commands
-
-```bash
-# After every change:
-pnpm codegen
-pnpm tsc --noEmit
-TUI_OFF=true pnpm dev
-```
-
-**Runtime testing is mandatory** - TypeScript only catches syntax errors, not database/logic issues.
-
----
-
 ## Quality Checklist
 
+- [ ] Subgraph GraphQL endpoint obtained
+- [ ] Test blocks identified with representative events
 - [ ] All `@entity` decorators removed
 - [ ] `Bytes!` → `String!` in schema
 - [ ] All entity arrays have `@derivedFrom`
@@ -409,6 +526,5 @@ TUI_OFF=true pnpm dev
 - [ ] BigDecimal precision maintained
 - [ ] Field names match generated types (`_id` suffix for relations)
 - [ ] `field_selection` added for transaction fields
-- [ ] No hardcoded addresses (use constants)
-- [ ] async/await on all `context.Entity.get()` calls
-- [ ] Runtime tested with `TUI_OFF=true pnpm dev`
+- [ ] Tests pass and match subgraph data
+- [ ] Snapshots captured for regression testing
