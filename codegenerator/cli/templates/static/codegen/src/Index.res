@@ -1,7 +1,6 @@
 let main = async () => {
   try {
     await Main.start(
-      ~registerAllHandlers=Generated.registerAllHandlers,
       ~makeGeneratedConfig=Generated.makeGeneratedConfig,
       ~persistence=Generated.codegenPersistence,
     )

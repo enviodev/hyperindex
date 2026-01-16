@@ -266,7 +266,7 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await Generated.registerAllHandlers()
+    let registrations = await HandlerLoader.registerAllHandlers(~config=Generated.configWithoutRegistrations)
 
     let config = {
       let config = Generated.makeGeneratedConfig()

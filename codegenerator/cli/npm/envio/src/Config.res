@@ -53,10 +53,16 @@ type sourceSync = {
 
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 
+type contractHandler = {
+  name: string,
+  handler: option<string>,
+}
+
 type t = {
   name: string,
   description: option<string>,
   handlers: string,
+  contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   multichain: multichain,
@@ -83,6 +89,7 @@ let publicConfigChainSchema = S.schema(s =>
 let contractConfigSchema = S.schema(s =>
   {
     "abi": s.matches(S.json(~validate=false)),
+    "handler": s.matches(S.option(S.string)),
   }
 )
 
@@ -281,10 +288,25 @@ let fromPublic = (
     })
     ->Js.Dict.fromArray
 
+  // Extract contract handlers from the public config
+  let contractHandlers = switch publicContractsConfig {
+  | Some(contractsDict) =>
+    contractsDict
+    ->Js.Dict.entries
+    ->Js.Array2.map(((contractName, contractConfig)) => {
+      {
+        name: contractName,
+        handler: contractConfig["handler"],
+      }
+    })
+  | None => []
+  }
+
   {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getWithDefault("src/handlers"),
+    contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getWithDefault(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getWithDefault(false),
     multichain: publicConfig["multichain"]->Option.getWithDefault(Unordered),
