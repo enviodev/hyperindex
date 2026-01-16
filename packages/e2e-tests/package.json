@@ -1,5 +1,5 @@
 {
-  "name": "@envio/e2e-tests",
+  "name": "e2e-tests",
   "version": "1.0.0",
   "private": true,
   "type": "module",
