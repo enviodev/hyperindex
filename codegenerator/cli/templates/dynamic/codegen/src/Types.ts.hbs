@@ -3,8 +3,8 @@
 // Use @genType.import to link the types back to ReScript code
 
 import type { Logger, IndexerFromConfig, EffectCaller } from "envio";
-import type * as Entities from "./db/Entities.gen.ts";
-import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains } from "../envio.d.ts";
+import type * as GeneratedEntities from "./db/Entities.gen.ts";
+import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities } from "../envio.d.ts";
 
 // Utility type to check if an object type is empty
 type IsEmptyObject<T> = keyof T extends never ? true : false;
@@ -121,22 +121,22 @@ export type HandlerContext = {
      * Load the entity {{entity.name.original}} from the storage by ID.
      * If the entity is not found, returns undefined.
      */
-    readonly get: (id: string) => Promise<Entities.{{entity.name.capitalized}}_t | undefined>,
+    readonly get: (id: string) => Promise<Entities["{{entity.name.capitalized}}"] | undefined>,
     /**
      * Load the entity {{entity.name.original}} from the storage by ID.
      * If the entity is not found, throws an error.
      */
-    readonly getOrThrow: (id: string, message?: string) => Promise<Entities.{{entity.name.capitalized}}_t>,
-    readonly getWhere: Entities.{{entity.name.capitalized}}_indexedFieldOperations,
+    readonly getOrThrow: (id: string, message?: string) => Promise<Entities["{{entity.name.capitalized}}"]>,
+    readonly getWhere: GeneratedEntities.{{entity.name.capitalized}}_indexedFieldOperations,
     /**
      * Returns the entity {{entity.name.original}} from the storage by ID.
      * If the entity is not found, creates it using provided parameters and returns it.
      */
-    readonly getOrCreate: (entity: Entities.{{entity.name.capitalized}}_t) => Promise<Entities.{{entity.name.capitalized}}_t>,
+    readonly getOrCreate: (entity: Entities["{{entity.name.capitalized}}"]) => Promise<Entities["{{entity.name.capitalized}}"]>,
     /**
      * Set the entity {{entity.name.original}} in the storage.
      */
-    readonly set: (entity: Entities.{{entity.name.capitalized}}_t) => void,
+    readonly set: (entity: Entities["{{entity.name.capitalized}}"]) => void,
     /**
      * Delete the entity {{entity.name.original}} from the storage.
      *
@@ -148,5 +148,5 @@ export type HandlerContext = {
 };
 
 {{#each entities as | entity |}}
-export type {{entity.name.capitalized}} = Entities.{{entity.name.capitalized}}_t;
+export type {{entity.name.capitalized}} = Entities["{{entity.name.capitalized}}"];
 {{/each}}
