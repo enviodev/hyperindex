@@ -28,7 +28,6 @@ describe("RpcSource - name", () => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
-      contracts: [],
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
@@ -44,7 +43,6 @@ describe("RpcSource - getHeightOrThrow", () => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
-      contracts: [],
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
