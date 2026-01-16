@@ -4,15 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "test": "tsx src/runner.ts",
-    "test:parallel": "tsx src/runner.ts --parallel",
-    "test:single": "tsx src/runner.ts --template",
+    "test": "vitest run",
+    "test:templates": "vitest run --project templates",
+    "test:e2e": "vitest run --project e2e",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
   }
 }

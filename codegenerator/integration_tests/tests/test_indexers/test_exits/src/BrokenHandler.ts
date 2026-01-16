@@ -1,2 +1,0 @@
-// Empty handler
-let x =
