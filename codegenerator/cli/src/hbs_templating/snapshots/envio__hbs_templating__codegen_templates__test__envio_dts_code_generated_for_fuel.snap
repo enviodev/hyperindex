@@ -1,5 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2437
 expression: project_template.envio_dts_code
 ---
 export type EvmChains = {};
@@ -11,3 +12,10 @@ export type FuelContracts = {
   "Greeter": {};
 };
 export type SvmChains = {};
+export namespace Enums {}
+export namespace Entities {
+  export type EmptyEntity = {
+    id: string;
+    emptyField: string;
+  };
+}

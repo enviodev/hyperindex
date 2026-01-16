@@ -161,6 +161,8 @@ pub struct EntityParamTypeTemplate {
     ///Used to determine if you can run a where
     ///query on this field.
     pub is_queryable_field: bool,
+    /// Whether this field is derived from another entity (not stored in DB).
+    pub is_derived_field: bool,
 }
 
 impl EntityParamTypeTemplate {
@@ -175,6 +177,7 @@ impl EntityParamTypeTemplate {
         let is_entity_field = field.field_type.is_entity_field(schema)?;
         let is_indexed_field = field.is_indexed_field(entity);
         let is_derived_lookup_field = field.is_derived_lookup_field(entity, schema);
+        let is_derived_field = field.field_type.is_derived_from();
 
         //Both of these cases have indexes on them and should exist
         let is_queryable_field = is_indexed_field || is_derived_lookup_field;
@@ -185,6 +188,7 @@ impl EntityParamTypeTemplate {
             is_entity_field,
             is_indexed_field,
             is_queryable_field,
+            is_derived_field,
         })
     }
 }
@@ -1743,6 +1747,64 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                 format!(
                     "export type SvmChains = {{\n{}\n}};",
                     svm_chains_entries.join("\n")
+                )
+            });
+
+            // Generate Enums namespace with all enum types
+            let enum_entries: Vec<String> = gql_enums
+                .iter()
+                .map(|gql_enum| {
+                    let enum_values: Vec<String> = gql_enum
+                        .params
+                        .iter()
+                        .map(|value| format!("\"{}\"", value.original))
+                        .collect();
+                    format!(
+                        "  export type {} = {};",
+                        gql_enum.name.capitalized,
+                        enum_values.join(" | ")
+                    )
+                })
+                .collect();
+            parts.push(if enum_entries.is_empty() {
+                "export namespace Enums {}".to_string()
+            } else {
+                format!("export namespace Enums {{\n{}\n}}", enum_entries.join("\n"))
+            });
+
+            // Generate Entities namespace with all entity types
+            let entity_entries: Vec<String> = entities
+                .iter()
+                .map(|entity| {
+                    let field_entries: Vec<String> = entity
+                        .params
+                        .iter()
+                        // Skip derived fields as they are not stored in the DB
+                        .filter(|param| !param.is_derived_field)
+                        .map(|param| {
+                            let ts_type = param.res_type.to_ts_type_string();
+                            // For entity fields, the actual stored value is the ID (string)
+                            let field_type = if param.is_entity_field {
+                                "string".to_string()
+                            } else {
+                                ts_type
+                            };
+                            format!("    {}: {};", param.field_name.original, field_type)
+                        })
+                        .collect();
+                    format!(
+                        "  export type {} = {{\n{}\n  }};",
+                        entity.name.capitalized,
+                        field_entries.join("\n")
+                    )
+                })
+                .collect();
+            parts.push(if entity_entries.is_empty() {
+                "export namespace Entities {}".to_string()
+            } else {
+                format!(
+                    "export namespace Entities {{\n{}\n}}",
+                    entity_entries.join("\n")
                 )
             });
 
