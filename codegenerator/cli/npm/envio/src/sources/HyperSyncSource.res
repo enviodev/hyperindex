@@ -145,7 +145,6 @@ let memoGetSelectionConfig = (~chain) => {
 }
 
 type options = {
-  contracts: array<Internal.evmContractConfig>,
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventSignatures: array<string>,
@@ -160,7 +159,6 @@ type options = {
 
 let make = (
   {
-    contracts,
     chain,
     endpointUrl,
     allEventSignatures,

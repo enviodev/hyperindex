@@ -468,23 +468,13 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  contracts: array<Internal.evmContractConfig>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   allEventSignatures: array<string>,
   lowercaseAddresses: bool,
 }
 
 let make = (
-  {
-    sourceFor,
-    syncConfig,
-    url,
-    chain,
-    contracts,
-    eventRouter,
-    allEventSignatures,
-    lowercaseAddresses,
-  }: options,
+  {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses}: options,
 ): t => {
   let urlHost = switch sanitizeUrl(url) {
   | None =>
@@ -688,81 +678,82 @@ let make = (
       )
     }
 
-    let parsedQueueItems = await logs
-    ->Array.zip(parsedEvents)
-    ->Array.keepMap(((
-      log: Ethers.log,
-      maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
-    )) => {
-      let topic0 = log.topics[0]->Option.getWithDefault("0x0"->EvmTypes.Hex.fromStringUnsafe)
-      let routedAddress = if lowercaseAddresses {
-        log.address->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        log.address
-      }
-
-      switch eventRouter->EventRouter.get(
-        ~tag=EventRouter.getEvmEventId(
-          ~sighash=topic0->EvmTypes.Hex.toString,
-          ~topicCount=log.topics->Array.length,
-        ),
-        ~indexingContracts,
-        ~contractAddress=routedAddress,
-        ~blockNumber=log.blockNumber,
-      ) {
-      | None => None
-      | Some(eventConfig) =>
-        switch maybeDecodedEvent {
-        | Js.Nullable.Value(decoded) =>
-          Some(
-            (
-              async () => {
-                let (block, transaction) = try await Promise.all2((
-                  log->getEventBlockOrThrow,
-                  log->getEventTransactionOrThrow(
-                    ~transactionSchema=eventConfig.transactionSchema,
-                  ),
-                )) catch {
-                | exn =>
-                  raise(
-                    Source.GetItemsError(
-                      FailedGettingFieldSelection({
-                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                        exn,
-                        blockNumber: log.blockNumber,
-                        logIndex: log.logIndex,
-                      }),
-                    ),
-                  )
-                }
-
-                Internal.Event({
-                  eventConfig: (eventConfig :> Internal.eventConfig),
-                  timestamp: block.timestamp,
-                  blockNumber: block.number,
-                  chain,
-                  logIndex: log.logIndex,
-                  event: {
-                    chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded->eventConfig.convertHyperSyncEventArgs,
-                    transaction,
-                    block: block->(
-                      Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
-                    ),
-                    srcAddress: routedAddress,
-                    logIndex: log.logIndex,
-                  }->Internal.fromGenericEvent,
-                })
-              }
-            )(),
-          )
-        | Js.Nullable.Null
-        | Js.Nullable.Undefined =>
-          None
+    let parsedQueueItems =
+      await logs
+      ->Array.zip(parsedEvents)
+      ->Array.keepMap(((
+        log: Ethers.log,
+        maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
+      )) => {
+        let topic0 = log.topics[0]->Option.getWithDefault("0x0"->EvmTypes.Hex.fromStringUnsafe)
+        let routedAddress = if lowercaseAddresses {
+          log.address->Address.Evm.fromAddressLowercaseOrThrow
+        } else {
+          log.address
         }
-      }
-    })
-    ->Promise.all
+
+        switch eventRouter->EventRouter.get(
+          ~tag=EventRouter.getEvmEventId(
+            ~sighash=topic0->EvmTypes.Hex.toString,
+            ~topicCount=log.topics->Array.length,
+          ),
+          ~indexingContracts,
+          ~contractAddress=routedAddress,
+          ~blockNumber=log.blockNumber,
+        ) {
+        | None => None
+        | Some(eventConfig) =>
+          switch maybeDecodedEvent {
+          | Js.Nullable.Value(decoded) =>
+            Some(
+              (
+                async () => {
+                  let (block, transaction) = try await Promise.all2((
+                    log->getEventBlockOrThrow,
+                    log->getEventTransactionOrThrow(
+                      ~transactionSchema=eventConfig.transactionSchema,
+                    ),
+                  )) catch {
+                  | exn =>
+                    raise(
+                      Source.GetItemsError(
+                        FailedGettingFieldSelection({
+                          message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                          exn,
+                          blockNumber: log.blockNumber,
+                          logIndex: log.logIndex,
+                        }),
+                      ),
+                    )
+                  }
+
+                  Internal.Event({
+                    eventConfig: (eventConfig :> Internal.eventConfig),
+                    timestamp: block.timestamp,
+                    blockNumber: block.number,
+                    chain,
+                    logIndex: log.logIndex,
+                    event: {
+                      chainId: chain->ChainMap.Chain.toChainId,
+                      params: decoded->eventConfig.convertHyperSyncEventArgs,
+                      transaction,
+                      block: block->(
+                        Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
+                      ),
+                      srcAddress: routedAddress,
+                      logIndex: log.logIndex,
+                    }->Internal.fromGenericEvent,
+                  })
+                }
+              )(),
+            )
+          | Js.Nullable.Null
+          | Js.Nullable.Undefined =>
+            None
+          }
+        }
+      })
+      ->Promise.all
 
     let optFirstBlockParent = await firstBlockParentPromise
 

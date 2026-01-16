@@ -37,7 +37,6 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       RpcSource.make({
         chain,
         sourceFor: Sync,
-        contracts: evmContracts,
         syncConfig: {
           initialBlockInterval: 10000,
           backoffMultiplicative: 10000.,

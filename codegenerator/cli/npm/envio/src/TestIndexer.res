@@ -23,6 +23,20 @@ type testIndexerState = {
   mutable processChanges: array<unknown>,
 }
 
+// Cast Internal.entity back to DynamicContractRegistry.t
+external castFromDcRegistry: Internal.entity => InternalTable.DynamicContractRegistry.t =
+  "%identity"
+
+// Convert DynamicContractRegistry.t to Internal.indexingContract
+let toIndexingContract = (
+  dc: InternalTable.DynamicContractRegistry.t,
+): Internal.indexingContract => {
+  address: dc.contractAddress,
+  contractName: dc.contractName,
+  startBlock: dc.registeringEventBlockNumber,
+  registrationBlock: Some(dc.registeringEventBlockNumber),
+}
+
 let handleLoadByIds = (
   state: testIndexerState,
   ~tableName: string,
@@ -220,6 +234,7 @@ let handleWriteBatch = (
 let makeInitialState = (
   ~config: Config.t,
   ~processConfigChains: Js.Dict.t<chainConfig>,
+  ~dynamicContractsByChain: dict<array<Internal.indexingContract>>,
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Js.Dict.keys
   let chains = chainKeys->Array.map(chainIdStr => {
@@ -231,6 +246,10 @@ let makeInitialState = (
     }
 
     let processChainConfig = processConfigChains->Js.Dict.unsafeGet(chainIdStr)
+    let dynamicContracts =
+      dynamicContractsByChain
+      ->Js.Dict.get(chainIdStr)
+      ->Option.getWithDefault([])
     {
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,
@@ -241,7 +260,7 @@ let makeInitialState = (
       numEventsProcessed: 0,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
-      dynamicContracts: [],
+      dynamicContracts,
     }
   })
 
@@ -344,8 +363,33 @@ let makeCreateTestIndexer = (
         // Reset processChanges for this run
         state.processChanges = []
 
+        // Extract dynamic contracts from state.entities for each chain
+        let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Js.Dict.empty()
+        switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+        | Some(dcDict) =>
+          dcDict
+          ->Js.Dict.values
+          ->Array.forEach(entity => {
+            let dc = entity->castFromDcRegistry
+            let chainIdStr = dc.chainId->Int.toString
+            let contracts = switch dynamicContractsByChain->Js.Dict.get(chainIdStr) {
+            | Some(arr) => arr
+            | None =>
+              let arr = []
+              dynamicContractsByChain->Js.Dict.set(chainIdStr, arr)
+              arr
+            }
+            contracts->Array.push(dc->toIndexingContract)->ignore
+          })
+        | None => ()
+        }
+
         // Create initialState from processConfig chains
-        let initialState = makeInitialState(~config, ~processConfigChains=chains)
+        let initialState = makeInitialState(
+          ~config,
+          ~processConfigChains=chains,
+          ~dynamicContractsByChain,
+        )
 
         Promise.make((resolve, reject) => {
           // Include initialState in workerData
