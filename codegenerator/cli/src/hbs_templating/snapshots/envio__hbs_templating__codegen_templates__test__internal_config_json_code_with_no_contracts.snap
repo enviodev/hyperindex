@@ -1,5 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2367
 expression: project_template.internal_config_json_code
 ---
 {
@@ -16,7 +17,6 @@ expression: project_template.internal_config_json_code
         "startBlock": 0
       }
     },
-    "addressFormat": "checksum",
-    "eventDecoder": "hypersync"
+    "addressFormat": "checksum"
   }
 }

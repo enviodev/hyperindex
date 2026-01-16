@@ -80,7 +80,6 @@ struct InternalEvmConfig<'a> {
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
     address_format: &'a str,
-    event_decoder: &'a str,
 }
 
 #[derive(Serialize, Debug)]
@@ -1584,7 +1583,6 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         } else {
                             "checksum"
                         },
-                        event_decoder: "hypersync",
                     }),
                     None,
                     None,
