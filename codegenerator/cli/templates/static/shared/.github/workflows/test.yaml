@@ -5,7 +5,7 @@
 #
 # Prerequisites:
 # - Your project uses pnpm as the package manager
-# - You have a "test" script defined in package.json (e.g., "test": "pnpm envio test")
+# - Vitest is installed (included by default in envio projects)
 #
 # Optional: ENVIO_API_TOKEN
 # If your config.yaml uses "hypersync" (the default and recommended data source),
@@ -60,10 +60,9 @@ jobs:
           # This provides higher HyperSync rate limits during codegen
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
-      # Run your indexer tests
-      # Make sure you have a "test" script in your package.json
+      # Run your indexer tests using Vitest
       - name: Run tests
-        run: pnpm test
+        run: pnpm vitest run
         env:
           # Optional: Uncomment if you've added ENVIO_API_TOKEN to your repository secrets
           # This provides higher HyperSync rate limits during test execution
