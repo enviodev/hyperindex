@@ -1,6 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2356
+assertion_line: 2341
 expression: project_template.internal_config_json_code
 ---
 {
@@ -25,7 +25,6 @@ expression: project_template.internal_config_json_code
         "handler": "./src/EventHandler.js"
       }
     },
-    "addressFormat": "checksum",
-    "eventDecoder": "hypersync"
+    "addressFormat": "checksum"
   }
 }

@@ -50,7 +50,7 @@ export type SvmChainId = IsEmptyObject<SvmChains> extends true
   : SvmChains[keyof SvmChains]["id"];
 
 // Construct config type from generated types
-type Config = (IsEmptyObject<EvmChains> extends true
+type IndexerConfigTypes = (IsEmptyObject<EvmChains> extends true
   ? {}
   : {
       evm: { chains: EvmChains; contracts: EvmContracts };
@@ -67,7 +67,7 @@ type Config = (IsEmptyObject<EvmChains> extends true
       });
 
 /** The indexer type. */
-export type Indexer = IndexerFromConfig<Config>;
+export type Indexer = IndexerFromConfig<IndexerConfigTypes>;
 
 export type ChainId = IsEmptyObject<EvmChains> extends false
   ? EvmChains[keyof EvmChains]["id"]
@@ -84,7 +84,7 @@ import type {
 } from "envio";
 
 /** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
-export type TestIndexer = TestIndexerFromConfig<Config>;
+export type TestIndexer = TestIndexerFromConfig<IndexerConfigTypes>;
 
 export type HandlerContext = {
   /**

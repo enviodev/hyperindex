@@ -47,7 +47,6 @@ let makeSources = (
   ~contracts: array<Internal.evmContractConfig>,
   ~hyperSync,
   ~allEventSignatures,
-  ~shouldUseHypersyncClientDecoder,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
@@ -64,7 +63,6 @@ let makeSources = (
         endpointUrl,
         allEventSignatures,
         eventRouter,
-        shouldUseHypersyncClientDecoder,
         apiToken: Env.envioApiToken,
         clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
@@ -85,7 +83,6 @@ let makeSources = (
         url,
         eventRouter,
         allEventSignatures,
-        shouldUseHypersyncClientDecoder,
         lowercaseAddresses,
       }),
     )
