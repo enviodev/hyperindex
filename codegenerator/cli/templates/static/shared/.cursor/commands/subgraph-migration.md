@@ -189,7 +189,7 @@ type Transaction {
 
 **Note:** `@derivedFrom` arrays are virtual - cannot access in handlers, only in API queries.
 
-**Validate:** `pnpm codegen`
+**Run:** `pnpm codegen` (required after schema changes)
 
 ---
 
@@ -227,6 +227,8 @@ chains:
         address:
           - 0xFactoryAddress
 ```
+
+**Run:** `pnpm codegen` (required after config changes)
 
 ---
 
