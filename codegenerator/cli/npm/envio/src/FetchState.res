@@ -2,6 +2,12 @@ open Belt
 
 type contractConfig = {filterByAddresses: bool}
 
+// Lookup functions for event config fields that are stored in registrations
+type eventConfigLookup = {
+  getFilterByAddresses: string => bool,
+  getDependsOnAddresses: string => bool,
+}
+
 type blockNumberAndTimestamp = {
   blockNumber: int,
   blockTimestamp: int,
@@ -986,6 +992,7 @@ let make = (
   ~chainId,
   ~targetBufferSize,
   ~knownHeight,
+  ~eventConfigLookup: eventConfigLookup,
   ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=[],
   ~blockLag=0,
@@ -1002,17 +1009,18 @@ let make = (
   let contractConfigs = Js.Dict.empty()
 
   eventConfigs->Array.forEach(ec => {
+    let ecFilterByAddresses = eventConfigLookup.getFilterByAddresses(ec.id)
     switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
     | Some({filterByAddresses}) =>
       contractConfigs->Js.Dict.set(
         ec.contractName,
-        {filterByAddresses: filterByAddresses || ec.filterByAddresses},
+        {filterByAddresses: filterByAddresses || ecFilterByAddresses},
       )
     | None =>
-      contractConfigs->Js.Dict.set(ec.contractName, {filterByAddresses: ec.filterByAddresses})
+      contractConfigs->Js.Dict.set(ec.contractName, {filterByAddresses: ecFilterByAddresses})
     }
 
-    if ec.dependsOnAddresses {
+    if eventConfigLookup.getDependsOnAddresses(ec.id) {
       normalEventConfigs->Array.push(ec)
       contractNamesWithNormalEvents->Utils.Set.add(ec.contractName)->ignore
     } else {

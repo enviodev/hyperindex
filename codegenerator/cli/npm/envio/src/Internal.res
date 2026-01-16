@@ -126,19 +126,12 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
 // The idea is that it can only be coerced from fuel/evmEventConfig
 // and it can include their fields. We prevent manual creation,
 // so the fields are not overwritten and we can safely cast the type back to fuel/evmEventConfig
-// Note: handler and contractRegister are stored in EventRegister.eventHandlerRegistration
-// and looked up by id. isWildcard/filterByAddresses/dependsOnAddresses are used by
-// fetch code (FetchState, sources) and also stored in eventHandlerRegistration.
+// Note: handler, contractRegister, isWildcard, filterByAddresses, dependsOnAddresses are stored
+// in EventRegister.eventHandlerRegistration and looked up by eventConfig.id.
 type eventConfig = private {
   id: string,
   name: string,
   contractName: string,
-  isWildcard: bool,
-  // Whether the event has an event filter which uses addresses
-  filterByAddresses: bool,
-  // Usually always false for wildcard events
-  // But might be true for wildcard event with dynamic event filter by addresses
-  dependsOnAddresses: bool,
   paramsRawEventSchema: S.schema<eventParams>,
 }
 
@@ -150,6 +143,10 @@ type fuelEventKind =
   | Call
 type fuelEventConfig = {
   ...eventConfig,
+  // These fields are also stored in eventHandlerRegistration for lookup
+  isWildcard: bool,
+  filterByAddresses: bool,
+  dependsOnAddresses: bool,
   kind: fuelEventKind,
 }
 type fuelContractConfig = {
@@ -171,6 +168,10 @@ type eventFilters =
 
 type evmEventConfig = {
   ...eventConfig,
+  // These fields are also stored in eventHandlerRegistration for lookup
+  isWildcard: bool,
+  filterByAddresses: bool,
+  dependsOnAddresses: bool,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   blockSchema: S.schema<eventBlock>,
   transactionSchema: S.schema<eventTransaction>,

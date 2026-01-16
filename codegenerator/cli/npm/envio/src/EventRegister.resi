@@ -23,6 +23,18 @@ let getEventRegistration: (registrations, ~eventConfigId: string) => option<even
 // Check if an event has a contractRegister
 let hasContractRegister: (registrations, ~eventConfigId: string) => bool
 
+// Check if an event has a handler
+let hasHandler: (registrations, ~eventConfigId: string) => bool
+
+// Get isWildcard for an event (defaults to false if not found)
+let getIsWildcard: (registrations, ~eventConfigId: string) => bool
+
+// Get filterByAddresses for an event (defaults to false if not found)
+let getFilterByAddresses: (registrations, ~eventConfigId: string) => bool
+
+// Get dependsOnAddresses for an event (defaults to false if not found)
+let getDependsOnAddresses: (registrations, ~eventConfigId: string) => bool
+
 type t
 let make: (~contractName: string, ~eventName: string, ~eventConfigId: string) => t
 let setHandler: (

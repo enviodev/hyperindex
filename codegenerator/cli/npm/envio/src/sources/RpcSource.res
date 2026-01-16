@@ -337,7 +337,10 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     }
   | ([], [dynamicEventFilter]) if selection.eventConfigs->Js.Array2.length === 1 =>
-    let eventConfig = selection.eventConfigs->Js.Array2.unsafe_get(0)
+    let eventConfig =
+      selection.eventConfigs
+      ->Js.Array2.unsafe_get(0)
+      ->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
 
     (~addressesByContractName) => {
       let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll

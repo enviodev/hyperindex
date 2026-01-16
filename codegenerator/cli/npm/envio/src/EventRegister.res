@@ -159,6 +159,38 @@ let hasContractRegister = (registrations: registrations, ~eventConfigId: string)
   }
 }
 
+// Check if an event has a handler
+let hasHandler = (registrations: registrations, ~eventConfigId: string) => {
+  switch registrations->getEventRegistration(~eventConfigId) {
+  | Some({handler: Some(_)}) => true
+  | Some({handler: None}) | None => false
+  }
+}
+
+// Get isWildcard for an event (defaults to false if not found)
+let getIsWildcard = (registrations: registrations, ~eventConfigId: string) => {
+  switch registrations->getEventRegistration(~eventConfigId) {
+  | Some({isWildcard}) => isWildcard
+  | None => false
+  }
+}
+
+// Get filterByAddresses for an event (defaults to false if not found)
+let getFilterByAddresses = (registrations: registrations, ~eventConfigId: string) => {
+  switch registrations->getEventRegistration(~eventConfigId) {
+  | Some({filterByAddresses}) => filterByAddresses
+  | None => false
+  }
+}
+
+// Get dependsOnAddresses for an event (defaults to false if not found)
+let getDependsOnAddresses = (registrations: registrations, ~eventConfigId: string) => {
+  switch registrations->getEventRegistration(~eventConfigId) {
+  | Some({dependsOnAddresses}) => dependsOnAddresses
+  | None => false
+  }
+}
+
 let isPendingRegistration = () => {
   switch activeRegistration.contents {
   | Some(r) => !r.finished

@@ -58,20 +58,16 @@ let make = (
     let contractName = contract.name
 
     contract.events->Array.forEach(eventConfig => {
-      // Look up registration by eventConfigId
-      let registration = registrations->EventRegister.getEventRegistration(~eventConfigId=eventConfig.id)
-      let isWildcard = registration->Option.mapWithDefault(false, r => r.isWildcard)
-      let hasContractRegister = registration->Option.flatMap(r => r.contractRegister)->Option.isSome
-      let hasHandler = registration->Option.flatMap(r => r.handler)->Option.isSome
+      let eventConfigId = eventConfig.id
 
       // Should validate the events
       eventRouter->EventRouter.addOrThrow(
-        eventConfig.id,
+        eventConfigId,
         (),
         ~contractName,
         ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
         ~eventName=eventConfig.name,
-        ~isWildcard,
+        ~isWildcard=registrations->EventRegister.getIsWildcard(~eventConfigId),
       )
 
       // Filter out non-preRegistration events on preRegistration phase
@@ -79,7 +75,9 @@ let make = (
       let shouldBeIncluded = if config.enableRawEvents {
         true
       } else {
-        let isRegistered = hasContractRegister || hasHandler
+        let isRegistered =
+          registrations->EventRegister.hasContractRegister(~eventConfigId) ||
+            registrations->EventRegister.hasHandler(~eventConfigId)
         if !isRegistered {
           notRegisteredEvents->Array.push(eventConfig)
         }
@@ -183,6 +181,12 @@ let make = (
     ~targetBufferSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
+    ~eventConfigLookup={
+      getFilterByAddresses: eventConfigId =>
+        registrations->EventRegister.getFilterByAddresses(~eventConfigId),
+      getDependsOnAddresses: eventConfigId =>
+        registrations->EventRegister.getDependsOnAddresses(~eventConfigId),
+    },
     // FIXME: Shouldn't set with full history
     ~blockLag=Pervasives.max(
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
