@@ -7,11 +7,11 @@
 # - Your project uses pnpm as the package manager
 # - Vitest is installed (included by default in envio projects)
 #
-# Optional: ENVIO_API_TOKEN
-# If your config.yaml uses "hypersync" (the default and recommended data source),
-# you can optionally add an ENVIO_API_TOKEN secret to your repository for higher rate limits.
-# Without a token, you'll use the public rate limit which is sufficient for most testing.
+# Required: ENVIO_API_TOKEN
+# Envio indexers use HyperSync as the default data source, which requires an API token.
+# Add ENVIO_API_TOKEN to your repository secrets before running this workflow.
 # To add the secret: Repository Settings > Secrets and variables > Actions > New repository secret
+# Get your token at: https://envio.dev
 
 name: Test
 
@@ -56,14 +56,10 @@ jobs:
       - name: Run codegen
         run: pnpm codegen
         env:
-          # Optional: Uncomment if you've added ENVIO_API_TOKEN to your repository secrets
-          # This provides higher HyperSync rate limits during codegen
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
       # Run your indexer tests using Vitest
       - name: Run tests
         run: pnpm vitest run
         env:
-          # Optional: Uncomment if you've added ENVIO_API_TOKEN to your repository secrets
-          # This provides higher HyperSync rate limits during test execution
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
