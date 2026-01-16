@@ -59,7 +59,6 @@ let makeSources = (
   | Some(endpointUrl) => [
       HyperSyncSource.make({
         chain,
-        contracts,
         endpointUrl,
         allEventSignatures,
         eventRouter,
@@ -78,7 +77,6 @@ let makeSources = (
       RpcSource.make({
         chain,
         sourceFor,
-        contracts,
         syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
         url,
         eventRouter,
