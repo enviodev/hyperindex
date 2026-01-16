@@ -364,12 +364,13 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
                 ),
             };
 
+        // Note: handler and contractRegister are now stored in EventRegister.eventHandlerRegistration
+        // and looked up by id. isWildcard/filterByAddresses/dependsOnAddresses are kept on eventConfig
+        // for backward compatibility with fetch code.
         let base_event_config_code = r#"id,
 name,
 contractName,
 isWildcard: (handlerRegister->EventRegister.isWildcard),
-handler: handlerRegister->EventRegister.getHandler,
-contractRegister: handlerRegister->EventRegister.getContractRegister,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
 
         let non_event_mod_code = match fuel_event_kind_code {
@@ -446,6 +447,7 @@ let transactionSchema = {transaction_schema}
 let handlerRegister: EventRegister.t = EventRegister.make(
 ~contractName,
 ~eventName=name,
+~eventConfigId=id,
 )
 
 @genType
@@ -2089,6 +2091,7 @@ let transactionSchema = Transaction.schema
 let handlerRegister: EventRegister.t = EventRegister.make(
 ~contractName,
 ~eventName=name,
+~eventConfigId=id,
 )
 
 @genType
@@ -2109,8 +2112,6 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFilte
 name,
 contractName,
 isWildcard: (handlerRegister->EventRegister.isWildcard),
-handler: handlerRegister->EventRegister.getHandler,
-contractRegister: handlerRegister->EventRegister.getContractRegister,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }}
 }}"#
@@ -2177,6 +2178,7 @@ let transactionSchema = Transaction.schema
 let handlerRegister: EventRegister.t = EventRegister.make(
 ~contractName,
 ~eventName=name,
+~eventConfigId=id,
 )
 
 @genType
@@ -2197,8 +2199,6 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
 name,
 contractName,
 isWildcard: (handlerRegister->EventRegister.isWildcard),
-handler: handlerRegister->EventRegister.getHandler,
-contractRegister: handlerRegister->EventRegister.getContractRegister,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
 }"#.to_string(),
@@ -2271,6 +2271,7 @@ let transactionSchema = S.object((s): transaction => {from: s.field("from", S.nu
 let handlerRegister: EventRegister.t = EventRegister.make(
 ~contractName,
 ~eventName=name,
+~eventConfigId=id,
 )
 
 @genType
@@ -2291,8 +2292,6 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
 name,
 contractName,
 isWildcard: (handlerRegister->EventRegister.isWildcard),
-handler: handlerRegister->EventRegister.getHandler,
-contractRegister: handlerRegister->EventRegister.getContractRegister,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
 }"#.to_string(),

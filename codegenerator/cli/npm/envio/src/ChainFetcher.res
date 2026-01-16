@@ -58,8 +58,11 @@ let make = (
     let contractName = contract.name
 
     contract.events->Array.forEach(eventConfig => {
-      let {isWildcard} = eventConfig
-      let hasContractRegister = eventConfig.contractRegister->Option.isSome
+      // Look up registration by eventConfigId
+      let registration = registrations->EventRegister.getEventRegistration(~eventConfigId=eventConfig.id)
+      let isWildcard = registration->Option.mapWithDefault(false, r => r.isWildcard)
+      let hasContractRegister = registration->Option.flatMap(r => r.contractRegister)->Option.isSome
+      let hasHandler = registration->Option.flatMap(r => r.handler)->Option.isSome
 
       // Should validate the events
       eventRouter->EventRouter.addOrThrow(
@@ -76,7 +79,7 @@ let make = (
       let shouldBeIncluded = if config.enableRawEvents {
         true
       } else {
-        let isRegistered = hasContractRegister || eventConfig.handler->Option.isSome
+        let isRegistered = hasContractRegister || hasHandler
         if !isRegistered {
           notRegisteredEvents->Array.push(eventConfig)
         }
@@ -310,6 +313,7 @@ let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~chain: ChainMap.Chain.t,
   ~config: Config.t,
+  ~registrations: EventRegister.registrations,
 ) => {
   let itemsWithDcs = []
 
@@ -343,11 +347,12 @@ let runContractRegistersOrThrow = async (
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem {
-    | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
-    | {eventConfig: {contractRegister: None, name: eventName}} =>
+    // Look up contractRegister from registrations
+    let contractRegister = switch registrations->EventRegister.getEventRegistration(~eventConfigId=eventItem.eventConfig.id) {
+    | Some({contractRegister: Some(contractRegister)}) => contractRegister
+    | _ =>
       // Unexpected case, since we should pass only events with contract register to this function
-      Js.Exn.raiseError("Contract register is not set for event " ++ eventName)
+      Js.Exn.raiseError("Contract register is not set for event " ++ eventItem.eventConfig.name)
     }
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"

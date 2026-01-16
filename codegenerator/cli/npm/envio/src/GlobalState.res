@@ -506,11 +506,17 @@ let processPartitionQueryResponse = async (
 
   let itemsWithContractRegister = []
   let newItems = []
+  let registrations = state.ctx.registrations
 
   for idx in 0 to parsedQueueItems->Array.length - 1 {
     let item = parsedQueueItems->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    if eventItem.eventConfig.contractRegister !== None {
+    // Look up contractRegister from registrations
+    let hasContractRegister = registrations
+      ->EventRegister.getEventRegistration(~eventConfigId=eventItem.eventConfig.id)
+      ->Belt.Option.flatMap(r => r.contractRegister)
+      ->Belt.Option.isSome
+    if hasContractRegister {
       itemsWithContractRegister->Array.push(item)
     }
 
@@ -526,6 +532,7 @@ let processPartitionQueryResponse = async (
       ~itemsWithContractRegister,
       ~chain,
       ~config=state.ctx.config,
+      ~registrations,
     )
   }
 

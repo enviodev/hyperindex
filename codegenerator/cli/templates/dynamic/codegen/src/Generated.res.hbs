@@ -39,7 +39,11 @@ let makeGeneratedConfig = () => {
   )
 }
 
-// Config without handler registration - used by tests, migrations, etc.
+// Config created at module load time (before handler registration).
+// Used by tests, migrations, indexer initialization, etc.
+// Note: handler and contractRegister are stored in registrations.eventHandlerRegistrations,
+// not on eventConfig. This config has correct static values (chain info, contracts, etc.)
+// but isWildcard/filterByAddresses/dependsOnAddresses may be default values until handlers are loaded.
 let configWithoutRegistrations = makeGeneratedConfig()
 
 let initialSql = PgStorage.makeClient()

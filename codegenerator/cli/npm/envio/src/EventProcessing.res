@@ -208,7 +208,11 @@ let runHandlerOrThrow = async (
       )
     }
   | Event({eventConfig}) => {
-      switch eventConfig.handler {
+      // Look up handler from registrations
+      let handler = ctx.registrations
+        ->EventRegister.getEventRegistration(~eventConfigId=eventConfig.id)
+        ->Belt.Option.flatMap(r => r.handler)
+      switch handler {
       | Some(handler) =>
         await item->runEventHandlerOrThrow(
           ~handler,

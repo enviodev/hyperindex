@@ -1,5 +1,15 @@
+type eventHandlerRegistration = {
+  eventConfigId: string,
+  handler: option<Internal.handler>,
+  contractRegister: option<Internal.contractRegister>,
+  isWildcard: bool,
+  filterByAddresses: bool,
+  dependsOnAddresses: bool,
+}
+
 type registrations = {
   onBlockByChainId: dict<array<Internal.onBlockConfig>>,
+  eventHandlerRegistrations: dict<eventHandlerRegistration>,
   mutable hasEvents: bool,
 }
 
@@ -41,6 +51,7 @@ let startRegistration = (~ecosystem, ~multichain) => {
     multichain,
     registrations: {
       onBlockByChainId: Js.Dict.empty(),
+      eventHandlerRegistrations: Js.Dict.empty(),
       hasEvents: false,
     },
     finished: false,
@@ -55,15 +66,74 @@ let startRegistration = (~ecosystem, ~multichain) => {
   }
 }
 
+// Compute filterByAddresses by checking if eventFilters function accesses addresses
+let computeFilterByAddresses = (eventFilters: option<Js.Json.t>) => {
+  switch eventFilters {
+  | None => false
+  | Some(eventFilters) =>
+    if Js.typeof(eventFilters) === "function" {
+      let filterByAddresses = ref(false)
+      let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t)
+      try {
+        let args =
+          ({chainId: 0, addresses: []}: Internal.eventFiltersArgs)->Utils.Object.defineProperty(
+            "addresses",
+            {
+              get: () => {
+                filterByAddresses := true
+                []
+              },
+            },
+          )
+        let _ = fn(args)
+      } catch {
+      | _ => ()
+      }
+      filterByAddresses.contents
+    } else {
+      false
+    }
+  }
+}
+
 let finishRegistration = () => {
   switch activeRegistration.contents {
   | Some(r) => {
+      // Finalize all event registrations
+      allEventRegisters.contents->Belt.Array.forEach(t => {
+        let isWildcard = t->isWildcard
+        let filterByAddresses = t.eventOptions
+          ->Belt.Option.flatMap(o => o.eventFilters)
+          ->computeFilterByAddresses
+        let dependsOnAddresses = !isWildcard || filterByAddresses
+
+        r.registrations.eventHandlerRegistrations->Js.Dict.set(
+          t.eventConfigId,
+          {
+            eventConfigId: t.eventConfigId,
+            handler: t.handler,
+            contractRegister: t.contractRegister,
+            isWildcard,
+            filterByAddresses,
+            dependsOnAddresses,
+          },
+        )
+      })
+
+      // Reset the tracked instances
+      allEventRegisters := []
+
       r.finished = true
       r.registrations
     }
   | None =>
     Js.Exn.raiseError("The indexer has not started registering handlers, so can't finish it.")
   }
+}
+
+// Get an event registration by eventConfigId
+let getEventRegistration = (registrations: registrations, ~eventConfigId: string) => {
+  registrations.eventHandlerRegistrations->Js.Dict.get(eventConfigId)
 }
 
 let isPendingRegistration = () => {
@@ -142,12 +212,16 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
 }
 
 type t = {
+  eventConfigId: string,
   contractName: string,
   eventName: string,
   mutable handler: option<Internal.handler>,
   mutable contractRegister: option<Internal.contractRegister>,
   mutable eventOptions: option<Internal.eventOptions<Js.Json.t>>,
 }
+
+// Track all EventRegister.t instances created during registration
+let allEventRegisters: ref<array<t>> = ref([])
 
 let getHandler = (t: t) => t.handler
 
@@ -161,12 +235,18 @@ let isWildcard = (t: t) =>
 let hasRegistration = ({handler, contractRegister}) =>
   handler->Belt.Option.isSome || contractRegister->Belt.Option.isSome
 
-let make = (~contractName, ~eventName) => {
-  contractName,
-  eventName,
-  handler: None,
-  contractRegister: None,
-  eventOptions: None,
+let make = (~contractName, ~eventName, ~eventConfigId) => {
+  let t = {
+    eventConfigId,
+    contractName,
+    eventName,
+    handler: None,
+    contractRegister: None,
+    eventOptions: None,
+  }
+  // Track this instance so we can finalize registrations later
+  allEventRegisters.contents->Belt.Array.push(t)
+  t
 }
 
 type eventNamespace = {contractName: string, eventName: string}

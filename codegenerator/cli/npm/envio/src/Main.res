@@ -254,9 +254,14 @@ let start = async (
   // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
   let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
-  // Register all handlers first, then get the config with registrations
-  let configWithoutRegistrations = makeGeneratedConfig()
-  let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
+  // First makeGeneratedConfig() call initializes EventRegister.t instances and provides
+  // basic config values (handlers path, ecosystem, multichain) needed for handler loading.
+  // After registerAllHandlers(), EventRegister.t instances have eventOptions set by user handlers.
+  // Second makeGeneratedConfig() call creates eventConfigs with correct isWildcard/filterByAddresses/
+  // dependsOnAddresses computed from the updated EventRegister.t instances.
+  // Handler/contractRegister are stored in registrations.eventHandlerRegistrations and looked up by id.
+  let initialConfig = makeGeneratedConfig()
+  let registrations = await HandlerLoader.registerAllHandlers(~config=initialConfig)
   let config = makeGeneratedConfig()
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}

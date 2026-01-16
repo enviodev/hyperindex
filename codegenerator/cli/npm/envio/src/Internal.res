@@ -126,6 +126,9 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
 // The idea is that it can only be coerced from fuel/evmEventConfig
 // and it can include their fields. We prevent manual creation,
 // so the fields are not overwritten and we can safely cast the type back to fuel/evmEventConfig
+// Note: handler and contractRegister are now stored in EventRegister.eventHandlerRegistration
+// and looked up by id. isWildcard/filterByAddresses/dependsOnAddresses are kept here for
+// backward compatibility with fetch code, but also stored in eventHandlerRegistration.
 type eventConfig = private {
   id: string,
   name: string,
@@ -136,8 +139,6 @@ type eventConfig = private {
   // Usually always false for wildcard events
   // But might be true for wildcard event with dynamic event filter by addresses
   dependsOnAddresses: bool,
-  handler: option<handler>,
-  contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
 }
 
