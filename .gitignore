@@ -5,6 +5,7 @@ target
 *.swo
 *.swp
 .pnpm-store
+node_modules
 
 #All generated code for scenarios
 scenarios/**/*.bs.js
