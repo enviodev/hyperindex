@@ -1762,7 +1762,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         .collect();
                     format!(
                         "  \"{}\": {};",
-                        gql_enum.name.capitalized,
+                        gql_enum.name.original,
                         enum_values.join(" | ")
                     )
                 })
