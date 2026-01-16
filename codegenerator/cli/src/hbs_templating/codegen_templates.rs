@@ -80,7 +80,6 @@ struct InternalEvmConfig<'a> {
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
     address_format: &'a str,
-    event_decoder: &'a str,
 }
 
 #[derive(Serialize, Debug)]
@@ -865,7 +864,6 @@ pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
     sources_code: String,
-    // event_decoder: Option<String>,
 }
 
 impl NetworkConfigTemplate {
@@ -947,11 +945,7 @@ impl NetworkConfigTemplate {
             system_config::DataSource::Svm { rpc } => {
                 format!("[Svm.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
             }
-            system_config::DataSource::Evm {
-                main,
-                is_client_decoder: _,
-                rpcs,
-            } => {
+            system_config::DataSource::Evm { main, rpcs } => {
                 let all_event_signatures = codegen_contracts
                     .iter()
                     .map(|contract| format!("Types.{}.eventSignatures", contract.name.capitalized))
@@ -1587,11 +1581,6 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                             "lowercase"
                         } else {
                             "checksum"
-                        },
-                        event_decoder: if cfg.should_use_hypersync_client_decoder {
-                            "hypersync"
-                        } else {
-                            "viem"
                         },
                     }),
                     None,

@@ -94,14 +94,12 @@ let publicConfigEcosystemSchema = S.schema(s =>
 )
 
 type addressFormat = | @as("lowercase") Lowercase | @as("checksum") Checksum
-type decoder = | @as("hypersync") Hypersync | @as("viem") Viem
 
 let publicConfigEvmSchema = S.schema(s =>
   {
     "chains": s.matches(S.dict(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
-    "eventDecoder": s.matches(S.option(S.enum([Hypersync, Viem]))),
   }
 )
 

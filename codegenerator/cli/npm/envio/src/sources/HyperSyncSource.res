@@ -203,7 +203,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       switch HyperSyncClient.Decoder.fromSignatures(allEventSignatures) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
+          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
         )
       | decoder =>
         if lowercaseAddresses {
