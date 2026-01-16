@@ -38,6 +38,7 @@ module Util = {
 module Process = {
   type t = {env: Js.Dict.t<string>, execArgv: array<string>}
   @module external process: t = "process"
+  @module("process") external cwd: unit => string = "cwd"
 }
 
 module ChildProcess = {
@@ -60,13 +61,23 @@ module Url = {
   type t
   @module("url") external fileURLToPath: t => string = "fileURLToPath"
   @module("url") external fileURLToPathFromString: string => string = "fileURLToPath"
+  // Convert a file path to a file:// URL string (for dynamic imports)
+  @module("url") external pathToFileURL: string => t = "pathToFileURL"
+  @send external toString: t => string = "toString"
 }
 
 module ImportMeta = {
   type t = {url: Url.t}
   @val external importMeta: t = "import.meta"
+  // Get import.meta.url as string for module registration
+  @val external url: string = "import.meta.url"
   // Resolve module specifier to file:// URL
   @val external resolve: string => string = "import.meta.resolve"
+}
+
+module Module = {
+  // Register ESM loader hooks (e.g., for TypeScript support via tsx)
+  @module("node:module") external register: (string, string) => unit = "register"
 }
 
 module Path = {
