@@ -130,7 +130,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   ->(Utils.magic: array<Internal.eventConfig> => array<Internal.fuelEventConfig>)
   ->Array.forEach(eventConfig => {
     let contractName = eventConfig.contractName
-    if !eventConfig.isWildcard {
+    let isWildcard = selection.getIsWildcard(eventConfig.id)
+    if !isWildcard {
       let _ = contractNames->Utils.Set.add(contractName)
     }
     eventRouter->EventRouter.addOrThrow(
@@ -139,15 +140,15 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       ~contractName,
       ~eventName=eventConfig.name,
       ~chain,
-      ~isWildcard=eventConfig.isWildcard,
+      ~isWildcard,
     )
 
     switch eventConfig {
-    | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
+    | {kind: Mint} if isWildcard => addNonLogDataWildcardReceiptTypes(Mint)
     | {kind: Mint} => addNonLogDataReceiptType(contractName, Mint)
-    | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
+    | {kind: Burn} if isWildcard => addNonLogDataWildcardReceiptTypes(Burn)
     | {kind: Burn} => addNonLogDataReceiptType(contractName, Burn)
-    | {kind: Transfer, isWildcard: true} => {
+    | {kind: Transfer} if isWildcard => {
         addNonLogDataWildcardReceiptTypes(Transfer)
         addNonLogDataWildcardReceiptTypes(TransferOut)
       }
@@ -155,10 +156,10 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         addNonLogDataReceiptType(contractName, Transfer)
         addNonLogDataReceiptType(contractName, TransferOut)
       }
-    | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
+    | {kind: Call} if isWildcard => addNonLogDataWildcardReceiptTypes(Call)
     | {kind: Call} =>
       Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
-    | {kind: LogData({logId}), isWildcard} => {
+    | {kind: LogData({logId})} => {
         let rb = logId->BigInt.fromStringUnsafe
         if isWildcard {
           wildcardLogDataRbs->Array.push(rb)->ignore

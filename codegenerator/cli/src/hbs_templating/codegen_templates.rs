@@ -368,32 +368,52 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
         let base_event_config_code = r#"id,
 name,
 contractName,
-isWildcard: (handlerRegister->EventRegister.isWildcard),
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
 
         let non_event_mod_code = match fuel_event_kind_code {
             None => format!(
                 r#"
 let register = (): Internal.evmEventConfig => {{
-let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
+let {{getEventFiltersOrThrow, filterByAddresses: _}} = {parse_event_filters_code}
 {{
   getEventFiltersOrThrow,
-  filterByAddresses,
-  dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
   {base_event_config_code}
 }}
+}}
+
+// Returns registered handler with computed values from EventRegister
+let getRegisteredHandler = (): Internal.registeredHandler => {{
+  let {{filterByAddresses}} = {parse_event_filters_code}
+  let isWildcard = handlerRegister->EventRegister.isWildcard
+  {{
+    handler: handlerRegister->EventRegister.getHandler,
+    contractRegister: handlerRegister->EventRegister.getContractRegister,
+    isWildcard,
+    filterByAddresses,
+    dependsOnAddresses: !isWildcard || filterByAddresses,
+  }}
 }}"#
             ),
             Some(fuel_event_kind_code) => format!(
                 r#"
 let register = (): Internal.fuelEventConfig => {{
 kind: {fuel_event_kind_code},
-filterByAddresses: false,
-dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard),
 {base_event_config_code}
+}}
+
+// Returns registered handler with computed values from EventRegister
+let getRegisteredHandler = (): Internal.registeredHandler => {{
+  let isWildcard = handlerRegister->EventRegister.isWildcard
+  {{
+    handler: handlerRegister->EventRegister.getHandler,
+    contractRegister: handlerRegister->EventRegister.getContractRegister,
+    isWildcard,
+    filterByAddresses: false,
+    dependsOnAddresses: !isWildcard,
+  }}
 }}"#
             ),
         };

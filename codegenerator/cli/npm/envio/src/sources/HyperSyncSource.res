@@ -408,7 +408,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~chainId,
       ~exn,
     ) => {
-      if !eventConfig.isWildcard {
+      let isWildcard = selection.getIsWildcard(eventConfig.id)
+      if !isWildcard {
         //Wildcard events can be parsed as undefined if the number of topics
         //don't match the event with the given topic0
         //Non wildcard events should be expected to be parsed

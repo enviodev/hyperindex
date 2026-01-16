@@ -1,11 +1,11 @@
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
 
-// All event handler registers - used to collect registered handlers
-let allEventHandlerRegisters: array<(string, EventRegister.t)> = [
+// All event getRegisteredHandler functions - used to collect registered handlers
+let allEventGetRegisteredHandlers: array<(string, unit => Internal.registeredHandler)> = [
   {{#each chain_configs as | chain_config |}}
   {{#each chain_config.codegen_contracts as | contract |}}
   {{#each contract.events as | event |}}
-  (Types.{{contract.name.capitalized}}.{{event.name}}.id, Types.{{contract.name.capitalized}}.{{event.name}}.handlerRegister),
+  (Types.{{contract.name.capitalized}}.{{event.name}}.id, Types.{{contract.name.capitalized}}.{{event.name}}.getRegisteredHandler),
   {{/each}}
   {{/each}}
   {{/each}}
@@ -14,8 +14,8 @@ let allEventHandlerRegisters: array<(string, EventRegister.t)> = [
 // Collect all registered handlers into a dict by event id
 let collectRegisteredHandlers = (): dict<Internal.registeredHandler> => {
   let handlers = Js.Dict.empty()
-  allEventHandlerRegisters->Belt.Array.forEach(((eventId, handlerRegister)) => {
-    handlers->Js.Dict.set(eventId, handlerRegister->EventRegister.toRegisteredHandler)
+  allEventGetRegisteredHandlers->Belt.Array.forEach(((eventId, getRegisteredHandler)) => {
+    handlers->Js.Dict.set(eventId, getRegisteredHandler())
   })
   handlers
 }

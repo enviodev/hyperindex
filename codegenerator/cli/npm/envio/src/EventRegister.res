@@ -155,12 +155,6 @@ let getContractRegister = (t: t) => t.contractRegister
 
 let getEventFilters = (t: t) => t.eventOptions->Belt.Option.flatMap(value => value.eventFilters)
 
-// Convert EventRegister.t to Internal.registeredHandler
-let toRegisteredHandler = (t: t): Internal.registeredHandler => {
-  handler: t.handler,
-  contractRegister: t.contractRegister,
-}
-
 let isWildcard = (t: t) =>
   t.eventOptions->Belt.Option.flatMap(value => value.wildcard)->Belt.Option.getWithDefault(false)
 

@@ -58,7 +58,7 @@ let make = (
     let contractName = contract.name
 
     contract.events->Array.forEach(eventConfig => {
-      let {isWildcard} = eventConfig
+      let isWildcard = config->Config.getIsWildcard(~eventId=eventConfig.id)
       let hasContractRegister = config->Config.getContractRegister(~eventId=eventConfig.id)->Option.isSome
 
       // Should validate the events
@@ -187,6 +187,7 @@ let make = (
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
     ~onBlockConfigs?,
+    ~registeredHandlers=config.registeredHandlers,
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {

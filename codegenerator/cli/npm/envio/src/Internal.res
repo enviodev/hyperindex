@@ -123,9 +123,16 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
 }
 
 // Registered handlers for an event - stored separately from event config
+// These fields come from EventRegister and are set during handler registration
 type registeredHandler = {
-  mutable handler: option<handler>,
-  mutable contractRegister: option<contractRegister>,
+  handler: option<handler>,
+  contractRegister: option<contractRegister>,
+  isWildcard: bool,
+  // Whether the event has an event filter which uses addresses
+  filterByAddresses: bool,
+  // Usually always false for wildcard events
+  // But might be true for wildcard event with dynamic event filter by addresses
+  dependsOnAddresses: bool,
 }
 
 // This is private so it's not manually constructed internally
@@ -136,12 +143,6 @@ type eventConfig = private {
   id: string,
   name: string,
   contractName: string,
-  isWildcard: bool,
-  // Whether the event has an event filter which uses addresses
-  filterByAddresses: bool,
-  // Usually always false for wildcard events
-  // But might be true for wildcard event with dynamic event filter by addresses
-  dependsOnAddresses: bool,
   paramsRawEventSchema: S.schema<eventParams>,
 }
 

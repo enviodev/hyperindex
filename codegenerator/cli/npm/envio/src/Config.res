@@ -368,14 +368,26 @@ let getChain = (config, ~chainId) => {
       )
 }
 
+// Get registered handler for an event by its id
+let getRegisteredHandler = (config, ~eventId) =>
+  config.registeredHandlers->Js.Dict.get(eventId)
+
 // Get handler for an event by its id
 let getHandler = (config, ~eventId) =>
-  config.registeredHandlers
-  ->Js.Dict.get(eventId)
-  ->Belt.Option.flatMap(rh => rh.handler)
+  config->getRegisteredHandler(~eventId)->Belt.Option.flatMap(rh => rh.handler)
 
 // Get contract register for an event by its id
 let getContractRegister = (config, ~eventId) =>
-  config.registeredHandlers
-  ->Js.Dict.get(eventId)
-  ->Belt.Option.flatMap(rh => rh.contractRegister)
+  config->getRegisteredHandler(~eventId)->Belt.Option.flatMap(rh => rh.contractRegister)
+
+// Get isWildcard for an event by its id
+let getIsWildcard = (config, ~eventId) =>
+  config->getRegisteredHandler(~eventId)->Belt.Option.mapWithDefault(false, rh => rh.isWildcard)
+
+// Get filterByAddresses for an event by its id
+let getFilterByAddresses = (config, ~eventId) =>
+  config->getRegisteredHandler(~eventId)->Belt.Option.mapWithDefault(false, rh => rh.filterByAddresses)
+
+// Get dependsOnAddresses for an event by its id
+let getDependsOnAddresses = (config, ~eventId) =>
+  config->getRegisteredHandler(~eventId)->Belt.Option.mapWithDefault(true, rh => rh.dependsOnAddresses)

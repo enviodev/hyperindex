@@ -9,7 +9,14 @@ type blockNumberAndTimestamp = {
 
 type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
-type selection = {eventConfigs: array<Internal.eventConfig>, dependsOnAddresses: bool}
+// Lookup function type for getting isWildcard by event id
+type getIsWildcard = string => bool
+
+type selection = {
+  eventConfigs: array<Internal.eventConfig>,
+  dependsOnAddresses: bool,
+  getIsWildcard: getIsWildcard,
+}
 
 type status = {mutable fetchingStateId: option<int>}
 
@@ -989,11 +996,26 @@ let make = (
   ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=[],
   ~blockLag=0,
+  ~registeredHandlers: dict<Internal.registeredHandler>=Js.Dict.empty(),
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
     blockNumber: progressBlockNumber,
   }
+
+  // Helper to get handler-specific fields from registeredHandlers
+  let getFilterByAddresses = eventId =>
+    registeredHandlers
+    ->Js.Dict.get(eventId)
+    ->Belt.Option.mapWithDefault(false, rh => rh.filterByAddresses)
+  let getDependsOnAddresses = eventId =>
+    registeredHandlers
+    ->Js.Dict.get(eventId)
+    ->Belt.Option.mapWithDefault(true, rh => rh.dependsOnAddresses)
+  let getIsWildcard: getIsWildcard = eventId =>
+    registeredHandlers
+    ->Js.Dict.get(eventId)
+    ->Belt.Option.mapWithDefault(false, rh => rh.isWildcard)
 
   let notDependingOnAddresses = []
   let normalEventConfigs = []
@@ -1002,17 +1024,18 @@ let make = (
   let contractConfigs = Js.Dict.empty()
 
   eventConfigs->Array.forEach(ec => {
+    let filterByAddresses = getFilterByAddresses(ec.id)
     switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
-    | Some({filterByAddresses}) =>
+    | Some({filterByAddresses: existingFilterByAddresses}) =>
       contractConfigs->Js.Dict.set(
         ec.contractName,
-        {filterByAddresses: filterByAddresses || ec.filterByAddresses},
+        {filterByAddresses: existingFilterByAddresses || filterByAddresses},
       )
     | None =>
-      contractConfigs->Js.Dict.set(ec.contractName, {filterByAddresses: ec.filterByAddresses})
+      contractConfigs->Js.Dict.set(ec.contractName, {filterByAddresses: filterByAddresses})
     }
 
-    if ec.dependsOnAddresses {
+    if getDependsOnAddresses(ec.id) {
       normalEventConfigs->Array.push(ec)
       contractNamesWithNormalEvents->Utils.Set.add(ec.contractName)->ignore
     } else {
@@ -1032,6 +1055,7 @@ let make = (
       selection: {
         dependsOnAddresses: false,
         eventConfigs: notDependingOnAddresses,
+        getIsWildcard,
       },
       addressesByContractName: Js.Dict.empty(),
     })
@@ -1040,6 +1064,7 @@ let make = (
   let normalSelection = {
     dependsOnAddresses: true,
     eventConfigs: normalEventConfigs,
+    getIsWildcard,
   }
 
   switch normalEventConfigs {
