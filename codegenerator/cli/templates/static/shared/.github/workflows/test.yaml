@@ -6,6 +6,7 @@
 # Prerequisites:
 # - Your project uses pnpm as the package manager
 # - Vitest is installed (included by default in envio projects)
+# - You have a "test" script defined in package.json (e.g., "test": "vitest run")
 #
 # Required: ENVIO_API_TOKEN
 # Envio indexers use HyperSync as the default data source, which requires an API token.
