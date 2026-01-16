@@ -1,0 +1,70 @@
+# GitHub Actions workflow for testing your Envio indexer
+#
+# This workflow runs your indexer tests on every push to main and on pull requests.
+# It ensures your indexer code compiles correctly and all tests pass before merging.
+#
+# Prerequisites:
+# - Your project uses pnpm as the package manager
+# - You have a "test" script defined in package.json (e.g., "test": "pnpm envio test")
+#
+# Optional: ENVIO_API_TOKEN
+# If your config.yaml uses "hypersync" (the default and recommended data source),
+# you can optionally add an ENVIO_API_TOKEN secret to your repository for higher rate limits.
+# Without a token, you'll use the public rate limit which is sufficient for most testing.
+# To add the secret: Repository Settings > Secrets and variables > Actions > New repository secret
+
+name: Test
+
+on:
+  # Run tests when code is pushed to main branch
+  push:
+    branches:
+      - main
+  # Run tests on all pull requests
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Check out your repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up pnpm package manager
+      # Update the version below if you need a different pnpm version
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # Set up Node.js with caching for faster installs
+      # The cache: 'pnpm' option caches dependencies between runs
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      # Install project dependencies
+      - name: Install dependencies
+        run: pnpm install
+
+      # Generate indexer code from your config.yaml and schema.graphql
+      # This step is required before running tests
+      - name: Run codegen
+        run: pnpm codegen
+        env:
+          # Optional: Uncomment if you've added ENVIO_API_TOKEN to your repository secrets
+          # This provides higher HyperSync rate limits during codegen
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+
+      # Run your indexer tests
+      # Make sure you have a "test" script in your package.json
+      - name: Run tests
+        run: pnpm test
+        env:
+          # Optional: Uncomment if you've added ENVIO_API_TOKEN to your repository secrets
+          # This provides higher HyperSync rate limits during test execution
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
