@@ -133,12 +133,11 @@ Update `config.yaml`:
 # Global contract definitions
 contracts:
   - name: Factory
-    handler: src/handlers/factory.ts
     events:
       - event: PairCreated(...)
 
-# Network-specific addresses only
-networks:
+# Chain-specific addresses only
+chains:
   - id: 1
     contracts:
       - name: Factory
@@ -343,17 +342,7 @@ const value = new BigDecimal(amount.toString()).div(
 
 ## Common Issues & Fixes
 
-### Issue 1: Entity Type Imports
-
-```typescript
-// WRONG:
-import { Pair, Token } from "generated";
-
-// CORRECT:
-import { Pair_t, Token_t } from "generated/src/db/Entities.gen";
-```
-
-### Issue 2: Field Names
+### Issue 1: Field Names
 
 ```typescript
 // WRONG:
@@ -363,7 +352,7 @@ const pair = { token0: token0.id };
 const pair = { token0_id: token0.id };
 ```
 
-### Issue 3: BigDecimal Import
+### Issue 2: BigDecimal Import
 
 ```typescript
 // WRONG:
@@ -373,7 +362,7 @@ import { BigDecimal } from "bignumber.js";
 import { BigDecimal } from "generated";
 ```
 
-### Issue 4: Missing async/await
+### Issue 3: Missing async/await
 
 ```typescript
 // WRONG:
@@ -385,7 +374,7 @@ const entity = await context.Entity.get(id);
 
 Note: `context.Entity.set()` is synchronous - no await needed.
 
-### Issue 5: Schema Type Mapping
+### Issue 4: Schema Type Mapping
 
 | Schema | TypeScript |
 |--------|------------|
