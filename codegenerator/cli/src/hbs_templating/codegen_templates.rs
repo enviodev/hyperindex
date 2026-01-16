@@ -1787,10 +1787,12 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                             // For entity fields, the actual stored value is the ID (string)
                             // and the field name is suffixed with _id
                             let (field_name, field_type) = if param.is_entity_field {
-                                (
-                                    format!("{}_id", param.field_name.original),
-                                    "string".to_string(),
-                                )
+                                let base_type = if param.field_type.is_option() {
+                                    "string | undefined".to_string()
+                                } else {
+                                    "string".to_string()
+                                };
+                                (format!("{}_id", param.field_name.original), base_type)
                             } else {
                                 (param.field_name.original.clone(), ts_type)
                             };
