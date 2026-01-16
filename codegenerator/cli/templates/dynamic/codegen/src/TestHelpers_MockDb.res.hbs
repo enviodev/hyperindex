@@ -343,9 +343,10 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         )
       }
 
-      switch eventConfig {
-      | {handler: None, contractRegister: None} => Js.Exn.raiseError(`Event ${eventConfig.contractName}.${eventConfig.name} has no handler or contract register`)
-      | _ => ()
+      let hasHandler = config->Config.getHandler(~eventId=eventConfig.id)->Option.isSome
+      let hasContractRegister = config->Config.getContractRegister(~eventId=eventConfig.id)->Option.isSome
+      if !hasHandler && !hasContractRegister {
+        Js.Exn.raiseError(`Event ${eventConfig.contractName}.${eventConfig.name} has no handler or contract register`)
       }
 
       let chainId = switch chainId {
@@ -376,7 +377,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         latestFetchedBlockNumber.contents,
         event.block->config.ecosystem.getNumber,
       )
-      if eventConfig.contractRegister->Option.isSome {
+      if hasContractRegister {
         itemsWithContractRegister->Js.Array2.push(item)->ignore
       }
       item

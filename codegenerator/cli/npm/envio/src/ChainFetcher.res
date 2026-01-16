@@ -59,7 +59,7 @@ let make = (
 
     contract.events->Array.forEach(eventConfig => {
       let {isWildcard} = eventConfig
-      let hasContractRegister = eventConfig.contractRegister->Option.isSome
+      let hasContractRegister = config->Config.getContractRegister(~eventId=eventConfig.id)->Option.isSome
 
       // Should validate the events
       eventRouter->EventRouter.addOrThrow(
@@ -76,7 +76,8 @@ let make = (
       let shouldBeIncluded = if config.enableRawEvents {
         true
       } else {
-        let isRegistered = hasContractRegister || eventConfig.handler->Option.isSome
+        let hasHandler = config->Config.getHandler(~eventId=eventConfig.id)->Option.isSome
+        let isRegistered = hasContractRegister || hasHandler
         if !isRegistered {
           notRegisteredEvents->Array.push(eventConfig)
         }
@@ -343,11 +344,11 @@ let runContractRegistersOrThrow = async (
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem {
-    | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
-    | {eventConfig: {contractRegister: None, name: eventName}} =>
+    let contractRegister = switch config->Config.getContractRegister(~eventId=eventItem.eventConfig.id) {
+    | Some(contractRegister) => contractRegister
+    | None =>
       // Unexpected case, since we should pass only events with contract register to this function
-      Js.Exn.raiseError("Contract register is not set for event " ++ eventName)
+      Js.Exn.raiseError("Contract register is not set for event " ++ eventItem.eventConfig.name)
     }
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"

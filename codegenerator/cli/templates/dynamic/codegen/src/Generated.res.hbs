@@ -1,6 +1,26 @@
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
 
-let makeGeneratedConfig = () => {
+// All event handler registers - used to collect registered handlers
+let allEventHandlerRegisters: array<(string, EventRegister.t)> = [
+  {{#each chain_configs as | chain_config |}}
+  {{#each chain_config.codegen_contracts as | contract |}}
+  {{#each contract.events as | event |}}
+  (Types.{{contract.name.capitalized}}.{{event.name}}.id, Types.{{contract.name.capitalized}}.{{event.name}}.handlerRegister),
+  {{/each}}
+  {{/each}}
+  {{/each}}
+]
+
+// Collect all registered handlers into a dict by event id
+let collectRegisteredHandlers = (): dict<Internal.registeredHandler> => {
+  let handlers = Js.Dict.empty()
+  allEventHandlerRegisters->Belt.Array.forEach(((eventId, handlerRegister)) => {
+    handlers->Js.Dict.set(eventId, handlerRegister->EventRegister.toRegisteredHandler)
+  })
+  handlers
+}
+
+let makeGeneratedConfig = (~registeredHandlers: dict<Internal.registeredHandler>=Js.Dict.empty()) => {
   let codegenChains = [
     {{#each chain_configs as | chain_config |}}
     {
@@ -36,11 +56,15 @@ let makeGeneratedConfig = () => {
     %raw(`internalConfigJson`),
     ~codegenChains,
     ~userEntities=Entities.userEntities,
+    ~registeredHandlers,
   )
 }
 
 // Config without handler registration - used by tests, migrations, etc.
 let configWithoutRegistrations = makeGeneratedConfig()
+
+// Config with registered handlers - call after handler registration
+let makeConfigWithHandlers = () => makeGeneratedConfig(~registeredHandlers=collectRegisteredHandlers())
 
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema

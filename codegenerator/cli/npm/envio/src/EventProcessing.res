@@ -208,7 +208,7 @@ let runHandlerOrThrow = async (
       )
     }
   | Event({eventConfig}) => {
-      switch eventConfig.handler {
+      switch ctx.config->Config.getHandler(~eventId=eventConfig.id) {
       | Some(handler) =>
         await item->runEventHandlerOrThrow(
           ~handler,
@@ -257,8 +257,8 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler}, event}) =>
-        switch handler {
+      | Event({eventConfig, event}) =>
+        switch config->Config.getHandler(~eventId=eventConfig.id) {
         | None => ()
         | Some(handler) =>
           try {

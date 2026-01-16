@@ -75,6 +75,8 @@ type t = {
   lowercaseAddresses: bool,
   addContractNameToContractNameMapping: dict<string>,
   userEntitiesByName: dict<Internal.entityConfig>,
+  // Registered handlers by event id (e.g., "ContractName.EventName")
+  registeredHandlers: dict<Internal.registeredHandler>,
 }
 
 let publicConfigChainSchema = S.schema(s =>
@@ -135,6 +137,7 @@ let fromPublic = (
   ~codegenChains: array<codegenChain>=[],
   ~maxAddrInPartition=5000,
   ~userEntities: array<Internal.entityConfig>=[],
+  ~registeredHandlers: dict<Internal.registeredHandler>=Js.Dict.empty(),
 ) => {
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
@@ -200,6 +203,11 @@ let fromPublic = (
     codegenChainById->Js.Dict.set(codegenChain.id->Int.toString, codegenChain)
   })
 
+  // Helper to sort events by id
+  let sortEventsByIdInPlace = (events: array<Internal.eventConfig>) => {
+    events->Js.Array2.sortInPlaceWith((a, b) => Pervasives.compare(a.id, b.id))->ignore
+  }
+
   // Create a dictionary to store merged contracts with ABIs by chain id
   let contractsByChainId: Js.Dict.t<array<contract>> = Js.Dict.empty()
   codegenChains->Array.forEach(codegenChain => {
@@ -220,12 +228,15 @@ let fromPublic = (
             }
           },
         )
+        // Sort events by id
+        let sortedEvents = codegenContract.events->Js.Array2.copy
+        sortEventsByIdInPlace(sortedEvents)
         // Convert codegenContract to contract by adding abi
         {
           name: codegenContract.name,
           abi,
           addresses: parsedAddresses,
-          events: codegenContract.events,
+          events: sortedEvents,
           startBlock: codegenContract.startBlock,
         }
       | None =>
@@ -314,6 +325,13 @@ let fromPublic = (
   | None => []
   }
 
+  // Sort registered handlers by event id (dict keys)
+  let sortedRegisteredHandlers = {
+    let entries = registeredHandlers->Js.Dict.entries
+    entries->Js.Array2.sortInPlaceWith(((a, _), (b, _)) => Pervasives.compare(a, b))->ignore
+    entries->Js.Dict.fromArray
+  }
+
   {
     name: publicConfig["name"],
     description: publicConfig["description"],
@@ -331,6 +349,7 @@ let fromPublic = (
     lowercaseAddresses,
     addContractNameToContractNameMapping,
     userEntitiesByName,
+    registeredHandlers: sortedRegisteredHandlers,
   }
 }
 
@@ -348,3 +367,15 @@ let getChain = (config, ~chainId) => {
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
 }
+
+// Get handler for an event by its id
+let getHandler = (config, ~eventId) =>
+  config.registeredHandlers
+  ->Js.Dict.get(eventId)
+  ->Belt.Option.flatMap(rh => rh.handler)
+
+// Get contract register for an event by its id
+let getContractRegister = (config, ~eventId) =>
+  config.registeredHandlers
+  ->Js.Dict.get(eventId)
+  ->Belt.Option.flatMap(rh => rh.contractRegister)

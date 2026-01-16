@@ -369,8 +369,6 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
 name,
 contractName,
 isWildcard: (handlerRegister->EventRegister.isWildcard),
-handler: handlerRegister->EventRegister.getHandler,
-contractRegister: handlerRegister->EventRegister.getContractRegister,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
 
         let non_event_mod_code = match fuel_event_kind_code {

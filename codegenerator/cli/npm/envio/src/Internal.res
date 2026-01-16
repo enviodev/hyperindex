@@ -122,6 +122,12 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
   eventFilters?: 'eventFilters,
 }
 
+// Registered handlers for an event - stored separately from event config
+type registeredHandler = {
+  mutable handler: option<handler>,
+  mutable contractRegister: option<contractRegister>,
+}
+
 // This is private so it's not manually constructed internally
 // The idea is that it can only be coerced from fuel/evmEventConfig
 // and it can include their fields. We prevent manual creation,
@@ -136,8 +142,6 @@ type eventConfig = private {
   // Usually always false for wildcard events
   // But might be true for wildcard event with dynamic event filter by addresses
   dependsOnAddresses: bool,
-  handler: option<handler>,
-  contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
 }
 
