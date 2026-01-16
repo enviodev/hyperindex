@@ -52,7 +52,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      # Generate indexer code from your config.yaml and schema.graphql
+      # Generate indexer types
       # This step is required before running tests
       - name: Run codegen
         run: pnpm codegen
@@ -61,6 +61,6 @@ jobs:
 
       # Run your indexer tests using Vitest
       - name: Run tests
-        run: pnpm vitest run
+        run: pnpm test
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
