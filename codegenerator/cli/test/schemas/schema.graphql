@@ -1,6 +1,12 @@
 #test schema
 
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
 type EmptyEntity {
   id: ID!
   emptyField: ID!
+  status: Status!
 }

@@ -14,8 +14,8 @@ export type FuelContracts = {
 export type SvmChains = {};
 export type Enums = {};
 export type Entities = {
-  EmptyEntity: {
-    id: string;
-    emptyField: string;
+  "EmptyEntity": {
+    "id": string;
+    "emptyField": string;
   };
 };

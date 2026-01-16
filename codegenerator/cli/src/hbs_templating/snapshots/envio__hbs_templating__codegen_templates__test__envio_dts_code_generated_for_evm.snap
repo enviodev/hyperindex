@@ -12,10 +12,13 @@ export type EvmContracts = {
 export type FuelChains = {};
 export type FuelContracts = {};
 export type SvmChains = {};
-export type Enums = {};
+export type Enums = {
+  Status: "ACTIVE" | "INACTIVE";
+};
 export type Entities = {
-  EmptyEntity: {
-    id: string;
-    emptyField: string;
+  "EmptyEntity": {
+    "id": string;
+    "emptyField": string;
+    "status": Enums.Status;
   };
 };

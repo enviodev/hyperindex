@@ -1789,11 +1789,11 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                             } else {
                                 ts_type
                             };
-                            format!("    {}: {};", param.field_name.original, field_type)
+                            format!("    \"{}\": {};", param.field_name.original, field_type)
                         })
                         .collect();
                     format!(
-                        "  {}: {{\n{}\n  }};",
+                        "  \"{}\": {{\n{}\n  }};",
                         entity.name.capitalized,
                         field_entries.join("\n")
                     )
