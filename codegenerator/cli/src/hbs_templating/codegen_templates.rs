@@ -155,7 +155,8 @@ impl GraphQlEnumTypeTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub res_type: TypeIdent,
+    #[serde(rename = "res_type")]
+    pub field_type: TypeIdent,
     pub is_entity_field: bool,
     pub is_indexed_field: bool,
     ///Used to determine if you can run a where
@@ -167,7 +168,7 @@ pub struct EntityParamTypeTemplate {
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let res_type: TypeIdent = field
+        let field_type: TypeIdent = field
             .field_type
             .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?;
@@ -184,7 +185,7 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            res_type,
+            field_type,
             is_entity_field,
             is_indexed_field,
             is_queryable_field,
@@ -1760,7 +1761,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         .map(|value| format!("\"{}\"", value.original))
                         .collect();
                     format!(
-                        "  {}: {};",
+                        "  \"{}\": {};",
                         gql_enum.name.capitalized,
                         enum_values.join(" | ")
                     )
@@ -1782,7 +1783,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         // Skip derived fields as they are not stored in the DB
                         .filter(|param| !param.is_derived_field)
                         .map(|param| {
-                            let ts_type = param.res_type.to_ts_type_string();
+                            let ts_type = param.field_type.to_ts_type_string();
                             // For entity fields, the actual stored value is the ID (string)
                             let field_type = if param.is_entity_field {
                                 "string".to_string()

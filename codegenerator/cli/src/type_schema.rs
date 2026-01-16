@@ -528,7 +528,7 @@ impl TypeIdent {
                 format!("[{}]", inner_types_str)
             }
             Self::SchemaEnum(enum_name) => {
-                format!("Enums.{}", &enum_name.capitalized)
+                format!("Enums[\"{}\"]", &enum_name.capitalized)
             }
             Self::GenericParam(name) => name.clone(),
             Self::TypeApplication {
@@ -1211,7 +1211,7 @@ mod tests {
         };
         assert_eq!(
             TypeIdent::SchemaEnum(enum_name).to_ts_type_string(),
-            "Enums.MyEnum"
+            "Enums[\"MyEnum\"]"
         );
     }
 

@@ -5,8 +5,14 @@ enum Status {
   INACTIVE
 }
 
+type RelatedEntity {
+  id: ID!
+  name: String!
+}
+
 type EmptyEntity {
   id: ID!
   emptyField: ID!
   status: Status!
+  related: RelatedEntity!
 }
