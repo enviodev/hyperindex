@@ -947,11 +947,7 @@ impl NetworkConfigTemplate {
             system_config::DataSource::Svm { rpc } => {
                 format!("[Svm.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
             }
-            system_config::DataSource::Evm {
-                main,
-                is_client_decoder: _,
-                rpcs,
-            } => {
+            system_config::DataSource::Evm { main, rpcs } => {
                 let all_event_signatures = codegen_contracts
                     .iter()
                     .map(|contract| format!("Types.{}.eventSignatures", contract.name.capitalized))
@@ -1588,11 +1584,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         } else {
                             "checksum"
                         },
-                        event_decoder: if cfg.should_use_hypersync_client_decoder {
-                            "hypersync"
-                        } else {
-                            "viem"
-                        },
+                        event_decoder: "hypersync",
                     }),
                     None,
                     None,
