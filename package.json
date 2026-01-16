@@ -1,0 +1,9 @@
+{
+  "name": "hyperindex",
+  "private": true,
+  "scripts": {
+    "e2e": "pnpm --filter @envio/e2e-tests test",
+    "e2e:parallel": "pnpm --filter @envio/e2e-tests test:parallel"
+  },
+  "devDependencies": {}
+}

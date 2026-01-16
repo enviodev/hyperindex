@@ -1,0 +1,108 @@
+type EventsSummary {
+  id: ID!
+  futuresMarket_CacheUpdated: [FuturesMarket_CacheUpdated!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_CacheUpdatedCount: BigInt!
+  futuresMarket_FundingRecomputed: [FuturesMarket_FundingRecomputed!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_FundingRecomputedCount: BigInt!
+  futuresMarket_FuturesTracking: [FuturesMarket_FuturesTracking!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_FuturesTrackingCount: BigInt!
+  futuresMarket_MarginTransferred: [FuturesMarket_MarginTransferred!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_MarginTransferredCount: BigInt!
+  futuresMarket_NextPriceOrderRemoved: [FuturesMarket_NextPriceOrderRemoved!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_NextPriceOrderRemovedCount: BigInt!
+  futuresMarket_NextPriceOrderSubmitted: [FuturesMarket_NextPriceOrderSubmitted!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_NextPriceOrderSubmittedCount: BigInt!
+  futuresMarket_PositionLiquidated: [FuturesMarket_PositionLiquidated!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_PositionLiquidatedCount: BigInt!
+  futuresMarket_PositionModified: [FuturesMarket_PositionModified!]! @derivedFrom(field: "eventsSummary")
+  futuresMarket_PositionModifiedCount: BigInt!
+  futuresMarketManager_MarketAdded: [FuturesMarketManager_MarketAdded!]! @derivedFrom(field: "eventsSummary")
+  futuresMarketManager_MarketAddedCount: BigInt!
+}
+
+type FuturesMarket_CacheUpdated {
+  id: ID!
+  name: String!
+  destination: String!
+  eventsSummary: String!
+}
+
+type FuturesMarket_FundingRecomputed {
+  id: ID!
+  funding: BigInt!
+  index: BigInt!
+  timestamp: BigInt!
+  eventsSummary: String!
+}
+
+type FuturesMarket_FuturesTracking {
+  id: ID!
+  trackingCode: String!
+  baseAsset: String!
+  marketKey: String!
+  sizeDelta: BigInt!
+  fee: BigInt!
+  eventsSummary: String!
+}
+
+type FuturesMarket_MarginTransferred {
+  id: ID!
+  account: String!
+  marginDelta: BigInt!
+  eventsSummary: String!
+}
+
+type FuturesMarket_NextPriceOrderRemoved {
+  id: ID!
+  account: String!
+  currentRoundId: BigInt!
+  sizeDelta: BigInt!
+  targetRoundId: BigInt!
+  commitDeposit: BigInt!
+  keeperDeposit: BigInt!
+  trackingCode: String!
+  eventsSummary: String!
+}
+
+type FuturesMarket_NextPriceOrderSubmitted {
+  id: ID!
+  account: String!
+  sizeDelta: BigInt!
+  targetRoundId: BigInt!
+  commitDeposit: BigInt!
+  keeperDeposit: BigInt!
+  trackingCode: String!
+  eventsSummary: String!
+}
+
+type FuturesMarket_PositionLiquidated {
+  id: ID!
+  event_id: BigInt!
+  account: String!
+  liquidator: String!
+  size: BigInt!
+  price: BigInt!
+  fee: BigInt!
+  eventsSummary: String!
+}
+
+type FuturesMarket_PositionModified {
+  id: ID!
+  event_id: BigInt!
+  account: String!
+  margin: BigInt!
+  size: BigInt!
+  tradeSize: BigInt!
+  lastPrice: BigInt!
+  fundingIndex: BigInt!
+  fee: BigInt!
+  eventsSummary: String!
+}
+
+type FuturesMarketManager_MarketAdded {
+  id: ID!
+  market: String!
+  asset: String!
+  marketKey: String!
+  eventsSummary: String!
+}
