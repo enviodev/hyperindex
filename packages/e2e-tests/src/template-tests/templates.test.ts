@@ -21,6 +21,7 @@ interface TemplateTestConfig {
 const TEMPLATES: TemplateTestConfig[] = [
   { name: "EVM Greeter", ecosystem: "evm", template: "Greeter" },
   { name: "EVM ERC20", ecosystem: "evm", template: "Erc20" },
+  { name: "EVM Factory", ecosystem: "evm", template: "Factory" },
   { name: "Fuel Greeter", ecosystem: "fuel", template: "Greeter" },
 ];
 

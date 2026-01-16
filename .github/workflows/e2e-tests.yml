@@ -78,7 +78,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18.1
         env:
           POSTGRES_PASSWORD: testing
           POSTGRES_DB: envio-dev
@@ -149,11 +149,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build test_codegen scenario
-        working-directory: scenarios/test_codegen
+      - name: Mock gio
         run: |
+          mkdir -p /home/runner/.local/bin
+          echo 'echo "mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
+          echo 'echo "mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
+
+      - name: Generate E2E test project
+        run: |
+          mkdir -p e2e-test-project
+          cd e2e-test-project
+          pnpm envio init test-erc20 --template Erc20 --language typescript --ecosystem evm
+          cd test-erc20
+          pnpm install
           pnpm codegen
-          pnpm build
 
       - name: Wait for Hasura
         run: |

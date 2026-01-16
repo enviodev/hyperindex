@@ -56,7 +56,10 @@ export class GraphQLClient {
       body: JSON.stringify({ query, variables }),
     });
 
-    return response.json();
+    return response.json() as Promise<{
+      data?: T;
+      errors?: Array<{ message: string }>;
+    }>;
   }
 
   /**
