@@ -364,9 +364,9 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
                 ),
             };
 
-        // Note: handler and contractRegister are now stored in EventRegister.eventHandlerRegistration
-        // and looked up by id. isWildcard/filterByAddresses/dependsOnAddresses are kept on eventConfig
-        // for backward compatibility with fetch code.
+        // Note: handler and contractRegister are stored in EventRegister.eventHandlerRegistration
+        // and looked up by id. isWildcard/filterByAddresses/dependsOnAddresses are used by
+        // fetch code (FetchState, sources) and also stored in eventHandlerRegistration.
         let base_event_config_code = r#"id,
 name,
 contractName,

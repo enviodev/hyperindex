@@ -31,6 +31,21 @@ let activeRegistration = ref(None)
 // an error is thrown with the exact stack trace where the handler was registered.
 let preRegistered = []
 
+type t = {
+  eventConfigId: string,
+  contractName: string,
+  eventName: string,
+  mutable handler: option<Internal.handler>,
+  mutable contractRegister: option<Internal.contractRegister>,
+  mutable eventOptions: option<Internal.eventOptions<Js.Json.t>>,
+}
+
+// Track all EventRegister.t instances created during registration
+let allEventRegisters: ref<array<t>> = ref([])
+
+let isWildcard = (t: t) =>
+  t.eventOptions->Belt.Option.flatMap(value => value.wildcard)->Belt.Option.getWithDefault(false)
+
 let withRegistration = (fn: activeRegistration => unit) => {
   switch activeRegistration.contents {
   | None => preRegistered->Belt.Array.push(fn)
@@ -136,6 +151,14 @@ let getEventRegistration = (registrations: registrations, ~eventConfigId: string
   registrations.eventHandlerRegistrations->Js.Dict.get(eventConfigId)
 }
 
+// Check if an event has a contractRegister
+let hasContractRegister = (registrations: registrations, ~eventConfigId: string) => {
+  switch registrations->getEventRegistration(~eventConfigId) {
+  | Some({contractRegister: Some(_)}) => true
+  | Some({contractRegister: None}) | None => false
+  }
+}
+
 let isPendingRegistration = () => {
   switch activeRegistration.contents {
   | Some(r) => !r.finished
@@ -211,26 +234,11 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
   })
 }
 
-type t = {
-  eventConfigId: string,
-  contractName: string,
-  eventName: string,
-  mutable handler: option<Internal.handler>,
-  mutable contractRegister: option<Internal.contractRegister>,
-  mutable eventOptions: option<Internal.eventOptions<Js.Json.t>>,
-}
-
-// Track all EventRegister.t instances created during registration
-let allEventRegisters: ref<array<t>> = ref([])
-
 let getHandler = (t: t) => t.handler
 
 let getContractRegister = (t: t) => t.contractRegister
 
 let getEventFilters = (t: t) => t.eventOptions->Belt.Option.flatMap(value => value.eventFilters)
-
-let isWildcard = (t: t) =>
-  t.eventOptions->Belt.Option.flatMap(value => value.wildcard)->Belt.Option.getWithDefault(false)
 
 let hasRegistration = ({handler, contractRegister}) =>
   handler->Belt.Option.isSome || contractRegister->Belt.Option.isSome

@@ -511,12 +511,7 @@ let processPartitionQueryResponse = async (
   for idx in 0 to parsedQueueItems->Array.length - 1 {
     let item = parsedQueueItems->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    // Look up contractRegister from registrations
-    let hasContractRegister = registrations
-      ->EventRegister.getEventRegistration(~eventConfigId=eventItem.eventConfig.id)
-      ->Belt.Option.flatMap(r => r.contractRegister)
-      ->Belt.Option.isSome
-    if hasContractRegister {
+    if registrations->EventRegister.hasContractRegister(~eventConfigId=eventItem.eventConfig.id) {
       itemsWithContractRegister->Array.push(item)
     }
 

@@ -126,9 +126,9 @@ type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
 // The idea is that it can only be coerced from fuel/evmEventConfig
 // and it can include their fields. We prevent manual creation,
 // so the fields are not overwritten and we can safely cast the type back to fuel/evmEventConfig
-// Note: handler and contractRegister are now stored in EventRegister.eventHandlerRegistration
-// and looked up by id. isWildcard/filterByAddresses/dependsOnAddresses are kept here for
-// backward compatibility with fetch code, but also stored in eventHandlerRegistration.
+// Note: handler and contractRegister are stored in EventRegister.eventHandlerRegistration
+// and looked up by id. isWildcard/filterByAddresses/dependsOnAddresses are used by
+// fetch code (FetchState, sources) and also stored in eventHandlerRegistration.
 type eventConfig = private {
   id: string,
   name: string,

@@ -207,13 +207,10 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({eventConfig}) => {
+  | Event({eventConfig}) =>
       // Look up handler from registrations
-      let handler = ctx.registrations
-        ->EventRegister.getEventRegistration(~eventConfigId=eventConfig.id)
-        ->Belt.Option.flatMap(r => r.handler)
-      switch handler {
-      | Some(handler) =>
+      switch ctx.registrations->EventRegister.getEventRegistration(~eventConfigId=eventConfig.id) {
+      | Some({handler: Some(handler)}) =>
         await item->runEventHandlerOrThrow(
           ~handler,
           ~checkpointId,
@@ -225,7 +222,7 @@ let runHandlerOrThrow = async (
           ~chains,
           ~config=ctx.config,
         )
-      | None => ()
+      | Some({handler: None}) | None => ()
       }
 
       if ctx.config.enableRawEvents {
@@ -233,7 +230,6 @@ let runHandlerOrThrow = async (
         ->Internal.castUnsafeEventItem
         ->addItemToRawEvents(~inMemoryStore, ~config=ctx.config)
       }
-    }
   }
 }
 
@@ -244,6 +240,7 @@ let preloadBatchOrThrow = async (
   ~config: Config.t,
   ~inMemoryStore,
   ~chains: Internal.chains,
+  ~registrations: EventRegister.registrations,
 ) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
@@ -261,10 +258,10 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler}, event}) =>
-        switch handler {
-        | None => ()
-        | Some(handler) =>
+      | Event({eventConfig, event}) =>
+        switch registrations->EventRegister.getEventRegistration(~eventConfigId=eventConfig.id) {
+        | Some({handler: None}) | None => ()
+        | Some({handler: Some(handler)}) =>
           try {
             promises->Array.push(
               handler({
@@ -419,6 +416,7 @@ let processEventBatch = async (
         ~inMemoryStore,
         ~chains,
         ~config=ctx.config,
+        ~registrations=ctx.registrations,
       )
     }
 
