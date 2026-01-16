@@ -864,7 +864,6 @@ pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
     sources_code: String,
-    // event_decoder: Option<String>,
 }
 
 impl NetworkConfigTemplate {

@@ -193,8 +193,6 @@ type IndexerConfig = {
     contracts?: Record<string, EvmContractConfig>;
     /** Address format (default: "checksum"). */
     addressFormat?: "lowercase" | "checksum";
-    /** Event decoder (default: "hypersync"). */
-    eventDecoder?: "hypersync" | "viem";
   };
   /** Fuel ecosystem configuration. */
   fuel?: {
