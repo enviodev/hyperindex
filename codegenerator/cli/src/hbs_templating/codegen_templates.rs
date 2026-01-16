@@ -1750,7 +1750,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                 )
             });
 
-            // Generate Enums namespace with all enum types
+            // Generate Enums type with all enum types as fields
             let enum_entries: Vec<String> = gql_enums
                 .iter()
                 .map(|gql_enum| {
@@ -1760,19 +1760,19 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         .map(|value| format!("\"{}\"", value.original))
                         .collect();
                     format!(
-                        "  export type {} = {};",
+                        "  {}: {};",
                         gql_enum.name.capitalized,
                         enum_values.join(" | ")
                     )
                 })
                 .collect();
             parts.push(if enum_entries.is_empty() {
-                "export namespace Enums {}".to_string()
+                "export type Enums = {};".to_string()
             } else {
-                format!("export namespace Enums {{\n{}\n}}", enum_entries.join("\n"))
+                format!("export type Enums = {{\n{}\n}};", enum_entries.join("\n"))
             });
 
-            // Generate Entities namespace with all entity types
+            // Generate Entities type with all entity types as fields
             let entity_entries: Vec<String> = entities
                 .iter()
                 .map(|entity| {
@@ -1793,17 +1793,17 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         })
                         .collect();
                     format!(
-                        "  export type {} = {{\n{}\n  }};",
+                        "  {}: {{\n{}\n  }};",
                         entity.name.capitalized,
                         field_entries.join("\n")
                     )
                 })
                 .collect();
             parts.push(if entity_entries.is_empty() {
-                "export namespace Entities {}".to_string()
+                "export type Entities = {};".to_string()
             } else {
                 format!(
-                    "export namespace Entities {{\n{}\n}}",
+                    "export type Entities = {{\n{}\n}};",
                     entity_entries.join("\n")
                 )
             });

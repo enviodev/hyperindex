@@ -12,10 +12,10 @@ export type FuelContracts = {
   "Greeter": {};
 };
 export type SvmChains = {};
-export namespace Enums {}
-export namespace Entities {
-  export type EmptyEntity = {
+export type Enums = {};
+export type Entities = {
+  EmptyEntity: {
     id: string;
     emptyField: string;
   };
-}
+};
