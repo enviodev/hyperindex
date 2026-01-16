@@ -31,7 +31,6 @@ let isIndex = true
 module {{entity.name.capitalized}} = {
   let name = "{{entity.name.capitalized}}"
   let index = {{@index}}
-  @genType
   type t = {{{entity.type_code}}}
 
   let schema = {{{entity.schema_code}}}
