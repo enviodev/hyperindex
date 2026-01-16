@@ -19,19 +19,29 @@ interface TemplateTestConfig {
 }
 
 const TEMPLATES: TemplateTestConfig[] = [
-  { name: "EVM Greeter", ecosystem: "evm", template: "Greeter" },
-  { name: "EVM ERC20", ecosystem: "evm", template: "Erc20" },
-  { name: "EVM Factory", ecosystem: "evm", template: "Factory" },
-  { name: "Fuel Greeter", ecosystem: "fuel", template: "Greeter" },
+  { name: "EVM Greeter", ecosystem: "evm", template: "greeter" },
+  { name: "EVM ERC20", ecosystem: "evm", template: "erc20" },
+  { name: "EVM Factory", ecosystem: "evm", template: "feature-factory" },
+  { name: "Fuel Greeter", ecosystem: "fuel", template: "greeter" },
 ];
 
-describe.each(TEMPLATES)("Template: $name", ({ name, ecosystem, template }) => {
+// Get envio binary path - use built binary or fall back to cargo run
+const ENVIO_BIN = path.join(
+  config.rootDir,
+  "codegenerator/target/release/envio"
+);
+
+describe.each(TEMPLATES)("Template: $name", ({ ecosystem, template }) => {
   let testDir: string;
-  const projectName = `test-${ecosystem}-${template.toLowerCase()}`;
+  let projectDir: string;
+  const projectName = `test-${ecosystem}-${template.replace("-", "")}`;
 
   beforeAll(async () => {
     // Create a temporary directory for this test
-    testDir = await fs.mkdtemp(path.join(os.tmpdir(), `envio-template-test-`));
+    testDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), `envio-template-test-`)
+    );
+    projectDir = path.join(testDir, projectName);
   });
 
   afterAll(async () => {
@@ -42,83 +52,100 @@ describe.each(TEMPLATES)("Template: $name", ({ name, ecosystem, template }) => {
   });
 
   it("generates template with envio init", async () => {
-    const result = await runCommand(
-      "pnpm",
-      [
-        "envio",
-        "init",
-        projectName,
-        "--template",
-        template,
-        "--language",
-        "typescript",
-        "--ecosystem",
-        ecosystem,
-      ],
-      {
-        cwd: testDir,
-        timeout: config.timeouts.codegen,
-        env: {
-          ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
-        },
-      }
-    );
+    // Build the init command based on ecosystem
+    const args =
+      ecosystem === "fuel"
+        ? [
+            "init",
+            "fuel",
+            "template",
+            "--name",
+            projectName,
+            "--template",
+            template,
+            "--language",
+            "typescript",
+          ]
+        : [
+            "init",
+            "template",
+            "--name",
+            projectName,
+            "--template",
+            template,
+            "--language",
+            "typescript",
+          ];
 
-    expect(result.exitCode).toBe(0);
-
-    // Verify project was created
-    const projectPath = path.join(testDir, projectName);
-    const exists = await fs
-      .access(projectPath)
-      .then(() => true)
-      .catch(() => false);
-    expect(exists).toBe(true);
-  });
-
-  it("installs dependencies", async () => {
-    const projectPath = path.join(testDir, projectName);
-
-    const result = await runCommand("pnpm", ["install"], {
-      cwd: projectPath,
-      timeout: config.timeouts.install,
-    });
-
-    expect(result.exitCode).toBe(0);
-  });
-
-  it("runs codegen successfully", async () => {
-    const projectPath = path.join(testDir, projectName);
-
-    const result = await runCommand("pnpm", ["codegen"], {
-      cwd: projectPath,
+    const result = await runCommand(ENVIO_BIN, args, {
+      cwd: testDir,
       timeout: config.timeouts.codegen,
       env: {
         ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
       },
     });
 
+    if (result.exitCode !== 0) {
+      console.error("envio init failed:", result.stderr);
+    }
+    expect(result.exitCode).toBe(0);
+
+    // Verify project was created
+    const exists = await fs
+      .access(projectDir)
+      .then(() => true)
+      .catch(() => false);
+    expect(exists).toBe(true);
+  });
+
+  it("installs dependencies", async () => {
+    const result = await runCommand("pnpm", ["install"], {
+      cwd: projectDir,
+      timeout: config.timeouts.install,
+    });
+
+    if (result.exitCode !== 0) {
+      console.error("pnpm install failed:", result.stderr);
+    }
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("runs codegen successfully", async () => {
+    const result = await runCommand(ENVIO_BIN, ["codegen"], {
+      cwd: projectDir,
+      timeout: config.timeouts.codegen,
+      env: {
+        ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+      },
+    });
+
+    if (result.exitCode !== 0) {
+      console.error("envio codegen failed:", result.stderr);
+    }
     expect(result.exitCode).toBe(0);
   });
 
   it("passes TypeScript type check", async () => {
-    const projectPath = path.join(testDir, projectName);
-
     const result = await runCommand("pnpm", ["tsc", "--noEmit"], {
-      cwd: projectPath,
+      cwd: projectDir,
       timeout: config.timeouts.test,
     });
 
+    if (result.exitCode !== 0) {
+      console.error("tsc failed:", result.stderr);
+    }
     expect(result.exitCode).toBe(0);
   });
 
   it("passes unit tests", async () => {
-    const projectPath = path.join(testDir, projectName);
-
     const result = await runCommand("pnpm", ["test"], {
-      cwd: projectPath,
+      cwd: projectDir,
       timeout: config.timeouts.test,
     });
 
+    if (result.exitCode !== 0) {
+      console.error("pnpm test failed:", result.stderr);
+    }
     expect(result.exitCode).toBe(0);
   });
 });

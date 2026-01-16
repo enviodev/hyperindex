@@ -23,6 +23,12 @@ import path from "path";
 import fs from "fs/promises";
 import os from "os";
 
+// Get envio binary path
+const ENVIO_BIN = path.join(
+  config.rootDir,
+  "codegenerator/target/release/envio"
+);
+
 describe("E2E: Indexer with GraphQL", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
@@ -63,18 +69,17 @@ describe("E2E: Indexer with GraphQL", () => {
       projectDir = path.join(testDir, "test-erc20");
 
       // Generate ERC20 template
-      await runCommand(
-        "pnpm",
+      const initResult = await runCommand(
+        ENVIO_BIN,
         [
-          "envio",
           "init",
+          "template",
+          "--name",
           "test-erc20",
           "--template",
-          "Erc20",
+          "erc20",
           "--language",
           "typescript",
-          "--ecosystem",
-          "evm",
         ],
         {
           cwd: testDir,
@@ -83,17 +88,30 @@ describe("E2E: Indexer with GraphQL", () => {
         }
       );
 
-      // Install and codegen
-      await runCommand("pnpm", ["install"], {
+      if (initResult.exitCode !== 0) {
+        throw new Error(`envio init failed: ${initResult.stderr}`);
+      }
+
+      // Install dependencies
+      const installResult = await runCommand("pnpm", ["install"], {
         cwd: projectDir,
         timeout: config.timeouts.install,
       });
 
-      await runCommand("pnpm", ["codegen"], {
+      if (installResult.exitCode !== 0) {
+        throw new Error(`pnpm install failed: ${installResult.stderr}`);
+      }
+
+      // Run codegen
+      const codegenResult = await runCommand(ENVIO_BIN, ["codegen"], {
         cwd: projectDir,
         timeout: config.timeouts.codegen,
         env: { ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "" },
       });
+
+      if (codegenResult.exitCode !== 0) {
+        throw new Error(`envio codegen failed: ${codegenResult.stderr}`);
+      }
     }
 
     // Kill any existing indexer on the port
@@ -132,7 +150,7 @@ describe("E2E: Indexer with GraphQL", () => {
 
     // Clean up docker
     if (projectDir) {
-      await runCommand("pnpm", ["envio", "stop"], {
+      await runCommand(ENVIO_BIN, ["stop"], {
         cwd: projectDir,
         timeout: 30000,
       }).catch(() => {});

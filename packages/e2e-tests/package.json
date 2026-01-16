@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:templates": "vitest run --project templates",
-    "test:e2e": "vitest run --project e2e",
+    "test:templates": "vitest run src/template-tests/",
+    "test:e2e": "vitest run src/e2e/",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

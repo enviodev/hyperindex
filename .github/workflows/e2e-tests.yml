@@ -159,10 +159,10 @@ jobs:
         run: |
           mkdir -p e2e-test-project
           cd e2e-test-project
-          pnpm envio init test-erc20 --template Erc20 --language typescript --ecosystem evm
+          envio init template --name test-erc20 --template erc20 --language typescript
           cd test-erc20
           pnpm install
-          pnpm codegen
+          envio codegen
 
       - name: Wait for Hasura
         run: |
