@@ -1785,12 +1785,16 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         .map(|param| {
                             let ts_type = param.field_type.to_ts_type_string();
                             // For entity fields, the actual stored value is the ID (string)
-                            let field_type = if param.is_entity_field {
-                                "string".to_string()
+                            // and the field name is suffixed with _id
+                            let (field_name, field_type) = if param.is_entity_field {
+                                (
+                                    format!("{}_id", param.field_name.original),
+                                    "string".to_string(),
+                                )
                             } else {
-                                ts_type
+                                (param.field_name.original.clone(), ts_type)
                             };
-                            format!("    \"{}\": {};", param.field_name.original, field_type)
+                            format!("    \"{}\": {};", field_name, field_type)
                         })
                         .collect();
                     format!(
