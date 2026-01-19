@@ -54,8 +54,8 @@ importers:
         specifier: 13.1.3
         version: 13.1.3
       postgres:
-        specifier: 3.4.1
-        version: 3.4.1
+        specifier: 3.4.8
+        version: 3.4.8
       prom-client:
         specifier: 15.0.0
         version: 15.0.0
@@ -876,8 +876,8 @@ packages:
     resolution: {integrity: sha512-0zZC2ygfdqvqK8zJIr1e+wT1T/L+LF6qvqvbzEQ6tiMAoTqEVK9a1K3YRu8HEUvGEvNqZyPJTtb2sNIoTkB83w==}
     hasBin: true
 
-  postgres@3.4.1:
-    resolution: {integrity: sha512-Wasjv6WEzrZXbwKByR2RGD7MBfj7VBqco3hYWz8ifzSAp6tb2L6MlmcKFzkmgV1jT7/vKlcSa+lxXZeTdeVMzQ==}
+  postgres@3.4.8:
+    resolution: {integrity: sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg==}
     engines: {node: '>=12'}
 
   process-warning@5.0.0:
@@ -1875,7 +1875,7 @@ snapshots:
       sonic-boom: 4.2.0
       thread-stream: 3.1.0
 
-  postgres@3.4.1: {}
+  postgres@3.4.8: {}
 
   process-warning@5.0.0: {}
 
