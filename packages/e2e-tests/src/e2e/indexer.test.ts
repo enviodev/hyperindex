@@ -2,7 +2,7 @@
  * E2E Indexer Test
  *
  * Tests the full indexer flow with database:
- * 1. Generate an ERC20 template project
+ * 1. Use erc20_multichain_factory scenario
  * 2. Start indexer with pnpm dev
  * 3. Verify GraphQL queries return expected data
  *
@@ -20,8 +20,9 @@ import {
 import { waitForIndexer, waitForHasura } from "../utils/health.js";
 import { GraphQLClient } from "../utils/graphql.js";
 import path from "path";
-import fs from "fs/promises";
-import os from "os";
+
+// Use existing scenario
+const PROJECT_DIR = path.join(config.scenariosDir, "erc20_multichain_factory");
 
 // Get envio binary path
 const ENVIO_BIN = path.join(
@@ -32,8 +33,6 @@ const ENVIO_BIN = path.join(
 describe("E2E: Indexer with GraphQL", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
-  let projectDir: string;
-  let testDir: string;
 
   beforeAll(async () => {
     graphql = new GraphQLClient({
@@ -50,76 +49,12 @@ describe("E2E: Indexer with GraphQL", () => {
       );
     }
 
-    // Check if CI generated the project, otherwise create it
-    const ciProjectPath = path.join(
-      config.rootDir,
-      "e2e-test-project/test-erc20"
-    );
-    const ciProjectExists = await fs
-      .access(ciProjectPath)
-      .then(() => true)
-      .catch(() => false);
-
-    if (ciProjectExists) {
-      projectDir = ciProjectPath;
-      testDir = "";
-    } else {
-      // Generate template locally for development
-      testDir = await fs.mkdtemp(path.join(os.tmpdir(), "envio-e2e-test-"));
-      projectDir = path.join(testDir, "test-erc20");
-
-      // Generate ERC20 template
-      const initResult = await runCommand(
-        ENVIO_BIN,
-        [
-          "init",
-          "template",
-          "--name",
-          "test-erc20",
-          "--template",
-          "erc20",
-          "--language",
-          "typescript",
-        ],
-        {
-          cwd: testDir,
-          timeout: config.timeouts.codegen,
-          env: { ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "" },
-        }
-      );
-
-      if (initResult.exitCode !== 0) {
-        throw new Error(`envio init failed: ${initResult.stderr}`);
-      }
-
-      // Install dependencies
-      const installResult = await runCommand("pnpm", ["install"], {
-        cwd: projectDir,
-        timeout: config.timeouts.install,
-      });
-
-      if (installResult.exitCode !== 0) {
-        throw new Error(`pnpm install failed: ${installResult.stderr}`);
-      }
-
-      // Run codegen
-      const codegenResult = await runCommand(ENVIO_BIN, ["codegen"], {
-        cwd: projectDir,
-        timeout: config.timeouts.codegen,
-        env: { ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "" },
-      });
-
-      if (codegenResult.exitCode !== 0) {
-        throw new Error(`envio codegen failed: ${codegenResult.stderr}`);
-      }
-    }
-
     // Kill any existing indexer on the port
     await killProcessOnPort(config.indexerPort);
 
     // Start the indexer
     indexerProcess = startBackground("pnpm", ["dev"], {
-      cwd: projectDir,
+      cwd: PROJECT_DIR,
       env: {
         TUI_OFF: "true",
         ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
@@ -137,7 +72,7 @@ describe("E2E: Indexer with GraphQL", () => {
         `Indexer health check failed after ${indexerHealth.attempts} attempts`
       );
     }
-  }, config.timeouts.indexerStartup + 120000);
+  }, config.timeouts.indexerStartup + 30000);
 
   afterAll(async () => {
     // Stop the indexer
@@ -149,17 +84,10 @@ describe("E2E: Indexer with GraphQL", () => {
     await killProcessOnPort(config.indexerPort);
 
     // Clean up docker
-    if (projectDir) {
-      await runCommand(ENVIO_BIN, ["stop"], {
-        cwd: projectDir,
-        timeout: 30000,
-      }).catch(() => {});
-    }
-
-    // Clean up temp directory if created locally
-    if (testDir) {
-      await fs.rm(testDir, { recursive: true, force: true }).catch(() => {});
-    }
+    await runCommand(ENVIO_BIN, ["stop"], {
+      cwd: PROJECT_DIR,
+      timeout: 30000,
+    }).catch(() => {});
   });
 
   it("should have chain_metadata populated", async () => {
