@@ -3,7 +3,7 @@
 # on:
 #   pull_request:
 #     paths:
-#       - "codegenerator/**"
+#       - "packages/**"
 #       - "scenarios/test_codegen/**"
 
 # defaults:
@@ -30,7 +30,7 @@
 #             ~/.cargo/registry/cache/
 #             ~/.cargo/git/db/
 #             # using both of these paths to hedge bets on which is correct.
-#             ./codegenerator/target
+#             ./target
 #             ./target
 #           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 #           restore-keys: |

@@ -7,7 +7,7 @@
 #       - test-codegen-output-main # Branch to help test this pipeline
 #       # NOTE: this won't run on release branches at the moment.
 #     paths:
-#       - "codegenerator/**"
+#       - "packages/**"
 #       - "scenarios/test_codegen/**"
 
 # defaults:
@@ -34,7 +34,7 @@
 #             ~/.cargo/registry/cache/
 #             ~/.cargo/git/db/
 #             # using both of these paths to hedge bets on which is correct.
-#             ./codegenerator/target
+#             ./target
 #             ./target
 #           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 #           restore-keys: |

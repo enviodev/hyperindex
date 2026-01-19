@@ -107,7 +107,7 @@ jobs:
     runs-on: ${{ matrix.job.os }}
     defaults:
       run:
-        working-directory: codegenerator
+        working-directory: .
     needs: prepare
     strategy:
       matrix:
@@ -118,7 +118,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set new version in Cargo.toml
-        working-directory: codegenerator/cli
+        working-directory: packages/cli
         shell: bash
         run: |
           awk -v version="${VERSION:1}" '/^version = "/ {$0 = "version = \"" version "\""} 1' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
@@ -165,7 +165,7 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
         with:
           command: build
-          args: --release --bins --target ${{ matrix.job.target }} --manifest-path codegenerator/Cargo.toml
+          args: --release --bins --target ${{ matrix.job.target }} --manifest-path Cargo.toml
 
       - name: Archive binaries
         id: artifacts
@@ -216,8 +216,8 @@ jobs:
           prerelease: true #always true for now
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
-            codegenerator/${{ steps.artifacts.outputs.file_name }}
-            codegenerator/${{ steps.man.outputs.envio_man }}
+            ${{ steps.artifacts.outputs.file_name }}
+            ${{ steps.man.outputs.envio_man }}
 
       - name: Install node
         uses: actions/setup-node@v4
@@ -234,7 +234,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           version: ${{ needs.prepare.outputs.tag_name }}
         run: |
-          cd cli/npm
+          cd packages/envio
           bin="envio"
           node_os=$(echo "${NAME}" | cut -d '-' -f1)
           export node_os
@@ -246,12 +246,12 @@ jobs:
             export node_pkg="${bin}-${node_os}-${node_arch}"
           fi
           mkdir -p "${node_pkg}/bin"
-          envsubst < package.json.tmpl > "${node_pkg}/package.json"
+          envsubst < binary-package.json.tmpl > "${node_pkg}/package.json"
           if [ "${OS}" = "windows-2022" ]; then
             bin="${bin}.exe"
           fi
           cp "../../target/${TARGET}/release/${bin}" "${node_pkg}/bin"
-          cp ../README.md "${node_pkg}"
+          cp ../cli/README.md "${node_pkg}"
           cd "${node_pkg}"
           npm publish --access public
 
@@ -263,7 +263,7 @@ jobs:
     runs-on: ubuntu-22.04
     defaults:
       run:
-        working-directory: codegenerator/cli/npm/envio
+        working-directory: packages/envio
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -280,7 +280,7 @@ jobs:
           node-version: 22.10.0
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
-          cache-dependency-path: codegenerator/cli/npm/envio/pnpm-lock.yaml
+          cache-dependency-path: packages/envio/pnpm-lock.yaml
 
       - name: Publish the package
         shell: bash
@@ -292,7 +292,7 @@ jobs:
           pnpm install --frozen-lockfile
           envsubst < ./package.json.tmpl > "package.json"
           cat package.json # Leave this here for the sake of debugging bad builds.
-          cp ../../README.md .
+          cp ../cli/README.md .
           pnpm rescript # Build .res.js files to publish them to npm
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}

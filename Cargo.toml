@@ -1,0 +1,3 @@
+[workspace]
+members = ["packages/cli", "packages/integration_tests"]
+resolver = "2"

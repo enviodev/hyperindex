@@ -1,4 +1,7 @@
 target
+tarpaulin_target
+tarpaulin-report.html
+integration_test_output
 .DS_Store
 # vim files
 *~

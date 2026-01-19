@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/fuel.schema.json
+# yaml-language-server: $schema=../../packages/envio/fuel.schema.json
 name: Fuel Greeter Indexer
 ecosystem: fuel
 # raw_events: true

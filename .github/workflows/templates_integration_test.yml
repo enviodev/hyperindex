@@ -9,7 +9,7 @@ on:
 
 defaults:
   run:
-    working-directory: codegenerator/integration_tests
+    working-directory: packages/integration_tests
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,8 +31,6 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            # using both of these paths to hedge bets on which is correct.
-            ./codegenerator/target
             ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |

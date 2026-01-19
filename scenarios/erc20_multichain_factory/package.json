@@ -8,12 +8,12 @@
     "watch": "rescript -w",
     "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit test/**/*.res.mjs",
     "test": "pnpm build && pnpm mocha",
-    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
+    "codegen": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- codegen",
     "dev": "pnpm build && envio dev",
     "start": "pnpm build && envio start"
   },
   "dependencies": {
-    "envio": "file:../../codegenerator/cli/npm/envio",
+    "envio": "file:../../packages/envio",
     "ethers": "6.8.0",
     "tsx": "4.21.0",
     "helpers": "../helpers",

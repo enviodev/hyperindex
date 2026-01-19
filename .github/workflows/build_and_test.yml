@@ -8,7 +8,7 @@ on:
 
 defaults:
   run:
-    working-directory: codegenerator
+    working-directory: .
 
 env:
   CARGO_TERM_COLOR: always
@@ -59,7 +59,7 @@ jobs:
         with:
           filters: |
             testChanges:
-              - "codegenerator/**"
+              - "packages/**"
               - "scenarios/test_codegen/**"
 
       - name: Setup rust cache
@@ -72,8 +72,6 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            # using both of these paths to hedge bets on which is correct.
-            ./codegenerator/target
             ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |

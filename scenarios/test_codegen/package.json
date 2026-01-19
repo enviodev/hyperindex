@@ -10,9 +10,9 @@
     "test-coverage": "rescript && nyc mocha",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
     "codegen": "envio codegen",
-    "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
-    "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
-    "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
+    "docker-up": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- local docker up",
+    "docker-down": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- local docker down",
+    "db-setup": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- local db-migrate setup",
     "start": "envio start"
   },
   "keywords": [
@@ -43,7 +43,7 @@
     "typescript": "5.9.3",
     "ts-expect": "1.3.0",
     "viem": "2.21.0",
-    "envio": "file:../../codegenerator/cli/npm/envio"
+    "envio": "file:../../packages/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"
