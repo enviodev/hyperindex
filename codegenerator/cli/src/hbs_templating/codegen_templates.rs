@@ -154,17 +154,20 @@ impl GraphQlEnumTypeTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub res_type: TypeIdent,
+    #[serde(rename = "res_type")]
+    pub field_type: TypeIdent,
     pub is_entity_field: bool,
     pub is_indexed_field: bool,
     ///Used to determine if you can run a where
     ///query on this field.
     pub is_queryable_field: bool,
+    /// Whether this field is derived from another entity (not stored in DB).
+    pub is_derived_field: bool,
 }
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let res_type: TypeIdent = field
+        let field_type: TypeIdent = field
             .field_type
             .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?;
@@ -174,16 +177,18 @@ impl EntityParamTypeTemplate {
         let is_entity_field = field.field_type.is_entity_field(schema)?;
         let is_indexed_field = field.is_indexed_field(entity);
         let is_derived_lookup_field = field.is_derived_lookup_field(entity, schema);
+        let is_derived_field = field.field_type.is_derived_from();
 
         //Both of these cases have indexes on them and should exist
         let is_queryable_field = is_indexed_field || is_derived_lookup_field;
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            res_type,
+            field_type,
             is_entity_field,
             is_indexed_field,
             is_queryable_field,
+            is_derived_field,
         })
     }
 }
@@ -1732,6 +1737,70 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                 format!(
                     "export type SvmChains = {{\n{}\n}};",
                     svm_chains_entries.join("\n")
+                )
+            });
+
+            // Generate Enums type with all enum types as fields
+            let enum_entries: Vec<String> = gql_enums
+                .iter()
+                .map(|gql_enum| {
+                    let enum_values: Vec<String> = gql_enum
+                        .params
+                        .iter()
+                        .map(|value| format!("\"{}\"", value.original))
+                        .collect();
+                    format!(
+                        "  \"{}\": {};",
+                        gql_enum.name.original,
+                        enum_values.join(" | ")
+                    )
+                })
+                .collect();
+            parts.push(if enum_entries.is_empty() {
+                "export type Enums = {};".to_string()
+            } else {
+                format!("export type Enums = {{\n{}\n}};", enum_entries.join("\n"))
+            });
+
+            // Generate Entities type with all entity types as fields
+            let entity_entries: Vec<String> = entities
+                .iter()
+                .map(|entity| {
+                    let field_entries: Vec<String> = entity
+                        .params
+                        .iter()
+                        // Skip derived fields as they are not stored in the DB
+                        .filter(|param| !param.is_derived_field)
+                        .map(|param| {
+                            let ts_type = param.field_type.to_ts_type_string();
+                            // For entity fields, the actual stored value is the ID (string)
+                            // and the field name is suffixed with _id
+                            let (field_name, field_type) = if param.is_entity_field {
+                                let base_type = if param.field_type.is_option() {
+                                    "string | undefined".to_string()
+                                } else {
+                                    "string".to_string()
+                                };
+                                (format!("{}_id", param.field_name.original), base_type)
+                            } else {
+                                (param.field_name.original.clone(), ts_type)
+                            };
+                            format!("    readonly \"{}\": {};", field_name, field_type)
+                        })
+                        .collect();
+                    format!(
+                        "  \"{}\": {{\n{}\n  }};",
+                        entity.name.capitalized,
+                        field_entries.join("\n")
+                    )
+                })
+                .collect();
+            parts.push(if entity_entries.is_empty() {
+                "export type Entities = {};".to_string()
+            } else {
+                format!(
+                    "export type Entities = {{\n{}\n}};",
+                    entity_entries.join("\n")
                 )
             });
 
