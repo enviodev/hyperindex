@@ -1,6 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2438
+assertion_line: 2427
 expression: project_template.envio_dts_code
 ---
 export type EvmChains = {
@@ -23,8 +23,8 @@ export type Entities = {
     readonly "optionalStatus": Enums["Status"] | undefined;
     readonly "related_id": string;
     readonly "optionalRelated_id": string | undefined;
-    readonly "tags": string[];
-    readonly "optionalTags": string[] | undefined;
+    readonly "tags": readonly string[];
+    readonly "optionalTags": readonly string[] | undefined;
   };
   "RelatedEntity": {
     readonly "id": string;

@@ -511,9 +511,9 @@ impl TypeIdent {
                 let inner_ts = inner_type.to_ts_type_string();
                 // Wrap in parens if the inner type is a union (Option generates union)
                 if inner_type.is_option() {
-                    format!("({})[]", inner_ts)
+                    format!("readonly ({})[]", inner_ts)
                 } else {
-                    format!("{}[]", inner_ts)
+                    format!("readonly {}[]", inner_ts)
                 }
             }
             Self::Option(inner_type) => {
@@ -1185,7 +1185,7 @@ mod tests {
     fn test_to_ts_type_string_containers() {
         assert_eq!(
             TypeIdent::array(TypeIdent::Int).to_ts_type_string(),
-            "number[]"
+            "readonly number[]"
         );
         assert_eq!(
             TypeIdent::option(TypeIdent::String).to_ts_type_string(),
@@ -1198,7 +1198,7 @@ mod tests {
         // Nested containers
         assert_eq!(
             TypeIdent::array(TypeIdent::option(TypeIdent::Int)).to_ts_type_string(),
-            "(number | undefined)[]"
+            "readonly (number | undefined)[]"
         );
     }
 
