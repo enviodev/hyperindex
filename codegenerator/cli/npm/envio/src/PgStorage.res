@@ -25,9 +25,28 @@ let makeClient = () => {
   )
 }
 
-let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
+// PostgreSQL B-tree indexes have a max row size of ~8191 bytes.
+// For TEXT fields, we truncate to 2700 bytes to stay well under the limit,
+// allowing room for composite indexes with multiple TEXT fields.
+let textIndexMaxLength = 2700
+
+let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema, ~table: Table.table) => {
   let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
-  let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
+  let index =
+    indexFields
+    ->Belt.Array.map(idx => {
+      // Check if this field is a TEXT type (String or Entity) that needs truncation
+      let needsTruncation = switch table->Table.getFieldByDbName(idx) {
+      | Some(Field({fieldType: String | Entity(_)})) => true
+      | _ => false
+      }
+      if needsTruncation {
+        `left("${idx}", ${textIndexMaxLength->Belt.Int.toString})`
+      } else {
+        `"${idx}"`
+      }
+    })
+    ->Js.Array2.joinWith(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
@@ -35,9 +54,9 @@ let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
   open Belt
   let tableName = table.tableName
   let createIndex = indexField =>
-    makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
+    makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema, ~table)
   let createCompositeIndex = indexFields => {
-    makeCreateIndexQuery(~tableName, ~indexFields, ~pgSchema)
+    makeCreateIndexQuery(~tableName, ~indexFields, ~pgSchema, ~table)
   }
 
   let singleIndices = table->Table.getSingleIndices
@@ -222,6 +241,12 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     ->Js.Array2.forEach(derivedFromField => {
       let indexField =
         derivedSchema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+      // Find the table for the derived entity
+      let derivedTable =
+        entities
+        ->Js.Array2.find(e => e.name == derivedFromField.derivedFromEntity)
+        ->Belt.Option.map(e => e.table)
+        ->Belt.Option.getWithDefault(entity.table)
       query :=
         query.contents ++
         "\n" ++
@@ -229,6 +254,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
           ~tableName=derivedFromField.derivedFromEntity,
           ~indexFields=[indexField],
           ~pgSchema,
+          ~table=derivedTable,
         )
     })
   })
