@@ -5,20 +5,6 @@
   "types": "index.d.ts",
   "private": true,
   "type": "module",
-  "scripts": {
-    "clean": "rescript clean",
-    "build": "rescript",
-    "watch": "rescript -w",
-    "format": "rescript format -all",
-    {{!-- We need this to always have cwd at the root of the project --}}
-    {{!-- For imports and dotenv to correctly resolve --}}
-    "db-up": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))'",
-    "db-down": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))'",
-    "db-setup": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))'",
-    "print-benchmark-summary": "cd {{relative_path_to_root_from_generated}} && node -e 'import(\"{{relative_path_to_generated_from_root}}/src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())'",
-    {{!-- tsx is needed for start script to support TypeScript handlers --}}
-    "start": "cd {{relative_path_to_root_from_generated}}{{#if is_typescript}} && tsc --noEmit{{/if}} && node --no-warnings --import {{relative_path_to_generated_from_root}}/node_modules/envio/node_modules/tsx/dist/esm/index.mjs {{relative_path_to_generated_from_root}}/src/Index.res.mjs"
-  },
   "keywords": [
     "ReScript"
   ],

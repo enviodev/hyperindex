@@ -18,7 +18,6 @@ contracts:
       - event: WithExcessField(address indexed from)
       - event: EmptyFiltersArray(address indexed from)
       - event: "FilterTestEvent(address indexed addr)"
-event_decoder: "hypersync-client" # default
 chains:
   - id: 1337
     rpc_config:

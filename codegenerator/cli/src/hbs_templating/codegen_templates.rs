@@ -80,7 +80,6 @@ struct InternalEvmConfig<'a> {
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
     address_format: &'a str,
-    event_decoder: &'a str,
 }
 
 #[derive(Serialize, Debug)]
@@ -109,8 +108,11 @@ struct InternalChainConfig {
 }
 
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct InternalContractConfig {
     abi: Box<serde_json::value::RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler: Option<String>,
 }
 
 // ============== Template Types ==============
@@ -865,7 +867,6 @@ pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
     sources_code: String,
-    // event_decoder: Option<String>,
 }
 
 impl NetworkConfigTemplate {
@@ -947,11 +948,7 @@ impl NetworkConfigTemplate {
             system_config::DataSource::Svm { rpc } => {
                 format!("[Svm.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
             }
-            system_config::DataSource::Evm {
-                main,
-                is_client_decoder: _,
-                rpcs,
-            } => {
+            system_config::DataSource::Evm { main, rpcs } => {
                 let all_event_signatures = codegen_contracts
                     .iter()
                     .map(|contract| format!("Types.{}.eventSignatures", contract.name.capitalized))
@@ -1039,7 +1036,7 @@ impl NetworkConfigTemplate {
                     "EvmChain.makeSources(~chain, ~contracts=[{contracts_code}], \
                        ~hyperSync={hyper_sync_code}, \
                        ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
-                       ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{rpcs}], \
+                       ~rpcs=[{rpcs}], \
                        ~lowercaseAddresses={})",
                     if config.lowercase_addresses {
                         "true"
@@ -1572,7 +1569,10 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
                     Ok((
                         contract.name.as_str(),
-                        InternalContractConfig { abi: abi_raw },
+                        InternalContractConfig {
+                            abi: abi_raw,
+                            handler: contract.handler_path.clone(),
+                        },
                     ))
                 })
                 .collect::<Result<_>>()?;
@@ -1587,11 +1587,6 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                             "lowercase"
                         } else {
                             "checksum"
-                        },
-                        event_decoder: if cfg.should_use_hypersync_client_decoder {
-                            "hypersync"
-                        } else {
-                            "viem"
                         },
                     }),
                     None,
@@ -1870,7 +1865,7 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![contract1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1936,12 +1931,12 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![contract1_on_chain1, contract2_on_chain1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
         let chain_config_2 = super::NetworkConfigTemplate {
           network_config: network2,
           codegen_contracts: vec![contract1_on_chain2, contract2_on_chain2],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -1972,7 +1967,7 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![contract1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}], ~lowercaseAddresses=false)".to_string(),
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -1999,13 +1994,13 @@ mod test {
           codegen_contracts: vec![],
           sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
                ~allEventSignatures=[]->Belt.Array.concatMany, \
-               ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+               ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
       };
 
         let chain_config_2 = super::NetworkConfigTemplate {
           network_config: network2,
           codegen_contracts: vec![],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~shouldUseHypersyncClientDecoder=true, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
+          sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];

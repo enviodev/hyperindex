@@ -62,7 +62,6 @@ let mockChainConfig: Config.chain = {
       eventRouter: evmContracts
       ->Belt.Array.flatMap(contract => contract.events)
       ->EventRouter.fromEvmEventModsOrThrow(~chain=chain1337),
-      shouldUseHypersyncClientDecoder: false,
       lowercaseAddresses: false,
       allEventSignatures: [],
     }),
