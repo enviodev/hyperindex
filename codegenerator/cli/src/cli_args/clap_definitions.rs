@@ -69,6 +69,16 @@ pub enum CommandType {
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
+
+    /// Configuration commands
+    #[command(subcommand)]
+    Config(ConfigSubcommands),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigSubcommands {
+    /// Print the base config as JSON with camelCase fields
+    List,
 }
 
 #[derive(Debug, Subcommand)]
