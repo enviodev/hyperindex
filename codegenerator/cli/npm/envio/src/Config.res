@@ -53,10 +53,16 @@ type sourceSync = {
 
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 
+type contractHandler = {
+  name: string,
+  handler: option<string>,
+}
+
 type t = {
   name: string,
   description: option<string>,
   handlers: string,
+  contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   multichain: multichain,
@@ -83,6 +89,7 @@ let publicConfigChainSchema = S.schema(s =>
 let contractConfigSchema = S.schema(s =>
   {
     "abi": s.matches(S.json(~validate=false)),
+    "handler": s.matches(S.option(S.string)),
   }
 )
 
@@ -94,14 +101,12 @@ let publicConfigEcosystemSchema = S.schema(s =>
 )
 
 type addressFormat = | @as("lowercase") Lowercase | @as("checksum") Checksum
-type decoder = | @as("hypersync") Hypersync | @as("viem") Viem
 
 let publicConfigEvmSchema = S.schema(s =>
   {
     "chains": s.matches(S.dict(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
-    "eventDecoder": s.matches(S.option(S.enum([Hypersync, Viem]))),
   }
 )
 
@@ -153,19 +158,9 @@ let fromPublic = (
   }
 
   // Extract EVM-specific options with defaults
-  let (lowercaseAddresses, shouldUseHypersyncClientDecoder) = switch publicConfig["evm"] {
-  | Some(evm) => (
-      evm["addressFormat"]->Option.getWithDefault(Checksum) == Lowercase,
-      evm["eventDecoder"]->Option.getWithDefault(Hypersync) == Hypersync,
-    )
-  | None => (false, true)
-  }
-
-  // Validate that lowercase addresses is not used with viem decoder
-  if lowercaseAddresses && !shouldUseHypersyncClientDecoder {
-    Js.Exn.raiseError(
-      "lowercase addresses is not supported when event_decoder is 'viem'. Please set event_decoder to 'hypersync-client' or change address_format to 'checksum'.",
-    )
+  let lowercaseAddresses = switch publicConfig["evm"] {
+  | Some(evm) => evm["addressFormat"]->Option.getWithDefault(Checksum) == Lowercase
+  | None => false
   }
 
   // Parse ABIs from public config
@@ -293,10 +288,25 @@ let fromPublic = (
     })
     ->Js.Dict.fromArray
 
+  // Extract contract handlers from the public config
+  let contractHandlers = switch publicContractsConfig {
+  | Some(contractsDict) =>
+    contractsDict
+    ->Js.Dict.entries
+    ->Js.Array2.map(((contractName, contractConfig)) => {
+      {
+        name: contractName,
+        handler: contractConfig["handler"],
+      }
+    })
+  | None => []
+  }
+
   {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getWithDefault("src/handlers"),
+    contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getWithDefault(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getWithDefault(false),
     multichain: publicConfig["multichain"]->Option.getWithDefault(Unordered),

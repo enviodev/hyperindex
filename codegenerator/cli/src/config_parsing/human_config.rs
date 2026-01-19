@@ -203,11 +203,6 @@ pub mod evm {
         pub multichain: Option<Multichain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The event decoder to use for the indexer (default: hypersync-client)"
-        )]
-        pub event_decoder: Option<EventDecoder>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
             description = "A flag to indicate if the indexer should rollback to the last known \
                            valid block on a reorg. This currently incurs a performance hit on \
                            historical sync and is recommended to turn this off while developing \
@@ -379,13 +374,6 @@ pub mod evm {
     #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
         Evm,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-    #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-    pub enum EventDecoder {
-        Viem,
-        HypersyncClient,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -777,7 +765,7 @@ pub mod svm {
 #[cfg(test)]
 mod tests {
     use super::{
-        evm::{Chain, ContractConfig, EventDecoder, HumanConfig},
+        evm::{Chain, ContractConfig, HumanConfig},
         ChainContract,
     };
     use crate::{
@@ -786,7 +774,6 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use schemars::{schema_for, Schema};
-    use serde_json::json;
     use std::path::PathBuf;
 
     #[test]
@@ -1058,26 +1045,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             serde_yaml::to_string(&cfg).unwrap(),
             "name: Fuel indexer\necosystem: fuel\nchains: []\n"
-        );
-    }
-
-    #[test]
-    fn deserializes_event_decoder() {
-        assert_eq!(
-            serde_json::from_value::<EventDecoder>(json!("viem")).unwrap(),
-            EventDecoder::Viem
-        );
-        assert_eq!(
-            serde_json::from_value::<EventDecoder>(json!("hypersync-client")).unwrap(),
-            EventDecoder::HypersyncClient
-        );
-        assert_eq!(
-            serde_json::to_value(&EventDecoder::HypersyncClient).unwrap(),
-            json!("hypersync-client")
-        );
-        assert_eq!(
-            serde_json::to_value(&EventDecoder::Viem).unwrap(),
-            json!("viem")
         );
     }
 

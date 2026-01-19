@@ -471,7 +471,6 @@ type options = {
   contracts: array<Internal.evmContractConfig>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   allEventSignatures: array<string>,
-  shouldUseHypersyncClientDecoder: bool,
   lowercaseAddresses: bool,
 }
 
@@ -484,7 +483,6 @@ let make = (
     contracts,
     eventRouter,
     allEventSignatures,
-    shouldUseHypersyncClientDecoder,
     lowercaseAddresses,
   }: options,
 ): t => {
@@ -571,11 +569,6 @@ let make = (
       ~lowercaseAddresses,
     ),
   )
-
-  let contractNameAbiMapping = Js.Dict.empty()
-  contracts->Belt.Array.forEach(contract => {
-    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
-  })
 
   let convertEthersLogToHyperSyncEvent = (log: Ethers.log): HyperSyncClient.ResponseTypes.event => {
     let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
@@ -676,156 +669,68 @@ let make = (
       )
     }
 
-    let parsedQueueItems = if shouldUseHypersyncClientDecoder {
-      // Convert Ethers logs to HyperSync events
-      let hyperSyncEvents = logs->Belt.Array.map(convertEthersLogToHyperSyncEvent)
+    // Convert Ethers logs to HyperSync events
+    let hyperSyncEvents = logs->Belt.Array.map(convertEthersLogToHyperSyncEvent)
 
-      // Decode using HyperSyncClient decoder
-      let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
-      | exn =>
-        raise(
-          Source.GetItemsError(
-            FailedGettingItems({
-              exn,
-              attemptedToBlock: toBlock,
-              retry: ImpossibleForTheQuery({
-                message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
-              }),
+    // Decode using HyperSyncClient decoder
+    let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
+    | exn =>
+      raise(
+        Source.GetItemsError(
+          FailedGettingItems({
+            exn,
+            attemptedToBlock: toBlock,
+            retry: ImpossibleForTheQuery({
+              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
             }),
-          ),
-        )
+          }),
+        ),
+      )
+    }
+
+    let parsedQueueItems = await logs
+    ->Array.zip(parsedEvents)
+    ->Array.keepMap(((
+      log: Ethers.log,
+      maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
+    )) => {
+      let topic0 = log.topics[0]->Option.getWithDefault("0x0"->EvmTypes.Hex.fromStringUnsafe)
+      let routedAddress = if lowercaseAddresses {
+        log.address->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        log.address
       }
 
-      await logs
-      ->Array.zip(parsedEvents)
-      ->Array.keepMap(((
-        log: Ethers.log,
-        maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
-      )) => {
-        let topic0 = log.topics[0]->Option.getWithDefault("0x0"->EvmTypes.Hex.fromStringUnsafe)
-        let routedAddress = if lowercaseAddresses {
-          log.address->Address.Evm.fromAddressLowercaseOrThrow
-        } else {
-          log.address
-        }
-
-        switch eventRouter->EventRouter.get(
-          ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0->EvmTypes.Hex.toString,
-            ~topicCount=log.topics->Array.length,
-          ),
-          ~indexingContracts,
-          ~contractAddress=routedAddress,
-          ~blockNumber=log.blockNumber,
-        ) {
-        | None => None
-        | Some(eventConfig) =>
-          switch maybeDecodedEvent {
-          | Js.Nullable.Value(decoded) =>
-            Some(
-              (
-                async () => {
-                  let (block, transaction) = try await Promise.all2((
-                    log->getEventBlockOrThrow,
-                    log->getEventTransactionOrThrow(
-                      ~transactionSchema=eventConfig.transactionSchema,
-                    ),
-                  )) catch {
-                  | exn =>
-                    raise(
-                      Source.GetItemsError(
-                        FailedGettingFieldSelection({
-                          message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                          exn,
-                          blockNumber: log.blockNumber,
-                          logIndex: log.logIndex,
-                        }),
-                      ),
-                    )
-                  }
-
-                  Internal.Event({
-                    eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: block.timestamp,
-                    blockNumber: block.number,
-                    chain,
-                    logIndex: log.logIndex,
-                    event: {
-                      chainId: chain->ChainMap.Chain.toChainId,
-                      params: decoded->eventConfig.convertHyperSyncEventArgs,
-                      transaction,
-                      block: block->(
-                        Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
-                      ),
-                      srcAddress: routedAddress,
-                      logIndex: log.logIndex,
-                    }->Internal.fromGenericEvent,
-                  })
-                }
-              )(),
-            )
-          | Js.Nullable.Null
-          | Js.Nullable.Undefined =>
-            None
-          }
-        }
-      })
-      ->Promise.all
-    } else {
-      // Decode using Viem
-      await logs
-      ->Belt.Array.keepMap(log => {
-        let topic0 = log.topics->Js.Array2.unsafe_get(0)
-
-        switch eventRouter->EventRouter.get(
-          ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0->EvmTypes.Hex.toString,
-            ~topicCount=log.topics->Array.length,
-          ),
-          ~indexingContracts,
-          ~contractAddress=log.address,
-          ~blockNumber=log.blockNumber,
-        ) {
-        | None => None //ignore events that aren't registered
-        | Some(eventConfig) =>
-          let blockNumber = log.blockNumber
-          let logIndex = log.logIndex
+      switch eventRouter->EventRouter.get(
+        ~tag=EventRouter.getEvmEventId(
+          ~sighash=topic0->EvmTypes.Hex.toString,
+          ~topicCount=log.topics->Array.length,
+        ),
+        ~indexingContracts,
+        ~contractAddress=routedAddress,
+        ~blockNumber=log.blockNumber,
+      ) {
+      | None => None
+      | Some(eventConfig) =>
+        switch maybeDecodedEvent {
+        | Js.Nullable.Value(decoded) =>
           Some(
             (
               async () => {
                 let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow,
-                  log->getEventTransactionOrThrow(~transactionSchema=eventConfig.transactionSchema),
+                  log->getEventTransactionOrThrow(
+                    ~transactionSchema=eventConfig.transactionSchema,
+                  ),
                 )) catch {
-                // Promise.catch won't work here, because the error
-                // might be thrown before a microtask is created
                 | exn =>
                   raise(
                     Source.GetItemsError(
                       FailedGettingFieldSelection({
                         message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
                         exn,
-                        blockNumber,
-                        logIndex,
-                      }),
-                    ),
-                  )
-                }
-
-                let decodedEvent = try contractNameAbiMapping->Viem.parseLogOrThrow(
-                  ~contractName=eventConfig.contractName,
-                  ~topics=log.topics,
-                  ~data=log.data,
-                ) catch {
-                | exn =>
-                  raise(
-                    Source.GetItemsError(
-                      FailedGettingItems({
-                        exn,
-                        attemptedToBlock: toBlock,
-                        retry: ImpossibleForTheQuery({
-                          message: `Failed to parse event with viem, please double-check your ABI. Block number: ${blockNumber->Int.toString}, log index: ${logIndex->Int.toString}`,
-                        }),
+                        blockNumber: log.blockNumber,
+                        logIndex: log.logIndex,
                       }),
                     ),
                   )
@@ -839,24 +744,25 @@ let make = (
                   logIndex: log.logIndex,
                   event: {
                     chainId: chain->ChainMap.Chain.toChainId,
-                    params: decodedEvent.args,
+                    params: decoded->eventConfig.convertHyperSyncEventArgs,
                     transaction,
-                    // Unreliably expect that the Ethers block fields match the types in HyperIndex
-                    // I assume this is wrong in some cases, so we need to fix it in the future
                     block: block->(
                       Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
                     ),
-                    srcAddress: log.address,
+                    srcAddress: routedAddress,
                     logIndex: log.logIndex,
                   }->Internal.fromGenericEvent,
                 })
               }
             )(),
           )
+        | Js.Nullable.Null
+        | Js.Nullable.Undefined =>
+          None
         }
-      })
-      ->Promise.all
-    }
+      }
+    })
+    ->Promise.all
 
     let optFirstBlockParent = await firstBlockParentPromise
 

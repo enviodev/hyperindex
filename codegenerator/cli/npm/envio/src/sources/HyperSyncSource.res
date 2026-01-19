@@ -149,7 +149,6 @@ type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventSignatures: array<string>,
-  shouldUseHypersyncClientDecoder: bool,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
   clientMaxRetries: int,
@@ -165,7 +164,6 @@ let make = (
     chain,
     endpointUrl,
     allEventSignatures,
-    shouldUseHypersyncClientDecoder,
     eventRouter,
     apiToken,
     clientMaxRetries,
@@ -205,7 +203,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       switch HyperSyncClient.Decoder.fromSignatures(allEventSignatures) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
+          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
         )
       | decoder =>
         if lowercaseAddresses {
@@ -244,11 +242,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }->Internal.fromGenericEvent,
     })
   }
-
-  let contractNameAbiMapping = Js.Dict.empty()
-  contracts->Belt.Array.forEach(contract => {
-    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
-  })
 
   let getItemsOrThrow = async (
     ~fromBlock,
@@ -402,7 +395,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
     let handleDecodeFailure = (
       ~eventConfig: Internal.evmEventConfig,
-      ~decoder,
       ~logIndex,
       ~blockNumber,
       ~chainId,
@@ -419,72 +411,28 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
             "chainId": chainId,
             "blockNumber": blockNumber,
             "logIndex": logIndex,
-            "decoder": decoder,
+            "decoder": "hypersync-client",
           },
         )
         exn->ErrorHandling.mkLogAndRaise(~msg, ~logger)
       }
     }
-    if shouldUseHypersyncClientDecoder {
-      //Currently there are still issues with decoder for some cases so
-      //this can only be activated with a flag
 
-      //Parse page items into queue items
-      let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
-      | exception exn =>
-        exn->mkLogAndRaise(
-          ~msg="Failed to parse events using hypersync client, please double check your ABI.",
-        )
-      | parsedEvents => parsedEvents
-      }
+    //Parse page items into queue items
+    let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
+    | exception exn =>
+      exn->mkLogAndRaise(
+        ~msg="Failed to parse events using hypersync client, please double check your ABI.",
+      )
+    | parsedEvents => parsedEvents
+    }
 
-      pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
-        let {block, log} = item
-        let chainId = chain->ChainMap.Chain.toChainId
-        let topic0 = log.topics->Js.Array2.unsafe_get(0)
-        let maybeEventConfig =
-          eventRouter->EventRouter.get(
-            ~tag=EventRouter.getEvmEventId(
-              ~sighash=topic0->EvmTypes.Hex.toString,
-              ~topicCount=log.topics->Array.length,
-            ),
-            ~indexingContracts,
-            ~contractAddress=log.address,
-            ~blockNumber=block.number->Belt.Option.getUnsafe,
-          )
-        let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
-
-        switch (maybeEventConfig, maybeDecodedEvent) {
-        | (Some(eventConfig), Value(decoded)) =>
-          parsedQueueItems
-          ->Js.Array2.push(
-            makeEventBatchQueueItem(
-              item,
-              ~params=decoded->eventConfig.convertHyperSyncEventArgs,
-              ~eventConfig,
-            ),
-          )
-          ->ignore
-        | (Some(eventConfig), Null | Undefined) =>
-          handleDecodeFailure(
-            ~eventConfig,
-            ~decoder="hypersync-client",
-            ~logIndex=log.logIndex,
-            ~blockNumber=block.number->Belt.Option.getUnsafe,
-            ~chainId,
-            ~exn=UndefinedValue,
-          )
-        | (None, _) => () //ignore events that aren't registered
-        }
-      })
-    } else {
-      //Parse with viem -> slower than the HyperSyncClient
-      pageUnsafe.items->Array.forEach(item => {
-        let {block, log} = item
-        let chainId = chain->ChainMap.Chain.toChainId
-        let topic0 = log.topics->Js.Array2.unsafe_get(0)
-
-        switch eventRouter->EventRouter.get(
+    pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
+      let {block, log} = item
+      let chainId = chain->ChainMap.Chain.toChainId
+      let topic0 = log.topics->Js.Array2.unsafe_get(0)
+      let maybeEventConfig =
+        eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
             ~sighash=topic0->EvmTypes.Hex.toString,
             ~topicCount=log.topics->Array.length,
@@ -492,31 +440,31 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~indexingContracts,
           ~contractAddress=log.address,
           ~blockNumber=block.number->Belt.Option.getUnsafe,
-        ) {
-        | Some(eventConfig) =>
-          switch contractNameAbiMapping->Viem.parseLogOrThrow(
-            ~contractName=eventConfig.contractName,
-            ~topics=log.topics,
-            ~data=log.data,
-          ) {
-          | exception exn =>
-            handleDecodeFailure(
-              ~eventConfig,
-              ~decoder="viem",
-              ~logIndex=log.logIndex,
-              ~blockNumber=block.number->Belt.Option.getUnsafe,
-              ~chainId,
-              ~exn,
-            )
-          | decodedEvent =>
-            parsedQueueItems
-            ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventConfig))
-            ->ignore
-          }
-        | None => () //Ignore events that aren't registered
-        }
-      })
-    }
+        )
+      let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
+
+      switch (maybeEventConfig, maybeDecodedEvent) {
+      | (Some(eventConfig), Value(decoded)) =>
+        parsedQueueItems
+        ->Js.Array2.push(
+          makeEventBatchQueueItem(
+            item,
+            ~params=decoded->eventConfig.convertHyperSyncEventArgs,
+            ~eventConfig,
+          ),
+        )
+        ->ignore
+      | (Some(eventConfig), Null | Undefined) =>
+        handleDecodeFailure(
+          ~eventConfig,
+          ~logIndex=log.logIndex,
+          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~chainId,
+          ~exn=UndefinedValue,
+        )
+      | (None, _) => () //ignore events that aren't registered
+      }
+    })
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
