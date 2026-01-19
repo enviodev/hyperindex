@@ -11,7 +11,7 @@ env:
   ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
 jobs:
-  # Template tests - verify templates build and pass tests
+  # Template tests - verify existing scenario templates build and pass tests
   # No DB required, can run in parallel
   template-tests:
     runs-on: ubuntu-latest
@@ -57,12 +57,6 @@ jobs:
 
       - name: Add envio to PATH
         run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
-
-      - name: Mock gio
-        run: |
-          mkdir -p /home/runner/.local/bin
-          echo 'echo "mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
-          echo 'echo "mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
 
       - name: Install dependencies
         run: pnpm install
@@ -149,20 +143,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Mock gio
+      - name: Build erc20_multichain_factory scenario
+        working-directory: scenarios/erc20_multichain_factory
         run: |
-          mkdir -p /home/runner/.local/bin
-          echo 'echo "mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
-          echo 'echo "mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
-
-      - name: Generate E2E test project
-        run: |
-          mkdir -p e2e-test-project
-          cd e2e-test-project
-          envio init template --name test-erc20 --template erc20 --language typescript
-          cd test-erc20
-          pnpm install
-          envio codegen
+          pnpm codegen
+          pnpm build
 
       - name: Wait for Hasura
         run: |
