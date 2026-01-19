@@ -14,5 +14,9 @@ type EmptyEntity {
   id: ID!
   emptyField: ID!
   status: Status!
+  optionalStatus: Status
   related: RelatedEntity!
+  optionalRelated: RelatedEntity
+  tags: [String!]!
+  optionalTags: [String!]
 }

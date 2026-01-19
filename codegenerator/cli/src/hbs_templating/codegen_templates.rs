@@ -1785,7 +1785,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                             } else {
                                 (param.field_name.original.clone(), ts_type)
                             };
-                            format!("    \"{}\": {};", field_name, field_type)
+                            format!("    readonly \"{}\": {};", field_name, field_type)
                         })
                         .collect();
                     format!(
