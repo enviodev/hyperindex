@@ -519,10 +519,10 @@ type ConfigEntities<Config extends IndexerConfigTypes> =
   Config["entities"] extends Record<string, object> ? Config["entities"] : {};
 
 /** Entity operations available on test indexer for direct entity manipulation. */
-type EntityOps<Entity extends { id: string }> = {
+type EntityOps<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
   get: (id: string) => Promise<Entity | undefined>;
-  /** Set (create or update) an entity. The entity must have an 'id' field. */
+  /** Set (create or update) an entity. */
   set: (entity: Entity) => void;
 };
 
@@ -591,9 +591,7 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
   }>;
 } & {
   /** Entity operations for direct manipulation outside of handlers. */
-  readonly [K in keyof ConfigEntities<Config>]: ConfigEntities<Config>[K] extends {
-    id: string;
-  }
-    ? EntityOps<ConfigEntities<Config>[K]>
-    : never;
+  readonly [K in keyof ConfigEntities<Config>]: EntityOps<
+    ConfigEntities<Config>[K]
+  >;
 };
