@@ -146,7 +146,7 @@ jobs:
       - name: Build e2e_test scenario
         working-directory: scenarios/e2e_test
         run: |
-          pnpm codegen
+          envio codegen
           pnpm build
 
       - name: Wait for Hasura
