@@ -1,6 +1,5 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2367
 expression: project_template.internal_config_json_code
 ---
 {
@@ -10,11 +9,13 @@ expression: project_template.internal_config_json_code
     "chains": {
       "ethereumMainnet": {
         "id": 1,
-        "startBlock": 0
+        "startBlock": 0,
+        "hypersync": "https://myskar.com"
       },
       "polygon": {
         "id": 137,
-        "startBlock": 0
+        "startBlock": 0,
+        "hypersync": "https://137.hypersync.xyz"
       }
     },
     "addressFormat": "checksum"

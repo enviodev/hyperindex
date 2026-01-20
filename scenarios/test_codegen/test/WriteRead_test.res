@@ -11,7 +11,7 @@ describe("Write/read tests", () => {
   Async.it("Test writing and reading entities with special cases", async () => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
-      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~saveFullHistory=true,
       ~enableHasura=true,
     )
@@ -201,7 +201,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   Async.it("Test getWhere queries with eq and gt operators", async () => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
-      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
     )
     await Utils.delay(0)
 

@@ -309,11 +309,11 @@ describe("E2E rollback tests", () => {
     let chains = [
       {
         Mock.Indexer.chain: #1337,
-        sources: [sourceMock1337.source],
+        sourceConfig: Config.CustomSources([sourceMock1337.source]),
       },
       {
         Mock.Indexer.chain: #100,
-        sources: [sourceMock100.source],
+        sourceConfig: Config.CustomSources([sourceMock100.source]),
       },
     ]
     let indexerMock = await Mock.Indexer.make(~chains)
@@ -408,7 +408,7 @@ describe("E2E rollback tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -429,7 +429,7 @@ describe("E2E rollback tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock.source],
+            sourceConfig: Config.CustomSources([sourceMock.source]),
           },
         ],
       )
@@ -466,7 +466,7 @@ describe("E2E rollback tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -550,11 +550,11 @@ describe("E2E rollback tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock1.source],
+            sourceConfig: Config.CustomSources([sourceMock1.source]),
           },
           {
             chain: #100,
-            sources: [sourceMock2.source],
+            sourceConfig: Config.CustomSources([sourceMock2.source]),
           },
         ],
       )
@@ -582,7 +582,7 @@ describe("E2E rollback tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -838,11 +838,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock1337.source],
+          sourceConfig: Config.CustomSources([sourceMock1337.source]),
         },
         {
           chain: #100,
-          sources: [sourceMock100.source],
+          sourceConfig: Config.CustomSources([sourceMock100.source]),
         },
       ],
     )
@@ -1233,11 +1233,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock1337.source],
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
           },
           {
             chain: #100,
-            sources: [sourceMock100.source],
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
           },
         ],
       )
@@ -1634,11 +1634,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock1337.source],
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
           },
           {
             chain: #100,
-            sources: [sourceMock100.source],
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
           },
         ],
         ~multichain=Ordered,
@@ -2035,7 +2035,7 @@ Sorted by timestamp and chain id`,
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
