@@ -144,7 +144,7 @@ struct InternalChainConfig {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct InternalContractEventItem {
-    signature: String,
+    event: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -1683,7 +1683,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         Abi::Evm(abi) => abi
                             .get_event_signatures()
                             .into_iter()
-                            .map(|sig| InternalContractEventItem { signature: sig })
+                            .map(|sig| InternalContractEventItem { event: sig })
                             .collect(),
                         Abi::Fuel(_) => vec![],
                     };

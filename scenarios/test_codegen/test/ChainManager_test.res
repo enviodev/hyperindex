@@ -96,8 +96,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
     let chainConfig = config.defaultChain->Option.getUnsafe
     let sources = switch chainConfig.sourceConfig {
-    | Config.ReadySources(sources) => sources
-    | _ => Js.Exn.raiseError("Expected ReadySources in test")
+    | Config.CustomSources(sources) => sources
+    | _ => Js.Exn.raiseError("Expected CustomSources in test")
     }
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,

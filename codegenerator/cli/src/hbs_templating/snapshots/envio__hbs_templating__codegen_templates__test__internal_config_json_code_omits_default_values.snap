@@ -30,10 +30,10 @@ expression: project_template.internal_config_json_code
         "handler": "./src/EventHandler.js",
         "events": [
           {
-            "signature": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+            "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
           },
           {
-            "signature": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
           }
         ]
       }

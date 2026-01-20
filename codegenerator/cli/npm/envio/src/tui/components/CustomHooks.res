@@ -29,7 +29,7 @@ module InitApi = {
       | Config.EvmSourceConfig({hypersync: None}) => false
       | Config.FuelSourceConfig(_) => true // Fuel always uses HyperFuel
       | Config.SvmSourceConfig(_) => false
-      | Config.ReadySources(sources) => sources->Array.some(s => s.poweredByHyperSync)
+      | Config.CustomSources(sources) => sources->Array.some(s => s.poweredByHyperSync)
       }
       switch usesHyperSync {
       | true => hyperSyncNetworks

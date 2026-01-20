@@ -44,8 +44,8 @@ type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
   | SvmSourceConfig({rpc: string})
-  // For tests: pass ready-to-use sources directly
-  | ReadySources(array<Source.t>)
+  // For tests: pass custom sources directly
+  | CustomSources(array<Source.t>)
 
 type chain = {
   name: string,
@@ -128,7 +128,7 @@ let publicConfigChainSchema = S.schema(s =>
 
 let contractEventItemSchema = S.schema(s =>
   {
-    "signature": s.matches(S.string),
+    "event": s.matches(S.string),
   }
 )
 
@@ -226,7 +226,7 @@ let fromPublic = (
     ->Js.Array2.map(((contractName, contractConfig)) => {
       let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
       let eventSignatures = switch contractConfig["events"] {
-      | Some(events) => events->Array.map(event => event["signature"])
+      | Some(events) => events->Array.map(eventItem => eventItem["event"])
       | None => []
       }
       (contractName, (abi, eventSignatures))

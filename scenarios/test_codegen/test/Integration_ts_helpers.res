@@ -35,7 +35,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     startBlock: 1,
     id: 1337,
     contracts,
-    sourceConfig: Config.ReadySources([
+    sourceConfig: Config.CustomSources([
       RpcSource.make({
         chain,
         sourceFor: Sync,

@@ -137,7 +137,7 @@ describe("Test PgStorage SQL generation functions", () => {
               endBlock: 200,
               maxReorgDepth: 10,
               contracts: [],
-              sourceConfig: Config.ReadySources([]),
+              sourceConfig: Config.CustomSources([]),
             },
             {
               name: "Chain137",
@@ -145,7 +145,7 @@ describe("Test PgStorage SQL generation functions", () => {
               startBlock: 0,
               maxReorgDepth: 200,
               contracts: [],
-              sourceConfig: Config.ReadySources([]),
+              sourceConfig: Config.CustomSources([]),
             },
           ],
           // Because of the line arrayOfBigInts and arrayOfBigDecimals should become TEXT[] instead of NUMERIC[]
@@ -632,7 +632,7 @@ WHERE cp."block_hash" IS NOT NULL
           endBlock: 200,
           maxReorgDepth: 5,
           contracts: [],
-          sourceConfig: Config.ReadySources([]),
+          sourceConfig: Config.CustomSources([]),
         }
 
         let query = InternalTable.Chains.makeInitialValuesQuery(
@@ -660,7 +660,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           startBlock: 100,
           maxReorgDepth: 5,
           contracts: [],
-          sourceConfig: Config.ReadySources([]),
+          sourceConfig: Config.CustomSources([]),
         }
 
         let query = InternalTable.Chains.makeInitialValuesQuery(
@@ -689,7 +689,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           endBlock: 200,
           maxReorgDepth: 5,
           contracts: [],
-          sourceConfig: Config.ReadySources([]),
+          sourceConfig: Config.CustomSources([]),
         }
 
         let chainConfig2: Config.chain = {
@@ -698,7 +698,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           startBlock: 500,
           maxReorgDepth: 0,
           contracts: [],
-          sourceConfig: Config.ReadySources([]),
+          sourceConfig: Config.CustomSources([]),
         }
 
         let query = InternalTable.Chains.makeInitialValuesQuery(

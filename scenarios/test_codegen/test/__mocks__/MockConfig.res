@@ -47,7 +47,7 @@ let mockChainConfig: Config.chain = {
   maxReorgDepth: 200,
   startBlock: 1,
   contracts,
-  sourceConfig: Config.ReadySources([
+  sourceConfig: Config.CustomSources([
     RpcSource.make({
       chain: chain1337,
       sourceFor: Sync,

@@ -15,7 +15,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
           startBlock: 100,
         },
       ],
@@ -47,7 +47,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -94,7 +94,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -179,11 +179,11 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock1337.source]),
+          sourceConfig: Config.CustomSources([sourceMock1337.source]),
         },
         {
           chain: #100,
-          sourceConfig: Config.ReadySources([sourceMock100.source]),
+          sourceConfig: Config.CustomSources([sourceMock100.source]),
         },
       ],
       ~multichain=Ordered,
@@ -323,7 +323,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -582,7 +582,7 @@ describe("E2E tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.ReadySources([sourceMockPrimary.source, sourceMockFallback.source]),
+            sourceConfig: Config.CustomSources([sourceMockPrimary.source, sourceMockFallback.source]),
           },
         ],
       )
@@ -651,7 +651,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -752,7 +752,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -870,7 +870,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -950,7 +950,7 @@ describe("E2E tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.ReadySources([sourceMock.source]),
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -1033,7 +1033,7 @@ describe("E2E tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.ReadySources([syncSource.source, liveSource.source]),
+            sourceConfig: Config.CustomSources([syncSource.source, liveSource.source]),
           },
         ],
       )
