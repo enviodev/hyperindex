@@ -13,6 +13,7 @@ let contracts = [
       (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
     ],
     startBlock: None,
+    eventSignatures: [],
   },
   {
     name: "NftFactory",
@@ -20,6 +21,7 @@ let contracts = [
     addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow],
     events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
     startBlock: None,
+    eventSignatures: [],
   },
   {
     name: "SimpleNft",
@@ -27,6 +29,7 @@ let contracts = [
     addresses: [],
     events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
     startBlock: None,
+    eventSignatures: [],
   },
 ]
 
@@ -44,7 +47,7 @@ let mockChainConfig: Config.chain = {
   maxReorgDepth: 200,
   startBlock: 1,
   contracts,
-  sources: [
+  sourceConfig: Config.CustomSources([
     RpcSource.make({
       chain: chain1337,
       sourceFor: Sync,
@@ -64,5 +67,5 @@ let mockChainConfig: Config.chain = {
       lowercaseAddresses: false,
       allEventSignatures: [],
     }),
-  ],
+  ]),
 }
