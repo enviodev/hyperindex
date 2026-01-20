@@ -95,10 +95,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     }
 
     let chainConfig = config.defaultChain->Option.getUnsafe
-    let sources = switch chainConfig.sourceConfig {
-    | Config.CustomSources(sources) => sources
-    | _ => Js.Exn.raiseError("Expected CustomSources in test")
-    }
+    // For this test we don't need real sources - just testing ChainManager event ordering
+    // Create a mock source that satisfies SourceManager requirements (chain ID doesn't matter here)
+    let mockSource = Mock.Source.make([], ~chain=#1)
+    let sources = [mockSource.source]
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
       firstEventBlockNumber: None,
