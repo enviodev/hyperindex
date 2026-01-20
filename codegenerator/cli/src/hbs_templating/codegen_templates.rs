@@ -12,13 +12,10 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
         field_types,
-        human_config::{
-            evm::{For, Rpc, RpcSyncConfig},
-            HumanConfig,
-        },
+        human_config::{evm::For, HumanConfig},
         system_config::{
-            self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, MainEvmDataSource,
-            SelectedField, SystemConfig,
+            self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField,
+            SystemConfig,
         },
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -118,10 +115,6 @@ struct InternalRpcConfig {
     query_timeout_millis: Option<u32>,
 }
 
-fn is_empty_vec<T>(v: &Vec<T>) -> bool {
-    v.is_empty()
-}
-
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct InternalChainConfig {
@@ -134,7 +127,7 @@ struct InternalChainConfig {
     // EVM/Fuel-specific source config (hypersync/hyperfuel endpoint)
     #[serde(skip_serializing_if = "Option::is_none")]
     hypersync: Option<String>,
-    #[serde(skip_serializing_if = "is_empty_vec")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     rpcs: Vec<InternalRpcConfig>,
     // SVM-specific source config
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -154,7 +147,7 @@ struct InternalContractConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     handler: Option<String>,
     // EVM-specific: event signatures for HyperSync queries
-    #[serde(skip_serializing_if = "is_empty_vec")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     events: Vec<InternalContractEventItem>,
 }
 
@@ -914,7 +907,6 @@ impl NetworkTemplate {
 pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
-    sources_code: String,
 }
 
 impl NetworkConfigTemplate {
@@ -955,150 +947,9 @@ impl NetworkConfigTemplate {
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
 
-        let contracts_code: String = codegen_contracts
-            .iter()
-            .map(|contract| {
-                let events_code: String = contract
-                    .events
-                    .iter()
-                    .map(|event| {
-                        format!(
-                            "Types.{}.{}.register()",
-                            contract.name.capitalized, event.name
-                        )
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                let ecosystem_fields = match &network.sync_source {
-                    system_config::DataSource::Evm { .. } => {
-                        format!(",abi: Types.{}.abi", contract.name.capitalized)
-                    }
-                    system_config::DataSource::Fuel { .. }
-                    | system_config::DataSource::Svm { .. } => "".to_string(),
-                };
-
-                format!(
-                    "{{name: \"{}\",events: [{}]{ecosystem_fields}}}",
-                    contract.name.capitalized, events_code
-                )
-            })
-            .collect::<Vec<String>>()
-            .join(", ");
-
-        let sources_code = match &network.sync_source {
-            system_config::DataSource::Fuel {
-                hypersync_endpoint_url,
-            } => format!(
-                "[HyperFuelSource.make({{chain, endpointUrl: \
-                   \"{hypersync_endpoint_url}\"}})]",
-            ),
-            system_config::DataSource::Svm { rpc } => {
-                format!("[Svm.makeRPCSource(~chain, ~rpc=\"{rpc}\")]",)
-            }
-            system_config::DataSource::Evm { main, rpcs } => {
-                let all_event_signatures = codegen_contracts
-                    .iter()
-                    .map(|contract| format!("Types.{}.eventSignatures", contract.name.capitalized))
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                let hyper_sync_code = match main {
-                    MainEvmDataSource::HyperSync {
-                        hypersync_endpoint_url,
-                    } => format!("Some(\"{hypersync_endpoint_url}\")"),
-                    MainEvmDataSource::Rpc(_) => "None".to_string(),
-                };
-
-                let rpc_to_sync_config_options = |rpc: &Rpc| match rpc.sync_config {
-                    None => "{}".to_string(),
-                    Some(RpcSyncConfig {
-                        acceleration_additive,
-                        initial_block_interval,
-                        backoff_multiplicative,
-                        interval_ceiling,
-                        backoff_millis,
-                        fallback_stall_timeout,
-                        query_timeout_millis,
-                    }) => {
-                        let mut code = String::from("{");
-                        if let Some(acceleration_additive) = acceleration_additive {
-                            code.push_str(&format!(
-                                "accelerationAdditive: {},",
-                                acceleration_additive
-                            ));
-                        }
-                        if let Some(initial_block_interval) = initial_block_interval {
-                            code.push_str(&format!(
-                                "initialBlockInterval: {},",
-                                initial_block_interval
-                            ));
-                        }
-                        if let Some(backoff_multiplicative) = backoff_multiplicative {
-                            code.push_str(&format!(
-                                "backoffMultiplicative: {},",
-                                backoff_multiplicative
-                            ));
-                        }
-                        if let Some(interval_ceiling) = interval_ceiling {
-                            code.push_str(&format!("intervalCeiling: {},", interval_ceiling));
-                        }
-                        if let Some(backoff_millis) = backoff_millis {
-                            code.push_str(&format!("backoffMillis: {},", backoff_millis));
-                        }
-                        if let Some(fallback_stall_timeout) = fallback_stall_timeout {
-                            code.push_str(&format!(
-                                "fallbackStallTimeout: {},",
-                                fallback_stall_timeout
-                            ));
-                        }
-                        if let Some(query_timeout_millis) = query_timeout_millis {
-                            code.push_str(&format!(
-                                "queryTimeoutMillis: {},",
-                                query_timeout_millis
-                            ));
-                        }
-                        code.push('}');
-                        code
-                    }
-                };
-
-                let rpcs = rpcs
-                    .iter()
-                    .map(|rpc| {
-                        format!(
-                            "{{url: \"{}\", sourceFor: {}, syncConfig: {}}}",
-                            rpc.url,
-                            match rpc.source_for {
-                                For::Sync => "Sync",
-                                For::Fallback => "Fallback",
-                                For::Live => "Live",
-                            },
-                            rpc_to_sync_config_options(rpc)
-                        )
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                format!(
-                    "EvmChain.makeSources(~chain, ~contracts=[{contracts_code}], \
-                       ~hyperSync={hyper_sync_code}, \
-                       ~allEventSignatures=[{all_event_signatures}]->Belt.Array.concatMany, \
-                       ~rpcs=[{rpcs}], \
-                       ~lowercaseAddresses={})",
-                    if config.lowercase_addresses {
-                        "true"
-                    } else {
-                        "false"
-                    }
-                )
-            }
-        };
-
         Ok(NetworkConfigTemplate {
             network_config,
             codegen_contracts,
-            sources_code,
         })
     }
 }
@@ -2006,7 +1857,6 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![contract1],
-          sources_code: "[HyperFuelSource.make({chain, endpointUrl: \"https://fuel-testnet.hypersync.xyz\"})]".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -2050,7 +1900,6 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![contract1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -2116,12 +1965,10 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![contract1_on_chain1, contract2_on_chain1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
         let chain_config_2 = super::NetworkConfigTemplate {
           network_config: network2,
           codegen_contracts: vec![contract1_on_chain2, contract2_on_chain2],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -2152,7 +1999,6 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![contract1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -2177,15 +2023,11 @@ mod test {
         let chain_config_1 = super::NetworkConfigTemplate {
           network_config: network1,
           codegen_contracts: vec![],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://myskar.com\"), \
-               ~allEventSignatures=[]->Belt.Array.concatMany, \
-               ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
       };
 
         let chain_config_2 = super::NetworkConfigTemplate {
           network_config: network2,
           codegen_contracts: vec![],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[], ~hyperSync=Some(\"https://137.hypersync.xyz\"), ~allEventSignatures=[]->Belt.Array.concatMany, ~rpcs=[], ~lowercaseAddresses=false)".to_string(),
       };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
