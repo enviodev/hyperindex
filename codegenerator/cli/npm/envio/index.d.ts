@@ -506,6 +506,14 @@ type EntityChangeValue<Entity> = {
   readonly deleted?: readonly string[];
 };
 
+/** A dynamic contract address registration. */
+type AddressRegistration = {
+  /** The contract address. */
+  readonly address: Address;
+  /** The contract name. */
+  readonly contract: string;
+};
+
 /** Extract entities from config. */
 type ConfigEntities<Config extends IndexerConfigTypes> =
   Config["entities"] extends Record<string, object> ? Config["entities"] : {};
@@ -520,6 +528,10 @@ type EntityChange<Config extends IndexerConfigTypes> = {
   readonly chainId: number;
   /** Number of events processed in this block. */
   readonly eventsProcessed: number;
+  /** Dynamic contract address registrations for this block. */
+  readonly addresses?: {
+    readonly sets?: readonly AddressRegistration[];
+  };
 } & {
   readonly [K in keyof ConfigEntities<Config>]?: EntityChangeValue<
     ConfigEntities<Config>[K]
