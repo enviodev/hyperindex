@@ -526,15 +526,6 @@ type EntityOps<Entity extends { id: string }> = {
   set: (entity: Entity) => void;
 };
 
-/** Entity operations for all entities in the config. */
-type TestIndexerEntities<Config extends IndexerConfigTypes> = {
-  readonly [K in keyof ConfigEntities<Config>]: ConfigEntities<Config>[K] extends {
-    id: string;
-  }
-    ? EntityOps<ConfigEntities<Config>[K]>
-    : never;
-};
-
 /** A single change representing entity modifications at a specific block. */
 type EntityChange<Config extends IndexerConfigTypes> = {
   /** The block where the changes occurred. */
@@ -598,4 +589,11 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
     /** Changes happened during the processing. */
     readonly changes: readonly EntityChange<Config>[];
   }>;
-} & TestIndexerEntities<Config>;
+} & {
+  /** Entity operations for direct manipulation outside of handlers. */
+  readonly [K in keyof ConfigEntities<Config>]: ConfigEntities<Config>[K] extends {
+    id: string;
+  }
+    ? EntityOps<ConfigEntities<Config>[K]>
+    : never;
+};
