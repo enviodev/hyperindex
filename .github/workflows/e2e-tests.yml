@@ -143,8 +143,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build erc20_multichain_factory scenario
-        working-directory: scenarios/erc20_multichain_factory
+      - name: Build e2e_test scenario
+        working-directory: scenarios/e2e_test
         run: |
           pnpm codegen
           pnpm build

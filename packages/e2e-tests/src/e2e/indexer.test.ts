@@ -21,8 +21,8 @@ import { waitForIndexer, waitForHasura } from "../utils/health.js";
 import { GraphQLClient } from "../utils/graphql.js";
 import path from "path";
 
-// Use existing scenario
-const PROJECT_DIR = path.join(config.scenariosDir, "erc20_multichain_factory");
+// Use dedicated e2e_test scenario
+const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
 
 // Get envio binary path
 const ENVIO_BIN = path.join(
