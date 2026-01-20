@@ -26,8 +26,9 @@ module InitApi = {
       // Check if chain uses HyperSync based on sourceConfig
       let usesHyperSync = switch sourceConfig {
       | Config.EvmSourceConfig({hypersync: Some(_)}) => true
+      | Config.EvmSourceConfig({hypersync: None}) => false
       | Config.FuelSourceConfig(_) => true // Fuel always uses HyperFuel
-      | _ => false
+      | Config.SvmSourceConfig(_) => false
       }
       switch usesHyperSync {
       | true => hyperSyncNetworks

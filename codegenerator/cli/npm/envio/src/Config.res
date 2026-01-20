@@ -42,7 +42,7 @@ type evmRpcConfig = {
 
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
-  | FuelSourceConfig({hyperfuel: string})
+  | FuelSourceConfig({hypersync: string})
   | SvmSourceConfig({rpc: string})
 
 type chain = {
@@ -122,13 +122,17 @@ let publicConfigChainSchema = S.schema(s =>
     "startBlock": s.matches(S.int),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
-    // EVM source config
+    // EVM/Fuel source config (hypersync for EVM, hyperfuel for Fuel)
     "hypersync": s.matches(S.option(S.string)),
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
-    // Fuel source config
-    "hyperfuel": s.matches(S.option(S.string)),
     // SVM source config
     "rpc": s.matches(S.option(S.string)),
+  }
+)
+
+let contractEventSchema = S.schema(s =>
+  {
+    "signatures": s.matches(S.array(S.string)),
   }
 )
 
@@ -136,8 +140,8 @@ let contractConfigSchema = S.schema(s =>
   {
     "abi": s.matches(S.json(~validate=false)),
     "handler": s.matches(S.option(S.string)),
-    // EVM-specific: event sighashes for HyperSync queries
-    "eventSignatures": s.matches(S.option(S.array(S.string))),
+    // EVM-specific: event config with sighashes for HyperSync queries
+    "event": s.matches(S.option(contractEventSchema)),
   }
 )
 
@@ -225,7 +229,10 @@ let fromPublic = (
     ->Js.Dict.entries
     ->Js.Array2.map(((contractName, contractConfig)) => {
       let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
-      let eventSignatures = contractConfig["eventSignatures"]->Option.getWithDefault([])
+      let eventSignatures = switch contractConfig["event"] {
+      | Some(event) => event["signatures"]
+      | None => []
+      }
       (contractName, (abi, eventSignatures))
     })
     ->Js.Dict.fromArray
@@ -339,11 +346,11 @@ let fromPublic = (
           })
         EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
       | Ecosystem.Fuel =>
-        switch publicChainConfig["hyperfuel"] {
-        | Some(hyperfuel) => FuelSourceConfig({hyperfuel: hyperfuel})
+        switch publicChainConfig["hypersync"] {
+        | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})
         | None =>
           Js.Exn.raiseError(
-            `Chain ${chainName} is missing hyperfuel endpoint in config`,
+            `Chain ${chainName} is missing hypersync endpoint in config`,
           )
         }
       | Ecosystem.Svm =>

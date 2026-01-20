@@ -30,10 +30,12 @@ expression: project_template.internal_config_json_code
       "Contract1": {
         "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
         "handler": "./src/EventHandler.js",
-        "eventSignatures": [
-          "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
-          "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
-        ]
+        "event": {
+          "signatures": [
+            "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
+            "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          ]
+        }
       }
     },
     "addressFormat": "checksum"

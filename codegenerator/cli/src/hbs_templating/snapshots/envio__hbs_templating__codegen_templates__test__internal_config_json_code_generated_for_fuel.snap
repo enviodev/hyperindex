@@ -10,7 +10,7 @@ expression: project_template.internal_config_json_code
       "0": {
         "id": 0,
         "startBlock": 0,
-        "hyperfuel": "https://fuel-testnet.hypersync.xyz"
+        "hypersync": "https://fuel-testnet.hypersync.xyz"
       }
     },
     "contracts": {

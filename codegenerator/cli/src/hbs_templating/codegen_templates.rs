@@ -148,17 +148,20 @@ struct InternalChainConfig {
     end_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reorg_depth: Option<i32>,
-    // EVM-specific source config
+    // EVM/Fuel-specific source config (hypersync/hyperfuel endpoint)
     #[serde(skip_serializing_if = "Option::is_none")]
     hypersync: Option<String>,
     #[serde(skip_serializing_if = "is_empty_vec")]
     rpcs: Vec<InternalRpcConfig>,
-    // Fuel-specific source config (hyperfuel endpoint)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hyperfuel: Option<String>,
     // SVM-specific source config
     #[serde(skip_serializing_if = "Option::is_none")]
     rpc: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalContractEvent {
+    signatures: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -167,9 +170,9 @@ struct InternalContractConfig {
     abi: Box<serde_json::value::RawValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handler: Option<String>,
-    // EVM-specific: array of event sighashes (hex strings with 0x prefix)
+    // EVM-specific: event config with sighashes
     #[serde(skip_serializing_if = "Option::is_none")]
-    event_signatures: Option<Vec<String>>,
+    event: Option<InternalContractEvent>,
 }
 
 // ============== Template Types ==============
@@ -1606,7 +1609,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                     let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
                     // Extract source config based on ecosystem
-                    let (hypersync, rpcs, hyperfuel, rpc) = match &network.sync_source {
+                    let (hypersync, rpcs, rpc) = match &network.sync_source {
                         system_config::DataSource::Evm { main, rpcs } => {
                             let hypersync_url = match main {
                                 system_config::MainEvmDataSource::HyperSync {
@@ -1655,13 +1658,14 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                     },
                                 })
                                 .collect();
-                            (hypersync_url, rpc_configs, None, None)
+                            (hypersync_url, rpc_configs, None)
                         }
+                        // Fuel uses hypersync field (for HyperFuel endpoint)
                         system_config::DataSource::Fuel {
                             hypersync_endpoint_url,
-                        } => (None, vec![], Some(hypersync_endpoint_url.clone()), None),
+                        } => (Some(hypersync_endpoint_url.clone()), vec![], None),
                         system_config::DataSource::Svm { rpc } => {
-                            (None, vec![], None, Some(rpc.clone()))
+                            (None, vec![], Some(rpc.clone()))
                         }
                     };
 
@@ -1674,7 +1678,6 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                             max_reorg_depth: network.max_reorg_depth,
                             hypersync,
                             rpcs,
-                            hyperfuel,
                             rpc,
                         },
                     )
@@ -1694,9 +1697,11 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                     let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
                     let abi_compact = serde_json::to_string(&abi_value)?;
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
-                    // Extract event signatures for EVM contracts
-                    let event_signatures = match &contract.abi {
-                        Abi::Evm(abi) => Some(abi.get_event_signatures()),
+                    // Extract event config for EVM contracts
+                    let event = match &contract.abi {
+                        Abi::Evm(abi) => Some(InternalContractEvent {
+                            signatures: abi.get_event_signatures(),
+                        }),
                         Abi::Fuel(_) => None,
                     };
                     Ok((
@@ -1704,7 +1709,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         InternalContractConfig {
                             abi: abi_raw,
                             handler: contract.handler_path.clone(),
-                            event_signatures,
+                            event,
                         },
                     ))
                 })

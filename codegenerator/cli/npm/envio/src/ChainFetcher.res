@@ -231,7 +231,7 @@ let make = (
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
     )
-  | Config.FuelSourceConfig({hyperfuel}) => [HyperFuelSource.make({chain, endpointUrl: hyperfuel})]
+  | Config.FuelSourceConfig({hypersync}) => [HyperFuelSource.make({chain, endpointUrl: hypersync})]
   | Config.SvmSourceConfig({rpc}) => [Svm.makeRPCSource(~chain, ~rpc)]
   }
 
