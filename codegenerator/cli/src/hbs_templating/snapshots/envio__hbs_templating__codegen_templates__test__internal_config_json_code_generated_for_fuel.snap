@@ -1,6 +1,5 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2350
 expression: project_template.internal_config_json_code
 ---
 {
@@ -10,7 +9,8 @@ expression: project_template.internal_config_json_code
     "chains": {
       "0": {
         "id": 0,
-        "startBlock": 0
+        "startBlock": 0,
+        "hyperfuel": "https://fuel-testnet.hypersync.xyz"
       }
     },
     "contracts": {

@@ -16,6 +16,8 @@ type contract = {
   addresses: array<Address.t>,
   events: array<Internal.eventConfig>,
   startBlock: option<int>,
+  // EVM-specific: event sighashes for HyperSync queries
+  eventSignatures: array<string>,
 }
 
 type codegenContract = {
@@ -25,11 +27,23 @@ type codegenContract = {
   startBlock: option<int>,
 }
 
+// Source config is now parsed from internal.config.json and sources are created lazily
 type codegenChain = {
   id: int,
   contracts: array<codegenContract>,
-  sources: array<Source.t>,
 }
+
+// Source config parsed from internal.config.json - sources are created lazily in ChainFetcher
+type evmRpcConfig = {
+  url: string,
+  sourceFor: Source.sourceFor,
+  syncConfig: option<sourceSyncOptions>,
+}
+
+type sourceConfig =
+  | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
+  | FuelSourceConfig({hyperfuel: string})
+  | SvmSourceConfig({rpc: string})
 
 type chain = {
   name: string,
@@ -38,7 +52,7 @@ type chain = {
   endBlock?: int,
   maxReorgDepth: int,
   contracts: array<contract>,
-  sources: array<Source.t>,
+  sourceConfig: sourceConfig,
 }
 
 type sourceSync = {
@@ -77,12 +91,44 @@ type t = {
   userEntitiesByName: dict<Internal.entityConfig>,
 }
 
+// Types for parsing source config from internal.config.json
+type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
+
+let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
+
+let rpcSyncConfigSchema = S.schema(s =>
+  {
+    "initialBlockInterval": s.matches(S.option(S.int)),
+    "backoffMultiplicative": s.matches(S.option(S.float)),
+    "accelerationAdditive": s.matches(S.option(S.int)),
+    "intervalCeiling": s.matches(S.option(S.int)),
+    "backoffMillis": s.matches(S.option(S.int)),
+    "fallbackStallTimeout": s.matches(S.option(S.int)),
+    "queryTimeoutMillis": s.matches(S.option(S.int)),
+  }
+)
+
+let rpcConfigSchema = S.schema(s =>
+  {
+    "url": s.matches(S.string),
+    "for": s.matches(rpcSourceForSchema),
+    "syncConfig": s.matches(S.option(rpcSyncConfigSchema)),
+  }
+)
+
 let publicConfigChainSchema = S.schema(s =>
   {
     "id": s.matches(S.int),
     "startBlock": s.matches(S.int),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
+    // EVM source config
+    "hypersync": s.matches(S.option(S.string)),
+    "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
+    // Fuel source config
+    "hyperfuel": s.matches(S.option(S.string)),
+    // SVM source config
+    "rpc": s.matches(S.option(S.string)),
   }
 )
 
@@ -90,6 +136,8 @@ let contractConfigSchema = S.schema(s =>
   {
     "abi": s.matches(S.json(~validate=false)),
     "handler": s.matches(S.option(S.string)),
+    // EVM-specific: event sighashes for HyperSync queries
+    "eventSignatures": s.matches(S.option(S.array(S.string))),
   }
 )
 
@@ -170,13 +218,15 @@ let fromPublic = (
   | _ => None
   }
 
-  let contractsWithAbis = switch publicContractsConfig {
+  // Store both ABI and event signatures for each contract (using inline tuple)
+  let contractsWithAbis: Js.Dict.t<(EvmTypes.Abi.t, array<string>)> = switch publicContractsConfig {
   | Some(contractsDict) =>
     contractsDict
     ->Js.Dict.entries
     ->Js.Array2.map(((contractName, contractConfig)) => {
       let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
-      (contractName, abi)
+      let eventSignatures = contractConfig["eventSignatures"]->Option.getWithDefault([])
+      (contractName, (abi, eventSignatures))
     })
     ->Js.Dict.fromArray
   | None => Js.Dict.empty()
@@ -193,7 +243,7 @@ let fromPublic = (
   codegenChains->Array.forEach(codegenChain => {
     let mergedContracts = codegenChain.contracts->Array.map(codegenContract => {
       switch contractsWithAbis->Js.Dict.get(codegenContract.name) {
-      | Some(abi) =>
+      | Some((abi, eventSignatures)) =>
         // Parse addresses based on ecosystem and address format
         let parsedAddresses = codegenContract.addresses->Array.map(
           addressString => {
@@ -208,13 +258,14 @@ let fromPublic = (
             }
           },
         )
-        // Convert codegenContract to contract by adding abi
+        // Convert codegenContract to contract by adding abi and eventSignatures
         {
           name: codegenContract.name,
           abi,
           addresses: parsedAddresses,
           events: codegenContract.events,
           startBlock: codegenContract.startBlock,
+          eventSignatures,
         }
       | None =>
         Js.Exn.raiseError(
@@ -224,6 +275,15 @@ let fromPublic = (
     })
     contractsByChainId->Js.Dict.set(codegenChain.id->Int.toString, mergedContracts)
   })
+
+  // Helper to convert parsed RPC config to evmRpcConfig
+  let parseRpcSourceFor = (sourceFor: rpcSourceFor): Source.sourceFor => {
+    switch sourceFor {
+    | Sync => Source.Sync
+    | Fallback => Source.Fallback
+    | Live => Source.Live
+    }
+  }
 
   // Merge codegenChains with names from publicConfig
   let chains =
@@ -244,6 +304,58 @@ let fromPublic = (
           `Contracts for chain with id ${chainId->Int.toString} not found in merged contracts`,
         )
       }
+
+      // Build sourceConfig from the parsed chain config
+      let sourceConfig = switch ecosystemName {
+      | Ecosystem.Evm =>
+        let rpcs =
+          publicChainConfig["rpcs"]
+          ->Option.getWithDefault([])
+          ->Array.map((rpcConfig): evmRpcConfig => {
+            let syncConfig: option<sourceSyncOptions> =
+              rpcConfig["syncConfig"]->Option.map((sc): sourceSyncOptions => {
+                let initialBlockInterval = sc["initialBlockInterval"]
+                let backoffMultiplicative = sc["backoffMultiplicative"]
+                let accelerationAdditive = sc["accelerationAdditive"]
+                let intervalCeiling = sc["intervalCeiling"]
+                let backoffMillis = sc["backoffMillis"]
+                let queryTimeoutMillis = sc["queryTimeoutMillis"]
+                let fallbackStallTimeout = sc["fallbackStallTimeout"]
+                {
+                  ?initialBlockInterval,
+                  ?backoffMultiplicative,
+                  ?accelerationAdditive,
+                  ?intervalCeiling,
+                  ?backoffMillis,
+                  ?queryTimeoutMillis,
+                  ?fallbackStallTimeout,
+                }
+              })
+            {
+              url: rpcConfig["url"],
+              sourceFor: parseRpcSourceFor(rpcConfig["for"]),
+              syncConfig,
+            }
+          })
+        EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
+      | Ecosystem.Fuel =>
+        switch publicChainConfig["hyperfuel"] {
+        | Some(hyperfuel) => FuelSourceConfig({hyperfuel: hyperfuel})
+        | None =>
+          Js.Exn.raiseError(
+            `Chain ${chainName} is missing hyperfuel endpoint in config`,
+          )
+        }
+      | Ecosystem.Svm =>
+        switch publicChainConfig["rpc"] {
+        | Some(rpc) => SvmSourceConfig({rpc: rpc})
+        | None =>
+          Js.Exn.raiseError(
+            `Chain ${chainName} is missing rpc endpoint in config`,
+          )
+        }
+      }
+
       {
         name: chainName,
         id: codegenChain.id,
@@ -255,7 +367,7 @@ let fromPublic = (
         | Ecosystem.Fuel | Ecosystem.Svm => 0
         },
         contracts: mergedContracts,
-        sources: codegenChain.sources,
+        sourceConfig,
       }
     })
 
@@ -336,3 +448,4 @@ let getChain = (config, ~chainId) => {
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
 }
+
