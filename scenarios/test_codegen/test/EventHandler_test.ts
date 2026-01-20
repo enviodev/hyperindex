@@ -9,6 +9,7 @@ import {
   type EvmChainName,
   type FuelChainId,
   type SvmChainId,
+  type TestIndexer,
 } from "generated";
 import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -753,5 +754,38 @@ describe("Use Envio test framework to test event handlers", () => {
           "Invalid block range for chain 1: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer().",
       }
     );
+  });
+
+  it("TestIndexer result type is properly typed", async () => {
+    const indexer = createTestIndexer();
+
+    // Verify TestIndexer type matches createTestIndexer return type
+    expectType<TypeEqual<typeof indexer, TestIndexer>>(true);
+
+    const result = await indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    const change = result.changes[0];
+    if (change) {
+      // Verify change has expected metadata fields
+      expectType<TypeEqual<typeof change.block, number>>(true);
+      expectType<TypeEqual<typeof change.chainId, number>>(true);
+      expectType<TypeEqual<typeof change.eventsProcessed, number>>(true);
+      expectType<TypeEqual<typeof change.blockHash, string | undefined>>(true);
+
+      // Verify entity changes have expected structure
+      const userChange = change.User;
+      if (userChange) {
+        expectType<
+          TypeEqual<typeof userChange.sets, readonly User[] | undefined>
+        >(true);
+        expectType<
+          TypeEqual<typeof userChange.deleted, readonly string[] | undefined>
+        >(true);
+      }
+    }
   });
 });

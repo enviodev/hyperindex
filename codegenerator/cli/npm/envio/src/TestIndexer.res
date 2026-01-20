@@ -215,14 +215,30 @@ let handleWriteBatch = (
       entityChanges
       ->Js.Dict.entries
       ->Array.forEach(((entityName, {sets, deleted})) => {
-        let entityObj: dict<unknown> = Js.Dict.empty()
-        if sets->Array.length > 0 {
-          entityObj->Js.Dict.set("sets", sets->Utils.magic)
+        // Transform dynamic_contract_registry to addresses with simplified structure
+        if entityName === InternalTable.DynamicContractRegistry.name {
+          let entityObj: dict<unknown> = Js.Dict.empty()
+          if sets->Array.length > 0 {
+            // Transform sets to simplified {address, contract} objects
+            let simplifiedSets =
+              sets->Array.map(entity => {
+                let dc = entity->Utils.magic->castFromDcRegistry
+                {"address": dc.contractAddress, "contract": dc.contractName}
+              })
+            entityObj->Js.Dict.set("sets", simplifiedSets->Utils.magic)
+          }
+          // Note: deleted is not relevant for addresses since we use address string directly
+          change->Js.Dict.set("addresses", entityObj->Utils.magic)
+        } else {
+          let entityObj: dict<unknown> = Js.Dict.empty()
+          if sets->Array.length > 0 {
+            entityObj->Js.Dict.set("sets", sets->Utils.magic)
+          }
+          if deleted->Array.length > 0 {
+            entityObj->Js.Dict.set("deleted", deleted->Utils.magic)
+          }
+          change->Js.Dict.set(entityName, entityObj->Utils.magic)
         }
-        if deleted->Array.length > 0 {
-          entityObj->Js.Dict.set("deleted", deleted->Utils.magic)
-        }
-        change->Js.Dict.set(entityName, entityObj->Utils.magic)
       })
     | None => ()
     }

@@ -64,7 +64,7 @@ type IndexerConfigTypes = (IsEmptyObject<EvmChains> extends true
     ? {}
     : {
         svm: { chains: SvmChains };
-      });
+      }) & { entities: Entities };
 
 /** The indexer type. */
 export type Indexer = IndexerFromConfig<IndexerConfigTypes>;
