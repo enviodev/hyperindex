@@ -23,6 +23,23 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.7)(jsdom@16.7.0)
 
+  scenarios/e2e_test:
+    dependencies:
+      envio:
+        specifier: file:../../codegenerator/cli/npm/envio
+        version: file:codegenerator/cli/npm/envio(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.9
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+    optionalDependencies:
+      generated:
+        specifier: ./generated
+        version: link:generated
+
   scenarios/erc20_multichain_factory:
     dependencies:
       envio:
