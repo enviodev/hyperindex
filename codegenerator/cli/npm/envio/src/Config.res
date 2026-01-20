@@ -98,8 +98,10 @@ type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") 
 
 let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
 
-let rpcSyncConfigSchema = S.schema(s =>
+let rpcConfigSchema = S.schema(s =>
   {
+    "url": s.matches(S.string),
+    "for": s.matches(rpcSourceForSchema),
     "initialBlockInterval": s.matches(S.option(S.int)),
     "backoffMultiplicative": s.matches(S.option(S.float)),
     "accelerationAdditive": s.matches(S.option(S.int)),
@@ -107,14 +109,6 @@ let rpcSyncConfigSchema = S.schema(s =>
     "backoffMillis": s.matches(S.option(S.int)),
     "fallbackStallTimeout": s.matches(S.option(S.int)),
     "queryTimeoutMillis": s.matches(S.option(S.int)),
-  }
-)
-
-let rpcConfigSchema = S.schema(s =>
-  {
-    "url": s.matches(S.string),
-    "for": s.matches(rpcSourceForSchema),
-    "syncConfig": s.matches(S.option(rpcSyncConfigSchema)),
   }
 )
 
@@ -132,9 +126,9 @@ let publicConfigChainSchema = S.schema(s =>
   }
 )
 
-let contractEventSchema = S.schema(s =>
+let contractEventItemSchema = S.schema(s =>
   {
-    "signatures": s.matches(S.array(S.string)),
+    "signature": s.matches(S.string),
   }
 )
 
@@ -142,8 +136,8 @@ let contractConfigSchema = S.schema(s =>
   {
     "abi": s.matches(S.json(~validate=false)),
     "handler": s.matches(S.option(S.string)),
-    // EVM-specific: event config with sighashes for HyperSync queries
-    "event": s.matches(S.option(contractEventSchema)),
+    // EVM-specific: event signatures for HyperSync queries
+    "events": s.matches(S.option(S.array(contractEventItemSchema))),
   }
 )
 
@@ -231,8 +225,8 @@ let fromPublic = (
     ->Js.Dict.entries
     ->Js.Array2.map(((contractName, contractConfig)) => {
       let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
-      let eventSignatures = switch contractConfig["event"] {
-      | Some(event) => event["signatures"]
+      let eventSignatures = switch contractConfig["events"] {
+      | Some(events) => events->Array.map(event => event["signature"])
       | None => []
       }
       (contractName, (abi, eventSignatures))
@@ -321,25 +315,35 @@ let fromPublic = (
           publicChainConfig["rpcs"]
           ->Option.getWithDefault([])
           ->Array.map((rpcConfig): evmRpcConfig => {
-            let syncConfig: option<sourceSyncOptions> =
-              rpcConfig["syncConfig"]->Option.map((sc): sourceSyncOptions => {
-                let initialBlockInterval = sc["initialBlockInterval"]
-                let backoffMultiplicative = sc["backoffMultiplicative"]
-                let accelerationAdditive = sc["accelerationAdditive"]
-                let intervalCeiling = sc["intervalCeiling"]
-                let backoffMillis = sc["backoffMillis"]
-                let queryTimeoutMillis = sc["queryTimeoutMillis"]
-                let fallbackStallTimeout = sc["fallbackStallTimeout"]
-                {
-                  ?initialBlockInterval,
-                  ?backoffMultiplicative,
-                  ?accelerationAdditive,
-                  ?intervalCeiling,
-                  ?backoffMillis,
-                  ?queryTimeoutMillis,
-                  ?fallbackStallTimeout,
-                }
+            // Build syncConfig from flattened fields
+            let initialBlockInterval = rpcConfig["initialBlockInterval"]
+            let backoffMultiplicative = rpcConfig["backoffMultiplicative"]
+            let accelerationAdditive = rpcConfig["accelerationAdditive"]
+            let intervalCeiling = rpcConfig["intervalCeiling"]
+            let backoffMillis = rpcConfig["backoffMillis"]
+            let queryTimeoutMillis = rpcConfig["queryTimeoutMillis"]
+            let fallbackStallTimeout = rpcConfig["fallbackStallTimeout"]
+            let hasSyncConfig =
+              initialBlockInterval->Option.isSome ||
+              backoffMultiplicative->Option.isSome ||
+              accelerationAdditive->Option.isSome ||
+              intervalCeiling->Option.isSome ||
+              backoffMillis->Option.isSome ||
+              queryTimeoutMillis->Option.isSome ||
+              fallbackStallTimeout->Option.isSome
+            let syncConfig: option<sourceSyncOptions> = if hasSyncConfig {
+              Some({
+                ?initialBlockInterval,
+                ?backoffMultiplicative,
+                ?accelerationAdditive,
+                ?intervalCeiling,
+                ?backoffMillis,
+                ?queryTimeoutMillis,
+                ?fallbackStallTimeout,
               })
+            } else {
+              None
+            }
             {
               url: rpcConfig["url"],
               sourceFor: parseRpcSourceFor(rpcConfig["for"]),

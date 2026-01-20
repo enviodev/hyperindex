@@ -98,7 +98,10 @@ struct InternalSvmConfig {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct InternalRpcSyncConfig {
+struct InternalRpcConfig {
+    url: String,
+    #[serde(rename = "for")]
+    source_for: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -113,26 +116,6 @@ struct InternalRpcSyncConfig {
     fallback_stall_timeout: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     query_timeout_millis: Option<u32>,
-}
-
-fn is_empty_rpc_sync_config(config: &InternalRpcSyncConfig) -> bool {
-    config.initial_block_interval.is_none()
-        && config.backoff_multiplicative.is_none()
-        && config.acceleration_additive.is_none()
-        && config.interval_ceiling.is_none()
-        && config.backoff_millis.is_none()
-        && config.fallback_stall_timeout.is_none()
-        && config.query_timeout_millis.is_none()
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct InternalRpcConfig {
-    url: String,
-    #[serde(rename = "for")]
-    source_for: &'static str,
-    #[serde(skip_serializing_if = "is_empty_rpc_sync_config")]
-    sync_config: InternalRpcSyncConfig,
 }
 
 fn is_empty_vec<T>(v: &Vec<T>) -> bool {
@@ -160,8 +143,8 @@ struct InternalChainConfig {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct InternalContractEvent {
-    signatures: Vec<String>,
+struct InternalContractEventItem {
+    signature: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -170,9 +153,9 @@ struct InternalContractConfig {
     abi: Box<serde_json::value::RawValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handler: Option<String>,
-    // EVM-specific: event config with sighashes
-    #[serde(skip_serializing_if = "Option::is_none")]
-    event: Option<InternalContractEvent>,
+    // EVM-specific: event signatures for HyperSync queries
+    #[serde(skip_serializing_if = "is_empty_vec")]
+    events: Vec<InternalContractEventItem>,
 }
 
 // ============== Template Types ==============
@@ -1626,36 +1609,34 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                         For::Fallback => "fallback",
                                         For::Live => "live",
                                     },
-                                    sync_config: InternalRpcSyncConfig {
-                                        initial_block_interval: rpc
-                                            .sync_config
-                                            .as_ref()
-                                            .and_then(|c| c.initial_block_interval),
-                                        backoff_multiplicative: rpc
-                                            .sync_config
-                                            .as_ref()
-                                            .and_then(|c| c.backoff_multiplicative),
-                                        acceleration_additive: rpc
-                                            .sync_config
-                                            .as_ref()
-                                            .and_then(|c| c.acceleration_additive),
-                                        interval_ceiling: rpc
-                                            .sync_config
-                                            .as_ref()
-                                            .and_then(|c| c.interval_ceiling),
-                                        backoff_millis: rpc
-                                            .sync_config
-                                            .as_ref()
-                                            .and_then(|c| c.backoff_millis),
-                                        fallback_stall_timeout: rpc
-                                            .sync_config
-                                            .as_ref()
-                                            .and_then(|c| c.fallback_stall_timeout),
-                                        query_timeout_millis: rpc
-                                            .sync_config
-                                            .as_ref()
-                                            .and_then(|c| c.query_timeout_millis),
-                                    },
+                                    initial_block_interval: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.initial_block_interval),
+                                    backoff_multiplicative: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.backoff_multiplicative),
+                                    acceleration_additive: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.acceleration_additive),
+                                    interval_ceiling: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.interval_ceiling),
+                                    backoff_millis: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.backoff_millis),
+                                    fallback_stall_timeout: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.fallback_stall_timeout),
+                                    query_timeout_millis: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.query_timeout_millis),
                                 })
                                 .collect();
                             (hypersync_url, rpc_configs, None)
@@ -1697,19 +1678,21 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                     let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
                     let abi_compact = serde_json::to_string(&abi_value)?;
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
-                    // Extract event config for EVM contracts
-                    let event = match &contract.abi {
-                        Abi::Evm(abi) => Some(InternalContractEvent {
-                            signatures: abi.get_event_signatures(),
-                        }),
-                        Abi::Fuel(_) => None,
+                    // Extract event signatures for EVM contracts
+                    let events = match &contract.abi {
+                        Abi::Evm(abi) => abi
+                            .get_event_signatures()
+                            .into_iter()
+                            .map(|sig| InternalContractEventItem { signature: sig })
+                            .collect(),
+                        Abi::Fuel(_) => vec![],
                     };
                     Ok((
                         contract.name.as_str(),
                         InternalContractConfig {
                             abi: abi_raw,
                             handler: contract.handler_path.clone(),
-                            event,
+                            events,
                         },
                     ))
                 })

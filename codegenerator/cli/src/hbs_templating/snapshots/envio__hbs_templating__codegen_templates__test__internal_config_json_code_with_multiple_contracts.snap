@@ -14,26 +14,22 @@ expression: project_template.internal_config_json_code
           {
             "url": "https://eth.com",
             "for": "sync",
-            "syncConfig": {
-              "initialBlockInterval": 10000,
-              "backoffMultiplicative": 0.8,
-              "accelerationAdditive": 2000,
-              "intervalCeiling": 10000,
-              "backoffMillis": 5000,
-              "queryTimeoutMillis": 20000
-            }
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
           },
           {
             "url": "https://eth.com/fallback",
             "for": "sync",
-            "syncConfig": {
-              "initialBlockInterval": 10000,
-              "backoffMultiplicative": 0.8,
-              "accelerationAdditive": 2000,
-              "intervalCeiling": 10000,
-              "backoffMillis": 5000,
-              "queryTimeoutMillis": 20000
-            }
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
           }
         ]
       },
@@ -44,14 +40,12 @@ expression: project_template.internal_config_json_code
           {
             "url": "https://eth.com",
             "for": "sync",
-            "syncConfig": {
-              "initialBlockInterval": 10000,
-              "backoffMultiplicative": 0.8,
-              "accelerationAdditive": 2000,
-              "intervalCeiling": 10000,
-              "backoffMillis": 5000,
-              "queryTimeoutMillis": 20000
-            }
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
           }
         ]
       }
@@ -60,22 +54,26 @@ expression: project_template.internal_config_json_code
       "Contract1": {
         "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
         "handler": "./src/EventHandler.js",
-        "event": {
-          "signatures": [
-            "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
-            "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
-          ]
-        }
+        "events": [
+          {
+            "signature": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          },
+          {
+            "signature": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          }
+        ]
       },
       "Contract2": {
         "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
         "handler": "./src/EventHandler.js",
-        "event": {
-          "signatures": [
-            "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
-            "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
-          ]
-        }
+        "events": [
+          {
+            "signature": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          },
+          {
+            "signature": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          }
+        ]
       }
     },
     "addressFormat": "checksum"
