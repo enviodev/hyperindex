@@ -521,9 +521,9 @@ type ConfigEntities<Config extends IndexerConfigTypes> =
 /** Entity operations available on test indexer for direct entity manipulation. */
 type EntityOps<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
-  get: (id: string) => Promise<Entity | undefined>;
+  readonly get: (id: string) => Promise<Entity | undefined>;
   /** Set (create or update) an entity. */
-  set: (entity: Entity) => void;
+  readonly set: (entity: Entity) => void;
 };
 
 /** A single change representing entity modifications at a specific block. */
