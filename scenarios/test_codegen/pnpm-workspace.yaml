@@ -2,7 +2,3 @@ packages:
   - ./*
   - ./generated/*
   - ../helpers
-
-ignoredBuiltDependencies:
-  - esbuild
-  - rescript
