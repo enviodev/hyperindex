@@ -10,6 +10,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       addresses: [nftFactoryContractAddress],
       events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
       startBlock: None,
+      eventSignatures: [],
     },
     {
       name: "SimpleNft",
@@ -17,6 +18,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       addresses: [],
       events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
       startBlock: None,
+      eventSignatures: [],
     },
   ]
   let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConfig => {
@@ -33,7 +35,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     startBlock: 1,
     id: 1337,
     contracts,
-    sources: [
+    sourceConfig: Config.ReadySources([
       RpcSource.make({
         chain,
         sourceFor: Sync,
@@ -53,7 +55,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
         allEventSignatures: [],
         lowercaseAddresses: false,
       }),
-    ],
+    ]),
   }
 }
 

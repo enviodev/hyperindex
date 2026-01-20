@@ -44,6 +44,8 @@ type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
   | SvmSourceConfig({rpc: string})
+  // For tests: pass ready-to-use sources directly
+  | ReadySources(array<Source.t>)
 
 type chain = {
   name: string,

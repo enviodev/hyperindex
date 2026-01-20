@@ -95,6 +95,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     }
 
     let chainConfig = config.defaultChain->Option.getUnsafe
+    let sources = switch chainConfig.sourceConfig {
+    | Config.ReadySources(sources) => sources
+    | _ => Js.Exn.raiseError("Expected ReadySources in test")
+    }
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
       firstEventBlockNumber: None,
@@ -104,7 +108,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       fetchState: fetchState.contents,
       logger: Logging.getLogger(),
       sourceManager: SourceManager.make(
-        ~sources=chainConfig.sources,
+        ~sources,
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
       ),
       chainConfig,
