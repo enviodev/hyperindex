@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
+    "codegen": "envio codegen",
     "build": "tsc --noEmit",
     "dev": "envio dev",
     "start": "envio start"
