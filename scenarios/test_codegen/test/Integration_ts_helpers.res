@@ -1,19 +1,21 @@
 @genType.opaque
 type chainConfig = Config.chain
 
+let emptyAbi: EvmTypes.Abi.t = []->Utils.magic
+
 @genType
 let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let contracts = [
     {
       Config.name: "NftFactory",
-      abi: Types.NftFactory.abi,
+      abi: emptyAbi,
       addresses: [nftFactoryContractAddress],
       events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
       startBlock: None,
     },
     {
       name: "SimpleNft",
-      abi: Types.SimpleNft.abi,
+      abi: emptyAbi,
       addresses: [],
       events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
       startBlock: None,
@@ -21,7 +23,6 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   ]
   let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConfig => {
     name: contract.name,
-    abi: contract.abi,
     events: contract.events->(
       Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
     ),

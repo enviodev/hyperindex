@@ -763,10 +763,8 @@ impl ContractTemplate {
                 let signatures = abi.get_event_signatures();
 
                 format!(
-                    r#"let abi = (%raw(`{}`): EvmTypes.Abi.t)
-let eventSignatures = [{}]
+                    r#"let eventSignatures = [{}]
 {chain_id_type_code}"#,
-                    abi.raw,
                     signatures
                         .iter()
                         .map(|w| format!("\"{}\"", w))
@@ -927,16 +925,8 @@ impl NetworkConfigTemplate {
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                let ecosystem_fields = match &network.sync_source {
-                    system_config::DataSource::Evm { .. } => {
-                        format!(",abi: Types.{}.abi", contract.name.capitalized)
-                    }
-                    system_config::DataSource::Fuel { .. }
-                    | system_config::DataSource::Svm { .. } => "".to_string(),
-                };
-
                 format!(
-                    "{{name: \"{}\",events: [{}]{ecosystem_fields}}}",
+                    "{{name: \"{}\",events: [{}]}}",
                     contract.name.capitalized, events_code
                 )
             })
@@ -1912,138 +1902,6 @@ mod test {
             project_template.chain_configs[0].network_config
         );
         assert_eq!(expected_chain_configs, project_template.chain_configs,);
-    }
-
-    #[test]
-    fn chain_configs_parsed_case_1() {
-        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-
-        let network1 = NetworkTemplate {
-            id: 1,
-            ..NetworkTemplate::default()
-        };
-
-        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
-        let contract1 = super::PerNetworkContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
-            addresses: vec![address1.clone()],
-            events,
-            start_block: None,
-        };
-
-        let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![contract1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-      };
-
-        let expected_chain_configs = vec![chain_config_1];
-
-        let project_template = get_project_template_helper("config1.yaml");
-
-        assert_eq!(
-            project_template.relative_path_to_root_from_generated,
-            "../.".to_string()
-        );
-
-        assert_eq!(
-            expected_chain_configs[0].network_config,
-            project_template.chain_configs[0].network_config
-        );
-        assert_eq!(expected_chain_configs, project_template.chain_configs);
-    }
-
-    #[tokio::test]
-    async fn chain_configs_parsed_case_2() {
-        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-        let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
-
-        let network1 = NetworkTemplate {
-            id: 1,
-            ..NetworkTemplate::default()
-        };
-
-        let network2 = NetworkTemplate {
-            id: 2,
-            ..NetworkTemplate::default()
-        };
-
-        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
-        let contract1_on_chain1 = super::PerNetworkContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
-            addresses: vec![address1.clone()],
-            events: events.clone(),
-            start_block: None,
-        };
-
-        let contract2_on_chain1 = super::PerNetworkContractTemplate {
-            name: String::from("Contract2").to_capitalized_options(),
-            addresses: vec![],
-            events: events.clone(),
-            start_block: None,
-        };
-
-        let contract1_on_chain2 = super::PerNetworkContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
-            addresses: vec![],
-            events: events.clone(),
-            start_block: None,
-        };
-
-        let contract2_on_chain2 = super::PerNetworkContractTemplate {
-            name: String::from("Contract2").to_capitalized_options(),
-            addresses: vec![address2.clone()],
-            events: events.clone(),
-            start_block: None,
-        };
-
-        let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![contract1_on_chain1, contract2_on_chain1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-      };
-        let chain_config_2 = super::NetworkConfigTemplate {
-          network_config: network2,
-          codegen_contracts: vec![contract1_on_chain2, contract2_on_chain2],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}, {name: \"Contract2\",events: [Types.Contract2.NewGravatar.register(), Types.Contract2.UpdatedGravatar.register()],abi: Types.Contract2.abi}], ~hyperSync=None, ~allEventSignatures=[Types.Contract1.eventSignatures, Types.Contract2.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://eth.com\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}, {url: \"https://eth.com/fallback\", sourceFor: Sync, syncConfig: {accelerationAdditive: 2000,initialBlockInterval: 10000,backoffMultiplicative: 0.8,intervalCeiling: 10000,backoffMillis: 5000,queryTimeoutMillis: 20000,}}], ~lowercaseAddresses=false)".to_string(),
-      };
-
-        let expected_chain_configs = vec![chain_config_1, chain_config_2];
-
-        let project_template = get_project_template_helper("config2.yaml");
-
-        assert_eq!(expected_chain_configs, project_template.chain_configs);
-    }
-
-    #[test]
-    fn convert_to_chain_configs_case_3() {
-        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-
-        let network1 = NetworkTemplate {
-            id: 1,
-            ..NetworkTemplate::default()
-        };
-
-        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
-
-        let contract1 = super::PerNetworkContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
-            addresses: vec![address1.clone()],
-            events,
-            start_block: None,
-        };
-
-        let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![contract1],
-          sources_code: "EvmChain.makeSources(~chain, ~contracts=[{name: \"Contract1\",events: [Types.Contract1.NewGravatar.register(), Types.Contract1.UpdatedGravatar.register()],abi: Types.Contract1.abi}], ~hyperSync=Some(\"https://1.hypersync.xyz\"), ~allEventSignatures=[Types.Contract1.eventSignatures]->Belt.Array.concatMany, ~rpcs=[{url: \"https://fallback.eth.com\", sourceFor: Fallback, syncConfig: {}}], ~lowercaseAddresses=false)".to_string(),
-      };
-
-        let expected_chain_configs = vec![chain_config_1];
-
-        let project_template = get_project_template_helper("config3.yaml");
-
-        assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
 
     #[test]

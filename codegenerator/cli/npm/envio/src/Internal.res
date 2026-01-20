@@ -177,7 +177,6 @@ type evmEventConfig = {
 }
 type evmContractConfig = {
   name: string,
-  abi: EvmTypes.Abi.t,
   events: array<evmEventConfig>,
 }
 

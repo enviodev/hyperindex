@@ -2,10 +2,12 @@ let chain1 = ChainMap.Chain.makeUnsafe(~chainId=1)
 let chain137 = ChainMap.Chain.makeUnsafe(~chainId=137)
 let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
 
+let emptyAbi: EvmTypes.Abi.t = []->Utils.magic
+
 let contracts = [
   {
     Config.name: "Gravatar",
-    abi: Types.Gravatar.abi,
+    abi: emptyAbi,
     addresses: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow],
     events: [
       (Types.Gravatar.TestEvent.register() :> Internal.eventConfig),
@@ -16,14 +18,14 @@ let contracts = [
   },
   {
     name: "NftFactory",
-    abi: Types.NftFactory.abi,
+    abi: emptyAbi,
     addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow],
     events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
     startBlock: None,
   },
   {
     name: "SimpleNft",
-    abi: Types.SimpleNft.abi,
+    abi: emptyAbi,
     addresses: [],
     events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
     startBlock: None,
@@ -32,7 +34,6 @@ let contracts = [
 
 let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConfig => {
   name: contract.name,
-  abi: contract.abi,
   events: contract.events->(
     Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
   ),
