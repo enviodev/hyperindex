@@ -25,6 +25,7 @@ type partition = {
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
+  endBlock: option<int>,
 }
 
 type t = {
@@ -117,6 +118,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           selection: target.selection,
           addressesByContractName: restAddresses,
           latestFetchedBlock,
+          endBlock: p.endBlock,
         })
       } else {
         None
@@ -131,6 +133,7 @@ let mergeIntoPartition = (p: partition, ~target: partition, ~maxAddrInPartition)
           selection: target.selection,
           addressesByContractName: mergedAddresses,
           latestFetchedBlock,
+          endBlock: target.endBlock,
         },
         rest,
       )
@@ -467,6 +470,7 @@ let registerDynamicContracts = (
             },
             selection: fetchState.normalSelection,
             addressesByContractName,
+            endBlock: None,
           },
         ]
       } else {
@@ -488,6 +492,7 @@ let registerDynamicContracts = (
             },
             selection: fetchState.normalSelection,
             addressesByContractName: pendingAddressesByContractName.contents,
+            endBlock: None,
           })
 
         // I use for loops instead of forEach, so ReScript better inlines ref access
@@ -531,6 +536,7 @@ let registerDynamicContracts = (
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName,
+                endBlock: None,
               })
             })
           } else {
@@ -636,7 +642,12 @@ let handleQueryResult = (
       switch query.target {
       | Head
       | EndBlock(_) =>
-        Ok(partitions->Utils.Array.setIndexImmutable(pIndex, updatedPartition))
+        // Remove partition if it reached its partition-level endBlock
+        switch updatedPartition.endBlock {
+        | Some(endBlock) if latestFetchedBlock.blockNumber >= endBlock =>
+          Ok(partitions->Utils.Array.removeAtIndex(pIndex))
+        | _ => Ok(partitions->Utils.Array.setIndexImmutable(pIndex, updatedPartition))
+        }
       | Merge({intoPartitionId}) =>
         switch partitions->Array.getIndexBy(p => p.id === intoPartitionId) {
         | Some(targetIndex)
@@ -892,6 +903,16 @@ let getNextQuery = (
         | (_, false) => endBlock
         }
 
+        // Use partition-level endBlock if it's smaller than computed endBlock
+        let endBlock = switch p.endBlock {
+        | Some(partitionEndBlock) =>
+          switch endBlock {
+          | Some(eb) => Some(Pervasives.min(eb, partitionEndBlock))
+          | None => Some(partitionEndBlock)
+          }
+        | None => endBlock
+        }
+
         switch p->makePartitionQuery(~indexingContracts, ~endBlock, ~mergeTarget) {
         | Some(q) => queries->Array.push(q)
         | None => ()
@@ -1034,6 +1055,7 @@ let make = (
         eventConfigs: notDependingOnAddresses,
       },
       addressesByContractName: Js.Dict.empty(),
+      endBlock: None,
     })
   }
 
@@ -1054,6 +1076,7 @@ let make = (
           latestFetchedBlock,
           selection: normalSelection,
           addressesByContractName: Js.Dict.empty(),
+          endBlock: None,
         }
       }
 
@@ -1132,6 +1155,11 @@ let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) =
         blockTimestamp: 0,
       }
     : p.latestFetchedBlock
+  // Clear endBlock when rolling back below it
+  let endBlock = switch p.endBlock {
+  | Some(endBlock) if targetBlockNumber < endBlock => None
+  | other => other
+  }
   switch p {
   | {selection: {dependsOnAddresses: false}} =>
     Some({
@@ -1140,6 +1168,7 @@ let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) =
       status: {
         fetchingStateId: None,
       },
+      endBlock,
     })
   | {addressesByContractName} =>
     let rollbackedAddressesByContractName = Js.Dict.empty()
@@ -1162,6 +1191,7 @@ let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) =
         },
         addressesByContractName: rollbackedAddressesByContractName,
         latestFetchedBlock,
+        endBlock,
       })
     }
   }

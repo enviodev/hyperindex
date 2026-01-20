@@ -143,6 +143,7 @@ describe("SourceManager fetchNext", () => {
       },
       selection: normalSelection,
       addressesByContractName,
+      endBlock: None,
     }
   }
 
