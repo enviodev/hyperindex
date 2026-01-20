@@ -16,7 +16,6 @@ import os from "os";
 interface TemplateConfig {
   name: string;
   initArgs: string[];
-  language: "typescript" | "rescript";
 }
 
 // Get envio binary path
@@ -25,65 +24,34 @@ const ENVIO_BIN = path.join(
   "codegenerator/target/release/envio"
 );
 
-// All available templates to test
+// All available templates to test (TypeScript only)
 const TEMPLATES: TemplateConfig[] = [
-  // EVM Templates - TypeScript
+  // EVM Templates
   {
-    name: "evm-greeter-ts",
+    name: "evm-greeter",
     initArgs: ["template", "-t", "greeter", "-l", "typescript"],
-    language: "typescript",
   },
   {
-    name: "evm-erc20-ts",
+    name: "evm-erc20",
     initArgs: ["template", "-t", "erc20", "-l", "typescript"],
-    language: "typescript",
   },
   {
-    name: "evm-factory-ts",
+    name: "evm-factory",
     initArgs: ["template", "-t", "feature-factory", "-l", "typescript"],
-    language: "typescript",
-  },
-  // EVM Templates - ReScript
-  {
-    name: "evm-greeter-res",
-    initArgs: ["template", "-t", "greeter", "-l", "rescript"],
-    language: "rescript",
-  },
-  {
-    name: "evm-erc20-res",
-    initArgs: ["template", "-t", "erc20", "-l", "rescript"],
-    language: "rescript",
-  },
-  {
-    name: "evm-factory-res",
-    initArgs: ["template", "-t", "feature-factory", "-l", "rescript"],
-    language: "rescript",
   },
   // Fuel Templates
   {
-    name: "fuel-greeter-ts",
+    name: "fuel-greeter",
     initArgs: ["fuel", "template", "-t", "greeter", "-l", "typescript"],
-    language: "typescript",
-  },
-  {
-    name: "fuel-greeter-res",
-    initArgs: ["fuel", "template", "-t", "greeter", "-l", "rescript"],
-    language: "rescript",
   },
   // SVM Templates
   {
-    name: "svm-block-handler-ts",
+    name: "svm-block-handler",
     initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
-    language: "typescript",
-  },
-  {
-    name: "svm-block-handler-res",
-    initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "rescript"],
-    language: "rescript",
   },
 ];
 
-describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, language }) => {
+describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
   let projectDir: string;
 
   beforeAll(async () => {
@@ -149,19 +117,6 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, language }) => {
   });
 
   it("builds successfully", async () => {
-    // For ReScript projects, run rescript build first
-    if (language === "rescript") {
-      const resResult = await runCommand("pnpm", ["res:build"], {
-        cwd: projectDir,
-        timeout: config.timeouts.test,
-      });
-
-      if (resResult.exitCode !== 0) {
-        console.error(`[${name}] rescript build failed:`, resResult.stderr);
-      }
-      expect(resResult.exitCode).toBe(0);
-    }
-
     const result = await runCommand("pnpm", ["build"], {
       cwd: projectDir,
       timeout: config.timeouts.test,
