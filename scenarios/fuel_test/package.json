@@ -6,7 +6,7 @@
     "res:clean": "rescript clean",
     "res:build": "rescript",
     "res:watch": "rescript -w",
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.{ts,res.mjs}",
+    "mocha": "tsc --noEmit && node --import tsx/esm node_modules/mocha/bin/mocha.js --exit test/**/*.{ts,res.mjs}",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- dev",
     "test": "rescript && pnpm mocha",
@@ -21,6 +21,13 @@
     "mocha": "10.2.0"
   },
   "dependencies": {
+    "@fuel-ts/address": "0.96.1",
+    "@fuel-ts/crypto": "0.96.1",
+    "@fuel-ts/errors": "0.96.1",
+    "@fuel-ts/hasher": "0.96.1",
+    "@fuel-ts/math": "0.96.1",
+    "@fuel-ts/utils": "0.96.1",
+    "bignumber.js": "9.1.2",
     "chai": "4.3.10",
     "envio": "file:../../codegenerator/cli/npm/envio",
     "rescript-schema": "9.3.4",
