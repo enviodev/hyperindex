@@ -477,6 +477,43 @@ let prepareUnorderedBatch = (
     chainIdx := chainIdx.contents + 1
   }
 
+  // Update progress for remaining chains that weren't processed due to batch being full.
+  // This is critical for multichain indexers to enter live indexing mode -
+  // all chains must have their progress updated even if they have no items in this batch.
+  while chainIdx.contents < preparedNumber {
+    let fetchState = preparedFetchStates->Js.Array2.unsafe_get(chainIdx.contents)
+    let chainBeforeBatch =
+      chainsBeforeBatch->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=fetchState.chainId))
+
+    // Use index=0 since we're not consuming any items from this chain
+    let progressBlockNumberAfterBatch =
+      fetchState->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0)
+
+    // Only add reorg checkpoints and update progress if the chain actually progressed
+    if chainBeforeBatch.progressBlockNumber < progressBlockNumberAfterBatch {
+      prevCheckpointId :=
+        addReorgCheckpoints(
+          ~chainId=fetchState.chainId,
+          ~reorgDetection=chainBeforeBatch.reorgDetection,
+          ~prevCheckpointId=prevCheckpointId.contents,
+          ~fromBlockExclusive=chainBeforeBatch.progressBlockNumber,
+          ~toBlockExclusive=progressBlockNumberAfterBatch + 1,
+          ~mutCheckpointIds=checkpointIds,
+          ~mutCheckpointChainIds=checkpointChainIds,
+          ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
+          ~mutCheckpointBlockHashes=checkpointBlockHashes,
+          ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
+        )
+
+      mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+        fetchState.chainId,
+        progressBlockNumberAfterBatch,
+      )
+    }
+
+    chainIdx := chainIdx.contents + 1
+  }
+
   {
     totalBatchSize: totalBatchSize.contents,
     items,

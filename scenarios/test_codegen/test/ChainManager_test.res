@@ -235,4 +235,185 @@ describe("ChainManager", () => {
       },
     )
   })
+
+  describe("unordered batch progress", () => {
+    it(
+      "when one chain fills the batch, other chains without items still get their progress updated",
+      () => {
+        // Create two chains: one with many events, one with no events
+        let config = Generated.configWithoutRegistrations
+        let eventConfigs = [
+          (Mock.evmEventConfig(
+            ~id="0",
+            ~contractName="Gravatar",
+            ~isWildcard=true,
+          ) :> Internal.eventConfig),
+        ]
+
+        let chainConfig = config.defaultChain->Option.getUnsafe
+
+        // Chain 1: has 100 events
+        let fetchState1 = FetchState.make(
+          ~maxAddrInPartition=Env.maxAddrInPartition,
+          ~endBlock=None,
+          ~eventConfigs,
+          ~contracts=[],
+          ~startBlock=0,
+          ~targetBufferSize=5000,
+          ~chainId=1,
+          ~knownHeight=1000,
+        )
+
+        // Add 100 events to chain 1
+        let events1 = Array.makeBy(100, i => {
+          Internal.Event({
+            timestamp: 100 + i,
+            chain: ChainMap.Chain.makeUnsafe(~chainId=1),
+            blockNumber: 100 + i,
+            logIndex: 0,
+            eventConfig: Utils.magic("Mock eventConfig"),
+            event: `mock event chain1 block ${(100 + i)->Int.toString}`->Utils.magic,
+          })
+        })
+
+        let fetchState1WithEvents =
+          fetchState1
+          ->FetchState.handleQueryResult(
+            ~query={
+              partitionId: "0",
+              fromBlock: 0,
+              target: Head,
+              selection: {
+                dependsOnAddresses: false,
+                eventConfigs,
+              },
+              addressesByContractName: Js.Dict.empty(),
+              indexingContracts: fetchState1.indexingContracts,
+            },
+            ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000},
+            ~newItems=events1,
+          )
+          ->Result.getExn
+
+        // Chain 137 (polygon): no events, but has fetched up to block 1000
+        let fetchState137 = FetchState.make(
+          ~maxAddrInPartition=Env.maxAddrInPartition,
+          ~endBlock=None,
+          ~eventConfigs,
+          ~contracts=[],
+          ~startBlock=0,
+          ~targetBufferSize=5000,
+          ~chainId=137,
+          ~knownHeight=1000,
+        )
+
+        // Update chain 137 to have fetched up to block 1000 but with no events
+        let fetchState137WithNoEvents =
+          fetchState137
+          ->FetchState.handleQueryResult(
+            ~query={
+              partitionId: "0",
+              fromBlock: 0,
+              target: Head,
+              selection: {
+                dependsOnAddresses: false,
+                eventConfigs,
+              },
+              addressesByContractName: Js.Dict.empty(),
+              indexingContracts: fetchState137.indexingContracts,
+            },
+            ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000},
+            ~newItems=[],
+          )
+          ->Result.getExn
+
+        // Create mock chain fetchers
+        let mockSource1 = Mock.Source.make([], ~chain=#1)
+        let mockSource137 = Mock.Source.make([], ~chain=#137)
+
+        let makeChainFetcher = (~fetchState, ~source) => {
+          (
+            {
+              ChainFetcher.timestampCaughtUpToHeadOrEndblock: None,
+              firstEventBlockNumber: None,
+              committedProgressBlockNumber: -1,
+              numEventsProcessed: 0,
+              numBatchesFetched: 0,
+              fetchState,
+              logger: Logging.getLogger(),
+              sourceManager: SourceManager.make(
+                ~sources=[source.Mock.Source.source],
+                ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+              ),
+              chainConfig,
+              reorgDetection: ReorgDetection.make(
+                ~chainReorgCheckpoints=[],
+                ~maxReorgDepth=200,
+                ~shouldRollbackOnReorg=false,
+              ),
+              safeCheckpointTracking: None,
+              isProgressAtHead: false,
+            }: ChainFetcher.t
+          )
+        }
+
+        let chainFetcher1 = makeChainFetcher(
+          ~fetchState=fetchState1WithEvents,
+          ~source=mockSource1,
+        )
+        let chainFetcher137 = makeChainFetcher(
+          ~fetchState=fetchState137WithNoEvents,
+          ~source=mockSource137,
+        )
+
+        let chainFetchers = ChainMap.fromArrayUnsafe([
+          (MockConfig.chain1, chainFetcher1),
+          (MockConfig.chain137, chainFetcher137),
+        ])
+
+        let chainManager: ChainManager.t = {
+          chainFetchers,
+          multichain: Unordered,
+          committedCheckpointId: 0.,
+          isInReorgThreshold: false,
+        }
+
+        // Create a batch with size target of 10 (smaller than chain 1's 100 events)
+        let {progressedChainsById} = ChainManager.createBatch(
+          chainManager,
+          ~batchSizeTarget=10,
+          ~isRollback=false,
+        )
+
+        // Chain 1 should be in progressedChainsById (it had items)
+        let chain1Progress = progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(1)
+        Assert.equal(
+          chain1Progress->Option.isSome,
+          true,
+          ~message="Chain 1 should be in progressedChainsById",
+        )
+
+        // Chain 137 should ALSO be in progressedChainsById even though it had no items
+        // This is the bug fix - previously chains that weren't processed because the batch
+        // was full wouldn't have their progress updated
+        let chain137Progress = progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(137)
+        Assert.equal(
+          chain137Progress->Option.isSome,
+          true,
+          ~message="Chain 137 should be in progressedChainsById even though it had no items (fix for multichain live indexing bug)",
+        )
+
+        // Chain 137's progress should be at its bufferBlockNumber (1000)
+        switch chain137Progress {
+        | Some(progress) =>
+          Assert.equal(
+            progress.progressBlockNumber,
+            1000,
+            ~message="Chain 137 progress should be at block 1000",
+          )
+        | None => ()
+        }
+      },
+    )
+  })
 })
