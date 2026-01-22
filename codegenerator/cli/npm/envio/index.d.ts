@@ -349,6 +349,7 @@ type IndexerConfigTypes = {
     contracts?: Record<string, {}>;
   };
   svm?: { chains: Record<string, { id: number }> };
+  entities?: Record<string, object>;
 };
 
 // Helper: Check if ecosystem is configured in a given config
@@ -497,11 +498,46 @@ export type TestIndexerChainConfig = {
   endBlock: number;
 };
 
-/** Progress returned after processing blocks with the test indexer. */
-export type TestIndexerProcessResult = {
-  /** Changes happened during the processing. */
-  changes: unknown[];
+/** Entity change value containing sets and/or deleted IDs. */
+type EntityChangeValue<Entity> = {
+  /** Entities that were created or updated. */
+  readonly sets?: readonly Entity[];
+  /** IDs of entities that were deleted. */
+  readonly deleted?: readonly string[];
 };
+
+/** A dynamic contract address registration. */
+type AddressRegistration = {
+  /** The contract address. */
+  readonly address: Address;
+  /** The contract name. */
+  readonly contract: string;
+};
+
+/** Extract entities from config. */
+type ConfigEntities<Config extends IndexerConfigTypes> =
+  Config["entities"] extends Record<string, object> ? Config["entities"] : {};
+
+/** A single change representing entity modifications at a specific block. */
+type EntityChange<Config extends IndexerConfigTypes> = {
+  /** The block where the changes occurred. */
+  readonly block: number;
+  /** The block hash (if available). */
+  readonly blockHash?: string;
+  /** The chain ID. */
+  readonly chainId: number;
+  /** Number of events processed in this block. */
+  readonly eventsProcessed: number;
+  /** Dynamic contract address registrations for this block. */
+  readonly addresses?: {
+    readonly sets?: readonly AddressRegistration[];
+  };
+} & {
+  readonly [K in keyof ConfigEntities<Config>]?: EntityChangeValue<
+    ConfigEntities<Config>[K]
+  >;
+};
+
 
 // Helper to extract chain IDs from config for test indexer
 type TestIndexerChainIds<Config extends IndexerConfigTypes> =
@@ -541,5 +577,8 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
   /** Process blocks for the specified chains and return progress with checkpoints and changes. */
   process: (
     config: Prettify<TestIndexerProcessConfig<Config>>
-  ) => Promise<TestIndexerProcessResult>;
+  ) => Promise<{
+    /** Changes happened during the processing. */
+    readonly changes: readonly EntityChange<Config>[];
+  }>;
 };
