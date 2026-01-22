@@ -439,47 +439,26 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         updatedFetchState.contents->FetchState.registerDynamicContracts(newItemsWithDcs)
     }
 
-    updatedFetchState :=
-      updatedFetchState.contents
-      ->FetchState.handleQueryResult(
-        ~latestFetchedBlock={
-          blockNumber: latestFetchedBlockNumber.contents,
-          blockTimestamp: 0,
-        },
-        ~query={
-          partitionId: (updatedFetchState.contents.partitions->Array.getUnsafe(0)).id,
-          fromBlock: 0,
-          selection: {eventConfigs: [], dependsOnAddresses: false},
-          addressesByContractName: Js.Dict.empty(),
-          target: FetchState.Head,
-          indexingContracts: Js.Dict.empty(),
-        },
-        ~newItems,
-      )
-      ->Result.getExn
-
-    // Handle query for the rest partitions without items
-    // to catch up the latest fully fetched block
-    for idx in 1 to updatedFetchState.contents.partitions->Array.length - 1 {
-      let partition = updatedFetchState.contents.partitions->Array.getUnsafe(idx)
+    // Handle query for all partitions
+    let partitionIds = updatedFetchState.contents.optimizedPartitions.idsInAscOrder
+    for idx in 0 to partitionIds->Array.length - 1 {
+      let partitionId = partitionIds->Array.getUnsafe(idx)
       updatedFetchState :=
-        updatedFetchState.contents
-        ->FetchState.handleQueryResult(
+        updatedFetchState.contents->FetchState.handleQueryResult(
           ~latestFetchedBlock={
             blockNumber: latestFetchedBlockNumber.contents,
             blockTimestamp: 0,
           },
           ~query={
-            partitionId: partition.id,
+            partitionId,
             fromBlock: 0,
             selection: {eventConfigs: [], dependsOnAddresses: false},
             addressesByContractName: Js.Dict.empty(),
-            target: FetchState.Head,
+            toBlock: None,
             indexingContracts: Js.Dict.empty(),
           },
-          ~newItems=[],
+          ~newItems=if idx === 0 { newItems } else { [] },
         )
-        ->Result.getExn
     }
 
     let batch = Batch.prepareUnorderedBatch(

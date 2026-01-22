@@ -365,7 +365,6 @@ let validatePartitionQueryResponse = (
       ~numEvents=parsedQueueItems->Array.length,
       ~numAddresses=query.addressesByContractName->FetchState.addressesByContractNameCount,
       ~queryName=switch query {
-      | {target: Merge(_)} => `Merge Query`
       | {selection: {dependsOnAddresses: false}} => `Wildcard Query`
       | {selection: {dependsOnAddresses: true}} => `Normal Query`
       },
@@ -459,15 +458,13 @@ let submitPartitionQueryResponse = (
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
 
   let updatedChainFetcher =
-    chainFetcher
-    ->ChainFetcher.handleQueryResult(
+    chainFetcher->ChainFetcher.handleQueryResult(
       ~query,
       ~latestFetchedBlock,
       ~newItems,
       ~newItemsWithDcs,
       ~knownHeight,
     )
-    ->Utils.unwrapResultExn
 
   let updatedChainFetcher = {
     ...updatedChainFetcher,

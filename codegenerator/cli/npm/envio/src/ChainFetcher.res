@@ -405,12 +405,12 @@ let handleQueryResult = (
   | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
   }
 
-  fs
-  ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-  ->Result.map(fs => {
+  {
     ...chainFetcher,
-    fetchState: fs->FetchState.updateKnownHeight(~knownHeight),
-  })
+    fetchState: fs
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.updateKnownHeight(~knownHeight),
+  }
 }
 
 /**

@@ -95,6 +95,17 @@ module Dict = {
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
+  let getOrInsertEmptyDict = (dict, key) => {
+    switch dict->dangerouslyGetNonOption(key) {
+    | Some(d) => d
+    | None => {
+        let d = Js.Dict.empty()
+        dict->Js.Dict.set(key, d)
+        d
+      }
+    }
+  }
+
   @get_index
   /**
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
@@ -572,6 +583,10 @@ module Set = {
   external has: (t<'value>, 'value) => bool = "has"
 
   external toArray: t<'a> => array<'a> = "Array.from"
+
+  let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
+    return new Set(...set, value)
+  }`)
 
   /*
    * Iteration methods

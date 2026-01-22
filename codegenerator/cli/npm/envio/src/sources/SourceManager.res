@@ -417,14 +417,7 @@ let getNextSyncSourceState = (
 }
 
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight) => {
-  let toBlockRef = ref(
-    switch query.target {
-    | Head => None
-    | EndBlock({toBlock})
-    | Merge({toBlock}) =>
-      Some(toBlock)
-    },
-  )
+  let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
   let initialSourceState =

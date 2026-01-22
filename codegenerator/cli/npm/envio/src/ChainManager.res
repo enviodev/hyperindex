@@ -15,11 +15,16 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
 }
 
 let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {
-  let targetBatchesInBuffer = 3
+  let targetBatchesInBuffer = 9
+  let targetBatchesInBufferMin = 3
   switch Env.targetBufferSize {
   | Some(size) => size
   | None =>
-    config.batchSize * (activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer)
+    config.batchSize * (
+      activeChainsCount > targetBatchesInBuffer / targetBatchesInBufferMin
+        ? targetBatchesInBufferMin
+        : targetBatchesInBuffer
+    )
   }
 }
 
