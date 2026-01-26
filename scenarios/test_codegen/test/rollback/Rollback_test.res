@@ -2142,8 +2142,8 @@ Sorted by timestamp and chain id`,
   Async.it(
     "Should NOT be in reorg threshold on restart (not clean) when sourceBlockNumber is 0",
     async () => {
-      // Test the defensive check: when sourceBlockNumber is 0 (DB initialized but
-      // no batches written yet), isInReorgThreshold should be false.
+      // Test: when sourceBlockNumber is 0 but progressBlockNumber > 0,
+      // isInReorgThreshold should be false (not true due to 50 > 0-200 = 50 > -200).
 
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -2159,11 +2159,31 @@ Sorted by timestamp and chain id`,
       )
       await Utils.delay(0)
 
-      // Restart immediately - DB has sourceBlockNumber=0
+      // Get height and write a batch to set progressBlockNumber > 0
+      sourceMock.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 50,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "1", value: "value-1"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=50,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Now progressBlockNumber=50 is in DB, but sourceBlockNumber might be 0
+      // if the throttled setChainMeta hasn't run yet.
+      // Restart immediately to test the bug case.
       let indexerMock = await indexerMock.restart()
       await Utils.delay(0)
 
-      // CRITICAL: Should NOT be in reorg threshold when sourceBlockNumber=0
+      // BUG: Without the fix, isInReorgThreshold = 50 > (0 - 200) = true (WRONG!)
+      // With the fix (sourceBlockNumber > 0 check), should be false.
       Assert.deepEqual(
         await indexerMock.metric("envio_reorg_threshold"),
         [{value: "0", labels: Js.Dict.empty()}],
