@@ -74,7 +74,6 @@ module Chains = {
   type progressFields = [
     | #progress_block
     | #events_processed
-    | #source_block
   ]
 
   type field = [
@@ -109,6 +108,7 @@ module Chains = {
   type metaFields = {
     @as("first_event_block") firstEventBlockNumber: Js.null<int>,
     @as("buffer_block") latestFetchedBlockNumber: int,
+    @as("source_block") blockHeight: int,
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
@@ -168,6 +168,7 @@ module Chains = {
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Js.Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
+      blockHeight: 0,
       firstEventBlockNumber: Js.Null.empty,
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
@@ -210,8 +211,8 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
   }
 
   // Fields that can be updated outside of the batch transaction
-  // Note: source_block is updated in progressFields during batch write
   let metaFields: array<field> = [
+    #source_block,
     #buffer_block,
     #first_event_block,
     #ready_at,
@@ -278,7 +279,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
     ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
 
-  let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
+  let progressFields: array<progressFields> = [#progress_block, #events_processed]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
@@ -320,7 +321,6 @@ WHERE "id" = $1;`
     chainId: int,
     progressBlockNumber: int,
     totalEventsProcessed: int,
-    sourceBlockNumber: int,
   }
 
   let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
@@ -341,7 +341,6 @@ WHERE "id" = $1;`
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
-          | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
         )
         ->ignore

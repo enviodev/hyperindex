@@ -2222,25 +2222,11 @@ Sorted by timestamp and chain id`,
       )
       await Utils.delay(0)
 
-      // Get height but don't write any batches - sourceBlockNumber stays 0 in DB
-      sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // Verify NOT in reorg threshold (fresh start, cleanRun=true)
-      Assert.deepEqual(
-        await indexerMock.metric("envio_reorg_threshold"),
-        [{value: "0", labels: Js.Dict.empty()}],
-        ~message="Should NOT be in reorg threshold on fresh start",
-      )
-
-      // Restart without writing any batches - DB has sourceBlockNumber=0
+      // Restart immediately - DB has sourceBlockNumber=0
       let indexerMock = await indexerMock.restart()
       await Utils.delay(0)
-      await Utils.delay(0)
 
-      // CRITICAL: Should still NOT be in reorg threshold
-      // The defensive check ensures sourceBlockNumber=0 returns false
+      // CRITICAL: Should NOT be in reorg threshold when sourceBlockNumber=0
       Assert.deepEqual(
         await indexerMock.metric("envio_reorg_threshold"),
         [{value: "0", labels: Js.Dict.empty()}],
