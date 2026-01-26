@@ -2142,11 +2142,9 @@ Sorted by timestamp and chain id`,
   Async.it(
     "Should NOT be in reorg threshold on restart when progress is below threshold",
     async () => {
-      // Regression test: sourceBlockNumber must be persisted during batch write.
-      // Without the fix, sourceBlockNumber would remain 0 after restart, causing:
-      //   isInReorgThreshold = 50 > (0 - 200) = true (WRONG!)
-      // With the fix, sourceBlockNumber=300 is persisted, so:
-      //   isInReorgThreshold = 50 > (300 - 200) = 50 > 100 = false (CORRECT)
+      // Regression test: isInReorgThreshold must be correct after restart.
+      // Fix 1: isProgressInReorgThreshold returns false if sourceBlockNumber is 0
+      // Fix 2: sourceBlockNumber is persisted during batch write
 
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
