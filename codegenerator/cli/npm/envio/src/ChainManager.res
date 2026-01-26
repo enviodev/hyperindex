@@ -10,8 +10,10 @@ type t = {
 // Check if progress is past the reorg threshold (safe block).
 // A chain is in reorg threshold when progressBlockNumber > sourceBlockNumber - maxReorgDepth.
 // This matches the logic in InternalTable.Checkpoints.makeGetReorgCheckpointsQuery.
+// Note: sourceBlockNumber > 0 check is needed because sourceBlockNumber is updated via throttled
+// setChainMeta which might not have persisted to DB before a restart.
 let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~maxReorgDepth) => {
-  maxReorgDepth > 0 && progressBlockNumber > sourceBlockNumber - maxReorgDepth
+  maxReorgDepth > 0 && sourceBlockNumber > 0 && progressBlockNumber > sourceBlockNumber - maxReorgDepth
 }
 
 let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {

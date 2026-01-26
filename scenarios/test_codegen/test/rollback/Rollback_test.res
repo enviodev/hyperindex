@@ -2140,7 +2140,7 @@ Sorted by timestamp and chain id`,
   })
 
   Async.it(
-    "Should NOT be in reorg threshold on restart (not clean) when sourceBlockNumber is 0",
+    "Should NOT be in reorg threshold on restart when sourceBlockNumber is 0 (after batch write)",
     async () => {
       // Test: when sourceBlockNumber is 0 but progressBlockNumber > 0,
       // isInReorgThreshold should be false (not true due to 50 > 0-200 = 50 > -200).
@@ -2188,6 +2188,44 @@ Sorted by timestamp and chain id`,
         await indexerMock.metric("envio_reorg_threshold"),
         [{value: "0", labels: Js.Dict.empty()}],
         ~message="Should NOT be in reorg threshold when sourceBlockNumber is 0",
+      )
+    },
+  )
+
+  Async.it(
+    "Should NOT be in reorg threshold on restart when DB is only initialized (sourceBlockNumber=0, progressBlockNumber=-1)",
+    async () => {
+      // Test: immediately after DB initialization (no batches written),
+      // progressBlockNumber=-1 and sourceBlockNumber=0.
+      // isInReorgThreshold calculation: -1 > 0 - 200 = -1 > -200 = true (BUG!)
+      // Should be false because sourceBlockNumber is not yet set.
+
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+
+      // First create the indexer (initializes DB)
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+
+      // Restart immediately without writing any batches
+      // At this point: progressBlockNumber=-1, sourceBlockNumber=0 in DB
+      let indexerMock = await indexerMock.restart()
+      await Utils.delay(0)
+
+      // BUG: Without the fix, isInReorgThreshold = -1 > (0 - 200) = -1 > -200 = true (WRONG!)
+      // With the fix (sourceBlockNumber > 0 check), should be false.
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "0", labels: Js.Dict.empty()}],
+        ~message="Should NOT be in reorg threshold when sourceBlockNumber is 0 and DB just initialized",
       )
     },
   )
