@@ -2138,4 +2138,118 @@ Sorted by timestamp and chain id`,
       ~message="Should have all entities rolled back",
     )
   })
+
+  Async.it(
+    "Should NOT be in reorg threshold on restart when progress is below threshold",
+    async () => {
+      // This test reproduces a bug where after a clean start succeeds and the indexer
+      // restarts, isInReorgThreshold is incorrectly set to true even though progress
+      // is below the reorg threshold.
+      //
+      // The bug occurs when sourceBlockNumber is not persisted to the database before
+      // restart. If sourceBlockNumber is 0 (default), then:
+      //   isInReorgThreshold = progressBlockNumber > sourceBlockNumber - maxReorgDepth
+      //   isInReorgThreshold = 50 > 0 - 200 = 50 > -200 = true (WRONG!)
+      //
+      // With correct sourceBlockNumber = 300:
+      //   isInReorgThreshold = 50 > 300 - 200 = 50 > 100 = false (CORRECT)
+
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // Get initial height - this should set sourceBlockNumber to 300
+      Assert.deepEqual(
+        sourceMock.getHeightOrThrowCalls->Array.length,
+        1,
+        ~message="should have called getHeightOrThrow to get initial height",
+      )
+      sourceMock.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // First fetch request - should be from block 0 to 100 (reorg threshold)
+      // With height=300 and maxReorgDepth=200, reorg threshold starts at block 100
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 0,
+          "toBlock": Some(100),
+          "retry": 0,
+        }),
+        ~message="Should request items until reorg threshold",
+      )
+
+      // Progress to block 50 - deliberately staying BELOW the reorg threshold
+      // This simulates a case where the indexer is stopped before entering reorg threshold
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 50,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({
+                id: "1",
+                value: "value-1",
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=50,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Verify we're NOT in reorg threshold yet
+      // Progress (50) < reorg threshold start (100)
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "0", labels: Js.Dict.empty()}],
+        ~message="Should NOT be in reorg threshold before restart (progress 50 < threshold 100)",
+      )
+
+      // Restart the indexer - this is where the bug manifests
+      let indexerMock = await indexerMock.restart()
+
+      sourceMock.getHeightOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
+
+      // Allow async operations to settle
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // CRITICAL ASSERTION: After restart, we should still NOT be in reorg threshold
+      // because progress (50) is still below the threshold (100)
+      //
+      // BUG: If sourceBlockNumber was not saved to DB (is 0), then:
+      //   isInReorgThreshold = 50 > (0 - 200) = 50 > -200 = true (WRONG!)
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "0", labels: Js.Dict.empty()}],
+        ~message="Should still NOT be in reorg threshold after restart (progress 50 < threshold 100)",
+      )
+
+      // Additional verification: should continue fetching from block 51
+      // If sourceBlockNumber is correctly restored, fetch should continue normally
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 51,
+          "toBlock": Some(100),
+          "retry": 0,
+        }),
+        ~message="Should continue fetching from where we left off, still limited to reorg threshold",
+      )
+    },
+  )
 })
