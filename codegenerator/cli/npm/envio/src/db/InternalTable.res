@@ -109,7 +109,6 @@ module Chains = {
   type metaFields = {
     @as("first_event_block") firstEventBlockNumber: Js.null<int>,
     @as("buffer_block") latestFetchedBlockNumber: int,
-    @as("source_block") blockHeight: int,
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
@@ -169,7 +168,6 @@ module Chains = {
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Js.Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
-      blockHeight: 0,
       firstEventBlockNumber: Js.Null.empty,
       latestFetchedBlockNumber: -1,
       timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
@@ -212,8 +210,8 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
   }
 
   // Fields that can be updated outside of the batch transaction
+  // Note: source_block is updated in progressFields during batch write
   let metaFields: array<field> = [
-    #source_block,
     #buffer_block,
     #first_event_block,
     #ready_at,
