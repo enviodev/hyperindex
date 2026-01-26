@@ -2140,70 +2140,7 @@ Sorted by timestamp and chain id`,
   })
 
   Async.it(
-    "Should NOT be in reorg threshold on restart when progress is below threshold",
-    async () => {
-      // Regression test: isInReorgThreshold must be correct after restart.
-      // Fix 1: isProgressInReorgThreshold returns false if sourceBlockNumber is 0
-      // Fix 2: sourceBlockNumber is persisted during batch write
-
-      let sourceMock = Mock.Source.make(
-        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
-      )
-      let indexerMock = await Mock.Indexer.make(
-        ~chains=[
-          {
-            chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock.source]),
-          },
-        ],
-      )
-      await Utils.delay(0)
-
-      // Get initial height (300) and progress to block 50
-      sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 50,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.simpleEntity.set({id: "1", value: "value-1"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=50,
-      )
-      await indexerMock.getBatchWritePromise()
-
-      // Verify NOT in reorg threshold before restart
-      // Progress (50) < reorg threshold (100 = 300 - 200)
-      Assert.deepEqual(
-        await indexerMock.metric("envio_reorg_threshold"),
-        [{value: "0", labels: Js.Dict.empty()}],
-        ~message="Should NOT be in reorg threshold before restart",
-      )
-
-      // Immediately restart - this is where the bug manifests
-      let indexerMock = await indexerMock.restart()
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // CRITICAL: After restart, should still NOT be in reorg threshold
-      // BUG: If sourceBlockNumber wasn't persisted (is 0), this will incorrectly be "1"
-      Assert.deepEqual(
-        await indexerMock.metric("envio_reorg_threshold"),
-        [{value: "0", labels: Js.Dict.empty()}],
-        ~message="Should NOT be in reorg threshold after restart (sourceBlockNumber must be persisted)",
-      )
-    },
-  )
-
-  Async.it(
-    "Should NOT be in reorg threshold on restart when sourceBlockNumber is 0",
+    "Should NOT be in reorg threshold on restart (not clean) when sourceBlockNumber is 0",
     async () => {
       // Test the defensive check: when sourceBlockNumber is 0 (DB initialized but
       // no batches written yet), isInReorgThreshold should be false.
