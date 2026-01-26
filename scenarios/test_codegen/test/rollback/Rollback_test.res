@@ -2201,4 +2201,51 @@ Sorted by timestamp and chain id`,
       )
     },
   )
+
+  Async.it(
+    "Should NOT be in reorg threshold on restart when sourceBlockNumber is 0",
+    async () => {
+      // Test the defensive check: when sourceBlockNumber is 0 (DB initialized but
+      // no batches written yet), isInReorgThreshold should be false.
+
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // Get height but don't write any batches - sourceBlockNumber stays 0 in DB
+      sourceMock.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Verify NOT in reorg threshold (fresh start, cleanRun=true)
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "0", labels: Js.Dict.empty()}],
+        ~message="Should NOT be in reorg threshold on fresh start",
+      )
+
+      // Restart without writing any batches - DB has sourceBlockNumber=0
+      let indexerMock = await indexerMock.restart()
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // CRITICAL: Should still NOT be in reorg threshold
+      // The defensive check ensures sourceBlockNumber=0 returns false
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "0", labels: Js.Dict.empty()}],
+        ~message="Should NOT be in reorg threshold when sourceBlockNumber is 0",
+      )
+    },
+  )
 })
