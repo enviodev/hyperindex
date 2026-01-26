@@ -74,6 +74,7 @@ module Chains = {
   type progressFields = [
     | #progress_block
     | #events_processed
+    | #source_block
   ]
 
   type field = [
@@ -279,7 +280,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
     ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
 
-  let progressFields: array<progressFields> = [#progress_block, #events_processed]
+  let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
@@ -321,6 +322,7 @@ WHERE "id" = $1;`
     chainId: int,
     progressBlockNumber: int,
     totalEventsProcessed: int,
+    sourceBlockNumber: int,
   }
 
   let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
@@ -341,6 +343,7 @@ WHERE "id" = $1;`
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
+          | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
         )
         ->ignore

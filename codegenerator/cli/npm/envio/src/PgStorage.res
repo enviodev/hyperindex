@@ -934,6 +934,7 @@ let rec writeBatch = async (
                   chainId: chainAfterBatch.fetchState.chainId,
                   progressBlockNumber: chainAfterBatch.progressBlockNumber,
                   totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
+                  sourceBlockNumber: chainAfterBatch.fetchState.knownHeight,
                 }),
               ),
             setRawEvents,

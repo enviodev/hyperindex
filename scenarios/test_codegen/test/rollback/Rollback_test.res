@@ -2142,17 +2142,11 @@ Sorted by timestamp and chain id`,
   Async.it(
     "Should NOT be in reorg threshold on restart when progress is below threshold",
     async () => {
-      // This test reproduces a bug where after a clean start succeeds and the indexer
-      // restarts, isInReorgThreshold is incorrectly set to true even though progress
-      // is below the reorg threshold.
-      //
-      // The bug occurs when sourceBlockNumber is not persisted to the database before
-      // restart. If sourceBlockNumber is 0 (default), then:
-      //   isInReorgThreshold = progressBlockNumber > sourceBlockNumber - maxReorgDepth
-      //   isInReorgThreshold = 50 > 0 - 200 = 50 > -200 = true (WRONG!)
-      //
-      // With correct sourceBlockNumber = 300:
-      //   isInReorgThreshold = 50 > 300 - 200 = 50 > 100 = false (CORRECT)
+      // Regression test: sourceBlockNumber must be persisted during batch write.
+      // Without the fix, sourceBlockNumber would remain 0 after restart, causing:
+      //   isInReorgThreshold = 50 > (0 - 200) = true (WRONG!)
+      // With the fix, sourceBlockNumber=300 is persisted, so:
+      //   isInReorgThreshold = 50 > (300 - 200) = 50 > 100 = false (CORRECT)
 
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
