@@ -416,6 +416,24 @@ let sourceLabelsSchema = S.schema(s =>
   }
 )
 
+let sourceOnlyLabelsSchema = S.schema(s =>
+  {
+    "source": s.matches(S.string),
+  }
+)
+
+module SourceRequestCount = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_source_request_count",
+    ~help="The number of raw source requests made to fetch data.",
+    ~labelSchema=sourceOnlyLabelsSchema,
+  )
+
+  let increment = (~sourceName) => {
+    counter->SafeCounter.increment(~labels={"source": sourceName})
+  }
+}
+
 module SourceHeight = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_source_height",
