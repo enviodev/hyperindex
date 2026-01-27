@@ -788,4 +788,99 @@ describe("Use Envio test framework to test event handlers", () => {
       }
     }
   });
+
+  it("TestIndexer.Entity.set stores entity and .get retrieves it", async () => {
+    const indexer = createTestIndexer();
+
+    const user: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    // Set entity
+    indexer.User.set(user);
+
+    // Get entity
+    const retrieved = await indexer.User.get("test-user-1");
+    assert.deepEqual(retrieved, user);
+  });
+
+  it("TestIndexer.Entity.get returns undefined for non-existent entity", async () => {
+    const indexer = createTestIndexer();
+
+    const retrieved = await indexer.User.get("non-existent");
+    assert.strictEqual(retrieved, undefined);
+  });
+
+  it("TestIndexer.Entity.set overwrites existing entity", async () => {
+    const indexer = createTestIndexer();
+
+    const user1: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    const user2: User = {
+      id: "test-user-1",
+      address: "0x5678",
+      updatesCountOnUserForTesting: 10,
+      gravatar_id: "gravatar-1",
+      accountType: "ADMIN",
+    };
+
+    indexer.User.set(user1);
+    indexer.User.set(user2);
+
+    const retrieved = await indexer.User.get("test-user-1");
+    assert.deepEqual(retrieved, user2);
+  });
+
+  it("TestIndexer.Entity.get throws when called during processing", () => {
+    const indexer = createTestIndexer();
+
+    // Start processing (don't await - we're testing the error during processing)
+    indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // The error is thrown synchronously when calling get during processing
+    assert.throws(() => indexer.User.get("test-user-1"), {
+      message:
+        "Cannot call User.get() while indexer.process() is running. Wait for process() to complete before accessing entities directly.",
+    });
+  });
+
+  it("TestIndexer.Entity.set throws when called during processing", () => {
+    const indexer = createTestIndexer();
+
+    const user: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    // Start processing (don't await - we're testing the error during processing)
+    indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // Try to call set during processing
+    assert.throws(() => indexer.User.set(user), {
+      message:
+        "Cannot call User.set() while indexer.process() is running. Wait for process() to complete before modifying entities directly.",
+    });
+  });
+
 });
