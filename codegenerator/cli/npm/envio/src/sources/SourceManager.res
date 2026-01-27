@@ -454,7 +454,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
     )
 
     try {
-      Prometheus.SourceRequestCount.increment(~sourceName=source.name)
       let response = await source.getItemsOrThrow(
         ~fromBlock=query.fromBlock,
         ~toBlock,

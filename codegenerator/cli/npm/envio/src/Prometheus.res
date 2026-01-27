@@ -434,6 +434,18 @@ module SourceRequestCount = {
   }
 }
 
+module RawSourceRequestCount = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_raw_source_request_count",
+    ~help="The number of low-level requests made to data sources (queries, height fetches, SSE events, RPC calls).",
+    ~labelSchema=sourceOnlyLabelsSchema,
+  )
+
+  let increment = (~sourceName) => {
+    counter->SafeCounter.increment(~labels={"source": sourceName})
+  }
+}
+
 module SourceHeight = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_source_height",

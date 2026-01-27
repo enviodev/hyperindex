@@ -495,8 +495,10 @@ let make = (
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
-      ~loaderFn=transactionHash =>
-        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client),
+      ~loaderFn=transactionHash => {
+        Prometheus.SourceRequestCount.increment(~sourceName=name)
+        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client)
+      },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -516,7 +518,8 @@ let make = (
 
   let makeBlockLoader = () =>
     LazyLoader.make(
-      ~loaderFn=blockNumber =>
+      ~loaderFn=blockNumber => {
+        Prometheus.SourceRequestCount.increment(~sourceName=name)
         getKnownBlockWithBackoff(
           ~provider,
           ~sourceName=name,
@@ -524,7 +527,8 @@ let make = (
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~lowercaseAddresses,
-        ),
+        )
+      },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -627,6 +631,7 @@ let make = (
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
+    Prometheus.SourceRequestCount.increment(~sourceName=name)
     let {logs, latestFetchedBlock} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
@@ -813,7 +818,10 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: 1000,
     getBlockHashes,
-    getHeightOrThrow: () => Rpc.GetBlockHeight.route->Rest.fetch((), ~client),
+    getHeightOrThrow: () => {
+      Prometheus.SourceRequestCount.increment(~sourceName=name)
+      Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+    },
     getItemsOrThrow,
   }
 }
