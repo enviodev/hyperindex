@@ -446,66 +446,105 @@ describe("RpcSource - address checksumming", () => {
 
   let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
 
+  // ERC20 Transfer event: Transfer(address,address,uint256)
+  let transferEventSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+
   Async.it(
-    "FAILING: block.miner from RPC is not checksummed when lowercaseAddresses=false",
+    "FAILING: srcAddress in events from RpcSource.getItemsOrThrow should be checksummed",
     async () => {
-      let client = Rest.client(rpcUrl)
-
-      // Fetch block using the same Rpc module that RpcSource uses internally
-      let block = await Rpc.GetBlockByNumber.route->Rest.fetch(
-        {"blockNumber": 17000000, "includeTransactions": false},
-        ~client,
-      )
-
-      switch block {
-      | Some(block) =>
-        // Address.schema (used in Rpc module) doesn't checksum - it parses as-is
-        // RpcSource should checksum when lowercaseAddresses=false, but doesn't
-        let minerFromRpc = block.miner
-        let checksummedMiner = minerFromRpc->Address.Evm.fromAddressOrThrow
-
-        // This FAILS - miner should equal its checksummed version
-        Assert.equal(
-          minerFromRpc->Address.toString,
-          checksummedMiner->Address.toString,
-          ~message="Block miner should be checksummed when lowercaseAddresses=false",
-        )
-      | None => Assert.fail("Block not found")
+      // Create event config for ERC20 Transfer event
+      let eventConfig: Internal.evmEventConfig = {
+        id: transferEventSighash,
+        contractName: "USDT",
+        name: "Transfer",
+        isWildcard: false,
+        filterByAddresses: false,
+        dependsOnAddresses: true,
+        handler: None,
+        contractRegister: None,
+        paramsRawEventSchema: S.literal(%raw(`null`))
+        ->S.shape(_ => ())
+        ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+        blockSchema: S.object(_ => ())->Utils.magic,
+        transactionSchema: S.object(_ => ())->Utils.magic,
+        getEventFiltersOrThrow: _ =>
+          Static([
+            {
+              topic0: [transferEventSighash->EvmTypes.Hex.fromStringUnsafe],
+              topic1: [],
+              topic2: [],
+              topic3: [],
+            },
+          ]),
+        convertHyperSyncEventArgs: _ => %raw(`{}`),
       }
-    },
-  )
 
-  Async.it(
-    "FAILING: log.address from RPC is not checksummed when lowercaseAddresses=false",
-    async () => {
-      let client = Rest.client(rpcUrl)
-      let usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"->Address.Evm.fromStringOrThrow
+      // Create event router with the Transfer event
+      let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+      let eventRouter = EventRouter.fromEvmEventModsOrThrow([eventConfig], ~chain)
 
-      // Fetch logs using the same Rpc module that RpcSource uses internally
-      let logs = await Rpc.GetLogs.route->Rest.fetch(
-        {
-          fromBlock: 17000000,
-          toBlock: 17000010,
-          address: [usdtAddress],
-          topics: [],
+      // Create RpcSource with lowercaseAddresses=false (checksum mode)
+      let source = RpcSource.make({
+        url: rpcUrl,
+        chain,
+        eventRouter,
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventSignatures: [
+          "event Transfer(address indexed from, address indexed to, uint256 value)",
+        ],
+        lowercaseAddresses: false, // checksum mode - addresses should be checksummed
+      })
+
+      let usdtAddr = usdtAddress->Address.Evm.fromStringOrThrow
+
+      // Fetch real events using getItemsOrThrow
+      let result = await source.getItemsOrThrow(
+        ~fromBlock=17000000,
+        ~toBlock=Some(17000010),
+        ~addressesByContractName=Js.Dict.fromArray([("USDT", [usdtAddr])]),
+        ~indexingContracts=Js.Dict.fromArray([
+          (
+            usdtAddr->Address.toString,
+            {
+              Internal.address: usdtAddr,
+              contractName: "USDT",
+              startBlock: 0,
+              registrationBlock: None,
+            },
+          ),
+        ]),
+        ~knownHeight=17000100,
+        ~partitionId="test",
+        ~selection={
+          dependsOnAddresses: true,
+          eventConfigs: [(eventConfig :> Internal.eventConfig)],
         },
-        ~client,
+        ~retry=0,
+        ~logger=%raw(`{trace:()=>{},debug:()=>{},info:()=>{},warn:()=>{},error:()=>{},fatal:()=>{}}`),
       )
 
-      switch logs->Belt.Array.get(0) {
-      | Some(log) =>
-        // Address.schema (used in Rpc module) doesn't checksum - it parses as-is
-        // RpcSource should checksum when lowercaseAddresses=false, but doesn't
-        let addressFromRpc = log.address
-        let checksummedAddress = addressFromRpc->Address.Evm.fromAddressOrThrow
+      // Check that we got some events
+      Assert.equal(
+        result.parsedQueueItems->Belt.Array.length > 0,
+        true,
+        ~message="Should have fetched some Transfer events",
+      )
 
-        // This FAILS - address should equal its checksummed version
+      // Get the first event and check srcAddress format
+      switch result.parsedQueueItems->Belt.Array.get(0) {
+      | Some(Internal.Event({event})) =>
+        let srcAddress = event.srcAddress
+        let checksummedAddress = srcAddress->Address.Evm.fromAddressOrThrow
+
+        // This FAILS - srcAddress should be checksummed but it's not
         Assert.equal(
-          addressFromRpc->Address.toString,
+          srcAddress->Address.toString,
           checksummedAddress->Address.toString,
-          ~message="Log address should be checksummed when lowercaseAddresses=false",
+          ~message=`srcAddress should be checksummed when lowercaseAddresses=false. Got: ${srcAddress->Address.toString}, Expected: ${checksummedAddress->Address.toString}`,
         )
-      | None => Assert.fail("No logs found in block range")
+      | _ => Assert.fail("Expected an Event item")
       }
     },
   )
