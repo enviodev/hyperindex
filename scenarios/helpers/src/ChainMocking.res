@@ -239,9 +239,7 @@ module Make = () => {
     let {fromBlock} = query
     let toBlock = switch query.target {
     | Head => None
-    | EndBlock({toBlock})
-    | Merge({toBlock}) =>
-      Some(toBlock)
+    | EndBlock({toBlock}) => Some(toBlock)
     }
 
     let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
