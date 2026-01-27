@@ -75,7 +75,6 @@ let make = (
 }
 
 let getId = self => self.id
-let incrementId = self => {...self, id: self.id + 1}
 let setChainManager = (self, chainManager) => {
   ...self,
   chainManager,
@@ -433,8 +432,17 @@ let validatePartitionQueryResponse = (
       }
       (
         {
-          ...nextState->incrementId,
-          chainManager,
+          ...nextState,
+          id: nextState.id + 1,
+          chainManager: {
+            ...chainManager,
+            chainFetchers: chainManager.chainFetchers->ChainMap.map(chainFetcher => {
+              ...chainFetcher,
+              // TODO: It's not optimal to abort pending queries for all chains,
+              // this is how it always worked, but we should consider a better approach.
+              fetchState: chainFetcher.fetchState->FetchState.resetPendingQueries,
+            }),
+          },
           rollbackState: ReorgDetected({
             chain,
             blockNumber: reorgDetectedBlockNumber,

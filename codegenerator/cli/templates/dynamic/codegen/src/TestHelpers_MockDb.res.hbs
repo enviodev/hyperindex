@@ -456,6 +456,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
             addressesByContractName: Js.Dict.empty(),
             toBlock: None,
             indexingContracts: Js.Dict.empty(),
+            isChunk: false,
           },
           ~newItems=if idx === 0 { newItems } else { [] },
         )

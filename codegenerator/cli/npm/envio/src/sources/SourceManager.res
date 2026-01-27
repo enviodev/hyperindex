@@ -117,7 +117,6 @@ let fetchNext = async (
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
-    ~stateId,
   )
 
   switch nextQuery {
@@ -142,7 +141,7 @@ let fetchNext = async (
       }
     }
   | Ready(queries) => {
-      fetchState->FetchState.startFetchingQueries(~queries, ~stateId)
+      fetchState->FetchState.startFetchingQueries(~queries)
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
       Prometheus.IndexingConcurrency.set(

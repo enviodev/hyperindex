@@ -227,7 +227,7 @@ module Dict = {
 module Math = {
   let minOptInt = (a, b) =>
     switch (a, b) {
-    | (Some(a), Some(b)) => Pervasives.min(a, b)->Some
+    | (Some(a), Some(b)) => Some(a < b ? a : b)
     | (Some(a), None) => Some(a)
     | (None, Some(b)) => Some(b)
     | (None, None) => None
