@@ -3,6 +3,7 @@ source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.internal_config_json_code
 ---
 {
+  "version": "0.0.1-dev",
   "name": "config1",
   "description": "Gravatar for Ethereum",
   "evm": {
