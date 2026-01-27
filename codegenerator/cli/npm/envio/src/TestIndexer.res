@@ -409,7 +409,7 @@ let makeCreateTestIndexer = (
     entityOpsDict
     ->Js.Dict.entries
     ->Array.forEach(((name, ops)) => {
-      result->Js.Dict.set(name, ops->Utils.magic)
+      result->Js.Dict.set(name, ops->(Utils.magic: entityOps => unknown))
     })
 
     result->Js.Dict.set(
@@ -561,10 +561,10 @@ let makeCreateTestIndexer = (
             }
           })
         })
-      })->Utils.magic,
+      })->(Utils.magic: ('a => promise<processResult>) => unknown),
     )
 
-    result->Utils.magic
+    result->(Utils.magic: Js.Dict.t<unknown> => t<'processConfig>)
   }
 }
 
