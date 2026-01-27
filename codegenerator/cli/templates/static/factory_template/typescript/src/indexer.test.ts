@@ -14,25 +14,17 @@ describe("Indexer Testing", () => {
       {
         "changes": [
           {
-            "block": 12369739,
-            "blockHash": "0xe8228e3e736a42c7357d2ce6882a1662c588ce608897dd53c3053bcbefb4309a",
-            "chainId": 1,
-            "dynamic_contract_registry": {
+            "addresses": {
               "sets": [
                 {
-                  "chain_id": 1,
-                  "contract_address": "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
-                  "contract_name": "UniswapV3Pool",
-                  "id": "1-0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
-                  "registering_event_block_number": 12369739,
-                  "registering_event_block_timestamp": 1620157956,
-                  "registering_event_contract_name": "UniswapV3Factory",
-                  "registering_event_log_index": 24,
-                  "registering_event_name": "PoolCreated",
-                  "registering_event_src_address": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                  "address": "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
+                  "contract": "UniswapV3Pool",
                 },
               ],
             },
+            "block": 12369739,
+            "blockHash": "0xe8228e3e736a42c7357d2ce6882a1662c588ce608897dd53c3053bcbefb4309a",
+            "chainId": 1,
             "eventsProcessed": 1,
           },
         ],
