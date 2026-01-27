@@ -440,181 +440,75 @@ describe("RpcSource - getSelectionConfig", () => {
 describe("RpcSource - address checksumming", () => {
   // Reproducing issue: RPC fallback returns lowercase addresses instead of checksummed
   // when lowercaseAddresses=false (checksum mode)
-  // The issue is in RpcSource.res where log.address is used directly without checksumming
+  // The bug is in RpcSource.res:
+  // - log.address not checksummed (line 692)
+  // - block.miner not checksummed (line 59)
 
-  // Unit tests that demonstrate the bug with simulated RPC data
-  // (RPC providers typically return lowercase addresses)
-  describe("Unit tests with simulated RPC response", () => {
-    it(
-      "FAILING: log.address from RPC should be checksummed when lowercaseAddresses=false",
-      () => {
-        // Simulate what RPC providers typically return - lowercase addresses
-        // This is exactly what happens when Address.schema parses RPC JSON response
-        let lowercaseAddressFromRpc = "0xdac17f958d2ee523a2206206994597c13d831ec7"->Address.unsafeFromString
-        let expectedChecksummed = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+  let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
 
-        // Simulate what RpcSource does (lines 689-693):
-        // let routedAddress = if lowercaseAddresses {
-        //   log.address->Address.Evm.fromAddressLowercaseOrThrow
-        // } else {
-        //   log.address  // <-- BUG: not checksumming!
-        // }
-        let lowercaseAddresses = false
-        let routedAddress = if lowercaseAddresses {
-          lowercaseAddressFromRpc->Address.Evm.fromAddressLowercaseOrThrow
-        } else {
-          lowercaseAddressFromRpc // Current buggy behavior - just returns as-is
-        }
+  Async.it(
+    "FAILING: block.miner from RPC is not checksummed when lowercaseAddresses=false",
+    async () => {
+      let client = Rest.client(rpcUrl)
 
-        // This FAILS - address should be checksummed but it's not
+      // Fetch block using the same Rpc module that RpcSource uses internally
+      let block = await Rpc.GetBlockByNumber.route->Rest.fetch(
+        {"blockNumber": 17000000, "includeTransactions": false},
+        ~client,
+      )
+
+      switch block {
+      | Some(block) =>
+        // Address.schema (used in Rpc module) doesn't checksum - it parses as-is
+        // RpcSource should checksum when lowercaseAddresses=false, but doesn't
+        let minerFromRpc = block.miner
+        let checksummedMiner = minerFromRpc->Address.Evm.fromAddressOrThrow
+
+        // This FAILS - miner should equal its checksummed version
         Assert.equal(
-          routedAddress->Address.toString,
-          expectedChecksummed,
+          minerFromRpc->Address.toString,
+          checksummedMiner->Address.toString,
+          ~message="Block miner should be checksummed when lowercaseAddresses=false",
+        )
+      | None => Assert.fail("Block not found")
+      }
+    },
+  )
+
+  Async.it(
+    "FAILING: log.address from RPC is not checksummed when lowercaseAddresses=false",
+    async () => {
+      let client = Rest.client(rpcUrl)
+      let usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"->Address.Evm.fromStringOrThrow
+
+      // Fetch logs using the same Rpc module that RpcSource uses internally
+      let logs = await Rpc.GetLogs.route->Rest.fetch(
+        {
+          fromBlock: 17000000,
+          toBlock: 17000010,
+          address: [usdtAddress],
+          topics: [],
+        },
+        ~client,
+      )
+
+      switch logs->Belt.Array.get(0) {
+      | Some(log) =>
+        // Address.schema (used in Rpc module) doesn't checksum - it parses as-is
+        // RpcSource should checksum when lowercaseAddresses=false, but doesn't
+        let addressFromRpc = log.address
+        let checksummedAddress = addressFromRpc->Address.Evm.fromAddressOrThrow
+
+        // This FAILS - address should equal its checksummed version
+        Assert.equal(
+          addressFromRpc->Address.toString,
+          checksummedAddress->Address.toString,
           ~message="Log address should be checksummed when lowercaseAddresses=false",
         )
-      },
-    )
-
-    it("FAILING: block.miner from RPC should be checksummed when lowercaseAddresses=false", () => {
-      // Simulate a miner address as returned by RPC (lowercase)
-      let lowercaseMinerFromRpc = "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"->Address.unsafeFromString
-      let expectedChecksummed = "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
-
-      // Simulate what RpcSource.getKnownBlockWithBackoff does (lines 46-60):
-      // if lowercaseAddresses {
-      //   { ...result, miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow }
-      // } else {
-      //   result  // <-- BUG: miner not checksummed!
-      // }
-      let lowercaseAddresses = false
-      let processedMiner = if lowercaseAddresses {
-        lowercaseMinerFromRpc->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        lowercaseMinerFromRpc // Current buggy behavior - just returns as-is
+      | None => Assert.fail("No logs found in block range")
       }
-
-      // This FAILS - miner should be checksummed but it's not
-      Assert.equal(
-        processedMiner->Address.toString,
-        expectedChecksummed,
-        ~message="Block miner address should be checksummed when lowercaseAddresses=false",
-      )
-    })
-
-    it("Correct behavior: addresses should be checksummed using fromAddressOrThrow", () => {
-      let lowercaseAddressFromRpc = "0xdac17f958d2ee523a2206206994597c13d831ec7"->Address.unsafeFromString
-      let expectedChecksummed = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
-
-      // This is what the fix should do:
-      let lowercaseAddresses = false
-      let routedAddressFixed = if lowercaseAddresses {
-        lowercaseAddressFromRpc->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        lowercaseAddressFromRpc->Address.Evm.fromAddressOrThrow // Fixed - apply checksum!
-      }
-
-      // This PASSES - showing correct behavior
-      Assert.equal(
-        routedAddressFixed->Address.toString,
-        expectedChecksummed,
-        ~message="Address should be checksummed when lowercaseAddresses=false",
-      )
-    })
-  })
-
-  // Integration tests with real RPC calls (requires network access)
-  describe("Integration tests with real RPC", () => {
-    let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
-
-    Async.it(
-      "FAILING: block.miner from real RPC should be checksummed when lowercaseAddresses=false",
-      async () => {
-        // Fetch a real block from Ethereum mainnet
-        let client = Rest.client(rpcUrl)
-        let blockNumber = 17000000 // A known block with miner address
-
-        let block = await Rpc.GetBlockByNumber.route->Rest.fetch(
-          {"blockNumber": blockNumber, "includeTransactions": false},
-          ~client,
-        )
-
-        switch block {
-        | Some(block) =>
-          // The RPC returns the miner address - check what format it comes in
-          let minerFromRpc = block.miner
-          let minerStr = minerFromRpc->Address.toString
-
-          // Log the actual value for debugging
-          Js.Console.log(`Miner from RPC: ${minerStr}`)
-
-          // Simulate what RpcSource.getKnownBlockWithBackoff does (lines 46-60):
-          let lowercaseAddresses = false
-          let processedMiner = if lowercaseAddresses {
-            minerFromRpc->Address.Evm.fromAddressLowercaseOrThrow
-          } else {
-            minerFromRpc // Current buggy behavior - no checksumming
-          }
-
-          // Get the properly checksummed version
-          let checksummedMiner = minerFromRpc->Address.Evm.fromAddressOrThrow
-
-          // This test FAILS if RPC returns lowercase and we don't checksum it
-          Assert.equal(
-            processedMiner->Address.toString,
-            checksummedMiner->Address.toString,
-            ~message=`Block miner should be checksummed. Got: ${processedMiner->Address.toString}, Expected: ${checksummedMiner->Address.toString}`,
-          )
-        | None => Assert.fail("Block not found")
-        }
-      },
-    )
-
-    Async.it(
-      "FAILING: log.address from real RPC should be checksummed when lowercaseAddresses=false",
-      async () => {
-        let client = Rest.client(rpcUrl)
-        let usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"->Address.Evm.fromStringOrThrow
-
-        let logs = await Rpc.GetLogs.route->Rest.fetch(
-          {
-            fromBlock: 17000000,
-            toBlock: 17000010,
-            address: [usdtAddress],
-            topics: [],
-          },
-          ~client,
-        )
-
-        switch logs->Belt.Array.get(0) {
-        | Some(log) =>
-          let addressFromRpc = log.address
-          let addrStr = addressFromRpc->Address.toString
-
-          // Log the actual value for debugging
-          Js.Console.log(`Log address from RPC: ${addrStr}`)
-
-          // Simulate what RpcSource does (lines 689-693):
-          let lowercaseAddresses = false
-          let routedAddress = if lowercaseAddresses {
-            addressFromRpc->Address.Evm.fromAddressLowercaseOrThrow
-          } else {
-            addressFromRpc // Current buggy behavior - no checksumming
-          }
-
-          // Get the properly checksummed version
-          let checksummedAddress = addressFromRpc->Address.Evm.fromAddressOrThrow
-
-          // This test FAILS if RPC returns lowercase and we don't checksum it
-          Assert.equal(
-            routedAddress->Address.toString,
-            checksummedAddress->Address.toString,
-            ~message=`Log address should be checksummed. Got: ${routedAddress->Address.toString}, Expected: ${checksummedAddress->Address.toString}`,
-          )
-        | None => Assert.fail("No logs found in block range")
-        }
-      },
-    )
-  })
+    },
+  )
 })
 
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
