@@ -437,6 +437,98 @@ describe("RpcSource - getSelectionConfig", () => {
   })
 })
 
+describe("RpcSource - address checksumming", () => {
+  // Reproducing issue: RPC fallback returns lowercase addresses instead of checksummed
+  // when lowercaseAddresses=false (checksum mode)
+  // The issue is in RpcSource.res where log.address is used directly without checksumming
+
+  it("FAILING: log.address from RPC should be checksummed when lowercaseAddresses=false", () => {
+    // This is what RPC providers typically return - lowercase addresses
+    let lowercaseAddress = "0x2c169dfe5fbba12957bdd0ba47d9cedbfe260ca7"
+    let expectedChecksummedAddress = "0x2C169DFe5fBbA12957Bdd0Ba47d9CEDbFE260CA7"
+
+    // Simulate the current (buggy) behavior in RpcSource.res lines 689-693:
+    // let routedAddress = if lowercaseAddresses {
+    //   log.address->Address.Evm.fromAddressLowercaseOrThrow
+    // } else {
+    //   log.address  // <-- BUG: not checksumming!
+    // }
+    let lowercaseAddresses = false
+    let logAddress = lowercaseAddress->Address.unsafeFromString
+
+    let routedAddress = if lowercaseAddresses {
+      logAddress->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      logAddress // Current buggy behavior - just returns the address as-is
+    }
+
+    // This assertion FAILS - demonstrating the bug
+    // The address should be checksummed but it's not
+    Assert.equal(
+      routedAddress->Address.toString,
+      expectedChecksummedAddress,
+      ~message="Address should be checksummed when lowercaseAddresses=false, but got lowercase instead",
+    )
+  })
+
+  it("Correct behavior: log.address should be checksummed using fromAddressOrThrow", () => {
+    let lowercaseAddress = "0x2c169dfe5fbba12957bdd0ba47d9cedbfe260ca7"
+    let expectedChecksummedAddress = "0x2C169DFe5fBbA12957Bdd0Ba47d9CEDbFE260CA7"
+
+    // This is what the fix should do:
+    // let routedAddress = if lowercaseAddresses {
+    //   log.address->Address.Evm.fromAddressLowercaseOrThrow
+    // } else {
+    //   log.address->Address.Evm.fromAddressOrThrow  // <-- FIX: checksum the address!
+    // }
+    let lowercaseAddresses = false
+    let logAddress = lowercaseAddress->Address.unsafeFromString
+
+    let routedAddressFixed = if lowercaseAddresses {
+      logAddress->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      logAddress->Address.Evm.fromAddressOrThrow // Fixed behavior
+    }
+
+    // This assertion PASSES - showing what the correct behavior should be
+    Assert.equal(
+      routedAddressFixed->Address.toString,
+      expectedChecksummedAddress,
+      ~message="Address should be checksummed when lowercaseAddresses=false",
+    )
+  })
+
+  it("Verify block miner address also has the same issue", () => {
+    // The same pattern exists for block.miner in getKnownBlockWithBackoff
+    // lines 46-60 of RpcSource.res:
+    // if lowercaseAddresses {
+    //   { ...result, miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow }
+    // } else {
+    //   result  // <-- miner address not checksummed!
+    // }
+    let lowercaseMinerAddress = "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"
+    let expectedChecksummed = "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+
+    // Simulating the buggy behavior
+    let lowercaseAddresses = false
+    let minerAddress = lowercaseMinerAddress->Address.unsafeFromString
+
+    // Current behavior just returns as-is (no checksum applied)
+    let resultMiner = if lowercaseAddresses {
+      minerAddress->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      minerAddress // Bug: not checksummed
+    }
+
+    // This FAILS - demonstrating the bug also affects block.miner
+    Assert.equal(
+      resultMiner->Address.toString,
+      expectedChecksummed,
+      ~message="Block miner address should be checksummed when lowercaseAddresses=false",
+    )
+  })
+})
+
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
 
