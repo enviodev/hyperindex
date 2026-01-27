@@ -1,6 +1,7 @@
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
 
 let makeGeneratedConfig = () => {
+  // Source config is now in internal.config.json, sources created lazily by ChainFetcher
   let codegenChains = [
     {{#each chain_configs as | chain_config |}}
     {
@@ -22,11 +23,9 @@ let makeGeneratedConfig = () => {
         },
         {{/each}}
       ]
-      let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
       {
         Config.id: {{chain_config.network_config.id}},
         contracts,
-        sources: {{chain_config.sources_code}}
       }
     },
     {{/each}}
