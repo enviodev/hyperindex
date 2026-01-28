@@ -446,23 +446,6 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
   }
 }
 
-let sanitizeUrl = (url: string) => {
-  // Regular expression requiring protocol and capturing hostname
-  // - (https?:\/\/) : Required http:// or https:// (capturing group)
-  // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
-  // - .* : Match rest of the string
-  let regex = %re("/https?:\/\/([^\/?]+).*/")
-
-  switch Js.Re.exec_(regex, url) {
-  | Some(result) =>
-    switch Js.Re.captures(result)->Belt.Array.get(1) {
-    | Some(host) => host->Js.Nullable.toOption
-    | None => None
-    }
-  | None => None
-  }
-}
-
 type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
@@ -476,7 +459,7 @@ type options = {
 let make = (
   {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses}: options,
 ): t => {
-  let urlHost = switch sanitizeUrl(url) {
+  let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     Js.Exn.raiseError(
       `EE109: The RPC url "${url}" is incorrect format. The RPC url needs to start with either http:// or https://`,

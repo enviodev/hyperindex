@@ -32,23 +32,11 @@ module GetFinalizedSlot = {
   )
 }
 
-let sanitizeUrl = (url: string) => {
-  let regex = %re("/https?:\/\/([^\/?]+).*/")
-  switch Js.Re.exec_(regex, url) {
-  | Some(result) =>
-    switch Js.Re.captures(result)->Belt.Array.get(1) {
-    | Some(host) => host->Js.Nullable.toOption
-    | None => None
-    }
-  | None => None
-  }
-}
-
 let makeRPCSource = (~chain, ~rpc: string): Source.t => {
   let client = Rest.client(rpc)
   let chainId = chain->ChainMap.Chain.toChainId
 
-  let urlHost = switch sanitizeUrl(rpc) {
+  let urlHost = switch Utils.Url.getHostFromUrl(rpc) {
   | None =>
     Js.Exn.raiseError(
       `EE109: The RPC url "${rpc}" is incorrect format. The RPC url needs to start with either http:// or https://`,
