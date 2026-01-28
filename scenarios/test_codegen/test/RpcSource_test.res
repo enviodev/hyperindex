@@ -290,6 +290,34 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     },
   )
 
+  // Issue #931: Transaction `to` field is null for contract creation transactions
+  // The schema uses S.option which expects string|undefined, but RPC returns null
+  Async.it(
+    "FAILING: Contract creation transaction with null `to` field should parse successfully",
+    async () => {
+      // This is the USDT contract deployment transaction where `to` is null
+      let contractCreationTxHash = "0x2f1c5c2b44f771e942a8506148e256f94f1a464babc938ae0690c6e34cd79190"
+
+      let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
+      let client = Rest.client(rpcUrl)
+
+      // This should succeed but fails because the schema uses S.option instead of S.null
+      // RPC returns: { "to": null, "from": "0x...", ... }
+      // Schema expects: { "to": string | undefined }
+      // Error: "Expected string | undefined, received null"
+      let transaction =
+        await Rpc.GetTransactionByHash.route->Rest.fetch(contractCreationTxHash, ~client)
+
+      // If we get here, the parsing succeeded
+      Assert.ok(transaction->Belt.Option.isSome, ~message="Contract creation transaction should be fetched")
+      let tx = transaction->Belt.Option.getUnsafe
+
+      // Verify `to` is None (parsed from null) and `from` is present
+      Assert.equal(tx.to, None, ~message="Contract creation tx should have no `to` address")
+      Assert.ok(tx.from->Belt.Option.isSome, ~message="Transaction should have `from` address")
+    },
+  )
+
   Async.it("Error with a value not matching the schema", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
