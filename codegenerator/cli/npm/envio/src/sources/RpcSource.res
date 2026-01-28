@@ -465,7 +465,7 @@ let make = (
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     Js.Exn.raiseError(
-      `EE109: The RPC url "${url}" is incorrect format. The RPC url needs to start with either http:// or https://`,
+      `EE109: The RPC url is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
