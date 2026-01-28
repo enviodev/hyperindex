@@ -187,7 +187,7 @@ module GetTransactionByHash = {
     // blockNumber: ?s.field("blockNumber", S.option(hexIntSchema)),
     // chainId: ?s.field("chainId", S.option(hexIntSchema)),
     from: ?s.field("from", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
-    to: ?s.field("to", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
+    to: ?s.field("to", S.null(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
     gas: ?s.field("gas", S.option(hexBigintSchema)),
     gasPrice: ?s.field("gasPrice", S.option(hexBigintSchema)),
     hash: ?s.field("hash", S.option(S.string)),

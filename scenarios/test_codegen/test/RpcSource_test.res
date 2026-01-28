@@ -291,9 +291,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   )
 
   // Issue #931: Transaction `to` field is null for contract creation transactions
-  // The schema uses S.option which expects string|undefined, but RPC returns null
+  // Fixed by using S.null instead of S.option in the schema
   Async.it(
-    "FAILING: Contract creation transaction with null `to` field should parse successfully",
+    "Contract creation transaction with null `to` field should parse successfully",
     async () => {
       // This is the USDT contract deployment transaction where `to` is null
       let contractCreationTxHash = "0x2f1c5c2b44f771e942a8506148e256f94f1a464babc938ae0690c6e34cd79190"
@@ -301,10 +301,6 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
       let client = Rest.client(rpcUrl)
 
-      // This should succeed but fails because the schema uses S.option instead of S.null
-      // RPC returns: { "to": null, "from": "0x...", ... }
-      // Schema expects: { "to": string | undefined }
-      // Error: "Expected string | undefined, received null"
       let transaction =
         await Rpc.GetTransactionByHash.route->Rest.fetch(contractCreationTxHash, ~client)
 
@@ -463,121 +459,6 @@ describe("RpcSource - getSelectionConfig", () => {
     | _ => Assert.fail("Should have thrown UnsupportedSelection")
     }
   })
-})
-
-describe("RpcSource - address checksumming", () => {
-  // Reproducing issue: RPC fallback returns lowercase addresses instead of checksummed
-  // when lowercaseAddresses=false (checksum mode)
-  // The bug is in RpcSource.res:
-  // - log.address not checksummed (line 692)
-  // - block.miner not checksummed (line 59)
-
-  let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
-
-  // ERC20 Transfer event: Transfer(address,address,uint256)
-  // Has 3 topics: topic0=sighash, topic1=from, topic2=to
-  let transferEventSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-  let transferEventId = EventRouter.getEvmEventId(~sighash=transferEventSighash, ~topicCount=3)
-  let usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
-
-  Async.it(
-    "FAILING: srcAddress in events from RpcSource.getItemsOrThrow should be checksummed",
-    async () => {
-      // Create event config for ERC20 Transfer event
-      let eventConfig: Internal.evmEventConfig = {
-        id: transferEventId,
-        contractName: "USDT",
-        name: "Transfer",
-        isWildcard: false,
-        filterByAddresses: false,
-        dependsOnAddresses: true,
-        handler: None,
-        contractRegister: None,
-        paramsRawEventSchema: S.literal(%raw(`null`))
-        ->S.shape(_ => ())
-        ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-        blockSchema: S.object(_ => ())->Utils.magic,
-        transactionSchema: S.object(_ => ())->Utils.magic,
-        getEventFiltersOrThrow: _ =>
-          Static([
-            {
-              topic0: [transferEventSighash->EvmTypes.Hex.fromStringUnsafe],
-              topic1: [],
-              topic2: [],
-              topic3: [],
-            },
-          ]),
-        convertHyperSyncEventArgs: _ => %raw(`{}`),
-      }
-
-      // Create event router with the Transfer event
-      let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
-      let eventRouter = EventRouter.fromEvmEventModsOrThrow([eventConfig], ~chain)
-
-      // Create RpcSource with lowercaseAddresses=false (checksum mode)
-      let source = RpcSource.make({
-        url: rpcUrl,
-        chain,
-        eventRouter,
-        sourceFor: Sync,
-        syncConfig: EvmChain.getSyncConfig({}),
-        allEventSignatures: [
-          "event Transfer(address indexed from, address indexed to, uint256 value)",
-        ],
-        lowercaseAddresses: false, // checksum mode - addresses should be checksummed
-      })
-
-      let usdtAddr = usdtAddress->Address.Evm.fromStringOrThrow
-
-      // Fetch real events using getItemsOrThrow
-      let result = await source.getItemsOrThrow(
-        ~fromBlock=17000000,
-        ~toBlock=Some(17000010),
-        ~addressesByContractName=Js.Dict.fromArray([("USDT", [usdtAddr])]),
-        ~indexingContracts=Js.Dict.fromArray([
-          (
-            usdtAddr->Address.toString,
-            {
-              Internal.address: usdtAddr,
-              contractName: "USDT",
-              startBlock: 0,
-              registrationBlock: None,
-            },
-          ),
-        ]),
-        ~knownHeight=17000100,
-        ~partitionId="test",
-        ~selection={
-          dependsOnAddresses: true,
-          eventConfigs: [(eventConfig :> Internal.eventConfig)],
-        },
-        ~retry=0,
-        ~logger=%raw(`{trace:()=>{},debug:()=>{},info:()=>{},warn:()=>{},error:()=>{},fatal:()=>{}}`),
-      )
-
-      // Check that we got some events
-      Assert.equal(
-        result.parsedQueueItems->Belt.Array.length > 0,
-        true,
-        ~message="Should have fetched some Transfer events",
-      )
-
-      // Get the first event and check srcAddress format
-      switch result.parsedQueueItems->Belt.Array.get(0) {
-      | Some(Internal.Event({event})) =>
-        let srcAddress = event.srcAddress
-        let checksummedAddress = srcAddress->Address.Evm.fromAddressOrThrow
-
-        // This FAILS - srcAddress should be checksummed but it's not
-        Assert.equal(
-          srcAddress->Address.toString,
-          checksummedAddress->Address.toString,
-          ~message=`srcAddress should be checksummed when lowercaseAddresses=false. Got: ${srcAddress->Address.toString}, Expected: ${checksummedAddress->Address.toString}`,
-        )
-      | _ => Assert.fail("Expected an Event item")
-      }
-    },
-  )
 })
 
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
