@@ -462,10 +462,11 @@ type options = {
 let make = (
   {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses}: options,
 ): t => {
+  let chainId = chain->ChainMap.Chain.toChainId
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     Js.Exn.raiseError(
-      `EE109: The RPC url is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `EE109: The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
