@@ -933,6 +933,7 @@ let rec writeBatch = async (
                 ): InternalTable.Chains.progressedChain => {
                   chainId: chainAfterBatch.fetchState.chainId,
                   progressBlockNumber: chainAfterBatch.progressBlockNumber,
+                  sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
                   totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
                 }),
               ),

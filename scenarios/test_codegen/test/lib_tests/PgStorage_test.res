@@ -533,12 +533,11 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
         let query = InternalTable.Chains.makeMetaFieldsUpdateQuery(~pgSchema="test_schema")
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
-SET "source_block" = $2,
-    "buffer_block" = $3,
-    "first_event_block" = $4,
-    "ready_at" = $5,
-    "_is_hyper_sync" = $6,
-    "_num_batches_fetched" = $7
+SET "buffer_block" = $2,
+    "first_event_block" = $3,
+    "ready_at" = $4,
+    "_is_hyper_sync" = $5,
+    "_num_batches_fetched" = $6
 WHERE "id" = $1;`
 
         Assert.equal(
@@ -558,7 +557,8 @@ WHERE "id" = $1;`
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "progress_block" = $2,
-    "events_processed" = $3
+    "events_processed" = $3,
+    "source_block" = $4
 WHERE "id" = $1;`
 
         Assert.equal(
