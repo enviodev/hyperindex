@@ -447,7 +447,9 @@ describe("RpcSource - address checksumming", () => {
   let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
 
   // ERC20 Transfer event: Transfer(address,address,uint256)
+  // Has 3 topics: topic0=sighash, topic1=from, topic2=to
   let transferEventSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let transferEventId = EventRouter.getEvmEventId(~sighash=transferEventSighash, ~topicCount=3)
   let usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
 
   Async.it(
@@ -455,7 +457,7 @@ describe("RpcSource - address checksumming", () => {
     async () => {
       // Create event config for ERC20 Transfer event
       let eventConfig: Internal.evmEventConfig = {
-        id: transferEventSighash,
+        id: transferEventId,
         contractName: "USDT",
         name: "Transfer",
         isWildcard: false,
