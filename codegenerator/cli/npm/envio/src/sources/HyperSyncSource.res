@@ -367,6 +367,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~serverUrl=endpointUrl,
           ~apiToken,
           ~blockNumber=heighestBlockQueried,
+          ~sourceName=name,
+          ~chainId=chain->ChainMap.Chain.toChainId,
           ~logger,
         )->Promise.thenResolve(res =>
           switch res {
@@ -496,15 +498,15 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger) => {
-    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+  let getBlockHashes = (~blockNumbers, ~logger) =>
     HyperSync.queryBlockDataMulti(
       ~serverUrl=endpointUrl,
       ~apiToken,
       ~blockNumbers,
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
-  }
 
   let jsonApiClient = Rest.client(endpointUrl)
 

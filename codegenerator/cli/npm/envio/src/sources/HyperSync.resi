@@ -56,6 +56,8 @@ let queryBlockData: (
   ~serverUrl: string,
   ~apiToken: string,
   ~blockNumber: int,
+  ~sourceName: string,
+  ~chainId: int,
   ~logger: Pino.t,
 ) => promise<queryResponse<option<ReorgDetection.blockDataWithTimestamp>>>
 
@@ -63,6 +65,8 @@ let queryBlockDataMulti: (
   ~serverUrl: string,
   ~apiToken: string,
   ~blockNumbers: array<int>,
+  ~sourceName: string,
+  ~chainId: int,
   ~logger: Pino.t,
 ) => promise<queryResponse<array<ReorgDetection.blockDataWithTimestamp>>>
 
