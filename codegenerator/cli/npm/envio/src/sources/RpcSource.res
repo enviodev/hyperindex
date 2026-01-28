@@ -222,6 +222,8 @@ let getNextPage = (
   ~provider,
   ~mutSuggestedBlockIntervals,
   ~partitionId,
+  ~sourceName,
+  ~chainId,
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
@@ -234,6 +236,7 @@ let getNextPage = (
     )
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
+  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId)
   let logsPromise =
     provider
     ->Ethers.JsonRpcProvider.getLogs(
@@ -614,7 +617,6 @@ let make = (
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
-    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
     let {logs, latestFetchedBlock} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
@@ -625,6 +627,8 @@ let make = (
       ~provider,
       ~mutSuggestedBlockIntervals,
       ~partitionId,
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
     )
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
