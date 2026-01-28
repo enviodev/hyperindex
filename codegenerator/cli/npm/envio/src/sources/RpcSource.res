@@ -16,49 +16,52 @@ let getKnownBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getKnownBlockWithBackoff = async (
+let getKnownBlockWithBackoff = async (
   ~provider,
   ~sourceName,
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
   ~lowercaseAddresses: bool,
-) =>
-  switch await getKnownBlock(provider, blockNumber) {
-  | exception err =>
-    Logging.warn({
-      "err": err->Utils.prettifyExn,
-      "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-      "source": sourceName,
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "type": "EXPONENTIAL_BACKOFF",
-    })
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-    await getKnownBlockWithBackoff(
-      ~provider,
-      ~sourceName,
-      ~chain,
-      ~blockNumber,
-      ~backoffMsOnFailure=backoffMsOnFailure * 2,
-      ~lowercaseAddresses,
-    )
-  | result =>
-    if lowercaseAddresses {
-      // NOTE: this is wasteful if these fields are not selected in the users config.
-      //       There might be a better way to do this based on the block schema.
-      //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+) => {
+  let currentBackoff = ref(backoffMsOnFailure)
+  let result = ref(None)
 
-      {
-        ...result,
-        // Mutation would be cheaper,
-        // BUT "result" is an Ethers.js Block object,
-        // which has the fields as readonly.
-        miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow,
-      }
-    } else {
-      result
+  while result.contents->Option.isNone {
+    switch await getKnownBlock(provider, blockNumber) {
+    | exception err =>
+      Logging.warn({
+        "err": err->Utils.prettifyExn,
+        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Belt.Int.toString}ms and try again.`,
+        "source": sourceName,
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "type": "EXPONENTIAL_BACKOFF",
+      })
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
+      currentBackoff := currentBackoff.contents * 2
+    | block =>
+      result :=
+        Some(
+          if lowercaseAddresses {
+            // NOTE: this is wasteful if these fields are not selected in the users config.
+            //       There might be a better way to do this based on the block schema.
+            //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+
+            {
+              ...block,
+              // Mutation would be cheaper,
+              // BUT "block" is an Ethers.js Block object,
+              // which has the fields as readonly.
+              miner: block.miner->Address.Evm.fromAddressLowercaseOrThrow,
+            }
+          } else {
+            block
+          },
+        )
     }
   }
+  result.contents->Option.getExn
+}
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
   let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
