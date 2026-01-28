@@ -496,7 +496,7 @@ let make = (
   let makeTransactionLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name)
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
         Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client)
       },
       ~onError=(am, ~exn) => {
@@ -519,7 +519,7 @@ let make = (
   let makeBlockLoader = () =>
     LazyLoader.make(
       ~loaderFn=blockNumber => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name)
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
         getKnownBlockWithBackoff(
           ~provider,
           ~sourceName=name,
@@ -631,7 +631,7 @@ let make = (
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
-    Prometheus.SourceRequestCount.increment(~sourceName=name)
+    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
     let {logs, latestFetchedBlock} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
@@ -819,7 +819,7 @@ let make = (
     pollingInterval: 1000,
     getBlockHashes,
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name)
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
       Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
     },
     getItemsOrThrow,

@@ -265,7 +265,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
-    Prometheus.SourceRequestCount.increment(~sourceName=name)
+    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
     let pageUnsafe = try await HyperSync.GetLogs.query(
       ~client,
       ~fromBlock,
@@ -516,7 +516,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name)
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
       switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>
@@ -530,6 +530,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>
-      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight),
+      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~chainId=chain->ChainMap.Chain.toChainId, ~onHeight),
   }
 }

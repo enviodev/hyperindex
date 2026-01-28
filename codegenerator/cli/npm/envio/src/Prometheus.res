@@ -416,33 +416,15 @@ let sourceLabelsSchema = S.schema(s =>
   }
 )
 
-let sourceOnlyLabelsSchema = S.schema(s =>
-  {
-    "source": s.matches(S.string),
-  }
-)
-
 module SourceRequestCount = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_source_request_count",
-    ~help="The number of raw source requests made to fetch data.",
-    ~labelSchema=sourceOnlyLabelsSchema,
+    ~help="The number of requests made to data sources.",
+    ~labelSchema=sourceLabelsSchema,
   )
 
-  let increment = (~sourceName) => {
-    counter->SafeCounter.increment(~labels={"source": sourceName})
-  }
-}
-
-module RawSourceRequestCount = {
-  let counter = SafeCounter.makeOrThrow(
-    ~name="envio_raw_source_request_count",
-    ~help="The number of low-level requests made to data sources (queries, height fetches, SSE events, RPC calls).",
-    ~labelSchema=sourceOnlyLabelsSchema,
-  )
-
-  let increment = (~sourceName) => {
-    counter->SafeCounter.increment(~labels={"source": sourceName})
+  let increment = (~sourceName, ~chainId) => {
+    counter->SafeCounter.increment(~labels={"source": sourceName, "chainId": chainId})
   }
 }
 
