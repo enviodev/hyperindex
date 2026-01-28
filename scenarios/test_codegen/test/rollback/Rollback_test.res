@@ -297,107 +297,110 @@ describe("E2E rollback tests", () => {
     )
   }
 
-  Async.it("Should stay in reorg threshold on restart when progress is past threshold", async () => {
-    let sourceMock1337 = Mock.Source.make(
-      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
-    )
-    let sourceMock100 = Mock.Source.make(
-      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
-    )
-    let chains = [
-      {
-        Mock.Indexer.chain: #1337,
-        sourceConfig: Config.CustomSources([sourceMock1337.source]),
-      },
-      {
-        Mock.Indexer.chain: #100,
-        sourceConfig: Config.CustomSources([sourceMock100.source]),
-      },
-    ]
-    let indexerMock = await Mock.Indexer.make(~chains)
-    await Utils.delay(0)
+  Async.it(
+    "Should stay in reorg threshold on restart when progress is past threshold",
+    async () => {
+      let sourceMock1337 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let chains = [
+        {
+          Mock.Indexer.chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock1337.source]),
+        },
+        {
+          Mock.Indexer.chain: #100,
+          sourceConfig: Config.CustomSources([sourceMock100.source]),
+        },
+      ]
+      let indexerMock = await Mock.Indexer.make(~chains)
+      await Utils.delay(0)
 
-    let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
-    ))
+      let _ = await Promise.all2((
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+      ))
 
-    Assert.deepEqual(
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-      Some({
-        "fromBlock": 101,
-        "toBlock": None,
-        "retry": 0,
-      }),
-      ~message="Should enter reorg threshold and request now to the latest block",
-    )
-    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
-    await indexerMock.getBatchWritePromise()
+      Assert.deepEqual(
+        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 101,
+          "toBlock": None,
+          "retry": 0,
+        }),
+        ~message="Should enter reorg threshold and request now to the latest block",
+      )
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+      await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
-      await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "1", labels: Js.Dict.empty()}],
-    )
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "1", labels: Js.Dict.empty()}],
+      )
 
-    let indexerMock = await indexerMock.restart()
+      let indexerMock = await indexerMock.restart()
 
-    sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
-    sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
-    sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
-    sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
 
-    // Allow async operations to settle
-    await Utils.delay(0)
-    await Utils.delay(0)
-    await Utils.delay(0)
+      // Allow async operations to settle
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
 
-    // After restart, we should still be in reorg threshold because
-    // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
-    Assert.deepEqual(
-      await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "1", labels: Js.Dict.empty()}],
-    )
+      // After restart, we should still be in reorg threshold because
+      // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "1", labels: Js.Dict.empty()}],
+      )
 
-    // After restart, both chains have knownHeight from sourceBlockNumber,
-    // so they don't need to call getHeightOrThrow
-    Assert.deepEqual(
-      sourceMock1337.getHeightOrThrowCalls->Array.length,
-      0,
-      ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
-    )
+      // After restart, both chains have knownHeight from sourceBlockNumber,
+      // so they don't need to call getHeightOrThrow
+      Assert.deepEqual(
+        sourceMock1337.getHeightOrThrowCalls->Array.length,
+        0,
+        ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
+      )
 
-    // Both chains are ready immediately, so chain 1337 should continue fetching
-    Assert.deepEqual(
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-      Some({
-        "fromBlock": 111,
-        "toBlock": None,
-        "retry": 0,
-      }),
-      ~message="Should continue indexing from where we left off",
-    )
+      // Both chains are ready immediately, so chain 1337 should continue fetching
+      Assert.deepEqual(
+        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 111,
+          "toBlock": None,
+          "retry": 0,
+        }),
+        ~message="Should continue indexing from where we left off",
+      )
 
-    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
 
-    await indexerMock.getBatchWritePromise()
+      await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-      Some({
-        "fromBlock": 201,
-        "toBlock": None,
-        "retry": 0,
-      }),
-      ~message="Continue normally inside of the reorg threshold",
-    )
+      Assert.deepEqual(
+        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 201,
+          "toBlock": None,
+          "retry": 0,
+        }),
+        ~message="Continue normally inside of the reorg threshold",
+      )
 
-    Assert.deepEqual(
-      await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "1", labels: Js.Dict.empty()}],
-    )
-  })
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "1", labels: Js.Dict.empty()}],
+      )
+    },
+  )
 
   Async.it("Rollback of a single chain indexer", async () => {
     let sourceMock = Mock.Source.make(
@@ -2140,15 +2143,13 @@ Sorted by timestamp and chain id`,
   })
 
   Async.it(
-    "Should NOT be in reorg threshold on restart when sourceBlockNumber is 0 (after batch write)",
+    "Should NOT be in reorg threshold on restart when DB is only initialized (sourceBlockNumber=0, progressBlockNumber=-1)",
     async () => {
-      // Test: when sourceBlockNumber is 0 but progressBlockNumber > 0,
-      // isInReorgThreshold should be false (not true due to 50 > 0-200 = 50 > -200).
-
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
+
       let indexerMock = await Mock.Indexer.make(
         ~chains=[
           {
@@ -2157,62 +2158,11 @@ Sorted by timestamp and chain id`,
           },
         ],
       )
-      await Utils.delay(0)
 
-      // Get height and write a batch to set progressBlockNumber > 0
-      sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 50,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.simpleEntity.set({id: "1", value: "value-1"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=50,
-      )
-      await indexerMock.getBatchWritePromise()
-
-      // Now progressBlockNumber=50 is in DB, but sourceBlockNumber might be 0
-      // if the throttled setChainMeta hasn't run yet.
-      // Restart immediately to test the bug case.
-      let indexerMock = await indexerMock.restart()
-      await Utils.delay(0)
-
-      // BUG: Without the fix, isInReorgThreshold = 50 > (0 - 200) = true (WRONG!)
-      // With the fix (sourceBlockNumber > 0 check), should be false.
       Assert.deepEqual(
         await indexerMock.metric("envio_reorg_threshold"),
         [{value: "0", labels: Js.Dict.empty()}],
-        ~message="Should NOT be in reorg threshold when sourceBlockNumber is 0",
-      )
-    },
-  )
-
-  Async.it(
-    "Should NOT be in reorg threshold on restart when DB is only initialized (sourceBlockNumber=0, progressBlockNumber=-1)",
-    async () => {
-      // Test: immediately after DB initialization (no batches written),
-      // progressBlockNumber=-1 and sourceBlockNumber=0.
-      // isInReorgThreshold calculation: -1 > 0 - 200 = -1 > -200 = true (BUG!)
-      // Should be false because sourceBlockNumber is not yet set.
-
-      let sourceMock = Mock.Source.make(
-        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
-      )
-
-      // First create the indexer (initializes DB)
-      let indexerMock = await Mock.Indexer.make(
-        ~chains=[
-          {
-            chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock.source]),
-          },
-        ],
+        ~message="Should NOT be in reorg threshold when we just created the indexer",
       )
 
       // Restart immediately without writing any batches
@@ -2220,8 +2170,6 @@ Sorted by timestamp and chain id`,
       let indexerMock = await indexerMock.restart()
       await Utils.delay(0)
 
-      // BUG: Without the fix, isInReorgThreshold = -1 > (0 - 200) = -1 > -200 = true (WRONG!)
-      // With the fix (sourceBlockNumber > 0 check), should be false.
       Assert.deepEqual(
         await indexerMock.metric("envio_reorg_threshold"),
         [{value: "0", labels: Js.Dict.empty()}],
