@@ -265,6 +265,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
+    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
     let pageUnsafe = try await HyperSync.GetLogs.query(
       ~client,
       ~fromBlock,
@@ -366,6 +367,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~serverUrl=endpointUrl,
           ~apiToken,
           ~blockNumber=heighestBlockQueried,
+          ~sourceName=name,
+          ~chainId=chain->ChainMap.Chain.toChainId,
           ~logger,
         )->Promise.thenResolve(res =>
           switch res {
@@ -500,6 +503,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~serverUrl=endpointUrl,
       ~apiToken,
       ~blockNumbers,
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 
@@ -514,7 +519,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
-    getHeightOrThrow: async () =>
+    getHeightOrThrow: async () => {
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
       switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>
@@ -524,9 +530,10 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         let _ = await Promise.make((_, _) => ())
         0
       | ErrorMessage(m) => Js.Exn.raiseError(m)
-      },
+      }
+    },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>
-      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight),
+      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~chainId=chain->ChainMap.Chain.toChainId, ~onHeight),
   }
 }
