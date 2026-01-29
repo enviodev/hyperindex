@@ -6,6 +6,7 @@ open Utils.UnsafeIntOperators
 type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
+  sourceBlockNumber: int,
   totalEventsProcessed: int,
   fetchState: FetchState.t,
   isProgressAtHeadWhenBatchCreated: bool,
@@ -108,6 +109,7 @@ let getProgressedChainsById = {
           {
             batchSize,
             progressBlockNumber: progressBlockNumberAfterBatch,
+            sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed + batchSize,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
