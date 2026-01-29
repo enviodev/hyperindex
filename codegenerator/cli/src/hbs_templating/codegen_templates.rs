@@ -18,7 +18,7 @@ use crate::{
             SystemConfig,
         },
     },
-    persisted_state::{PersistedState, PersistedStateJsonString},
+    persisted_state::{PersistedState, PersistedStateJsonString, CURRENT_CRATE_VERSION},
     project_paths::{
         path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
         ParsedProjectPaths,
@@ -47,6 +47,7 @@ fn is_false(v: &bool) -> bool {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct InternalConfigJson<'a> {
+    version: &'a str,
     name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<&'a str>,
@@ -1575,6 +1576,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
             };
 
             let config = InternalConfigJson {
+                version: CURRENT_CRATE_VERSION,
                 name: &cfg.name,
                 description: cfg.human_config.get_base_config().description.as_deref(),
                 handlers: cfg.handlers.as_deref(),

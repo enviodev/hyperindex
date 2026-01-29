@@ -324,6 +324,51 @@ let validateBlockRange = (
   }
 }
 
+// Entity operations for direct manipulation outside of handlers
+let makeEntityGet = (
+  ~state: testIndexerState,
+  ~entityConfig: Internal.entityConfig,
+): (string => promise<option<Internal.entity>>) => {
+  entityId => {
+    if state.processInProgress {
+      Js.Exn.raiseError(
+        `Cannot call ${entityConfig.name}.get() while indexer.process() is running. ` ++
+        "Wait for process() to complete before accessing entities directly.",
+      )
+    }
+    let entityDict =
+      state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
+    Promise.resolve(entityDict->Js.Dict.get(entityId))
+  }
+}
+
+let makeEntitySet = (
+  ~state: testIndexerState,
+  ~entityConfig: Internal.entityConfig,
+): (Internal.entity => unit) => {
+  entity => {
+    if state.processInProgress {
+      Js.Exn.raiseError(
+        `Cannot call ${entityConfig.name}.set() while indexer.process() is running. ` ++
+        "Wait for process() to complete before modifying entities directly.",
+      )
+    }
+    let entityDict = switch state.entities->Js.Dict.get(entityConfig.name) {
+    | Some(dict) => dict
+    | None =>
+      let dict = Js.Dict.empty()
+      state.entities->Js.Dict.set(entityConfig.name, dict)
+      dict
+    }
+    entityDict->Js.Dict.set(entity.id, entity)
+  }
+}
+
+type entityOps = {
+  get: string => promise<option<Internal.entity>>,
+  set: Internal.entity => unit,
+}
+
 let makeCreateTestIndexer = (
   ~config: Config.t,
   ~workerPath: string,
@@ -343,8 +388,33 @@ let makeCreateTestIndexer = (
       entityConfigs,
       processChanges: [],
     }
-    {
-      process: processConfig => {
+
+    // Build entity operations for each user entity
+    let entityOpsDict: Js.Dict.t<entityOps> = Js.Dict.empty()
+    allEntities->Array.forEach(entityConfig => {
+      // Only create ops for user entities (not internal tables like dynamic_contract_registry)
+      if entityConfig.name !== InternalTable.DynamicContractRegistry.name {
+        entityOpsDict->Js.Dict.set(
+          entityConfig.name,
+          {
+            get: makeEntityGet(~state, ~entityConfig),
+            set: makeEntitySet(~state, ~entityConfig),
+          },
+        )
+      }
+    })
+
+    // Build the result object with process + entity operations
+    let result: Js.Dict.t<unknown> = Js.Dict.empty()
+    entityOpsDict
+    ->Js.Dict.entries
+    ->Array.forEach(((name, ops)) => {
+      result->Js.Dict.set(name, ops->(Utils.magic: entityOps => unknown))
+    })
+
+    result->Js.Dict.set(
+      "process",
+      (processConfig => {
         // Check if already processing
         if state.processInProgress {
           Js.Exn.raiseError(
@@ -491,8 +561,10 @@ let makeCreateTestIndexer = (
             }
           })
         })
-      },
-    }
+      })->(Utils.magic: ('a => promise<processResult>) => unknown),
+    )
+
+    result->(Utils.magic: Js.Dict.t<unknown> => t<'processConfig>)
   }
 }
 

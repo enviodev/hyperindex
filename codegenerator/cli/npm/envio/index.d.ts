@@ -518,6 +518,14 @@ type AddressRegistration = {
 type ConfigEntities<Config extends IndexerConfigTypes> =
   Config["entities"] extends Record<string, object> ? Config["entities"] : {};
 
+/** Entity operations available on test indexer for direct entity manipulation. */
+type EntityOps<Entity> = {
+  /** Get an entity by ID. Returns undefined if not found. */
+  readonly get: (id: string) => Promise<Entity | undefined>;
+  /** Set (create or update) an entity. */
+  readonly set: (entity: Entity) => void;
+};
+
 /** A single change representing entity modifications at a specific block. */
 type EntityChange<Config extends IndexerConfigTypes> = {
   /** The block where the changes occurred. */
@@ -581,4 +589,9 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
     /** Changes happened during the processing. */
     readonly changes: readonly EntityChange<Config>[];
   }>;
+} & {
+  /** Entity operations for direct manipulation outside of handlers. */
+  readonly [K in keyof ConfigEntities<Config>]: EntityOps<
+    ConfigEntities<Config>[K]
+  >;
 };
