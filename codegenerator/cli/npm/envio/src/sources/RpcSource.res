@@ -28,6 +28,7 @@ let getKnownBlockWithBackoff = async (
   let result = ref(None)
 
   while result.contents->Option.isNone {
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId)
     switch await getKnownBlock(provider, blockNumber) {
     | exception err =>
       Logging.warn({
@@ -505,8 +506,7 @@ let make = (
 
   let makeBlockLoader = () =>
     LazyLoader.make(
-      ~loaderFn=blockNumber => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+      ~loaderFn=blockNumber =>
         getKnownBlockWithBackoff(
           ~provider,
           ~sourceName=name,
@@ -514,8 +514,7 @@ let make = (
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~lowercaseAddresses,
-        )
-      },
+        ),
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
