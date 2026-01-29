@@ -43,20 +43,19 @@ let rec getKnownBlockWithBackoff = async (
       ~lowercaseAddresses,
     )
   | result =>
-    if lowercaseAddresses {
-      // NOTE: this is wasteful if these fields are not selected in the users config.
-      //       There might be a better way to do this based on the block schema.
-      //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-
-      {
-        ...result,
-        // Mutation would be cheaper,
-        // BUT "result" is an Ethers.js Block object,
-        // which has the fields as readonly.
-        miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow,
-      }
-    } else {
-      result
+    // NOTE: this is wasteful if these fields are not selected in the users config.
+    //       There might be a better way to do this based on the block schema.
+    //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+    // Mutation would be cheaper,
+    // BUT "result" is an Ethers.js Block object,
+    // which has the fields as readonly.
+    {
+      ...result,
+      miner: if lowercaseAddresses {
+        result.miner->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        result.miner->Address.Evm.fromAddressOrThrow
+      },
     }
   }
 let getSuggestedBlockIntervalFromExn = {
@@ -689,7 +688,7 @@ let make = (
         let routedAddress = if lowercaseAddresses {
           log.address->Address.Evm.fromAddressLowercaseOrThrow
         } else {
-          log.address
+          log.address->Address.Evm.fromAddressOrThrow
         }
 
         switch eventRouter->EventRouter.get(
