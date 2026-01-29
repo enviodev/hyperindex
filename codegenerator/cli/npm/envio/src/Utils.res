@@ -435,6 +435,28 @@ String.replaceAll("the cat and the dog", "the", "this") == "this cat and this do
   external replaceAll: (string, string, string) => string = "replaceAll"
 }
 
+module Url = {
+  /**
+  Extracts the hostname from a URL string.
+  Returns None if the URL doesn't have a valid http:// or https:// protocol.
+  */
+  let getHostFromUrl = (url: string) => {
+    // Regular expression requiring protocol and capturing hostname
+    // - (https?:\/\/) : Required http:// or https:// (capturing group)
+    // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
+    // - .* : Match rest of the string
+    let regex = %re("/https?:\/\/([^\/?]+).*/")
+    switch Js.Re.exec_(regex, url) {
+    | Some(result) =>
+      switch Js.Re.captures(result)->Belt.Array.get(1) {
+      | Some(host) => host->Js.Nullable.toOption
+      | None => None
+      }
+    | None => None
+    }
+  }
+}
+
 module Result = {
   let forEach = (result, fn) => {
     switch result {
