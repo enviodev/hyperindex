@@ -245,6 +245,8 @@ module BlockData = {
     ~apiToken,
     ~fromBlock,
     ~toBlock,
+    ~sourceName,
+    ~chainId,
     ~logger,
   ): queryResponse<array<ReorgDetection.blockDataWithTimestamp>> => {
     let body = makeRequestBody(~fromBlock, ~toBlock)
@@ -258,6 +260,7 @@ module BlockData = {
       },
     )
 
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId)
     let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(() =>
       HyperSyncJsonApi.queryRoute->Rest.fetch(
         {
@@ -281,7 +284,7 @@ module BlockData = {
           `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~logger)
+        await queryBlockData(~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~sourceName, ~chainId, ~logger)
       }
     | Some(res) =>
       switch res->convertResponse {
@@ -292,6 +295,8 @@ module BlockData = {
             ~apiToken,
             ~fromBlock=res.nextBlock,
             ~toBlock,
+            ~sourceName,
+            ~chainId,
             ~logger,
           )
           restRes->Result.map(rest => datas->Array.concat(rest))
@@ -301,7 +306,7 @@ module BlockData = {
     }
   }
 
-  let queryBlockDataMulti = async (~serverUrl, ~apiToken, ~blockNumbers, ~logger) => {
+  let queryBlockDataMulti = async (~serverUrl, ~apiToken, ~blockNumbers, ~sourceName, ~chainId, ~logger) => {
     switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstBlock) => {
@@ -328,6 +333,8 @@ module BlockData = {
           ~toBlock=toBlock.contents,
           ~serverUrl,
           ~apiToken,
+          ~sourceName,
+          ~chainId,
           ~logger,
         )
         let filtered = res->Result.map(datas => {
@@ -346,12 +353,14 @@ module BlockData = {
   }
 }
 
-let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~logger) =>
+let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~sourceName, ~chainId, ~logger) =>
   BlockData.queryBlockData(
     ~serverUrl,
     ~apiToken,
     ~fromBlock=blockNumber,
     ~toBlock=blockNumber,
+    ~sourceName,
+    ~chainId,
     ~logger,
   )->Promise.thenResolve(res => res->Result.map(res => res->Array.get(0)))
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
