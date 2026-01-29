@@ -74,6 +74,7 @@ module Chains = {
   type progressFields = [
     | #progress_block
     | #events_processed
+    | #source_block
   ]
 
   type field = [
@@ -108,7 +109,6 @@ module Chains = {
   type metaFields = {
     @as("first_event_block") firstEventBlockNumber: Js.null<int>,
     @as("buffer_block") latestFetchedBlockNumber: int,
-    @as("source_block") blockHeight: int,
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
@@ -122,6 +122,7 @@ module Chains = {
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: int,
+    @as("source_block") blockHeight: int,
     ...metaFields,
   }
 
@@ -212,7 +213,6 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
 
   // Fields that can be updated outside of the batch transaction
   let metaFields: array<field> = [
-    #source_block,
     #buffer_block,
     #first_event_block,
     #ready_at,
@@ -279,7 +279,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
     ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
 
-  let progressFields: array<progressFields> = [#progress_block, #events_processed]
+  let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
     let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
@@ -320,6 +320,7 @@ WHERE "id" = $1;`
   type progressedChain = {
     chainId: int,
     progressBlockNumber: int,
+    sourceBlockNumber: int,
     totalEventsProcessed: int,
   }
 
@@ -341,6 +342,7 @@ WHERE "id" = $1;`
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
+          | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
         )
         ->ignore
