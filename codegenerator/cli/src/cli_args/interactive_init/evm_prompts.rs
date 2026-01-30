@@ -267,7 +267,7 @@ pub fn prompt_for_network_id(
 //Takes a u64 network ID and turns it into either "Supported" network or
 //"Unsupported" where we need an RPC url. If the RPC url is known, pass it
 //in as the 2nd arg otherwise prompt for an rpc url
-fn get_converter_network_u64(
+pub fn get_converter_network_u64(
     network_id: u64,
     rpc_url: &Option<String>,
     start_block: &Option<u64>,

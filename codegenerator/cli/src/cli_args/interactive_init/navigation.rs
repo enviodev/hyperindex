@@ -56,6 +56,7 @@ pub enum PromptSteps {
     FuelContractEvents,
     FuelAddAnotherContract,  // "Add another contract?" prompt
     // EVM contract import steps
+    EvmContractImportType,  // Local or Explorer selection (when adding new contract)
     EvmContractAbiPath,  // If Local
     EvmContractNetwork,  // If Explorer
     EvmContractAddress,
@@ -151,6 +152,7 @@ pub struct EvmContractBuilder {
     pub abi_path: Option<String>,  // If Local
     pub abi: Option<alloy_json_abi::JsonAbi>,  // Parsed ABI (if Local or after Explorer fetch)
     pub network: Option<NetworkKind>,  // If Explorer or after network selection
+    pub network_with_explorer: Option<crate::config_parsing::chain_helpers::NetworkWithExplorer>,  // For Explorer import to fetch ABI
     pub address: Option<EvmAddress>,
     pub name: Option<String>,
     pub events: Option<Vec<AlloyEvent>>,
@@ -162,6 +164,15 @@ pub enum EvmImportType {
     Explorer,
 }
 
+impl std::fmt::Display for EvmImportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvmImportType::Local => write!(f, "From ABI File - Use your own ABI file"),
+            EvmImportType::Explorer => write!(f, "From Address - Lookup ABI from block explorer"),
+        }
+    }
+}
+
 impl EvmContractBuilder {
     pub fn new() -> Self {
         Self {
@@ -169,6 +180,7 @@ impl EvmContractBuilder {
             abi_path: None,
             abi: None,
             network: None,
+            network_with_explorer: None,
             address: None,
             name: None,
             events: None,
@@ -223,6 +235,7 @@ impl EvmContractBuilder {
             abi_path: None, // Can't recover this from SelectedContract
             abi: None, // Can't recover this from SelectedContract (would need to re-parse)
             network: Some(first_chain.network.clone()),
+            network_with_explorer: None, // Can't recover this from SelectedContract
             address: Some(first_address.clone()),
             name: Some(contract.name.clone()),
             events: Some(contract.events.clone()),

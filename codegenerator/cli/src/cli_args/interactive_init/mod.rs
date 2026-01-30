@@ -810,6 +810,129 @@ enum AddNewContractOption {
     AddContract,
 }
 
+/// Helper function to prompt for network ID with back navigation support
+/// Returns PromptResult::Back if user presses Esc, otherwise PromptResult::Value(network)
+#[async_recursion]
+async fn prompt_for_network_id_with_back(
+    opt_rpc_url: &Option<String>,
+    opt_start_block: &Option<u64>,
+    already_selected_ids: Vec<u64>,
+    _init_args: &InitArgs,
+    _project_paths: &ProjectPaths,
+    _builder: &mut navigation::InitConfigBuilder,
+    _stack: &mut navigation::PromptStack,
+) -> Result<navigation::PromptResult<crate::config_parsing::contract_import::converters::NetworkKind>> {
+    use crate::config_parsing::chain_helpers::HypersyncNetwork;
+    use evm_prompts::get_converter_network_u64;
+    use prompt_helpers::prompt_select_with_back;
+    use prompt_helpers::prompt_text_with_back;
+    
+    // Define NetworkSelection enum locally (same as in evm_prompts.rs)
+    #[derive(Clone, Debug)]
+    enum NetworkSelection {
+        EnterNetworkId,
+        Network(HypersyncNetwork),
+    }
+    
+    impl std::fmt::Display for NetworkSelection {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::EnterNetworkId => write!(f, "<Enter Network Id>"),
+                Self::Network(network) => write!(f, "{}", network.get_pretty_name()),
+            }
+        }
+    }
+    
+    // Build network options
+    let networks: Vec<NetworkSelection> = HypersyncNetwork::iter()
+        .filter(|n| {
+            let network_id = *n as u64;
+            !already_selected_ids.contains(&network_id)
+        })
+        .map(NetworkSelection::Network)
+        .collect();
+    
+    let options = [vec![NetworkSelection::EnterNetworkId], networks].concat();
+    
+    // Prompt for network selection with back navigation
+    let selected = match prompt_select_with_back(
+        "Choose network:",
+        options,
+        "Failed during prompt for network",
+    )? {
+        navigation::PromptResult::Back => return Ok(navigation::PromptResult::Back),
+        navigation::PromptResult::Value(selection) => selection,
+    };
+    
+    match selected {
+        NetworkSelection::EnterNetworkId => {
+            // Prompt for network ID with back navigation
+            match prompt_text_with_back(
+                "Enter the network id:",
+                None,
+            )? {
+                navigation::PromptResult::Back => {
+                    // Go back to network selection (recursive call)
+                    prompt_for_network_id_with_back(opt_rpc_url, opt_start_block, already_selected_ids, _init_args, _project_paths, _builder, _stack).await
+                }
+                navigation::PromptResult::Value(id_str) => {
+                    let network_id: u64 = id_str.parse()
+                        .context("Invalid network id input, please enter a number")?;
+                    
+                    // Validate that ID is not already selected
+                    if already_selected_ids.contains(&network_id) {
+                        return Err(anyhow::anyhow!("Network ID {} is already selected", network_id));
+                    }
+                    
+                    // Convert to NetworkKind (this may prompt for RPC URL and start block if unsupported)
+                    // Note: get_converter_network_u64 doesn't support back navigation for RPC/start block prompts
+                    // For now, we'll use it as-is and handle back navigation at a higher level if needed
+                    let network = get_converter_network_u64(network_id, opt_rpc_url, opt_start_block)
+                        .context("Failed to convert network ID")?;
+                    Ok(navigation::PromptResult::Value(network))
+                }
+            }
+        }
+        NetworkSelection::Network(network) => {
+            use crate::config_parsing::contract_import::converters::NetworkKind;
+            Ok(navigation::PromptResult::Value(NetworkKind::Supported(network)))
+        }
+    }
+}
+
+/// Helper function to prompt for contract address with back navigation support
+async fn prompt_contract_address_with_back(
+    selected: Option<&Vec<String>>,
+    _init_args: &InitArgs,
+    _project_paths: &ProjectPaths,
+    _builder: &mut navigation::InitConfigBuilder,
+    _stack: &mut navigation::PromptStack,
+) -> Result<navigation::PromptResult<String>> {
+    use crate::evm::address::Address;
+    use prompt_helpers::prompt_text_with_back;
+    
+    match prompt_text_with_back(
+        "What is the address of the contract?",
+        None,
+    )? {
+        navigation::PromptResult::Back => Ok(navigation::PromptResult::Back),
+        navigation::PromptResult::Value(addr_str) => {
+            // Validate address format
+            let _: Address = addr_str.parse()
+                .context("Please input a valid contract address (should be a hexadecimal starting with (0x))")?;
+            
+            // Validate uniqueness if selected addresses provided
+            if let Some(selected_addrs) = selected {
+                if selected_addrs.contains(&addr_str) {
+                    return Err(anyhow::anyhow!("Address {} is already selected", addr_str));
+                }
+            }
+            
+            Ok(navigation::PromptResult::Value(addr_str))
+        }
+    }
+}
+
 // ============================================================================
 // EVM Contract Import Flow
 // ============================================================================
@@ -831,14 +954,85 @@ async fn prompt_evm_contract_import_flow(
         _ => return Err(anyhow::anyhow!("Current contract not initialized or wrong type")),
     };
 
-    match current_contract.import_type.as_ref() {
-        Some(navigation::EvmImportType::Local) => {
-            prompt_evm_contract_abi_path(init_args, project_paths, builder, stack).await
+    // If import_type is not set, prompt for it first (e.g., when adding a new contract)
+    if current_contract.import_type.is_none() {
+        // End the borrow by using a block scope
+        {
+            let _ = eco_builder; // Explicitly end the borrow
         }
-        Some(navigation::EvmImportType::Explorer) => {
-            prompt_evm_contract_network(init_args, project_paths, builder, stack).await
+        prompt_evm_contract_import_type(init_args, project_paths, builder, stack).await?;
+        
+        // Re-borrow after the function call
+        let eco_builder = builder.ecosystem.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+        let current_contract = match &eco_builder.current_contract {
+            Some(navigation::ContractBuilder::Evm(builder)) => builder,
+            _ => return Err(anyhow::anyhow!("Current contract not initialized or wrong type")),
+        };
+
+        match current_contract.import_type.as_ref() {
+            Some(navigation::EvmImportType::Local) => {
+                prompt_evm_contract_abi_path(init_args, project_paths, builder, stack).await
+            }
+            Some(navigation::EvmImportType::Explorer) => {
+                prompt_evm_contract_network(init_args, project_paths, builder, stack).await
+            }
+            None => Err(anyhow::anyhow!("Import type not set for EVM contract")),
         }
-        None => Err(anyhow::anyhow!("Import type not set for EVM contract")),
+    } else {
+        match current_contract.import_type.as_ref() {
+            Some(navigation::EvmImportType::Local) => {
+                prompt_evm_contract_abi_path(init_args, project_paths, builder, stack).await
+            }
+            Some(navigation::EvmImportType::Explorer) => {
+                prompt_evm_contract_network(init_args, project_paths, builder, stack).await
+            }
+            None => Err(anyhow::anyhow!("Import type not set for EVM contract")),
+        }
+    }
+}
+
+/// Prompt for EVM contract import type (Local or Explorer)
+/// This is used when adding a new contract and the import type hasn't been set yet
+async fn prompt_evm_contract_import_type(
+    init_args: &InitArgs,
+    project_paths: &ProjectPaths,
+    builder: &mut navigation::InitConfigBuilder,
+    stack: &mut navigation::PromptStack,
+) -> Result<()> {
+    use prompt_helpers::prompt_select_with_back;
+    
+    // Push step to stack
+    stack.push(navigation::PromptStackEntry {
+        step_name: navigation::PromptSteps::EvmContractImportType,
+    });
+
+    let eco_builder = builder.ecosystem.as_mut()
+        .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+
+    let current_contract = match &mut eco_builder.current_contract {
+        Some(navigation::ContractBuilder::Evm(builder)) => builder,
+        _ => return Err(anyhow::anyhow!("Current contract not initialized or wrong type")),
+    };
+
+    let options = vec![
+        navigation::EvmImportType::Local,
+        navigation::EvmImportType::Explorer,
+    ];
+
+    match prompt_select_with_back(
+        "How would you like to import the contract?",
+        options,
+        "Failed prompting for import type",
+    )? {
+        navigation::PromptResult::Back => {
+            handle_back_action(init_args, project_paths, builder, stack).await?;
+            Ok(())
+        }
+        navigation::PromptResult::Value(import_type) => {
+            current_contract.import_type = Some(import_type);
+            Ok(())
+        }
     }
 }
 
@@ -932,6 +1126,9 @@ async fn prompt_evm_contract_network(
             return Ok(());
         }
         navigation::PromptResult::Value(network) => {
+            // Store NetworkWithExplorer for Explorer import (needed to fetch ABI)
+            current_contract.network_with_explorer = Some(network);
+            
             // Convert NetworkWithExplorer to NetworkKind via HypersyncNetwork
             let network_enum = Network::from(network);
             let hypersync_network = HypersyncNetwork::try_from(network_enum)
@@ -985,8 +1182,61 @@ async fn prompt_evm_contract_address(
                 .context("Failed to parse address")?;
             current_contract.address = Some(addr);
             
-            // Continue to next step
-            prompt_evm_contract_name(init_args, project_paths, builder, stack).await
+            // If Explorer import, fetch ABI now (before events prompt)
+            // Then continue to events (skip contract name for now, prompt after events like original)
+            if current_contract.import_type == Some(navigation::EvmImportType::Explorer) {
+                prompt_evm_fetch_abi_from_explorer(init_args, project_paths, builder, stack).await
+            } else {
+                // Local import - continue to name step
+                prompt_evm_contract_name(init_args, project_paths, builder, stack).await
+            }
+        }
+    }
+}
+
+/// Step 2.5 (Explorer only): Fetch ABI from explorer
+/// After success, calls prompt_evm_contract_events
+async fn prompt_evm_fetch_abi_from_explorer(
+    init_args: &InitArgs,
+    project_paths: &ProjectPaths,
+    builder: &mut navigation::InitConfigBuilder,
+    stack: &mut navigation::PromptStack,
+) -> Result<()> {
+    use crate::config_parsing::contract_import::{contract_import, ContractImportResult};
+    
+    let eco_builder = builder.ecosystem.as_mut()
+        .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+
+    let current_contract = match &mut eco_builder.current_contract {
+        Some(navigation::ContractBuilder::Evm(builder)) => builder,
+        _ => return Err(anyhow::anyhow!("Current contract not initialized or wrong type")),
+    };
+
+    let network_with_explorer = current_contract.network_with_explorer
+        .ok_or_else(|| anyhow::anyhow!("NetworkWithExplorer not set for Explorer import"))?;
+    let address = current_contract.address.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Address not set"))?;
+
+    // Fetch ABI from explorer
+    println!("Fetching contract ABI from block explorer...");
+    let result = contract_import(&network_with_explorer, &address, 0).await
+        .context("Failed to fetch contract ABI from explorer")?;
+
+    match result {
+        ContractImportResult::Contract(contract_data) => {
+            current_contract.abi = Some(contract_data.abi);
+            // Use contract name from explorer if available, otherwise will prompt later
+            if let Some(name) = contract_data.name {
+                current_contract.name = Some(name);
+            }
+            // Continue to events step (skip name for now, will prompt after events if needed)
+            prompt_evm_contract_events(init_args, project_paths, builder, stack).await
+        }
+        ContractImportResult::NotVerified => {
+            Err(anyhow::anyhow!("Failed to find the verified contract on a block explorer. Use the Local ABI import option instead."))
+        }
+        ContractImportResult::UnsupportedChain => {
+            Err(anyhow::anyhow!("The \"{}\" chain doesn't support contract import yet. Use the Local ABI import option instead.", network_with_explorer))
         }
     }
 }
@@ -1026,8 +1276,8 @@ async fn prompt_evm_contract_name(
         navigation::PromptResult::Value(n) => {
             current_contract.name = Some(normalize_contract_name(n));
             
-            // Continue to next step
-            prompt_evm_contract_events(init_args, project_paths, builder, stack).await
+            // Continue to "add another" prompt (events were already selected if Explorer import)
+            prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
         }
     }
 }
@@ -1090,9 +1340,14 @@ async fn prompt_evm_contract_events(
             let events: Vec<AlloyEvent> = selected.into_iter().map(|item| item.item).collect();
             current_contract.events = Some(events);
             
-            // Contract is now complete, but don't commit yet - wait for "I'm finished" or "Add new contract"
-            // Continue to "add another" prompt
-            prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+            // If contract name is not set yet (Explorer import might have provided it), prompt for it
+            if current_contract.name.is_none() {
+                prompt_evm_contract_name(init_args, project_paths, builder, stack).await
+            } else {
+                // Contract is now complete, but don't commit yet - wait for "I'm finished" or "Add new contract"
+                // Continue to "add another" prompt
+                prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+            }
         }
     }
 }
@@ -1109,8 +1364,6 @@ async fn prompt_evm_add_another_contract(
 ) -> Result<()> {
     use crate::config_parsing::contract_import::converters::ContractImportNetworkSelection;
     use crate::evm::address::Address as EvmAddress;
-    use shared_prompts::prompt_contract_address;
-    use evm_prompts::prompt_for_network_id;
     use inquire::Select;
     
     // Push step to stack
@@ -1174,45 +1427,109 @@ async fn prompt_evm_add_another_contract(
             Ok(())
         }
         AddNewContractOption::AddAddress => {
-            // Add address to last chain
-            let chain = temp_contract.get_last_chain_mut()?;
-            let existing_addresses: Vec<String> = chain.addresses.iter()
-                .map(|a| format!("{}", a))
-                .collect();
-            let new_address_str = prompt_contract_address(Some(&existing_addresses))?;
-            let new_address = EvmAddress::from_str(&new_address_str)
-                .map_err(|e| anyhow::anyhow!("Invalid EVM address: {}", e))?;
-            chain.addresses.push(new_address);
+            // Add address to last chain with back navigation
+            // Collect existing addresses first to avoid borrow conflicts
+            let existing_addresses: Vec<String> = temp_contract.chains.last()
+                .map(|chain| chain.addresses.iter().map(|a| format!("{}", a)).collect())
+                .unwrap_or_default();
             
-            // Convert back to builder and show prompt again
-            let contract_builder = navigation::EvmContractBuilder::from_selected_contract(&temp_contract)?;
-            eco_builder.current_contract = Some(navigation::ContractBuilder::Evm(contract_builder));
-            prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+            // End eco_builder borrow by using a block scope
+            {
+                let _ = eco_builder;
+            }
+            
+            match prompt_contract_address_with_back(Some(&existing_addresses), init_args, project_paths, builder, stack).await? {
+                navigation::PromptResult::Back => {
+                    // User went back - convert back to builder and show prompt again
+                    let eco_builder = builder.ecosystem.as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+                    let contract_builder = navigation::EvmContractBuilder::from_selected_contract(&temp_contract)?;
+                    eco_builder.current_contract = Some(navigation::ContractBuilder::Evm(contract_builder));
+                    prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+                }
+                navigation::PromptResult::Value(new_address_str) => {
+                    let new_address = EvmAddress::from_str(&new_address_str)
+                        .map_err(|e| anyhow::anyhow!("Invalid EVM address: {}", e))?;
+                    
+                    // Add address to temp_contract
+                    let chain = temp_contract.get_last_chain_mut()?;
+                    chain.addresses.push(new_address);
+                    
+                    // Convert back to builder and show prompt again
+                    let eco_builder = builder.ecosystem.as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+                    let contract_builder = navigation::EvmContractBuilder::from_selected_contract(&temp_contract)?;
+                    eco_builder.current_contract = Some(navigation::ContractBuilder::Evm(contract_builder));
+                    prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+                }
+            }
         }
         AddNewContractOption::AddNetwork => {
-            // Add new network
+            // Add new network with back navigation support
+            // End eco_builder borrow by using a block scope
+            {
+                let _ = eco_builder;
+            }
+            
             const NO_RPC_URL: Option<String> = None;
             const NO_START_BLOCK: Option<u64> = None;
-            let selected_network = prompt_for_network_id(&NO_RPC_URL, &NO_START_BLOCK, temp_contract.get_chain_ids())
-                .context("Failed selecting network")?;
-            
-            let network_selection = ContractImportNetworkSelection::new_without_addresses(selected_network);
-            temp_contract.chains.push(network_selection);
-            
-            // Prompt for address on new network
-            let chain = temp_contract.get_last_chain_mut()?;
-            let existing_addresses: Vec<String> = chain.addresses.iter()
-                .map(|a| format!("{}", a))
-                .collect();
-            let new_address_str = prompt_contract_address(Some(&existing_addresses))?;
-            let new_address = EvmAddress::from_str(&new_address_str)
-                .map_err(|e| anyhow::anyhow!("Invalid EVM address: {}", e))?;
-            chain.addresses.push(new_address);
-            
-            // Convert back to builder and show prompt again
-            let contract_builder = navigation::EvmContractBuilder::from_selected_contract(&temp_contract)?;
-            eco_builder.current_contract = Some(navigation::ContractBuilder::Evm(contract_builder));
-            prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+            match prompt_for_network_id_with_back(
+                &NO_RPC_URL,
+                &NO_START_BLOCK,
+                temp_contract.get_chain_ids(),
+                init_args,
+                project_paths,
+                builder,
+                stack,
+            )
+            .await?
+            {
+                navigation::PromptResult::Back => {
+                    // User went back - convert back to builder and show prompt again
+                    let eco_builder = builder.ecosystem.as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+                    let contract_builder = navigation::EvmContractBuilder::from_selected_contract(&temp_contract)?;
+                    eco_builder.current_contract = Some(navigation::ContractBuilder::Evm(contract_builder));
+                    prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+                }
+                navigation::PromptResult::Value(network) => {
+                    let network_selection = ContractImportNetworkSelection::new_without_addresses(network);
+                    temp_contract.chains.push(network_selection);
+                    
+                    // Collect existing addresses (should be empty for new network, but be safe)
+                    let existing_addresses: Vec<String> = temp_contract.chains.last()
+                        .map(|chain| chain.addresses.iter().map(|a| format!("{}", a)).collect())
+                        .unwrap_or_default();
+                    
+                    // eco_builder was already dropped before prompt_for_network_id_with_back
+                    match prompt_contract_address_with_back(Some(&existing_addresses), init_args, project_paths, builder, stack).await? {
+                        navigation::PromptResult::Back => {
+                            // User went back - remove the network we just added and show prompt again
+                            temp_contract.chains.pop();
+                            let eco_builder = builder.ecosystem.as_mut()
+                                .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+                            let contract_builder = navigation::EvmContractBuilder::from_selected_contract(&temp_contract)?;
+                            eco_builder.current_contract = Some(navigation::ContractBuilder::Evm(contract_builder));
+                            prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+                        }
+                        navigation::PromptResult::Value(new_address_str) => {
+                            let new_address = EvmAddress::from_str(&new_address_str)
+                                .map_err(|e| anyhow::anyhow!("Invalid EVM address: {}", e))?;
+                            
+                            // Add address to temp_contract
+                            let chain = temp_contract.get_last_chain_mut()?;
+                            chain.addresses.push(new_address);
+                            
+                            // Convert back to builder and show prompt again
+                            let eco_builder = builder.ecosystem.as_mut()
+                                .ok_or_else(|| anyhow::anyhow!("EcosystemBuilder not initialized"))?;
+                            let contract_builder = navigation::EvmContractBuilder::from_selected_contract(&temp_contract)?;
+                            eco_builder.current_contract = Some(navigation::ContractBuilder::Evm(contract_builder));
+                            prompt_evm_add_another_contract(init_args, project_paths, builder, stack).await
+                        }
+                    }
+                }
+            }
         }
         AddNewContractOption::AddContract => {
             // Commit current, then start new contract flow
@@ -1377,6 +1694,10 @@ pub async fn navigate_to_step(
             prompt_fuel_add_another_contract(init_args, project_paths, builder, stack).await?;
             Ok(navigation::PromptResult::Value(()))
         }
+        navigation::PromptSteps::EvmContractImportType => {
+            prompt_evm_contract_import_type(init_args, project_paths, builder, stack).await?;
+            Ok(navigation::PromptResult::Value(()))
+        }
         navigation::PromptSteps::EvmContractAbiPath => {
             prompt_evm_contract_abi_path(init_args, project_paths, builder, stack).await?;
             Ok(navigation::PromptResult::Value(()))
@@ -1509,10 +1830,13 @@ pub async fn handle_back_action(
                 }
             }
         }
-        navigation::PromptSteps::FuelAddAnotherContract => {
-            // No data to clear - this is just a navigation prompt
-            // If we're going back from here, we might need to handle uncommitted current_contract
-            // but that's handled in navigate_to_step
+        navigation::PromptSteps::EvmContractImportType => {
+            // Clear import type
+            if let Some(eco_builder) = &mut builder.ecosystem {
+                if let Some(navigation::ContractBuilder::Evm(contract)) = &mut eco_builder.current_contract {
+                    contract.import_type = None;
+                }
+            }
         }
         navigation::PromptSteps::EvmContractAbiPath => {
             // Clear ABI path and ABI

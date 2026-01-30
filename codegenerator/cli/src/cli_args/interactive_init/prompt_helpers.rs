@@ -54,7 +54,7 @@ pub fn prompt_multiselect_with_back<T: std::fmt::Display>(
     context_msg: &str,
 ) -> Result<PromptResult<Vec<T>>> {
     let context_msg = context_msg.to_string();
-    let help_msg = "↑↓ to move, space to select, enter to confirm, type to filter, Esc to go back";
+    let help_msg = "↑↓ to move, space to select one, → to all, ← to none, type to filter, Esc to go back";
     let mut prompt = MultiSelect::new(message, options)
         .with_help_message(help_msg);
     
