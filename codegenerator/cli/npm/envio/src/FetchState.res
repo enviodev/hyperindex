@@ -1529,26 +1529,20 @@ let resetPendingQueries = (fetchState: t) => {
     let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
 
     if partition.mutPendingQueries->Array.length > 0 {
-      // Track the current block position and max fetched block
-      let currentBlockRef = ref(partition.latestFetchedBlock.blockNumber + 1)
+      // Track the end of the last fetched region (partition's latestFetchedBlock or previous fetched query)
+      let lastFetchedEndRef = ref(partition.latestFetchedBlock.blockNumber)
       let maxFetchedBlockRef = ref(partition.latestFetchedBlock)
 
       // Process all pending queries - they may be interleaved: [fetching, fetched, fetching, fetched]
+      // Create gap partitions for unfetched ranges between fetched queries
       for qIdx in 0 to partition.mutPendingQueries->Array.length - 1 {
         let pq = partition.mutPendingQueries->Js.Array2.unsafe_get(qIdx)
 
         switch pq.fetchedBlock {
-        | None =>
-          // Not fetched - will be re-fetched by the main partition or a gap partition
-          // Move current position past this query's range
-          currentBlockRef :=
-            switch pq.toBlock {
-            | Some(toBlock) => toBlock + 1
-            | None => currentBlockRef.contents // Keep current for open-ended queries
-            }
+        | None => () // Unfetched query - will be covered by gap partitions
         | Some(fetchedBlock) =>
-          // This query was fetched - create a gap partition for any unfetched range before it
-          let gapStart = currentBlockRef.contents
+          // Create a gap partition for any unfetched range before this fetched query
+          let gapStart = lastFetchedEndRef.contents + 1
           let gapEnd = pq.fromBlock - 1
           if gapEnd >= gapStart {
             let newPartitionId = nextPartitionIndexRef.contents->Int.toString
@@ -1577,7 +1571,8 @@ let resetPendingQueries = (fetchState: t) => {
           // For non-chunks, use fetchedBlock
           let effectiveEndBlock = pq.isChunk ? pq.toBlock->Option.getUnsafe : fetchedBlock.blockNumber
 
-          // Update max fetched block
+          // Update last fetched end and max fetched block
+          lastFetchedEndRef := effectiveEndBlock
           if effectiveEndBlock > maxFetchedBlockRef.contents.blockNumber {
             maxFetchedBlockRef :=
               {
@@ -1585,8 +1580,6 @@ let resetPendingQueries = (fetchState: t) => {
                 blockTimestamp: pq.isChunk ? 0 : fetchedBlock.blockTimestamp,
               }
           }
-
-          currentBlockRef := effectiveEndBlock + 1
         }
       }
 
