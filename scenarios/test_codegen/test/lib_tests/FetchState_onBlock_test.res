@@ -79,7 +79,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -88,7 +89,6 @@ describe("FetchState onBlock functionality", () => {
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -126,7 +126,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -135,7 +136,6 @@ describe("FetchState onBlock functionality", () => {
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -174,7 +174,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -183,7 +184,6 @@ describe("FetchState onBlock functionality", () => {
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -226,7 +226,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -235,7 +236,6 @@ describe("FetchState onBlock functionality", () => {
         ~latestFetchedBlock={blockNumber: 12, blockTimestamp: 12 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -281,7 +281,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -290,7 +291,6 @@ describe("FetchState onBlock functionality", () => {
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Verify that no block items were added when onBlock configs are not provided
     let queue = updatedFetchState.buffer

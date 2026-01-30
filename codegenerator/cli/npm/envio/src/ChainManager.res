@@ -16,19 +16,23 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
   progressBlockNumber > sourceBlockNumber - maxReorgDepth
 }
 
-let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {
-  let targetBatchesInBuffer = 3
+let calculateTargetBufferSize = (~activeChainsCount) => {
   switch Env.targetBufferSize {
   | Some(size) => size
   | None =>
-    config.batchSize * (activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer)
+    switch activeChainsCount {
+    | 1 => 50_000
+    | 2 => 30_000
+    | 3 => 20_000
+    | 4 => 15_000
+    | _ => 10_000
+    }
   }
 }
 
 let makeFromConfig = (~config: Config.t, ~registrations): t => {
   let targetBufferSize = calculateTargetBufferSize(
     ~activeChainsCount=config.chainMap->ChainMap.size,
-    ~config,
   )
   let chainFetchers =
     config.chainMap->ChainMap.map(
@@ -62,7 +66,6 @@ let makeFromDbState = async (
 
   let targetBufferSize = calculateTargetBufferSize(
     ~activeChainsCount=initialState.chains->Array.length,
-    ~config,
   )
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
