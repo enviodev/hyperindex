@@ -1335,48 +1335,165 @@ let make = (
     eventConfigs: normalEventConfigs,
   }
 
-  switch normalEventConfigs {
-  | [] => ()
-  | _ => {
-      let makePendingNormalPartition = () => {
-        {
-          id: partitions->Array.length->Int.toString,
-          latestFetchedBlock,
-          selection: normalSelection,
-          addressesByContractName: Js.Dict.empty(),
-          endBlock: None,
-          dynamicContract: None,
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          prevPrevPrevQueryRange: 0,
+  if normalEventConfigs->Array.length > 0 {
+    // Step 1: Group contracts by contractName and startBlock
+    let byContractName: dict<dict<array<Address.t>>> = Js.Dict.empty()
+
+    contracts->Array.forEach(contract => {
+      let contractName = contract.contractName
+      if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
+        indexingContracts->Js.Dict.set(contract.address->Address.toString, contract)
+        let byStartBlock = switch byContractName->Js.Dict.get(contractName) {
+        | Some(d) => d
+        | None =>
+          let d = Js.Dict.empty()
+          byContractName->Js.Dict.set(contractName, d)
+          d
         }
+        byStartBlock->Utils.Dict.push(contract.startBlock->Int.toString, contract.address)
       }
+    })
 
-      let pendingNormalPartition = ref(makePendingNormalPartition())
+    // Step 2: Create startBlock groups for each contract
+    // Each group: (startBlock, addresses, contractName)
+    let groups: array<(int, array<Address.t>, string)> = []
 
-      contracts->Array.forEach(contract => {
-        let contractName = contract.contractName
-        if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-          let pendingPartition = pendingNormalPartition.contents
-          pendingPartition.addressesByContractName->Utils.Dict.push(contractName, contract.address)
-          indexingContracts->Js.Dict.set(contract.address->Address.toString, contract)
-          if (
-            pendingPartition.addressesByContractName->addressesByContractNameCount ===
-              maxAddrInPartition
-          ) {
-            // FIXME: should split into separate partitions
-            // depending on the start block
-            partitions->Array.push(pendingPartition)
-            pendingNormalPartition := makePendingNormalPartition()
-          }
-        }
+    byContractName->Utils.Dict.forEachWithKey((byStartBlock, contractName) => {
+      let contractConfig = contractConfigs->Js.Dict.unsafeGet(contractName)
+
+      // Sort startBlocks in ascending order numerically
+      let ascKeys = byStartBlock->Js.Dict.keys
+      let _ = ascKeys->Js.Array2.sortInPlaceWith((a, b) => {
+        (a->Int.fromString->Option.getExn) - (b->Int.fromString->Option.getExn)
       })
 
-      if pendingNormalPartition.contents.addressesByContractName->addressesByContractNameCount > 0 {
-        partitions->Array.push(pendingNormalPartition.contents)
+      if ascKeys->Array.length > 0 {
+        let startBlockRef = ref(ascKeys->Js.Array2.unsafe_get(0)->Int.fromString->Option.getExn)
+        let addressesRef = ref(byStartBlock->Js.Dict.unsafeGet(ascKeys->Js.Array2.unsafe_get(0)))
+
+        for idx in 0 to ascKeys->Array.length - 1 {
+          let maybeNextKey = if idx + 1 < ascKeys->Array.length {
+            Some(ascKeys->Js.Array2.unsafe_get(idx + 1))
+          } else {
+            None
+          }
+
+          let shouldCreateGroup = if contractConfig.filterByAddresses {
+            // For filterByAddresses, each startBlock must be separate
+            true
+          } else {
+            switch maybeNextKey {
+            | None => true
+            | Some(nextKey) =>
+              let nextStartBlock = nextKey->Int.fromString->Option.getExn
+              let shouldJoin =
+                nextStartBlock - startBlockRef.contents < OptimizedPartitions.tooFarBlockRange
+              if shouldJoin {
+                addressesRef :=
+                  addressesRef.contents->Array.concat(byStartBlock->Js.Dict.unsafeGet(nextKey))
+                false
+              } else {
+                true
+              }
+            }
+          }
+
+          if shouldCreateGroup {
+            groups->Array.push((startBlockRef.contents, addressesRef.contents, contractName))
+            switch maybeNextKey {
+            | None => ()
+            | Some(nextKey) =>
+              startBlockRef := nextKey->Int.fromString->Option.getExn
+              addressesRef := byStartBlock->Js.Dict.unsafeGet(nextKey)
+            }
+          }
+        }
       }
-    }
+    })
+
+    // Sort groups by startBlock for deterministic partition ordering
+    let _ = groups->Js.Array2.sortInPlaceWith(((a, _, _), (b, _, _)) => a - b)
+
+    // Step 3: Create partitions from groups
+    // Try to merge groups with similar startBlocks (for non-filterByAddresses contracts)
+    // Each partition data: (mutable minStartBlock ref, addressesByContractName)
+    let partitionDatas: array<(ref<int>, dict<array<Address.t>>)> = []
+
+    groups->Array.forEach(((groupStartBlock, groupAddresses, groupContractName)) => {
+      let contractConfig = contractConfigs->Js.Dict.unsafeGet(groupContractName)
+      let addresses = ref(groupAddresses)
+
+      while addresses.contents->Array.length > 0 {
+        let chunkSize = Pervasives.min(addresses.contents->Array.length, maxAddrInPartition)
+        let chunk = addresses.contents->Js.Array2.slice(~start=0, ~end_=chunkSize)
+        addresses := addresses.contents->Js.Array2.sliceFrom(chunkSize)
+
+        // Try to merge with existing partition if allowed
+        let merged = ref(false)
+        if !contractConfig.filterByAddresses {
+          for pdx in 0 to partitionDatas->Array.length - 1 {
+            if !merged.contents {
+              let (minStartBlockRef, pdAddressesByContractName) =
+                partitionDatas->Js.Array2.unsafe_get(pdx)
+              let currentCount = pdAddressesByContractName->addressesByContractNameCount
+              let hasSpace = currentCount + chunk->Array.length <= maxAddrInPartition
+              let sameBucket =
+                Js.Math.abs_int(minStartBlockRef.contents - groupStartBlock) <
+                  OptimizedPartitions.tooFarBlockRange
+
+              // Check if target partition contracts allow merging
+              let targetAllowsMerge =
+                pdAddressesByContractName
+                ->Js.Dict.keys
+                ->Array.every(cn => {
+                  switch contractConfigs->Js.Dict.get(cn) {
+                  | Some({filterByAddresses: true}) => false
+                  | _ => true
+                  }
+                })
+
+              if hasSpace && sameBucket && targetAllowsMerge {
+                switch pdAddressesByContractName->Js.Dict.get(groupContractName) {
+                | Some(existing) =>
+                  pdAddressesByContractName->Js.Dict.set(
+                    groupContractName,
+                    existing->Array.concat(chunk),
+                  )
+                | None => pdAddressesByContractName->Js.Dict.set(groupContractName, chunk)
+                }
+                minStartBlockRef := Pervasives.min(minStartBlockRef.contents, groupStartBlock)
+                merged := true
+              }
+            }
+          }
+        }
+
+        if !merged.contents {
+          let addressesByContractName = Js.Dict.empty()
+          addressesByContractName->Js.Dict.set(groupContractName, chunk)
+          partitionDatas->Array.push((ref(groupStartBlock), addressesByContractName))
+        }
+      }
+    })
+
+    // Step 4: Convert partition datas to actual partitions
+    partitionDatas->Array.forEach(((minStartBlockRef, pdAddressesByContractName)) => {
+      partitions->Array.push({
+        id: partitions->Array.length->Int.toString,
+        latestFetchedBlock: {
+          blockTimestamp: 0,
+          blockNumber: Pervasives.max(minStartBlockRef.contents - 1, progressBlockNumber),
+        },
+        selection: normalSelection,
+        addressesByContractName: pdAddressesByContractName,
+        endBlock: None,
+        dynamicContract: None,
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        prevPrevPrevQueryRange: 0,
+      })
+    })
   }
 
   if partitions->Utils.Array.isEmpty && onBlockConfigs->Utils.Array.isEmpty {
