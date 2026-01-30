@@ -216,7 +216,7 @@ impl fmt::Display for NetworkSelection {
 ///known it can be passed in as the first arg. Otherwise this will be prompted.
 ///It also checks that the network does not belong to a given list of network ids
 ///To validate that a user is not double selecting a network id
-fn prompt_for_network_id(
+pub fn prompt_for_network_id(
     opt_rpc_url: &Option<String>,
     opt_start_block: &Option<u64>,
     already_selected_ids: Vec<u64>,
