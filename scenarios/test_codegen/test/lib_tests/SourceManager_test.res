@@ -134,9 +134,6 @@ describe("SourceManager fetchNext", () => {
 
     {
       id: partitionIndex->Int.toString,
-      status: {
-        fetchingStateId: None,
-      },
       latestFetchedBlock: {
         blockNumber: latestFetchedBlockNumber,
         blockTimestamp: latestFetchedBlockNumber * 15,
@@ -144,6 +141,12 @@ describe("SourceManager fetchNext", () => {
       selection: normalSelection,
       addressesByContractName,
       endBlock: None,
+      dynamicContract: None,
+      linkedFetchingPartition: None,
+      mutPendingQueries: [],
+      prevQueryRange: 0,
+      prevPrevQueryRange: 0,
+      prevPrevPrevQueryRange: 0,
     }
   }
 
@@ -157,7 +160,13 @@ describe("SourceManager fetchNext", () => {
     let indexingContracts = Js.Dict.empty()
 
     let latestFullyFetchedBlock = ref((partitions->Js.Array2.unsafe_get(0)).latestFetchedBlock)
+    let idsInAscOrder = []
+    let entities = Js.Dict.empty()
+    
     partitions->Array.forEach(partition => {
+      idsInAscOrder->Js.Array2.push(partition.id)->ignore
+      entities->Js.Dict.set(partition.id, partition)
+      
       if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
         latestFullyFetchedBlock := partition.latestFetchedBlock
       }
@@ -182,12 +191,18 @@ describe("SourceManager fetchNext", () => {
       )
     })
 
+    let optimizedPartitions: FetchState.OptimizedPartitions.t = {
+      idsInAscOrder,
+      entities,
+      maxAddrInPartition: 2,
+      nextPartitionIndex: partitions->Array.length,
+      dynamicContracts: Utils.Set.make(),
+    }
+
     {
-      partitions,
+      optimizedPartitions,
       startBlock: 0,
       endBlock,
-      nextPartitionIndex: partitions->Array.length,
-      maxAddrInPartition: 2,
       buffer,
       normalSelection,
       latestFullyFetchedBlock: latestFullyFetchedBlock.contents,
@@ -199,8 +214,7 @@ describe("SourceManager fetchNext", () => {
       blockLag: 0,
       onBlockConfigs: [],
       knownHeight,
-      // All the null values should be computed during updateInternal
-    }->FetchState.updateInternal
+    }
   }
 
   let neverWaitForNewBlock = async (~knownHeight as _) =>
@@ -242,7 +256,8 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "0",
             fromBlock: 5,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition0.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -250,7 +265,8 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "1",
             fromBlock: 6,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition1.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -258,7 +274,8 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "2",
             fromBlock: 2,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition2.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -306,7 +323,8 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "2",
             fromBlock: 2,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition2.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -314,7 +332,8 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "0",
             fromBlock: 5,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition0.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -676,11 +695,11 @@ describe("SourceManager fetchNext", () => {
             mockFullPartition(~partitionIndex=4, ~latestFetchedBlockNumber=3),
           ],
           ~buffer=[
-            FetchState_test.mockEvent(~blockNumber=1),
-            FetchState_test.mockEvent(~blockNumber=2),
-            FetchState_test.mockEvent(~blockNumber=3),
-            FetchState_test.mockEvent(~blockNumber=4),
-            FetchState_test.mockEvent(~blockNumber=5),
+            FetchState_onBlock_test.mockEvent(~blockNumber=1),
+            FetchState_onBlock_test.mockEvent(~blockNumber=2),
+            FetchState_onBlock_test.mockEvent(~blockNumber=3),
+            FetchState_onBlock_test.mockEvent(~blockNumber=4),
+            FetchState_onBlock_test.mockEvent(~blockNumber=5),
           ],
           ~targetBufferSize=4,
           ~knownHeight=10,
@@ -1229,7 +1248,8 @@ describe("SourceManager.executeQuery", () => {
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
     fromBlock: 0,
-    target: Head,
+    toBlock: None,
+            isChunk: false,
     selection,
     addressesByContractName,
     indexingContracts: Js.Dict.empty(),

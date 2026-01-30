@@ -70,7 +70,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             ~query={
               partitionId: "0",
               fromBlock: 0,
-              target: Head,
+              toBlock: None,
+              isChunk: false,
               selection: {
                 dependsOnAddresses: false,
                 eventConfigs,

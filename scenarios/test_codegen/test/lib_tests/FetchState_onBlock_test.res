@@ -79,7 +79,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -125,7 +126,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -172,7 +174,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -223,7 +226,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,
@@ -277,7 +281,8 @@ describe("FetchState onBlock functionality", () => {
       ->FetchState.handleQueryResult(
         ~query={
           partitionId: "0",
-          target: Head,
+          toBlock: None,
+          isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           fromBlock: 0,

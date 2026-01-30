@@ -585,7 +585,7 @@ module Set = {
   external toArray: t<'a> => array<'a> = "Array.from"
 
   let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
-    return new Set(...set, value)
+    return new Set([...set, value])
   }`)
 
   /*

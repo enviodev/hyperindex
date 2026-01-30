@@ -36,9 +36,6 @@ type partition = {
   // When set, partition indexes a single dynamic contract type.
   // The addressesByContractName must contain only addresses for this contract.
   dynamicContract: option<string>,
-  // When we split fetching partition, we need to make sure
-  // that response will update both partitions
-  linkedFetchingPartition: option<array<string>>,
   // Mutable array for SourceManager sync - queries exist only while being fetched
   mutPendingQueries: array<pendingQuery>,
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
@@ -112,7 +109,6 @@ module OptimizedPartitions = {
           selection: p1.selection, // We merge only partitions with normal selection
           latestFetchedBlock: p1.latestFetchedBlock, // We merge only partitions at the same block
           endBlock: None, // We don't merge partitions with endBlock
-          linkedFetchingPartition: None,
           mutPendingQueries: p1.mutPendingQueries,
           // Keep query range history from original partition
           prevQueryRange: p1.prevQueryRange,
@@ -126,7 +122,6 @@ module OptimizedPartitions = {
           selection: p1.selection, // We merge only partitions with normal selection
           latestFetchedBlock: p1.latestFetchedBlock, // We merge only partitions at the same block
           endBlock: None, // We don't merge partitions with endBlock
-          linkedFetchingPartition: None,
           mutPendingQueries: [],
           // Keep query range history from original partition
           prevQueryRange: p1.prevQueryRange,
@@ -144,7 +139,6 @@ module OptimizedPartitions = {
         selection: p1.selection, // We merge only partitions with normal selection
         latestFetchedBlock: p1.latestFetchedBlock, // We merge only partitions at the same block
         endBlock: None, // We don't merge partitions with endBlock
-        linkedFetchingPartition: None,
         mutPendingQueries: p1.mutPendingQueries,
         // Keep query range history from original partition
         prevQueryRange: p1.prevQueryRange,
@@ -389,7 +383,6 @@ module OptimizedPartitions = {
           addressesByContractName: p.addressesByContractName,
           endBlock: Some(queryToBlock),
           dynamicContract: p.dynamicContract,
-          linkedFetchingPartition: None,
           mutPendingQueries: [],
           prevQueryRange: updatedPrevQueryRange,
           prevPrevQueryRange: updatedPrevPrevQueryRange,
@@ -418,66 +411,12 @@ module OptimizedPartitions = {
       let updatedMainPartition = {
         ...p,
         latestFetchedBlock: updatedLatestFetchedBlock,
-        linkedFetchingPartition: None,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
         prevPrevPrevQueryRange: updatedPrevPrevPrevQueryRange,
       }
 
       mutEntities->Js.Dict.set(p.id, updatedMainPartition)
-
-      // FIXME: To do something with linked partitions
-      // Currently they don't really work with multiple queries per partition
-      // FIXME: When we reset pending queries
-      // and there's some fetched queries in the middle
-      // it means we already have the events,
-      // so we don't need to fetch them again
-      // It means we need to create partitions for
-      // unfinished queries before and update original partition latest fetched block
-      // Handle linked partitions
-      // switch p.linkedFetchingPartition {
-      // | None => ()
-      // | Some(linkedPartitionIds) =>
-      //   linkedPartitionIds->Js.Array2.forEach(linkedPartitionId => {
-      //     let linkedP = optimizedPartitions->getOrThrow(~partitionId=linkedPartitionId)
-
-      //     // Find and mark the query as fetched on linked partition
-      //     for idx in 0 to linkedP.mutPendingQueries->Array.length - 1 {
-      //       let linkedPendingQuery = linkedP.mutPendingQueries->Js.Array2.unsafe_get(idx)
-      //       if linkedPendingQuery.fromBlock === pendingQuery.fromBlock {
-      //         let (
-      //           linkedPrevQueryRange,
-      //           linkedPrevPrevQueryRange,
-      //           linkedPrevPrevPrevQueryRange,
-      //         ) = markQueryAsFetched(
-      //           linkedPendingQuery,
-      //           ~latestFetchedBlock,
-      //           ~prevQueryRange=linkedP.prevQueryRange,
-      //           ~prevPrevQueryRange=linkedP.prevPrevQueryRange,
-      //           ~prevPrevPrevQueryRange=linkedP.prevPrevPrevQueryRange,
-      //         )
-
-      //         // Process fetched queries from front for linked partition
-      //         let linkedUpdatedLatestFetchedBlock = consumeFetchedQueries(
-      //           linkedP.mutPendingQueries,
-      //           ~initialLatestFetchedBlock=linkedP.latestFetchedBlock,
-      //         )
-
-      //         mutEntities->Js.Dict.set(
-      //           linkedPartitionId,
-      //           {
-      //             ...linkedP,
-      //             latestFetchedBlock: linkedUpdatedLatestFetchedBlock,
-      //             linkedFetchingPartition: None,
-      //             prevQueryRange: linkedPrevQueryRange,
-      //             prevPrevQueryRange: linkedPrevPrevQueryRange,
-      //             prevPrevPrevQueryRange: linkedPrevPrevPrevQueryRange,
-      //           },
-      //         )
-      //       }
-      //     }
-      //   })
-      // }
     }
 
     // Re-optimize to maintain sorted order and apply optimizations
@@ -865,50 +804,45 @@ let registerDynamicContracts = (
                     },
                   )
                 | _ => {
-                    let newPartitionId =
-                      (fetchState.optimizedPartitions.nextPartitionIndex +
-                      newPartitions->Array.length)->Int.toString
-
-                    let restAddressesByContractName =
-                      p.addressesByContractName->Utils.Dict.shallowCopy
-                    restAddressesByContractName->Utils.Dict.deleteInPlace(contractName)
-
                     let isFetching = p.mutPendingQueries->Array.length > 0
-                    mutExistingPartitions->Js.Array2.unsafe_set(
-                      idx,
-                      {
-                        ...p,
-                        addressesByContractName: restAddressesByContractName,
-                        linkedFetchingPartition: if isFetching {
-                          Some(
-                            switch p.linkedFetchingPartition {
-                            // TODO: Test why it should be an array - can be split twice during fetching
-                            | Some(linkedFetchingPartition) =>
-                              linkedFetchingPartition->Array.concat([newPartitionId])
-                            | None => [newPartitionId]
-                            },
-                          )
-                        } else {
-                          None
-                        },
-                      },
-                    )
+                    if isFetching {
+                      // The partition won't be split and won't get a dynamicContract field
+                      // This won't allow to optimize the partitions to the potential max
+                      // Not super critical - at least we won't have a burden of
+                      // splitting a fetching partition and then handing the response
+                      ()
+                    } else {
+                      let newPartitionId =
+                        (fetchState.optimizedPartitions.nextPartitionIndex +
+                        newPartitions->Array.length)->Int.toString
 
-                    let addressesByContractName = Js.Dict.empty()
-                    addressesByContractName->Js.Dict.set(contractName, addresses)
-                    newPartitions->Array.push({
-                      id: newPartitionId,
-                      latestFetchedBlock: p.latestFetchedBlock,
-                      selection: fetchState.normalSelection,
-                      dynamicContract: Some(contractName),
-                      addressesByContractName,
-                      endBlock: None,
-                      linkedFetchingPartition: None,
-                      mutPendingQueries: p.mutPendingQueries,
-                      prevQueryRange: p.prevQueryRange,
-                      prevPrevQueryRange: p.prevPrevQueryRange,
-                      prevPrevPrevQueryRange: p.prevPrevPrevQueryRange,
-                    })
+                      let restAddressesByContractName =
+                        p.addressesByContractName->Utils.Dict.shallowCopy
+                      restAddressesByContractName->Utils.Dict.deleteInPlace(contractName)
+
+                      mutExistingPartitions->Js.Array2.unsafe_set(
+                        idx,
+                        {
+                          ...p,
+                          addressesByContractName: restAddressesByContractName,
+                        },
+                      )
+
+                      let addressesByContractName = Js.Dict.empty()
+                      addressesByContractName->Js.Dict.set(contractName, addresses)
+                      newPartitions->Array.push({
+                        id: newPartitionId,
+                        latestFetchedBlock: p.latestFetchedBlock,
+                        selection: fetchState.normalSelection,
+                        dynamicContract: Some(contractName),
+                        addressesByContractName,
+                        endBlock: None,
+                        mutPendingQueries: p.mutPendingQueries,
+                        prevQueryRange: p.prevQueryRange,
+                        prevPrevQueryRange: p.prevPrevQueryRange,
+                        prevPrevPrevQueryRange: p.prevPrevPrevQueryRange,
+                      })
+                    }
                   }
                 }
               }
@@ -1003,7 +937,6 @@ let registerDynamicContracts = (
                 dynamicContract: Some(contractName),
                 addressesByContractName,
                 endBlock: None,
-                linkedFetchingPartition: None,
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
@@ -1390,7 +1323,6 @@ let make = (
       addressesByContractName: Js.Dict.empty(),
       endBlock: None,
       dynamicContract: None,
-      linkedFetchingPartition: None,
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
@@ -1414,7 +1346,6 @@ let make = (
           addressesByContractName: Js.Dict.empty(),
           endBlock: None,
           dynamicContract: None,
-          linkedFetchingPartition: None,
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
@@ -1533,7 +1464,6 @@ let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) =
         latestFetchedBlock,
         endBlock,
         dynamicContract: p.dynamicContract,
-        linkedFetchingPartition: None,
         mutPendingQueries: [],
         prevQueryRange: p.prevQueryRange,
         prevPrevQueryRange: p.prevPrevQueryRange,
@@ -1586,6 +1516,12 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   )
 }
 
+// FIXME: When we reset pending queries
+// and there's some fetched queries in the middle
+// it means we already have the events,
+// so we don't need to fetch them again
+// It means we need to create partitions for
+// unfinished queries before and update original partition latest fetched block
 let resetPendingQueries = (fetchState: t) => {
   let newEntities = Js.Dict.empty()
   for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
@@ -1599,7 +1535,13 @@ let resetPendingQueries = (fetchState: t) => {
       },
     )
   }
-  fetchState
+  {
+    ...fetchState,
+    optimizedPartitions: {
+      ...fetchState.optimizedPartitions,
+      entities: newEntities,
+    },
+  }
 }
 
 /**

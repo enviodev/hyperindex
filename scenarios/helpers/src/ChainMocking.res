@@ -236,11 +236,7 @@ module Make = () => {
   }
 
   let executeQuery = (self: t, query: FetchState.query): Source.blockRangeFetchResponse => {
-    let {fromBlock} = query
-    let toBlock = switch query.target {
-    | Head => None
-    | EndBlock({toBlock}) => Some(toBlock)
-    }
+    let {fromBlock, toBlock} = query
 
     let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
