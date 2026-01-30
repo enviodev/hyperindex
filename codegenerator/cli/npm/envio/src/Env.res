@@ -153,6 +153,7 @@ module Db = {
     //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
     ~devFallback=Bool(false),
   )
+  let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
 }
 
 module ClickHouseSink = {

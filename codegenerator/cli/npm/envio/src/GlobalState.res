@@ -158,7 +158,6 @@ let updateChainMetadataTable = (
     chainsData->Js.Dict.set(
       cf.chainConfig.id->Belt.Int.toString,
       {
-        blockHeight: cf.fetchState.knownHeight,
         firstEventBlockNumber: cf.firstEventBlockNumber->Js.Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,

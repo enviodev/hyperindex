@@ -416,6 +416,18 @@ let sourceLabelsSchema = S.schema(s =>
   }
 )
 
+module SourceRequestCount = {
+  let counter = SafeCounter.makeOrThrow(
+    ~name="envio_source_request_count",
+    ~help="The number of requests made to data sources.",
+    ~labelSchema=sourceLabelsSchema,
+  )
+
+  let increment = (~sourceName, ~chainId) => {
+    counter->SafeCounter.increment(~labels={"source": sourceName, "chainId": chainId})
+  }
+}
+
 module SourceHeight = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_source_height",

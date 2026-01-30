@@ -43,20 +43,19 @@ let rec getKnownBlockWithBackoff = async (
       ~lowercaseAddresses,
     )
   | result =>
-    if lowercaseAddresses {
-      // NOTE: this is wasteful if these fields are not selected in the users config.
-      //       There might be a better way to do this based on the block schema.
-      //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-
-      {
-        ...result,
-        // Mutation would be cheaper,
-        // BUT "result" is an Ethers.js Block object,
-        // which has the fields as readonly.
-        miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow,
-      }
-    } else {
-      result
+    // NOTE: this is wasteful if these fields are not selected in the users config.
+    //       There might be a better way to do this based on the block schema.
+    //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+    // Mutation would be cheaper,
+    // BUT "result" is an Ethers.js Block object,
+    // which has the fields as readonly.
+    {
+      ...result,
+      miner: if lowercaseAddresses {
+        result.miner->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        result.miner->Address.Evm.fromAddressOrThrow
+      },
     }
   }
 let getSuggestedBlockIntervalFromExn = {
@@ -222,6 +221,8 @@ let getNextPage = (
   ~provider,
   ~mutSuggestedBlockIntervals,
   ~partitionId,
+  ~sourceName,
+  ~chainId,
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
@@ -234,6 +235,7 @@ let getNextPage = (
     )
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
+  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId)
   let logsPromise =
     provider
     ->Ethers.JsonRpcProvider.getLogs(
@@ -446,23 +448,6 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
   }
 }
 
-let sanitizeUrl = (url: string) => {
-  // Regular expression requiring protocol and capturing hostname
-  // - (https?:\/\/) : Required http:// or https:// (capturing group)
-  // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
-  // - .* : Match rest of the string
-  let regex = %re("/https?:\/\/([^\/?]+).*/")
-
-  switch Js.Re.exec_(regex, url) {
-  | Some(result) =>
-    switch Js.Re.captures(result)->Belt.Array.get(1) {
-    | Some(host) => host->Js.Nullable.toOption
-    | None => None
-    }
-  | None => None
-  }
-}
-
 type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
@@ -476,10 +461,11 @@ type options = {
 let make = (
   {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses}: options,
 ): t => {
-  let urlHost = switch sanitizeUrl(url) {
+  let chainId = chain->ChainMap.Chain.toChainId
+  let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     Js.Exn.raiseError(
-      `EE109: The RPC url "${url}" is incorrect format. The RPC url needs to start with either http:// or https://`,
+      `EE109: The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
@@ -495,8 +481,10 @@ let make = (
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
-      ~loaderFn=transactionHash =>
-        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client),
+      ~loaderFn=transactionHash => {
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client)
+      },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -516,7 +504,8 @@ let make = (
 
   let makeBlockLoader = () =>
     LazyLoader.make(
-      ~loaderFn=blockNumber =>
+      ~loaderFn=blockNumber => {
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
         getKnownBlockWithBackoff(
           ~provider,
           ~sourceName=name,
@@ -524,7 +513,8 @@ let make = (
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~lowercaseAddresses,
-        ),
+        )
+      },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -637,6 +627,8 @@ let make = (
       ~provider,
       ~mutSuggestedBlockIntervals,
       ~partitionId,
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
     )
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
@@ -689,7 +681,7 @@ let make = (
         let routedAddress = if lowercaseAddresses {
           log.address->Address.Evm.fromAddressLowercaseOrThrow
         } else {
-          log.address
+          log.address->Address.Evm.fromAddressOrThrow
         }
 
         switch eventRouter->EventRouter.get(
@@ -813,7 +805,10 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: 1000,
     getBlockHashes,
-    getHeightOrThrow: () => Rpc.GetBlockHeight.route->Rest.fetch((), ~client),
+    getHeightOrThrow: () => {
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+      Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+    },
     getItemsOrThrow,
   }
 }

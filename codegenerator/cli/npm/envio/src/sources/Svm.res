@@ -34,16 +34,29 @@ module GetFinalizedSlot = {
 
 let makeRPCSource = (~chain, ~rpc: string): Source.t => {
   let client = Rest.client(rpc)
+  let chainId = chain->ChainMap.Chain.toChainId
+
+  let urlHost = switch Utils.Url.getHostFromUrl(rpc) {
+  | None =>
+    Js.Exn.raiseError(
+      `EE109: The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+    )
+  | Some(host) => host
+  }
+  let name = `RPC (${urlHost})`
 
   {
-    name: "Svm",
+    name,
     sourceFor: Sync,
     chain,
     poweredByHyperSync: false,
     pollingInterval: 10_000,
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
       Js.Exn.raiseError("Svm does not support getting block hashes"),
-    getHeightOrThrow: () => GetFinalizedSlot.route->Rest.fetch((), ~client),
+    getHeightOrThrow: () => {
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId)
+      GetFinalizedSlot.route->Rest.fetch((), ~client)
+    },
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,
