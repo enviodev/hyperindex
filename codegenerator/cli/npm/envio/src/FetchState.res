@@ -1516,31 +1516,107 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   )
 }
 
-// FIXME: When we reset pending queries
-// and there's some fetched queries in the middle
-// it means we already have the events,
-// so we don't need to fetch them again
-// It means we need to create partitions for
-// unfinished queries before and update original partition latest fetched block
+// When resetting pending queries, preserve progress from already-fetched queries.
+// If there are fetched queries in the middle (with unfetched ones before them),
+// create gap partitions for the unfetched ranges and update latestFetchedBlock
+// to avoid re-fetching events that are already in the buffer.
 let resetPendingQueries = (fetchState: t) => {
+  let newPartitions = []
   let newEntities = Js.Dict.empty()
+  let nextPartitionIndexRef = ref(fetchState.optimizedPartitions.nextPartitionIndex)
+
   for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
     let partitionId = fetchState.optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
     let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
-    newEntities->Js.Dict.set(
-      partitionId,
-      {
-        ...partition,
-        mutPendingQueries: [],
-      },
-    )
+
+    if partition.mutPendingQueries->Array.length === 0 {
+      // No pending queries, just copy the partition
+      newEntities->Js.Dict.set(partitionId, partition)
+    } else {
+      // First consume fetched queries from the front of the queue
+      let latestFetchedBlock = OptimizedPartitions.consumeFetchedQueries(
+        partition.mutPendingQueries,
+        ~initialLatestFetchedBlock=partition.latestFetchedBlock,
+      )
+
+      // Track the current block position and max fetched block
+      let currentBlockRef = ref(latestFetchedBlock.blockNumber + 1)
+      let maxFetchedBlockRef = ref(latestFetchedBlock)
+
+      // Process remaining pending queries to find fetched ones in the middle
+      for qIdx in 0 to partition.mutPendingQueries->Array.length - 1 {
+        let pq = partition.mutPendingQueries->Js.Array2.unsafe_get(qIdx)
+
+        switch pq.fetchedBlock {
+        | None =>
+          // Not fetched - will be re-fetched by the main partition or a gap partition
+          // Move current position past this query's range
+          currentBlockRef :=
+            switch pq.toBlock {
+            | Some(toBlock) => toBlock + 1
+            | None => currentBlockRef.contents // Keep current for open-ended queries
+            }
+        | Some(fetchedBlock) =>
+          // This query was fetched but has unfetched queries before it
+          // Create a gap partition for the unfetched range before this query
+          let gapStart = currentBlockRef.contents
+          let gapEnd = pq.fromBlock - 1
+          if gapEnd >= gapStart {
+            let newPartitionId = nextPartitionIndexRef.contents->Int.toString
+            nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+            newPartitions->Array.push({
+              id: newPartitionId,
+              latestFetchedBlock: {
+                blockNumber: gapStart - 1,
+                blockTimestamp: 0,
+              },
+              selection: partition.selection,
+              addressesByContractName: partition.addressesByContractName,
+              endBlock: Some(gapEnd),
+              dynamicContract: partition.dynamicContract,
+              mutPendingQueries: [],
+              prevQueryRange: partition.prevQueryRange,
+              prevPrevQueryRange: partition.prevPrevQueryRange,
+              prevPrevPrevQueryRange: partition.prevPrevPrevQueryRange,
+            })
+          }
+
+          // For chunks, use toBlock as effective end (incomplete chunks create new partitions)
+          // For non-chunks, use fetchedBlock
+          let effectiveEndBlock = pq.isChunk ? pq.toBlock->Option.getUnsafe : fetchedBlock.blockNumber
+
+          // Update max fetched block
+          if effectiveEndBlock > maxFetchedBlockRef.contents.blockNumber {
+            maxFetchedBlockRef :=
+              {
+                blockNumber: effectiveEndBlock,
+                blockTimestamp: pq.isChunk ? 0 : fetchedBlock.blockTimestamp,
+              }
+          }
+
+          currentBlockRef := effectiveEndBlock + 1
+        }
+      }
+
+      newEntities->Js.Dict.set(
+        partitionId,
+        {
+          ...partition,
+          latestFetchedBlock: maxFetchedBlockRef.contents,
+          mutPendingQueries: [],
+        },
+      )
+    }
   }
+
   {
     ...fetchState,
-    optimizedPartitions: {
-      ...fetchState.optimizedPartitions,
-      entities: newEntities,
-    },
+    optimizedPartitions: OptimizedPartitions.make(
+      ~partitions=newEntities->Js.Dict.values->Array.concat(newPartitions),
+      ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+      ~nextPartitionIndex=nextPartitionIndexRef.contents,
+      ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+    ),
   }
 }
 
