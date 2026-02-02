@@ -264,6 +264,7 @@ describe("FetchState.make", () => {
 })
 
 describe("FetchState.registerDynamicContracts", () => {
+  // It shouldn't happen, but just in case
   it("Nothing breaks when provided an empty array", () => {
     let fetchState = makeInitial()
 
@@ -289,6 +290,9 @@ describe("FetchState.registerDynamicContracts", () => {
   it("Correctly registers all valid contracts even when some are skipped in the middle", () => {
     let fetchState = makeInitial()
 
+    // Create a single event with 3 DCs:
+    // - First DC should be skipped (already exists in config at mockAddress0)
+    // - Second and third DCs should both be registered
     let dc1 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress0)
     let dc2 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress1)
     let dc3 = makeDynContractRegistration(~blockNumber=10, ~contractAddress=mockAddress2)
@@ -298,6 +302,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
     let updatedFetchState = fetchState->FetchState.registerDynamicContracts([event])
 
+    // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
       updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
@@ -364,11 +369,14 @@ describe("FetchState.registerDynamicContracts", () => {
 
   it(
     "Dcs for contract with event filtering using addresses shouldn't be grouped into a single partition to prevent overfetching",
+    // This is because we can't filter events before dc registration block number for this case
     () => {
       let fetchState = FetchState.make(
         ~eventConfigs=[
           baseEventConfig,
           (Mock.evmEventConfig(~id="0", ~contractName="NftFactory") :> Internal.eventConfig),
+          // An event from another contract
+          // which has an event filter by addresses
           (Mock.evmEventConfig(
             ~id="0",
             ~contractName="SimpleNft",
@@ -414,6 +422,9 @@ describe("FetchState.registerDynamicContracts", () => {
         ~contractAddress=mockAddress4,
         ~contractName="SimpleNft",
       )
+      // Even though this has another contract than Gravatar,
+      // and higher block number, it still should be in one partition
+      // with Gravatar dcs.
       let dc5 = makeDynContractRegistration(
         ~blockNumber=6,
         ~contractAddress=mockAddress5,
@@ -465,8 +476,19 @@ End remove the dc from the later one, so they are not duplicated in the db`,
 
     let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
     let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
+    // Even if there's too big of a block difference,
+    // we don't care because:
+    // RPC - The registrations come from requested batch,
+    //       which is not very big by itself.
+    // HyperSync - Even though the block range of the batch with registrations
+    //             might be big, HyperSync will efficiently handle addresses registered
+    //             later on chain.
+    // If there are events before the contract registrations,
+    // they will be filtered client-side by the the router.
     let dc3 = makeDynContractRegistration(~blockNumber=20000, ~contractAddress=mockAddress3)
 
+    // Order of dcs doesn't matter
+    // but they are not sorted in fetch state
     let updatedFetchState =
       fetchState->FetchState.registerDynamicContracts([dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
     Assert.equal(updatedFetchState.indexingContracts->Utils.Dict.size, 4)
@@ -1037,6 +1059,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
       indexingContracts: fetchState.indexingContracts,
     }
 
+    // Helper: create a fetch state with desired latestFetchedBlock and queue items via public API
     let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
       let fs0 = mk()
       let query = mkQuery(fs0)
@@ -1047,8 +1070,12 @@ describe("FetchState.sortForUnorderedBatch", () => {
       )
     }
 
+    // Included: last queue item at block 1, latestFullyFetchedBlock = 10
     let fsEarly = makeFsWith(~latestBlock=10, ~queueBlocks=[2, 1])
+    // Included: last queue item at block 5, latestFullyFetchedBlock = 10
     let fsLate = makeFsWith(~latestBlock=10, ~queueBlocks=[5])
+    // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
+    // UPD: Starting from 2.30.1+ it should go last instead of filtered
     let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
 
     let prepared = FetchState.sortForUnorderedBatch(
@@ -1084,7 +1111,9 @@ describe("FetchState.sortForUnorderedBatch", () => {
       )
     }
 
+    // Full batch (>= maxBatchSize items). Make it later (earliest item at block 7)
     let fsFullLater = makeFsWith(~latestBlock=10, ~queueBlocks=[9, 8, 7])
+    // Half-full batch (1 item) but earlier earliest item (block 1)
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
     let prepared = FetchState.sortForUnorderedBatch(
@@ -1114,6 +1143,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   )
 
   it("Returns true when endBlock is reached and queue is empty", () => {
+    // latestFullyFetchedBlock = startBlock - 1 = 5, endBlock = 5
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
@@ -1136,6 +1166,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   })
 
   it("Returns false when endBlock not reached and below head - blockLag", () => {
+    // latestFullyFetchedBlock = 49, endBlock = 100, head - lag = 50
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
@@ -1158,6 +1189,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   })
 
   it("Returns true when endBlock not reached but latest >= head - blockLag", () => {
+    // latestFullyFetchedBlock = 49, head - lag = 49
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
@@ -1180,6 +1212,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   })
 
   it("Returns false when queue is not empty even if thresholds are met", () => {
+    // EndBlock reached but queue has items
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
@@ -1207,15 +1240,18 @@ describe("Dynamic contracts with start blocks", () => {
   it("Should respect dynamic contract startBlock even when registered earlier", () => {
     let fetchState = makeInitial()
 
+    // Register a dynamic contract with startBlock=200
     let dynamicContract = makeDynContractRegistration(
-      ~contractAddress=mockAddress1,
-      ~blockNumber=200,
-      ~contractName="Gravatar",
+      ~contractAddress=mockAddress1, // Use a different address from static contracts
+      ~blockNumber=200, // This is the startBlock - when indexing should actually begin
+      ~contractName="Gravatar", // Use Gravatar which has event configs in makeInitial
     )
 
+    // Register the contract at block 100 (before its startBlock)
     let updatedFetchState =
       fetchState->FetchState.registerDynamicContracts([dynamicContract->dcToItem])
 
+    // The contract should be registered in indexingContracts
     Assert.ok(
       updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
@@ -1223,6 +1259,7 @@ describe("Dynamic contracts with start blocks", () => {
       ~message="Dynamic contract should be registered in indexingContracts",
     )
 
+    // Verify the startBlock is set correctly
     let registeredContract =
       updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
@@ -1238,12 +1275,14 @@ describe("Dynamic contracts with start blocks", () => {
   it("Should handle dynamic contract registration with different startBlocks", () => {
     let fetchState = makeInitial()
 
+    // Contract 1: startBlock=150
     let contract1 = makeDynContractRegistration(
       ~contractAddress=mockAddress1,
       ~blockNumber=150,
       ~contractName="Gravatar",
     )
 
+    // Contract 2: startBlock=300
     let contract2 = makeDynContractRegistration(
       ~contractAddress=mockAddress2,
       ~blockNumber=300,
@@ -1253,6 +1292,7 @@ describe("Dynamic contracts with start blocks", () => {
     let updatedFetchState =
       fetchState->FetchState.registerDynamicContracts([contract1->dcToItem, contract2->dcToItem])
 
+    // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
       updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
@@ -1319,7 +1359,7 @@ describe("FetchState progress tracking", () => {
   it("When queue items are later than latest fetched block", () => {
     let fetchStateWithQueue = makeFetchStateWith(
       ~latestBlock=90,
-      ~queueBlocks=[(105, 2), (103, 1), (101, 2)],
+      ~queueBlocks=[(105, 2), (103, 1), (101, 2)], // Last item has blockNumber=101
     )
 
     Assert.equal(
@@ -1336,27 +1376,32 @@ describe("FetchState buffer overflow prevention", () => {
     () => {
       let fetchState = makeInitial(~maxAddrInPartition=1, ~targetBufferSize=10)
 
+      // Create a second partition to ensure buffer limiting logic is exercised across partitions
+      // Register at a later block, so partition "0" remains the earliest and is selected
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
       let fetchStateWithTwoPartitions =
         fetchState->FetchState.registerDynamicContracts([dc->dcToItem])
 
-      // Build up a large queue
+      // Build up a large queue using public API (handleQueryResult)
+      // queue.length = 15, targetBufferSize = 10
+      // targetBlockIdx = 15 - 10 = 5
+      // maxQueryBlockNumber should be the blockNumber at index 5 (which is 15)
       let largeQueueEvents = [
-        mockEvent(~blockNumber=20),
-        mockEvent(~blockNumber=19),
-        mockEvent(~blockNumber=18),
-        mockEvent(~blockNumber=17),
-        mockEvent(~blockNumber=16),
-        mockEvent(~blockNumber=15),
-        mockEvent(~blockNumber=14),
-        mockEvent(~blockNumber=13),
-        mockEvent(~blockNumber=12),
-        mockEvent(~blockNumber=11),
-        mockEvent(~blockNumber=10),
-        mockEvent(~blockNumber=9),
-        mockEvent(~blockNumber=8),
-        mockEvent(~blockNumber=7),
-        mockEvent(~blockNumber=6),
+        mockEvent(~blockNumber=20), // index 0
+        mockEvent(~blockNumber=19), // index 1
+        mockEvent(~blockNumber=18), // index 2
+        mockEvent(~blockNumber=17), // index 3
+        mockEvent(~blockNumber=16), // index 4
+        mockEvent(~blockNumber=15), // index 5 <- this should be maxQueryBlockNumber
+        mockEvent(~blockNumber=14), // index 6
+        mockEvent(~blockNumber=13), // index 7
+        mockEvent(~blockNumber=12), // index 8
+        mockEvent(~blockNumber=11), // index 9
+        mockEvent(~blockNumber=10), // index 10
+        mockEvent(~blockNumber=9), // index 11
+        mockEvent(~blockNumber=8), // index 12
+        mockEvent(~blockNumber=7), // index 13
+        mockEvent(~blockNumber=6), // index 14
       ]
 
       let query0: FetchState.query = {
@@ -1419,6 +1464,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
     () => {
       let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(0))
 
+      // Create FetchState with no event configs but with onBlockConfig
       let fetchState = FetchState.make(
         ~eventConfigs=[],
         ~contracts=[],
@@ -1431,6 +1477,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
         ~onBlockConfigs=[onBlockConfig],
       )
 
+      // Verify initial state
       Assert.equal(
         getPartitionCount(fetchState),
         0,
@@ -1444,6 +1491,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
         ~message="onBlockConfigs should be set",
       )
 
+      // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
       let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit=10)
       Assert.deepEqual(
         nextQuery,
@@ -1451,6 +1499,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
         ~message="Should return WaitingForNewBlock when knownHeight is 0",
       )
 
+      // Update known height to 20
       let updatedFetchState = fetchState->FetchState.updateKnownHeight(~knownHeight=20)
 
       Assert.equal(
