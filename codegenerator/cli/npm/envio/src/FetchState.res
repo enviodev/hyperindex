@@ -1516,10 +1516,55 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   )
 }
 
-// Reset pending queries by rolling back to the current latestFullyFetchedBlock.
-// This discards any in-flight queries and their partial progress.
+// Reset pending queries. If there are fetched queries in the middle (out-of-order completion),
+// rollback to latestFullyFetchedBlock. Otherwise just clear mutPendingQueries.
 let resetPendingQueries = (fetchState: t) => {
-  fetchState->rollback(~targetBlockNumber=fetchState.latestFullyFetchedBlock.blockNumber)
+  let hasFetchedInMiddle = ref(false)
+
+  // Check if any partition has fetched queries in the middle
+  for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
+    let partitionId = fetchState.optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
+    let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
+
+    // Look for pattern: [fetching, fetched, ...] - a fetched query after an unfetched one
+    let sawUnfetched = ref(false)
+    for qIdx in 0 to partition.mutPendingQueries->Array.length - 1 {
+      let pq = partition.mutPendingQueries->Js.Array2.unsafe_get(qIdx)
+      switch pq.fetchedBlock {
+      | None => sawUnfetched := true
+      | Some(_) if sawUnfetched.contents => hasFetchedInMiddle := true
+      | Some(_) => ()
+      }
+    }
+  }
+
+  if hasFetchedInMiddle.contents {
+    // Fetched queries in the middle - need full rollback
+    fetchState->rollback(~targetBlockNumber=fetchState.latestFullyFetchedBlock.blockNumber)
+  } else {
+    // No fetched queries in middle - just clear pending queries
+    let newEntities = fetchState.optimizedPartitions.entities->Utils.Dict.shallowCopy
+    for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
+      let partitionId = fetchState.optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
+      let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
+      if partition.mutPendingQueries->Array.length > 0 {
+        newEntities->Js.Dict.set(
+          partitionId,
+          {
+            ...partition,
+            mutPendingQueries: [],
+          },
+        )
+      }
+    }
+    {
+      ...fetchState,
+      optimizedPartitions: {
+        ...fetchState.optimizedPartitions,
+        entities: newEntities,
+      },
+    }
+  }
 }
 
 /**
