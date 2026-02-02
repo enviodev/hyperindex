@@ -26,7 +26,8 @@ expression: project_template.internal_config_json_code
             "accelerationAdditive": 2000,
             "intervalCeiling": 10000,
             "backoffMillis": 5000,
-            "queryTimeoutMillis": 20000
+            "queryTimeoutMillis": 20000,
+            "pollingInterval": 2000
           }
         ]
       }
