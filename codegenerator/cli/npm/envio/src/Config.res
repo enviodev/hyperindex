@@ -111,6 +111,7 @@ let rpcConfigSchema = S.schema(s =>
     "backoffMillis": s.matches(S.option(S.int)),
     "fallbackStallTimeout": s.matches(S.option(S.int)),
     "queryTimeoutMillis": s.matches(S.option(S.int)),
+    "pollingInterval": s.matches(S.option(S.int)),
   }
 )
 
@@ -325,6 +326,7 @@ let fromPublic = (
             let backoffMillis = rpcConfig["backoffMillis"]
             let queryTimeoutMillis = rpcConfig["queryTimeoutMillis"]
             let fallbackStallTimeout = rpcConfig["fallbackStallTimeout"]
+            let pollingInterval = rpcConfig["pollingInterval"]
             let hasSyncConfig =
               initialBlockInterval->Option.isSome ||
               backoffMultiplicative->Option.isSome ||
@@ -332,7 +334,8 @@ let fromPublic = (
               intervalCeiling->Option.isSome ||
               backoffMillis->Option.isSome ||
               queryTimeoutMillis->Option.isSome ||
-              fallbackStallTimeout->Option.isSome
+              fallbackStallTimeout->Option.isSome ||
+              pollingInterval->Option.isSome
             let syncConfig: option<sourceSyncOptions> = if hasSyncConfig {
               Some({
                 ?initialBlockInterval,
@@ -342,6 +345,7 @@ let fromPublic = (
                 ?backoffMillis,
                 ?queryTimeoutMillis,
                 ?fallbackStallTimeout,
+                ?pollingInterval,
               })
             } else {
               None
