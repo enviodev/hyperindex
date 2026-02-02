@@ -15,6 +15,7 @@ let getSyncConfig = (
     ?backoffMillis,
     ?queryTimeoutMillis,
     ?fallbackStallTimeout,
+    ?pollingInterval,
   }: Config.sourceSyncOptions,
 ): Config.sourceSync => {
   let queryTimeoutMillis = queryTimeoutMillis->Option.getWithDefault(20_000)
@@ -39,6 +40,8 @@ let getSyncConfig = (
     // How long to wait before cancelling an RPC request
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getWithDefault(queryTimeoutMillis / 2),
+    // How frequently to check for new blocks in realtime (default: 1000ms)
+    pollingInterval: pollingInterval->Option.getWithDefault(1000),
   }
 }
 

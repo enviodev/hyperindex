@@ -8,6 +8,7 @@ type sourceSyncOptions = {
   backoffMillis?: int,
   queryTimeoutMillis?: int,
   fallbackStallTimeout?: int,
+  pollingInterval?: int,
 }
 
 type contract = {
@@ -65,6 +66,7 @@ type sourceSync = {
   backoffMillis: int,
   queryTimeoutMillis: int,
   fallbackStallTimeout: int,
+  pollingInterval: int,
 }
 
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
