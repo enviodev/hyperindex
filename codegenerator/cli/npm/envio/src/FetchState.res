@@ -1142,6 +1142,7 @@ let getNextQuery = (
           }
 
           switch queryEndBlock {
+          | _ if nextFromBlock > maxQueryBlockNumber => ()
           | Some(endBlock)
             if nextFromBlock > endBlock => // The query should wait for the execution.
             // This is a valid case when endBlock is artifitially limited

@@ -74,18 +74,19 @@ describe("FetchState onBlock functionality", () => {
 
     // Simulate getting first batch of events by calling handleQueryResult
     // This should trigger the onBlock logic and add block items to the queue
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          toBlock: None,
-          isChunk: false,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
@@ -121,18 +122,19 @@ describe("FetchState onBlock functionality", () => {
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
 
     // Process a batch that goes from block 0 to 10
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          toBlock: None,
-          isChunk: false,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
@@ -169,18 +171,19 @@ describe("FetchState onBlock functionality", () => {
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
 
     // Process a batch that goes from block 0 to 10
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          toBlock: None,
-          isChunk: false,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
@@ -221,18 +224,19 @@ describe("FetchState onBlock functionality", () => {
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig1, onBlockConfig2]))
 
     // Process a batch
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          toBlock: None,
-          isChunk: false,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 12, blockTimestamp: 12 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
@@ -276,18 +280,19 @@ describe("FetchState onBlock functionality", () => {
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=None)
 
     // Process a batch
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          toBlock: None,
-          isChunk: false,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )

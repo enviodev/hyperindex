@@ -582,7 +582,10 @@ describe("E2E tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMockPrimary.source, sourceMockFallback.source]),
+            sourceConfig: Config.CustomSources([
+              sourceMockPrimary.source,
+              sourceMockFallback.source,
+            ]),
           },
         ],
       )
