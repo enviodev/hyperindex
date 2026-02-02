@@ -1516,93 +1516,10 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   )
 }
 
-// When resetting pending queries, preserve progress from already-fetched queries.
-// If there are fetched queries in the middle (with unfetched ones before them),
-// create gap partitions for the unfetched ranges and update latestFetchedBlock
-// to avoid re-fetching events that are already in the buffer.
+// Reset pending queries by rolling back to the current latestFullyFetchedBlock.
+// This discards any in-flight queries and their partial progress.
 let resetPendingQueries = (fetchState: t) => {
-  let newEntities = fetchState.optimizedPartitions.entities->Utils.Dict.shallowCopy
-  let nextPartitionIndexRef = ref(fetchState.optimizedPartitions.nextPartitionIndex)
-
-  for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
-    let partitionId = fetchState.optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
-    let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
-
-    if partition.mutPendingQueries->Array.length > 0 {
-      // Track the end of the last fetched region (partition's latestFetchedBlock or previous fetched query)
-      let lastFetchedEndRef = ref(partition.latestFetchedBlock.blockNumber)
-      let maxFetchedBlockRef = ref(partition.latestFetchedBlock)
-
-      // Process all pending queries - they may be interleaved: [fetching, fetched, fetching, fetched]
-      // Create gap partitions for unfetched ranges between fetched queries
-      for qIdx in 0 to partition.mutPendingQueries->Array.length - 1 {
-        let pq = partition.mutPendingQueries->Js.Array2.unsafe_get(qIdx)
-
-        switch pq.fetchedBlock {
-        | None => () // Unfetched query - will be covered by gap partitions
-        | Some(fetchedBlock) =>
-          // Create a gap partition for any unfetched range before this fetched query
-          let gapStart = lastFetchedEndRef.contents + 1
-          let gapEnd = pq.fromBlock - 1
-          if gapEnd >= gapStart {
-            let newPartitionId = nextPartitionIndexRef.contents->Int.toString
-            nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
-            newEntities->Js.Dict.set(
-              newPartitionId,
-              {
-                id: newPartitionId,
-                latestFetchedBlock: {
-                  blockNumber: gapStart - 1,
-                  blockTimestamp: 0,
-                },
-                selection: partition.selection,
-                addressesByContractName: partition.addressesByContractName,
-                endBlock: Some(gapEnd),
-                dynamicContract: partition.dynamicContract,
-                mutPendingQueries: [],
-                prevQueryRange: partition.prevQueryRange,
-                prevPrevQueryRange: partition.prevPrevQueryRange,
-                prevPrevPrevQueryRange: partition.prevPrevPrevQueryRange,
-              },
-            )
-          }
-
-          // For chunks, use toBlock as effective end (incomplete chunks create new partitions)
-          // For non-chunks, use fetchedBlock
-          let effectiveEndBlock = pq.isChunk ? pq.toBlock->Option.getUnsafe : fetchedBlock.blockNumber
-
-          // Update last fetched end and max fetched block
-          lastFetchedEndRef := effectiveEndBlock
-          if effectiveEndBlock > maxFetchedBlockRef.contents.blockNumber {
-            maxFetchedBlockRef :=
-              {
-                blockNumber: effectiveEndBlock,
-                blockTimestamp: pq.isChunk ? 0 : fetchedBlock.blockTimestamp,
-              }
-          }
-        }
-      }
-
-      newEntities->Js.Dict.set(
-        partitionId,
-        {
-          ...partition,
-          latestFetchedBlock: maxFetchedBlockRef.contents,
-          mutPendingQueries: [],
-        },
-      )
-    }
-  }
-
-  {
-    ...fetchState,
-    optimizedPartitions: OptimizedPartitions.make(
-      ~partitions=newEntities->Js.Dict.values,
-      ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-      ~nextPartitionIndex=nextPartitionIndexRef.contents,
-      ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-    ),
-  }
+  fetchState->rollback(~targetBlockNumber=fetchState.latestFullyFetchedBlock.blockNumber)
 }
 
 /**
