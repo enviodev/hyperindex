@@ -142,7 +142,6 @@ describe("SourceManager fetchNext", () => {
       addressesByContractName,
       endBlock: None,
       dynamicContract: None,
-      linkedFetchingPartition: None,
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
