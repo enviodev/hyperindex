@@ -1517,7 +1517,10 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
 }
 
 // Reset pending queries. If there are fetched queries in the middle (out-of-order completion),
-// rollback to the earliest such query's fromBlock - 1. Otherwise just clear mutPendingQueries.
+// it means we already have the events for those ranges, so we don't need to fetch them again.
+// We rollback to the earliest such query's fromBlock - 1. Otherwise just clear mutPendingQueries.
+// This is not the most efficient in terms of overfetching, but the simplest to implement.
+// Ideally we shouldn't stop handling queries on rollback.
 let resetPendingQueries = (fetchState: t) => {
   // Track earliest "fetched in middle" query's fromBlock for potential rollback
   let earliestFetchedInMiddleFromBlock = ref(None)
@@ -1557,11 +1560,7 @@ let resetPendingQueries = (fetchState: t) => {
   }
 
   switch earliestFetchedInMiddleFromBlock.contents {
-  | Some(fromBlock) =>
-    // Fetched queries in the middle - rollback to just before that query.
-    // This is not the most efficient in terms of overfetching, but the simplest
-    // to implement. Ideally we shouldn't stop handling queries on rollback.
-    fetchState->rollback(~targetBlockNumber=fromBlock - 1)
+  | Some(fromBlock) => fetchState->rollback(~targetBlockNumber=fromBlock - 1)
   | None =>
     // No fetched queries in middle - just use cleared pending queries
     {
