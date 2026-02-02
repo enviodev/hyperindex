@@ -443,22 +443,28 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let partitionIds = updatedFetchState.contents.optimizedPartitions.idsInAscOrder
     for idx in 0 to partitionIds->Array.length - 1 {
       let partitionId = partitionIds->Array.getUnsafe(idx)
+      let query: FetchState.query = {
+        partitionId,
+        fromBlock: 0,
+        selection: {eventConfigs: [], dependsOnAddresses: false},
+        addressesByContractName: Js.Dict.empty(),
+        toBlock: None,
+        indexingContracts: Js.Dict.empty(),
+        isChunk: false,
+      }
+      updatedFetchState.contents->FetchState.startFetchingQueries(~queries=[query])
       updatedFetchState :=
         updatedFetchState.contents->FetchState.handleQueryResult(
           ~latestFetchedBlock={
             blockNumber: latestFetchedBlockNumber.contents,
             blockTimestamp: 0,
           },
-          ~query={
-            partitionId,
-            fromBlock: 0,
-            selection: {eventConfigs: [], dependsOnAddresses: false},
-            addressesByContractName: Js.Dict.empty(),
-            toBlock: None,
-            indexingContracts: Js.Dict.empty(),
-            isChunk: false,
+          ~query,
+          ~newItems=if idx === 0 {
+            newItems
+          } else {
+            []
           },
-          ~newItems=if idx === 0 { newItems } else { [] },
         )
     }
 

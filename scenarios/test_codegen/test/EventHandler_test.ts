@@ -882,5 +882,4 @@ describe("Use Envio test framework to test event handlers", () => {
         "Cannot call User.set() while indexer.process() is running. Wait for process() to complete before modifying entities directly.",
     });
   });
-
 });

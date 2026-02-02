@@ -142,7 +142,6 @@ describe("SourceManager fetchNext", () => {
       addressesByContractName,
       endBlock: None,
       dynamicContract: None,
-      linkedFetchingPartition: None,
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
@@ -162,11 +161,11 @@ describe("SourceManager fetchNext", () => {
     let latestFullyFetchedBlock = ref((partitions->Js.Array2.unsafe_get(0)).latestFetchedBlock)
     let idsInAscOrder = []
     let entities = Js.Dict.empty()
-    
+
     partitions->Array.forEach(partition => {
       idsInAscOrder->Js.Array2.push(partition.id)->ignore
       entities->Js.Dict.set(partition.id, partition)
-      
+
       if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
         latestFullyFetchedBlock := partition.latestFetchedBlock
       }
@@ -1249,7 +1248,7 @@ describe("SourceManager.executeQuery", () => {
     partitionId: "0",
     fromBlock: 0,
     toBlock: None,
-            isChunk: false,
+    isChunk: false,
     selection,
     addressesByContractName,
     indexingContracts: Js.Dict.empty(),
