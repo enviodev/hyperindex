@@ -1516,31 +1516,60 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   )
 }
 
-// FIXME: When we reset pending queries
-// and there's some fetched queries in the middle
-// it means we already have the events,
-// so we don't need to fetch them again
-// It means we need to create partitions for
-// unfinished queries before and update original partition latest fetched block
+// Reset pending queries. If there are fetched queries in the middle (out-of-order completion),
+// it means we already have the events for those ranges, so we don't need to fetch them again.
+// We rollback to the earliest such query's fromBlock - 1. Otherwise just clear mutPendingQueries.
+// This is not the most efficient in terms of overfetching, but the simplest to implement.
+// Ideally we shouldn't stop handling queries on rollback.
 let resetPendingQueries = (fetchState: t) => {
-  let newEntities = Js.Dict.empty()
+  // Track earliest "fetched in middle" query's fromBlock for potential rollback
+  let earliestFetchedInMiddleFromBlock = ref(None)
+  let newEntities = fetchState.optimizedPartitions.entities->Utils.Dict.shallowCopy
+
   for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
     let partitionId = fetchState.optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
     let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
-    newEntities->Js.Dict.set(
-      partitionId,
-      {
-        ...partition,
-        mutPendingQueries: [],
-      },
-    )
+
+    if partition.mutPendingQueries->Array.length > 0 {
+      // Look for pattern: [fetching, fetched, ...] and track earliest fromBlock
+      let sawUnfetched = ref(false)
+      for qIdx in 0 to partition.mutPendingQueries->Array.length - 1 {
+        let pq = partition.mutPendingQueries->Js.Array2.unsafe_get(qIdx)
+        switch pq.fetchedBlock {
+        | None => sawUnfetched := true
+        | Some(_) if sawUnfetched.contents =>
+          earliestFetchedInMiddleFromBlock :=
+            Some(
+              switch earliestFetchedInMiddleFromBlock.contents {
+              | None => pq.fromBlock
+              | Some(existing) => Pervasives.min(existing, pq.fromBlock)
+              },
+            )
+        | Some(_) => ()
+        }
+      }
+
+      newEntities->Js.Dict.set(
+        partitionId,
+        {
+          ...partition,
+          mutPendingQueries: [],
+        },
+      )
+    }
   }
-  {
-    ...fetchState,
-    optimizedPartitions: {
-      ...fetchState.optimizedPartitions,
-      entities: newEntities,
-    },
+
+  switch earliestFetchedInMiddleFromBlock.contents {
+  | Some(fromBlock) => fetchState->rollback(~targetBlockNumber=fromBlock - 1)
+  | None =>
+    // No fetched queries in middle - just use cleared pending queries
+    {
+      ...fetchState,
+      optimizedPartitions: {
+        ...fetchState.optimizedPartitions,
+        entities: newEntities,
+      },
+    }
   }
 }
 
