@@ -54,6 +54,72 @@ type query = {
   indexingContracts: dict<Internal.indexingContract>,
 }
 
+// Random number from my head
+// Not super critical if it's too big or too small
+// We optimize for fastest data which we get in any case.
+// If the value is off, it'll only result in
+// quering the same block range multiple times
+let tooFarBlockRange = 20_000
+
+/**
+ * Groups addresses by startBlock ranges, respecting tooFarBlockRange threshold.
+ * Returns array of (startBlock, addresses) tuples.
+ *
+ * If filterByAddresses is true, each startBlock gets its own group.
+ * Otherwise, startBlocks within tooFarBlockRange are merged together.
+ */
+let groupAddressesByStartBlockRange = (
+  ~byStartBlock: dict<array<Address.t>>,
+  ~filterByAddresses: bool,
+): array<(int, array<Address.t>)> => {
+  // JS engine automatically sorts integer-like string keys in objects
+  let ascKeys = byStartBlock->Js.Dict.keys
+
+  if ascKeys->Array.length === 0 {
+    []
+  } else {
+    let groups = []
+    let startBlockRef = ref(ascKeys->Js.Array2.unsafe_get(0)->Int.fromString->Option.getUnsafe)
+    let addressesRef = ref(byStartBlock->Js.Dict.unsafeGet(ascKeys->Js.Array2.unsafe_get(0)))
+
+    for idx in 0 to ascKeys->Array.length - 1 {
+      let maybeNextKey =
+        ascKeys->Js.Array2.unsafe_get(idx + 1)->(Utils.magic: string => option<string>)
+
+      let shouldCreateGroup = if filterByAddresses {
+        // For filterByAddresses, each startBlock must be separate
+        true
+      } else {
+        switch maybeNextKey {
+        | None => true
+        | Some(nextKey) =>
+          let nextStartBlock = nextKey->Int.fromString->Option.getUnsafe
+          let shouldJoin = nextStartBlock - startBlockRef.contents < tooFarBlockRange
+          if shouldJoin {
+            addressesRef :=
+              addressesRef.contents->Array.concat(byStartBlock->Js.Dict.unsafeGet(nextKey))
+            false
+          } else {
+            true
+          }
+        }
+      }
+
+      if shouldCreateGroup {
+        groups->Array.push((startBlockRef.contents, addressesRef.contents))
+        switch maybeNextKey {
+        | None => ()
+        | Some(nextKey) =>
+          startBlockRef := nextKey->Int.fromString->Option.getUnsafe
+          addressesRef := byStartBlock->Js.Dict.unsafeGet(nextKey)
+        }
+      }
+    }
+
+    groups
+  }
+}
+
 module OptimizedPartitions = {
   type t = {
     idsInAscOrder: array<string>,
@@ -147,13 +213,6 @@ module OptimizedPartitions = {
       })
     }
   }
-
-  // Random number from my head
-  // Not super critical if it's too big or too small
-  // We optimize for fastest data which we get in any case.
-  // If the value is off, it'll only result in
-  // quering the same block range multiple times
-  let tooFarBlockRange = 20_000
 
   let ascSortFn = (a, b) => a.latestFetchedBlock.blockNumber - b.latestFetchedBlock.blockNumber
 
@@ -860,99 +919,55 @@ let registerDynamicContracts = (
         // that don't have any events to fetch
         let contractConfig = fetchState.contractConfigs->Js.Dict.unsafeGet(contractName)
 
+        // Group addresses by startBlock
         let byStartBlock = Js.Dict.empty()
-
-        // I use for loops instead of forEach, so ReScript better inlines ref access
         for jdx in 0 to addresses->Array.length - 1 {
           let address = addresses->Js.Array2.unsafe_get(jdx)
           let indexingContract = registeringContracts->Js.Dict.unsafeGet(address->Address.toString)
-
           byStartBlock->Utils.Dict.push(indexingContract.startBlock->Int.toString, address)
         }
 
-        // Will be in the ASC order by Js spec
-        let ascKeys = byStartBlock->Js.Dict.keys
+        // Use shared helper to group by startBlock ranges
+        let groups = groupAddressesByStartBlockRange(
+          ~byStartBlock,
+          ~filterByAddresses=contractConfig.filterByAddresses,
+        )
 
-        let initialKey = ascKeys->Js.Array2.unsafe_get(0)
-
-        let startBlockRef = ref(initialKey->Int.fromString->Option.getUnsafe)
-        let addressesRef = ref(byStartBlock->Js.Dict.unsafeGet(initialKey))
-
-        for idx in 0 to ascKeys->Js.Array2.length - 1 {
-          let maybeNextStartBlockKey =
-            ascKeys->Js.Array2.unsafe_get(idx + 1)->(Utils.magic: string => option<string>)
-          // For this case we can't filter out events earlier than contract registration
-          // on the client side, so we need to keep the old logic of creating
-          // a partition for every block range, so there are no irrelevant events
-          let shouldAllocateNewPartition = if contractConfig.filterByAddresses {
-            true
-          } else {
-            switch maybeNextStartBlockKey {
-            | None => true
-            | Some(nextStartBlockKey) => {
-                let nextStartBlock = nextStartBlockKey->Int.fromString->Option.getUnsafe
-                let shouldJoinCurrentStartBlock =
-                  nextStartBlock - startBlockRef.contents < OptimizedPartitions.tooFarBlockRange
-
-                // If dynamic contract registration are close to eachother
-                // and it's possible to use dc.startBlock to filter out events on client side
-                // then we can optimize the number of partitions,
-                // by putting dcs with different startBlocks in the same partition
-                if shouldJoinCurrentStartBlock {
-                  addressesRef :=
-                    addressesRef.contents->Array.concat(
-                      byStartBlock->Js.Dict.unsafeGet(nextStartBlockKey),
-                    )
-                  false
-                } else {
-                  true
-                }
-              }
-            }
+        // Create partitions from groups
+        groups->Array.forEach(((groupStartBlock, groupAddresses)) => {
+          let latestFetchedBlock = {
+            blockNumber: Pervasives.max(groupStartBlock - 1, 0),
+            blockTimestamp: 0,
           }
+          let addressesRef = ref(groupAddresses)
+          while addressesRef.contents->Array.length > 0 {
+            let pAddresses =
+              addressesRef.contents->Js.Array2.slice(
+                ~start=0,
+                ~end_=fetchState.optimizedPartitions.maxAddrInPartition,
+              )
+            addressesRef.contents =
+              addressesRef.contents->Js.Array2.sliceFrom(
+                fetchState.optimizedPartitions.maxAddrInPartition,
+              )
 
-          if shouldAllocateNewPartition {
-            let latestFetchedBlock = {
-              blockNumber: Pervasives.max(startBlockRef.contents - 1, 0),
-              blockTimestamp: 0,
-            }
-            while addressesRef.contents->Array.length > 0 {
-              let pAddresses =
-                addressesRef.contents->Js.Array2.slice(
-                  ~start=0,
-                  ~end_=fetchState.optimizedPartitions.maxAddrInPartition,
-                )
-              addressesRef.contents =
-                addressesRef.contents->Js.Array2.sliceFrom(
-                  fetchState.optimizedPartitions.maxAddrInPartition,
-                )
-
-              let addressesByContractName = Js.Dict.empty()
-              addressesByContractName->Js.Dict.set(contractName, pAddresses)
-              newPartitions->Array.push({
-                id: (fetchState.optimizedPartitions.nextPartitionIndex +
-                newPartitions->Array.length)->Int.toString,
-                latestFetchedBlock,
-                selection: fetchState.normalSelection,
-                dynamicContract: Some(contractName),
-                addressesByContractName,
-                endBlock: None,
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                prevPrevPrevQueryRange: 0,
-              })
-            }
-
-            switch maybeNextStartBlockKey {
-            | None => ()
-            | Some(nextStartBlockKey) => {
-                startBlockRef := nextStartBlockKey->Int.fromString->Option.getUnsafe
-                addressesRef := byStartBlock->Js.Dict.unsafeGet(nextStartBlockKey)
-              }
-            }
+            let addressesByContractName = Js.Dict.empty()
+            addressesByContractName->Js.Dict.set(contractName, pAddresses)
+            newPartitions->Array.push({
+              id: (fetchState.optimizedPartitions.nextPartitionIndex +
+              newPartitions->Array.length)->Int.toString,
+              latestFetchedBlock,
+              selection: fetchState.normalSelection,
+              dynamicContract: Some(contractName),
+              addressesByContractName,
+              endBlock: None,
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              prevPrevPrevQueryRange: 0,
+            })
           }
-        }
+        })
       }
 
       fetchState->updateInternal(
@@ -1354,61 +1369,19 @@ let make = (
       }
     })
 
-    // Step 2: Create startBlock groups for each contract
+    // Step 2: Create startBlock groups for each contract using shared helper
     // Each group: (startBlock, addresses, contractName)
     let groups: array<(int, array<Address.t>, string)> = []
 
     byContractName->Utils.Dict.forEachWithKey((byStartBlock, contractName) => {
       let contractConfig = contractConfigs->Js.Dict.unsafeGet(contractName)
-
-      // Sort startBlocks in ascending order numerically
-      let ascKeys = byStartBlock->Js.Dict.keys
-      let _ = ascKeys->Js.Array2.sortInPlaceWith((a, b) => {
-        (a->Int.fromString->Option.getExn) - (b->Int.fromString->Option.getExn)
+      let contractGroups = groupAddressesByStartBlockRange(
+        ~byStartBlock,
+        ~filterByAddresses=contractConfig.filterByAddresses,
+      )
+      contractGroups->Array.forEach(((startBlock, addresses)) => {
+        groups->Array.push((startBlock, addresses, contractName))
       })
-
-      if ascKeys->Array.length > 0 {
-        let startBlockRef = ref(ascKeys->Js.Array2.unsafe_get(0)->Int.fromString->Option.getExn)
-        let addressesRef = ref(byStartBlock->Js.Dict.unsafeGet(ascKeys->Js.Array2.unsafe_get(0)))
-
-        for idx in 0 to ascKeys->Array.length - 1 {
-          let maybeNextKey = if idx + 1 < ascKeys->Array.length {
-            Some(ascKeys->Js.Array2.unsafe_get(idx + 1))
-          } else {
-            None
-          }
-
-          let shouldCreateGroup = if contractConfig.filterByAddresses {
-            // For filterByAddresses, each startBlock must be separate
-            true
-          } else {
-            switch maybeNextKey {
-            | None => true
-            | Some(nextKey) =>
-              let nextStartBlock = nextKey->Int.fromString->Option.getExn
-              let shouldJoin =
-                nextStartBlock - startBlockRef.contents < OptimizedPartitions.tooFarBlockRange
-              if shouldJoin {
-                addressesRef :=
-                  addressesRef.contents->Array.concat(byStartBlock->Js.Dict.unsafeGet(nextKey))
-                false
-              } else {
-                true
-              }
-            }
-          }
-
-          if shouldCreateGroup {
-            groups->Array.push((startBlockRef.contents, addressesRef.contents, contractName))
-            switch maybeNextKey {
-            | None => ()
-            | Some(nextKey) =>
-              startBlockRef := nextKey->Int.fromString->Option.getExn
-              addressesRef := byStartBlock->Js.Dict.unsafeGet(nextKey)
-            }
-          }
-        }
-      }
     })
 
     // Sort groups by startBlock for deterministic partition ordering
@@ -1439,7 +1412,7 @@ let make = (
               let hasSpace = currentCount + chunk->Array.length <= maxAddrInPartition
               let sameBucket =
                 Js.Math.abs_int(minStartBlockRef.contents - groupStartBlock) <
-                  OptimizedPartitions.tooFarBlockRange
+                  tooFarBlockRange
 
               // Check if target partition contracts allow merging
               let targetAllowsMerge =
