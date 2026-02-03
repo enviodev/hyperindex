@@ -494,6 +494,7 @@ module Source = {
     getItemsOrThrowCalls: array<{"fromBlock": int, "toBlock": option<int>, "retry": int}>,
     resolveGetItemsOrThrow: (
       array<itemMock>,
+      ~resolveAt: [#first | #all | #last]=?,
       ~latestFetchedBlockNumber: int=?,
       ~latestFetchedBlockHash: string=?,
       ~knownHeight: int=?,
@@ -544,24 +545,39 @@ module Source = {
       getItemsOrThrowCalls,
       resolveGetItemsOrThrow: (
         items,
+        ~resolveAt=#all,
         ~latestFetchedBlockNumber=?,
         ~latestFetchedBlockHash=?,
         ~knownHeight=?,
         ~prevRangeLastBlock=?,
       ) => {
-        if getItemsOrThrowResolveFns->Utils.Array.isEmpty {
-          Js.Exn.raiseError("getItemsOrThrowResolveFns is empty")
+        let fns = switch resolveAt {
+        | #first => getItemsOrThrowResolveFns->Js.Array2.removeCountInPlace(~pos=0, ~count=1)
+        | #all => {
+            let copy = getItemsOrThrowResolveFns->Utils.Array.copy
+            getItemsOrThrowResolveFns->Utils.Array.clearInPlace
+            copy
+          }
+        | #last =>
+          getItemsOrThrowResolveFns->Js.Array2.removeCountInPlace(
+            ~pos=getItemsOrThrowResolveFns->Array.length - 1,
+            ~count=1,
+          )
         }
-        getItemsOrThrowResolveFns->Array.forEach(resolve =>
-          resolve({
-            "items": items,
-            "latestFetchedBlockNumber": latestFetchedBlockNumber,
-            "latestFetchedBlockHash": latestFetchedBlockHash,
-            "prevRangeLastBlock": prevRangeLastBlock,
-            "knownHeight": knownHeight,
-          })
-        )
-        getItemsOrThrowResolveFns->Utils.Array.clearInPlace
+
+        switch fns {
+        | [] => Js.Exn.raiseError("getItemsOrThrowResolveFns is empty")
+        | fns =>
+          fns->Array.forEach(fn =>
+            fn({
+              "items": items,
+              "latestFetchedBlockNumber": latestFetchedBlockNumber,
+              "latestFetchedBlockHash": latestFetchedBlockHash,
+              "prevRangeLastBlock": prevRangeLastBlock,
+              "knownHeight": knownHeight,
+            })
+          )
+        }
       },
       rejectGetItemsOrThrow: exn => {
         getItemsOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))

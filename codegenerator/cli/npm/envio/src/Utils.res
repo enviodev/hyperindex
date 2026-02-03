@@ -358,6 +358,7 @@ Helper to check if a value exists in an array
   }
 
   let last = (arr: array<'a>): option<'a> => arr->Belt.Array.get(arr->Array.length - 1)
+  let first = (arr: array<'a>): option<'a> => arr->Belt.Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Belt.Array.getUnsafe(arr->Array.length - 1)
 

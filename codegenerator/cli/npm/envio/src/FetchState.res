@@ -41,7 +41,6 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
-  prevPrevPrevQueryRange: int,
 }
 
 type query = {
@@ -113,7 +112,6 @@ module OptimizedPartitions = {
           // Keep query range history from original partition
           prevQueryRange: p1.prevQueryRange,
           prevPrevQueryRange: p1.prevPrevQueryRange,
-          prevPrevPrevQueryRange: p1.prevPrevPrevQueryRange,
         },
         {
           id: p2Id,
@@ -126,7 +124,6 @@ module OptimizedPartitions = {
           // Keep query range history from original partition
           prevQueryRange: p1.prevQueryRange,
           prevPrevQueryRange: p1.prevPrevQueryRange,
-          prevPrevPrevQueryRange: p1.prevPrevPrevQueryRange,
         },
       )
     } else {
@@ -143,7 +140,6 @@ module OptimizedPartitions = {
         // Keep query range history from original partition
         prevQueryRange: p1.prevQueryRange,
         prevPrevQueryRange: p1.prevPrevQueryRange,
-        prevPrevPrevQueryRange: p1.prevPrevPrevQueryRange,
       })
     }
   }
@@ -312,14 +308,7 @@ module OptimizedPartitions = {
         (mutPendingQueries->Js.Array2.unsafe_get(0)).fetchedBlock !== None
     ) {
       let removedQuery = mutPendingQueries->Js.Array2.shift->Option.getUnsafe
-      latestFetchedBlock := (
-          removedQuery.isChunk
-            ? {
-                blockNumber: removedQuery.toBlock->Option.getUnsafe,
-                blockTimestamp: 0,
-              }
-            : removedQuery.fetchedBlock->Option.getUnsafe
-        )
+      latestFetchedBlock := removedQuery.fetchedBlock->Option.getUnsafe
     }
 
     latestFetchedBlock.contents
@@ -365,13 +354,12 @@ module OptimizedPartitions = {
     }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
-    let updatedPrevPrevPrevQueryRange = shouldUpdateBlockRange
-      ? p.prevPrevQueryRange
-      : p.prevPrevPrevQueryRange
 
     // Create remaining partition only for chunks that didn't reach toBlock
     switch query.toBlock {
     | Some(queryToBlock) if query.isChunk && latestFetchedBlock.blockNumber < queryToBlock =>
+      // FIXME: During rollback this might result in two duplicate partitions
+      // Let's keep a single partition instead and update query logic to finish fetching the remaining blocks
       let newPartitionId = nextPartitionIndexRef.contents->Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
       mutEntities->Js.Dict.set(
@@ -386,7 +374,6 @@ module OptimizedPartitions = {
           mutPendingQueries: [],
           prevQueryRange: updatedPrevQueryRange,
           prevPrevQueryRange: updatedPrevPrevQueryRange,
-          prevPrevPrevQueryRange: updatedPrevPrevPrevQueryRange,
         },
       )
 
@@ -413,7 +400,6 @@ module OptimizedPartitions = {
         latestFetchedBlock: updatedLatestFetchedBlock,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
-        prevPrevPrevQueryRange: updatedPrevPrevPrevQueryRange,
       }
 
       mutEntities->Js.Dict.set(p.id, updatedMainPartition)
@@ -840,7 +826,6 @@ let registerDynamicContracts = (
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
-                        prevPrevPrevQueryRange: p.prevPrevPrevQueryRange,
                       })
                     }
                   }
@@ -940,7 +925,6 @@ let registerDynamicContracts = (
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
-                prevPrevPrevQueryRange: 0,
               })
             }
 
@@ -1041,10 +1025,9 @@ let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address
 
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
 let getChunkRangeFromHistory = (p: partition) => {
-  switch (p.prevQueryRange, p.prevPrevQueryRange, p.prevPrevPrevQueryRange) {
-  | (0, _, _) | (_, 0, _) => None
-  | (a, b, 0) => Some(a < b ? a : b)
-  | (a, b, c) => Some(Js.Math.minMany_int([a, b, c]))
+  switch (p.prevQueryRange, p.prevPrevQueryRange) {
+  | (0, _) | (_, 0) => None
+  | (a, b) => Some(a < b ? a : b)
   }
 }
 
@@ -1327,7 +1310,6 @@ let make = (
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
-      prevPrevPrevQueryRange: 0,
     })
   }
 
@@ -1350,7 +1332,6 @@ let make = (
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
-          prevPrevPrevQueryRange: 0,
         }
       }
 
@@ -1468,7 +1449,6 @@ let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) =
         mutPendingQueries: [],
         prevQueryRange: p.prevQueryRange,
         prevPrevQueryRange: p.prevPrevQueryRange,
-        prevPrevPrevQueryRange: p.prevPrevPrevQueryRange,
       })
     }
   }
@@ -1562,8 +1542,7 @@ let resetPendingQueries = (fetchState: t) => {
 
   switch earliestFetchedInMiddleFromBlock.contents {
   | Some(fromBlock) => fetchState->rollback(~targetBlockNumber=fromBlock - 1)
-  | None =>
-    // No fetched queries in middle - just use cleared pending queries
+  | None => // No fetched queries in middle - just use cleared pending queries
     {
       ...fetchState,
       optimizedPartitions: {

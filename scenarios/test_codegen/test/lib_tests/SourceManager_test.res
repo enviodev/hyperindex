@@ -145,7 +145,6 @@ describe("SourceManager fetchNext", () => {
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
-      prevPrevPrevQueryRange: 0,
     }
   }
 
@@ -157,15 +156,9 @@ describe("SourceManager fetchNext", () => {
     ~knownHeight,
   ): FetchState.t => {
     let indexingContracts = Js.Dict.empty()
-
     let latestFullyFetchedBlock = ref((partitions->Js.Array2.unsafe_get(0)).latestFetchedBlock)
-    let idsInAscOrder = []
-    let entities = Js.Dict.empty()
 
     partitions->Array.forEach(partition => {
-      idsInAscOrder->Js.Array2.push(partition.id)->ignore
-      entities->Js.Dict.set(partition.id, partition)
-
       if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
         latestFullyFetchedBlock := partition.latestFetchedBlock
       }
@@ -190,13 +183,12 @@ describe("SourceManager fetchNext", () => {
       )
     })
 
-    let optimizedPartitions: FetchState.OptimizedPartitions.t = {
-      idsInAscOrder,
-      entities,
-      maxAddrInPartition: 2,
-      nextPartitionIndex: partitions->Array.length,
-      dynamicContracts: Utils.Set.make(),
-    }
+    let optimizedPartitions = FetchState.OptimizedPartitions.make(
+      ~partitions,
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=partitions->Array.length,
+      ~dynamicContracts=Utils.Set.make(),
+    )
 
     {
       optimizedPartitions,
@@ -253,6 +245,15 @@ describe("SourceManager fetchNext", () => {
         executeQueryMock.calls,
         [
           {
+            partitionId: "2",
+            fromBlock: 2,
+            toBlock: None,
+            isChunk: false,
+            selection: normalSelection,
+            addressesByContractName: partition2.addressesByContractName,
+            indexingContracts: fetchState.indexingContracts,
+          },
+          {
             partitionId: "0",
             fromBlock: 5,
             toBlock: None,
@@ -270,16 +271,8 @@ describe("SourceManager fetchNext", () => {
             addressesByContractName: partition1.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
           },
-          {
-            partitionId: "2",
-            fromBlock: 2,
-            toBlock: None,
-            isChunk: false,
-            selection: normalSelection,
-            addressesByContractName: partition2.addressesByContractName,
-            indexingContracts: fetchState.indexingContracts,
-          },
         ],
+        ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
       )
 
       executeQueryMock.resolveAll()
@@ -611,7 +604,7 @@ describe("SourceManager fetchNext", () => {
     // can't do anything since we account
     // for running fetches from the prev state
     await sourceManager->SourceManager.fetchNext(
-      ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10),
+      ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10)->FetchState.resetPendingQueries,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
@@ -633,7 +626,10 @@ describe("SourceManager fetchNext", () => {
     // The same call with stateId=1 will trigger execution of two earliest queries
     let fetchNextPromise3 =
       sourceManager->SourceManager.fetchNext(
-        ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10),
+        ~fetchState=mockFetchState(
+          [p0, p1, p2, p3],
+          ~knownHeight=10,
+        )->FetchState.resetPendingQueries,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
