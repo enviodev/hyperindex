@@ -30,22 +30,6 @@ let calculateTargetBufferSize = (~activeChainsCount) => {
   }
 }
 
-let makeFromConfig = (~config: Config.t, ~registrations): t => {
-  let targetBufferSize = calculateTargetBufferSize(
-    ~activeChainsCount=config.chainMap->ChainMap.size,
-  )
-  let chainFetchers =
-    config.chainMap->ChainMap.map(
-      ChainFetcher.makeFromConfig(_, ~config, ~registrations, ~targetBufferSize),
-    )
-  {
-    committedCheckpointId: 0.,
-    chainFetchers,
-    multichain: config.multichain,
-    isInReorgThreshold: false,
-  }
-}
-
 let makeFromDbState = async (
   ~initialState: Persistence.initialState,
   ~config: Config.t,

@@ -394,6 +394,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       ~config,
       ~registrations=ctx.registrations,
       ~targetBufferSize=5000,
+      ~knownHeight=latestFetchedBlockNumber.contents,
     )
 
     //Deep copy the data in mockDb, mutate the clone and return the clone

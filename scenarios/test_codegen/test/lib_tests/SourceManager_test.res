@@ -196,7 +196,6 @@ describe("SourceManager fetchNext", () => {
       endBlock,
       buffer,
       normalSelection,
-      latestFullyFetchedBlock: latestFullyFetchedBlock.contents,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       targetBufferSize,
       chainId: 0,

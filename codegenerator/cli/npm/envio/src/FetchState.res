@@ -29,6 +29,8 @@ the are getting merged until the maxAddrInPartition is reached.
 */
 type partition = {
   id: string,
+  // The block number of the latest fetched query
+  // which added all its events to the queue
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
@@ -414,6 +416,7 @@ module OptimizedPartitions = {
     )
   }
 
+  @inline
   let getLatestFullyFetchedBlock = (optimizedPartitions: t) => {
     switch optimizedPartitions.idsInAscOrder->Array.get(0) {
     | Some(id) => Some((optimizedPartitions.entities->Js.Dict.unsafeGet(id)).latestFetchedBlock)
@@ -433,9 +436,6 @@ type t = {
   contractConfigs: dict<contractConfig>,
   // Not used for logic - only metadata
   chainId: int,
-  // The block number of the latest block fetched
-  // which added all its events to the queue
-  latestFullyFetchedBlock: blockNumberAndTimestamp,
   // The block number of the latest block which was added to the queue
   // by the onBlock configs
   // Need a separate pointer for this
@@ -454,23 +454,34 @@ type t = {
 }
 
 @inline
-let bufferBlockNumber = ({latestFullyFetchedBlock, latestOnBlockBlockNumber}: t) => {
-  latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
-    ? latestOnBlockBlockNumber
-    : latestFullyFetchedBlock.blockNumber
+let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => {
+  switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+  | None => latestOnBlockBlockNumber
+  | Some(latestFullyFetchedBlock) =>
+    latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
+      ? latestOnBlockBlockNumber
+      : latestFullyFetchedBlock.blockNumber
+  }
 }
 
 /**
 * Returns the latest block which is ready to be consumed
 */
 @inline
-let bufferBlock = ({latestFullyFetchedBlock, latestOnBlockBlockNumber}: t) => {
-  latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
-    ? {
-        blockNumber: latestOnBlockBlockNumber,
-        blockTimestamp: 0,
-      }
-    : latestFullyFetchedBlock
+let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
+  switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+  | None => {
+      blockNumber: latestOnBlockBlockNumber,
+      blockTimestamp: 0,
+    }
+  | Some(latestFullyFetchedBlock) =>
+    latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
+      ? {
+          blockNumber: latestOnBlockBlockNumber,
+          blockTimestamp: 0,
+        }
+      : latestFullyFetchedBlock
+  }
 }
 
 /*
@@ -502,21 +513,10 @@ let updateInternal = (
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
 ): t => {
-  let latestFullyFetchedBlock = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-  | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
-  | None => {
-      blockNumber: knownHeight,
-      // The case is only possible when using only block handlers
-      // so it's fine to have a zero timestamp
-      // since we don't support ordered multichain mode anyways
-      blockTimestamp: 0,
-    }
-  }
-
   let mutItemsRef = ref(mutItems)
 
   let latestOnBlockBlockNumber = switch fetchState.onBlockConfigs {
-  | [] => latestFullyFetchedBlock.blockNumber
+  | [] => knownHeight
   | onBlockConfigs => {
       // Calculate the max block number we are going to create items for
       // Use targetBufferSize to get the last target item in the buffer
@@ -530,7 +530,11 @@ let updateInternal = (
       | None => fetchState.buffer
       }->Belt.Array.get(fetchState.targetBufferSize - 1) {
       | Some(item) => item->Internal.getItemBlockNumber
-      | None => latestFullyFetchedBlock.blockNumber
+      | None =>
+        switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+        | None => knownHeight
+        | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
+        }
       }
 
       let mutItems = switch mutItemsRef.contents {
@@ -595,7 +599,6 @@ let updateInternal = (
     targetBufferSize: fetchState.targetBufferSize,
     optimizedPartitions,
     latestOnBlockBlockNumber,
-    latestFullyFetchedBlock,
     indexingContracts,
     blockLag,
     knownHeight,
@@ -1388,7 +1391,6 @@ let make = (
     chainId,
     startBlock,
     endBlock,
-    latestFullyFetchedBlock: latestFetchedBlock,
     latestOnBlockBlockNumber: progressBlockNumber,
     normalSelection,
     indexingContracts,
