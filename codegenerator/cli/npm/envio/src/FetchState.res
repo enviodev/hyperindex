@@ -228,6 +228,13 @@ module OptimizedPartitions = {
       let contractPartitionAggregate = mergingPartitions->Js.Dict.unsafeGet(contractName)
       // JS engine automatically sorts number keys in objects
       let ascPartitionKeys = contractPartitionAggregate->Js.Dict.keys
+
+      // But -1 is placed last...
+      if ascPartitionKeys->Js.Array2.unsafe_get(ascPartitionKeys->Array.length - 1) === "-1" {
+        ascPartitionKeys
+        ->Js.Array2.unshift(ascPartitionKeys->Js.Array2.pop->Option.getUnsafe)
+        ->ignore
+      }
       let currentPRef = ref(
         contractPartitionAggregate->Js.Dict.unsafeGet(ascPartitionKeys->Js.Array2.unsafe_get(0)),
       )
