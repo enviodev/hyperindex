@@ -156,7 +156,7 @@ describe("SourceManager fetchNext", () => {
     ~knownHeight,
   ): FetchState.t => {
     let indexingContracts = Js.Dict.empty()
-    let latestFullyFetchedBlock = ref((partitions->Js.Array2.unsafe_get(0)).latestFetchedBlock)
+    let latestFullyFetchedBlock = ref((partitions->Utils.Array.firstUnsafe).latestFetchedBlock)
 
     partitions->Array.forEach(partition => {
       if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
@@ -540,7 +540,7 @@ describe("SourceManager fetchNext", () => {
       ~message=`Should add a new call after a rollback`,
     )
 
-    (waitForNewBlockMock.resolveFns->Js.Array2.unsafe_get(0))(7)
+    (waitForNewBlockMock.resolveFns->Utils.Array.firstUnsafe)(7)
     (waitForNewBlockMock.resolveFns->Js.Array2.unsafe_get(1))(6)
 
     await fetchNextPromise
@@ -610,7 +610,7 @@ describe("SourceManager fetchNext", () => {
       ~stateId=1,
     )
 
-    (executeQueryMock.resolveFns->Js.Array2.unsafe_get(0))()
+    (executeQueryMock.resolveFns->Utils.Array.firstUnsafe)()
     (executeQueryMock.resolveFns->Js.Array2.unsafe_get(1))()
 
     // After resolving one the call with prev stateId won't do anything
@@ -1255,32 +1255,33 @@ describe("SourceManager.executeQuery", () => {
     ])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
-    Assert.deepEqual(getItemsOrThrowCalls, [{"fromBlock": 0, "toBlock": None, "retry": 0}])
+    Assert.deepEqual(
+      getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      [{"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"}],
+    )
     resolveGetItemsOrThrow([])
     Assert.deepEqual((await p).parsedQueueItems, [])
   })
 
   Async.it("Rethrows unknown errors", async () => {
-    let {source, rejectGetItemsOrThrow} = Mock.Source.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
+    let sourceMock = Mock.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(
+      ~sources=[sourceMock.source],
+      ~maxPartitionConcurrency=10,
+    )
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
     let error = {
       "message": "Something went wrong",
     }
-    rejectGetItemsOrThrow(error)
+    sourceMock.getItemsOrThrowCalls->Js.Array2.forEach(call => call.reject(error))
     await Assert.rejects(() => p, ~error)
   })
 
   Async.it("Immediately retries with the suggested toBlock", async () => {
-    let {
-      source,
-      resolveGetItemsOrThrow,
-      getItemsOrThrowCalls,
-      rejectGetItemsOrThrow,
-    } = Mock.Source.make([#getItemsOrThrow])
+    let sourceMock = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
       ~sources=[
-        source,
+        sourceMock.source,
         // Added second source without mock to the test,
         // to verify that we don't switch to it
         Mock.Source.make([]).source,
@@ -1288,7 +1289,12 @@ describe("SourceManager.executeQuery", () => {
       ~maxPartitionConcurrency=10,
     )
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
-    rejectGetItemsOrThrow(
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Array.length,
+      1,
+      ~message="Should call getItemsOrThrow",
+    )
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
       Source.GetItemsError(
         FailedGettingItems({
           exn: %raw(`null`),
@@ -1298,38 +1304,41 @@ describe("SourceManager.executeQuery", () => {
       ),
     )
     Assert.deepEqual(
-      getItemsOrThrowCalls->Array.length,
-      1,
-      ~message="Only one call before the microtask",
+      sourceMock.getItemsOrThrowCalls->Array.length,
+      0,
+      ~message="No new calls before the microtask",
     )
     await Promise.resolve() // Wait for microtask, so the rejection is caught
-    Assert.deepEqual(
-      getItemsOrThrowCalls,
-      [
-        {"fromBlock": 0, "toBlock": None, "retry": 0},
-        {"fromBlock": 0, "toBlock": Some(10), "retry": 0},
-      ],
-      ~message="Should reset retry count on WithSuggestedToBlock error",
-    )
 
-    resolveGetItemsOrThrow([])
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => {
+        Assert.deepEqual(
+          call.payload,
+          {"fromBlock": 0, "toBlock": Some(10), "retry": 0, "p": "0"},
+          ~message=`Should reset retry count on WithSuggestedToBlock error`,
+        )
+        call.resolve([])
+      }
+    | _ => Assert.fail("Should have a new call after the microtask")
+    }
+
     Assert.deepEqual((await p).parsedQueueItems, [])
   })
 
   Async.it(
     "When there are multiple sync sources, it retries 2 times and then immediately switches to another source without waiting for backoff. After that it switches every second retry",
     async () => {
-      let mock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
-      let mock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
+      let sourceMock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let sourceMock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockFallbackStallTimeout = 0
       let sourceManager = SourceManager.make(
         ~newBlockFallbackStallTimeout,
         ~sources=[
-          mock0.source,
+          sourceMock0.source,
           // Should be skipped until the 10th retry,
           // but we won't test it here
           Mock.Source.make([], ~sourceFor=Fallback).source,
-          mock1.source,
+          sourceMock1.source,
         ],
         ~maxPartitionConcurrency=10,
       )
@@ -1339,27 +1348,41 @@ describe("SourceManager.executeQuery", () => {
         // to test that it's included to the rotation
         let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
         await Utils.delay(newBlockFallbackStallTimeout)
-        mock1.resolveGetHeightOrThrow(101)
+        sourceMock1.resolveGetHeightOrThrow(101)
         Assert.equal(await p, 101)
         Assert.equal(
           sourceManager->SourceManager.getActiveSource,
-          mock1.source,
+          sourceMock1.source,
           ~message="Should switch to the fallback source",
         )
       }
 
       let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
 
+      let handledGetItemsOrThrowCalls = []
+
       for idx in 0 to 2 {
-        mock1.rejectGetItemsOrThrow(
-          Source.GetItemsError(
-            FailedGettingItems({
-              exn: %raw(`null`),
-              attemptedToBlock: 100,
-              retry: WithBackoff({message: "test", backoffMillis: 0}),
-            }),
-          ),
-        )
+        switch sourceMock1.getItemsOrThrowCalls {
+        | [call] => {
+            handledGetItemsOrThrowCalls->Array.push({
+              "fromBlock": call.payload["fromBlock"],
+              "toBlock": call.payload["toBlock"],
+              "retry": call.payload["retry"],
+              "source": 1,
+            })
+            call.reject(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: 100,
+                  retry: WithBackoff({message: "test", backoffMillis: 0}),
+                }),
+              ),
+            )
+          }
+        | _ => Assert.fail("Should have one pending call to sourceMock1")
+        }
+
         // Wait for microtask, so the rejection is caught
         await Promise.resolve()
         if idx !== 2 {
@@ -1368,55 +1391,86 @@ describe("SourceManager.executeQuery", () => {
         }
       }
 
-      mock0.rejectGetItemsOrThrow(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: %raw(`null`),
-            attemptedToBlock: 100,
-            retry: WithBackoff({message: "test", backoffMillis: 0}),
-          }),
-        ),
-      )
+      switch sourceMock0.getItemsOrThrowCalls {
+      | [call] => {
+          handledGetItemsOrThrowCalls->Array.push({
+            "fromBlock": call.payload["fromBlock"],
+            "toBlock": call.payload["toBlock"],
+            "retry": call.payload["retry"],
+            "source": 0,
+          })
+          call.reject(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn: %raw(`null`),
+                attemptedToBlock: 100,
+                retry: WithBackoff({message: "test", backoffMillis: 0}),
+              }),
+            ),
+          )
+        }
+      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      }
+
       await Promise.resolve() // Wait for microtask, so the rejection is caught
       await Utils.delay(0)
 
-      mock0.rejectGetItemsOrThrow(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: %raw(`null`),
-            attemptedToBlock: 100,
-            retry: WithBackoff({message: "test", backoffMillis: 0}),
-          }),
-        ),
-      )
+      switch sourceMock0.getItemsOrThrowCalls {
+      | [call] => {
+          handledGetItemsOrThrowCalls->Array.push({
+            "fromBlock": call.payload["fromBlock"],
+            "toBlock": call.payload["toBlock"],
+            "retry": call.payload["retry"],
+            "source": 0,
+          })
+          call.reject(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn: %raw(`null`),
+                attemptedToBlock: 100,
+                retry: WithBackoff({message: "test", backoffMillis: 0}),
+              }),
+            ),
+          )
+        }
+      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      }
+
       await Promise.resolve()
       // Doesn't wait for backoff on switch
 
-      Assert.deepEqual(
-        (mock0.getItemsOrThrowCalls, mock1.getItemsOrThrowCalls),
-        (
-          [
-            {"fromBlock": 0, "toBlock": None, "retry": 3},
-            {"fromBlock": 0, "toBlock": None, "retry": 4},
-          ],
-          [
-            {"fromBlock": 0, "toBlock": None, "retry": 0},
-            {"fromBlock": 0, "toBlock": None, "retry": 1},
-            {"fromBlock": 0, "toBlock": None, "retry": 2},
-            {"fromBlock": 0, "toBlock": None, "retry": 5},
-          ],
-        ),
-        ~message=`Should start with the initial active source and perform 3 tries.
-        After that it switches to another sync source.
-        The fallback source is skipped.
-        Then sources start switching every second retry.
-        The fallback sources not included in the rotation until the 10th retry,
-        but we still attempt the fallback source if it was the initial active source.
+      switch sourceMock1.getItemsOrThrowCalls {
+      | [call] => {
+          handledGetItemsOrThrowCalls->Array.push({
+            "fromBlock": call.payload["fromBlock"],
+            "toBlock": call.payload["toBlock"],
+            "retry": call.payload["retry"],
+            "source": 1,
+          })
+          Assert.deepEqual(
+            handledGetItemsOrThrowCalls,
+            [
+              {"fromBlock": 0, "toBlock": None, "retry": 0, "source": 1},
+              {"fromBlock": 0, "toBlock": None, "retry": 1, "source": 1},
+              {"fromBlock": 0, "toBlock": None, "retry": 2, "source": 1},
+              {"fromBlock": 0, "toBlock": None, "retry": 3, "source": 0},
+              {"fromBlock": 0, "toBlock": None, "retry": 4, "source": 0},
+              {"fromBlock": 0, "toBlock": None, "retry": 5, "source": 1},
+            ],
+            ~message=`Should start with the initial active source and perform 3 tries.
+After that it switches to another sync source.
+The fallback source is skipped.
+Then sources start switching every second retry.
+The fallback sources not included in the rotation until the 10th retry,
+but we still attempt the fallback source if it was the initial active source.
         `,
-      )
+          )
 
-      mock1.resolveGetItemsOrThrow([])
-      Assert.deepEqual((await p).parsedQueueItems, [])
+          call.resolve([])
+          Assert.deepEqual((await p).parsedQueueItems, [])
+        }
+      | _ => Assert.fail("Should have one pending call to sourceMock1")
+      }
     },
   )
 })

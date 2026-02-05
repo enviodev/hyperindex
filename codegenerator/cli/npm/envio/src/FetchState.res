@@ -236,7 +236,7 @@ module OptimizedPartitions = {
         ->ignore
       }
       let currentPRef = ref(
-        contractPartitionAggregate->Js.Dict.unsafeGet(ascPartitionKeys->Js.Array2.unsafe_get(0)),
+        contractPartitionAggregate->Js.Dict.unsafeGet(ascPartitionKeys->Utils.Array.firstUnsafe),
       )
       let nextJdx = ref(1)
       while nextJdx.contents < ascPartitionKeys->Array.length {
@@ -314,7 +314,7 @@ module OptimizedPartitions = {
 
     while (
       mutPendingQueries->Array.length > 0 &&
-        (mutPendingQueries->Js.Array2.unsafe_get(0)).fetchedBlock !== None
+        (mutPendingQueries->Utils.Array.firstUnsafe).fetchedBlock !== None
     ) {
       let removedQuery = mutPendingQueries->Js.Array2.shift->Option.getUnsafe
       latestFetchedBlock := removedQuery.fetchedBlock->Option.getUnsafe
@@ -868,7 +868,7 @@ let registerDynamicContracts = (
         // Will be in the ASC order by Js spec
         let ascKeys = byStartBlock->Js.Dict.keys
 
-        let initialKey = ascKeys->Js.Array2.unsafe_get(0)
+        let initialKey = ascKeys->Utils.Array.firstUnsafe
 
         let startBlockRef = ref(initialKey->Int.fromString->Option.getUnsafe)
         let addressesRef = ref(byStartBlock->Js.Dict.unsafeGet(initialKey))

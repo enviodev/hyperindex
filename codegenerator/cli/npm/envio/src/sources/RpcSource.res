@@ -42,8 +42,7 @@ let rec getKnownBlockWithBackoff = async (
       ~backoffMsOnFailure=backoffMsOnFailure * 2,
       ~lowercaseAddresses,
     )
-  | result =>
-    // NOTE: this is wasteful if these fields are not selected in the users config.
+  | result => // NOTE: this is wasteful if these fields are not selected in the users config.
     //       There might be a better way to do this based on the block schema.
     //       However this is not extremely expensive and good enough for now (only on rpc sync also).
     // Mutation would be cheaper,
@@ -339,7 +338,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     }
   | ([], [dynamicEventFilter]) if selection.eventConfigs->Js.Array2.length === 1 =>
-    let eventConfig = selection.eventConfigs->Js.Array2.unsafe_get(0)
+    let eventConfig = selection.eventConfigs->Utils.Array.firstUnsafe
 
     (~addressesByContractName) => {
       let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
@@ -482,7 +481,10 @@ let make = (
   let makeTransactionLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+        Prometheus.SourceRequestCount.increment(
+          ~sourceName=name,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+        )
         Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client)
       },
       ~onError=(am, ~exn) => {
@@ -505,7 +507,10 @@ let make = (
   let makeBlockLoader = () =>
     LazyLoader.make(
       ~loaderFn=blockNumber => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+        Prometheus.SourceRequestCount.increment(
+          ~sourceName=name,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+        )
         getKnownBlockWithBackoff(
           ~provider,
           ~sourceName=name,
@@ -806,7 +811,10 @@ let make = (
     pollingInterval: 1000,
     getBlockHashes,
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+      )
       Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
     },
     getItemsOrThrow,

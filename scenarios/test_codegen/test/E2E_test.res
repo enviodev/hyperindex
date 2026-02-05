@@ -32,8 +32,8 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
-      [{"fromBlock": 100, "toBlock": Some(200), "retry": 0}],
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      [{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}],
       ~message="Should request items from start block to reorg threshold",
     )
   })
@@ -602,36 +602,34 @@ describe("E2E tests", () => {
       await Utils.delay(0)
 
       // Primary source should now attempt to fetch items
-      Assert.deepEqual(
-        sourceMockPrimary.getItemsOrThrowCalls->Array.length,
-        1,
-        ~message="should have called getItemsOrThrow on primary source",
-      )
-
-      // Simulate missing params error from HyperSync (converted to InvalidData by the source)
-      sourceMockPrimary.rejectGetItemsOrThrow(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: %raw(`null`),
-            attemptedToBlock: 100,
-            retry: ImpossibleForTheQuery({
-              message: "Source returned invalid data with missing required fields: log.address",
+      switch sourceMockPrimary.getItemsOrThrowCalls {
+      | [call] =>
+        // Simulate missing params error from HyperSync (converted to InvalidData by the source)
+        call.reject(
+          Source.GetItemsError(
+            FailedGettingItems({
+              exn: %raw(`null`),
+              attemptedToBlock: 100,
+              retry: ImpossibleForTheQuery({
+                message: "Source returned invalid data with missing required fields: log.address",
+              }),
             }),
-          }),
-        ),
-      )
+          ),
+        )
+      | _ => Assert.fail("should have called getItemsOrThrow on primary source")
+      }
+
       await Utils.delay(0)
       await Utils.delay(0)
 
       // The fallback source should now be called immediately
-      Assert.deepEqual(
-        sourceMockFallback.getItemsOrThrowCalls->Array.length,
-        1,
-        ~message="fallback source should be called after primary fails with invalid data",
-      )
+      switch sourceMockFallback.getItemsOrThrowCalls {
+      | [call] =>
+        // Resolve the fallback source successfully
+        call.resolve([], ~latestFetchedBlockNumber=100)
+      | _ => Assert.fail("fallback source should be called after primary fails with invalid data")
+      }
 
-      // Resolve the fallback source successfully
-      sourceMockFallback.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
@@ -639,7 +637,7 @@ describe("E2E tests", () => {
           sourceMockPrimary.getItemsOrThrowCalls->Array.length,
           sourceMockFallback.getItemsOrThrowCalls->Array.length,
         ),
-        (2, 1),
+        (1, 0),
         ~message="Shouldn't switch to fallback source for the next query",
       )
     },

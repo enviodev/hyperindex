@@ -361,6 +361,7 @@ Helper to check if a value exists in an array
   let first = (arr: array<'a>): option<'a> => arr->Belt.Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Belt.Array.getUnsafe(arr->Array.length - 1)
+  let firstUnsafe = (arr: array<'a>): 'a => arr->Js.Array2.unsafe_get(0)
 
   let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
     let rec loop = (index: int) => {

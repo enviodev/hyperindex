@@ -484,6 +484,18 @@ module Source = {
     contractRegister?: Types.HandlerTypes.contractRegister<unit>,
   }
 
+  type getItemsOrThrowCall = {
+    payload: {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string},
+    resolve: (
+      array<itemMock>,
+      ~latestFetchedBlockNumber: int=?,
+      ~latestFetchedBlockHash: string=?,
+      ~knownHeight: int=?,
+      ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ) => unit,
+    reject: 'exn. 'exn => unit,
+  }
+
   type t = {
     source: Source.t,
     // Use array of bool instead of array of unit,
@@ -491,7 +503,8 @@ module Source = {
     getHeightOrThrowCalls: array<bool>,
     resolveGetHeightOrThrow: int => unit,
     rejectGetHeightOrThrow: 'exn. 'exn => unit,
-    getItemsOrThrowCalls: array<{"fromBlock": int, "toBlock": option<int>, "retry": int}>,
+    getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+    // TODO: Remove in favor of getItemsOrThrowCalls
     resolveGetItemsOrThrow: (
       array<itemMock>,
       ~resolveAt: [#first | #all | #last]=?,
@@ -500,7 +513,6 @@ module Source = {
       ~knownHeight: int=?,
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
-    rejectGetItemsOrThrow: 'exn. 'exn => unit,
     getBlockHashesCalls: array<array<int>>,
     resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
     // Height subscription mocking
@@ -523,14 +535,39 @@ module Source = {
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
     let getItemsOrThrowCalls = []
-    let getItemsOrThrowResolveFns = []
-    let getItemsOrThrowRejectFns = []
     let getBlockHashesCalls = []
     let getBlockHashesResolveFns = []
     // Height subscription state
     let heightSubscriptionCalls = []
     let heightSubscriptionCallbacks: array<int => unit> = []
     let heightSubscriptionUnsubscribed = ref(false)
+
+    // With the function we keep only the pending calls,
+    // and remove the resolved ones automatically.
+    let keepOnlyPendingCalls = (~array, ~fn) => {
+      Promise.make((resolve, reject) => {
+        let callRef = ref(%raw(`null`))
+        callRef :=
+          fn(
+            ~resolve=arg => {
+              resolve(arg)
+              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              if indexOf !== -1 {
+                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+              }
+            },
+            ~reject=arg => {
+              reject(arg)
+              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              if indexOf !== -1 {
+                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+              }
+            },
+          )
+        array->Js.Array2.push(callRef.contents)->ignore
+      })
+    }
+
     {
       getHeightOrThrowCalls,
       resolveGetHeightOrThrow: height => {
@@ -551,36 +588,25 @@ module Source = {
         ~knownHeight=?,
         ~prevRangeLastBlock=?,
       ) => {
-        let fns = switch resolveAt {
-        | #first => getItemsOrThrowResolveFns->Js.Array2.removeCountInPlace(~pos=0, ~count=1)
-        | #all => {
-            let copy = getItemsOrThrowResolveFns->Utils.Array.copy
-            getItemsOrThrowResolveFns->Utils.Array.clearInPlace
-            copy
-          }
-        | #last =>
-          getItemsOrThrowResolveFns->Js.Array2.removeCountInPlace(
-            ~pos=getItemsOrThrowResolveFns->Array.length - 1,
-            ~count=1,
-          )
+        let calls = switch resolveAt {
+        | #first => getItemsOrThrowCalls->Js.Array2.slice(~start=0, ~end_=1)
+        | #all => getItemsOrThrowCalls->Utils.Array.copy
+        | #last => getItemsOrThrowCalls->Js.Array2.sliceFrom(getItemsOrThrowCalls->Array.length - 1)
         }
 
-        switch fns {
-        | [] => Js.Exn.raiseError("getItemsOrThrowResolveFns is empty")
-        | fns =>
-          fns->Array.forEach(fn =>
-            fn({
-              "items": items,
-              "latestFetchedBlockNumber": latestFetchedBlockNumber,
-              "latestFetchedBlockHash": latestFetchedBlockHash,
-              "prevRangeLastBlock": prevRangeLastBlock,
-              "knownHeight": knownHeight,
-            })
+        switch calls {
+        | [] => Js.Exn.raiseError("getItemsOrThrowCalls is empty")
+        | calls =>
+          calls->Array.forEach(call =>
+            call.resolve(
+              items,
+              ~latestFetchedBlockNumber?,
+              ~latestFetchedBlockHash?,
+              ~knownHeight?,
+              ~prevRangeLastBlock?,
+            )
           )
         }
-      },
-      rejectGetItemsOrThrow: exn => {
-        getItemsOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
       },
       getBlockHashesCalls,
       resolveGetBlockHashes: blockHashes => {
@@ -626,38 +652,42 @@ module Source = {
             ~addressesByContractName as _,
             ~indexingContracts as _,
             ~knownHeight,
-            ~partitionId as _,
+            ~partitionId,
             ~selection as _,
             ~retry,
             ~logger as _,
           ) => {
-            getItemsOrThrowCalls
-            ->Js.Array2.push({
-              "fromBlock": fromBlock,
-              "toBlock": toBlock,
-              "retry": retry,
-            })
-            ->ignore
-            Promise.make((resolve, reject) => {
-              getItemsOrThrowResolveFns
-              ->Js.Array2.push(
-                data => {
+            keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
+              {
+                payload: {
+                  "fromBlock": fromBlock,
+                  "toBlock": toBlock,
+                  "retry": retry,
+                  "p": partitionId,
+                },
+                resolve: (
+                  items,
+                  ~latestFetchedBlockNumber=?,
+                  ~latestFetchedBlockHash=?,
+                  ~knownHeight=knownHeight,
+                  ~prevRangeLastBlock=?,
+                ) => {
                   let latestFetchedBlockNumber =
-                    data["latestFetchedBlockNumber"]->Option.getWithDefault(
+                    latestFetchedBlockNumber->Option.getWithDefault(
                       toBlock->Option.getWithDefault(fromBlock),
                     )
 
                   resolve({
-                    Source.knownHeight: data["knownHeight"]->Option.getWithDefault(knownHeight),
+                    Source.knownHeight,
                     reorgGuard: {
                       rangeLastBlock: {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: switch data["latestFetchedBlockHash"] {
+                        blockHash: switch latestFetchedBlockHash {
                         | Some(latestFetchedBlockHash) => latestFetchedBlockHash
                         | None => `0x${latestFetchedBlockNumber->Int.toString}`
                         },
                       },
-                      prevRangeLastBlock: switch data["prevRangeLastBlock"] {
+                      prevRangeLastBlock: switch prevRangeLastBlock {
                       | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
                       | None =>
                         if fromBlock > 0 {
@@ -670,7 +700,7 @@ module Source = {
                         }
                       },
                     },
-                    parsedQueueItems: data["items"]->Array.map(
+                    parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
                           eventConfig: ({
@@ -742,9 +772,8 @@ module Source = {
                     },
                   })
                 },
-              )
-              ->ignore
-              getItemsOrThrowRejectFns->Js.Array2.push(reject)->ignore
+                reject: reject->Utils.magic,
+              }
             })
           }),
           createHeightSubscription: ?switch methods->Js.Array2.includes(#createHeightSubscription) {
@@ -781,11 +810,9 @@ module Helper = {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    let expectedGetItemsCall1 = {"fromBlock": 0, "toBlock": Some(100), "retry": 0}
-
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
-      [expectedGetItemsCall1],
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      [{"fromBlock": 0, "toBlock": Some(100), "retry": 0, "p": "0"}],
       ~message="Should request items until reorg threshold",
     )
     sourceMock.resolveGetItemsOrThrow([])

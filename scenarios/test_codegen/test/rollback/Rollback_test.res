@@ -12,11 +12,12 @@ describe("E2E rollback tests", () => {
     ~firstHistoryCheckpointId=2.,
   ) => {
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
       Some({
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
+        "p": "0",
       }),
       ~message="Should enter reorg threshold and request now to the latest block",
     )
@@ -174,11 +175,12 @@ describe("E2E rollback tests", () => {
     )
 
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
       Some({
         "fromBlock": 103,
         "toBlock": None,
         "retry": 0,
+        "p": "0",
       }),
     )
 
@@ -219,11 +221,12 @@ describe("E2E rollback tests", () => {
     await indexerMock.getRollbackReadyPromise()
 
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
       Some({
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
+        "p": "0",
       }),
       ~message="Should rollback fetch state",
     )
@@ -327,11 +330,12 @@ describe("E2E rollback tests", () => {
       ))
 
       Assert.deepEqual(
-        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
         Some({
           "fromBlock": 101,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         }),
         ~message="Should enter reorg threshold and request now to the latest block",
       )
@@ -346,9 +350,7 @@ describe("E2E rollback tests", () => {
       let indexerMock = await indexerMock.restart()
 
       sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
       sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
-      sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
 
       // Allow async operations to settle
       await Utils.delay(0)
@@ -372,11 +374,12 @@ describe("E2E rollback tests", () => {
 
       // Both chains are ready immediately, so chain 1337 should continue fetching
       Assert.deepEqual(
-        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
         Some({
           "fromBlock": 111,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         }),
         ~message="Should continue indexing from where we left off",
       )
@@ -386,11 +389,12 @@ describe("E2E rollback tests", () => {
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
-        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
         Some({
           "fromBlock": 201,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         }),
         ~message="Continue normally inside of the reorg threshold",
       )
@@ -501,16 +505,15 @@ describe("E2E rollback tests", () => {
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
     ])
 
-    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
-
     await indexerMock.getRollbackReadyPromise()
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
         {
           "fromBlock": 101,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         },
       ],
       ~message="Should rollback fetch state and re-request items",
@@ -593,8 +596,6 @@ describe("E2E rollback tests", () => {
 
     await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
-    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
-
     let calls = []
     let handler = async (
       {event}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
@@ -644,24 +645,28 @@ describe("E2E rollback tests", () => {
 
     await indexerMock.getBatchWritePromise()
 
-    let expectedGetItemsCallsAfterFirstBatch = [
-      {
-        // New partition for DCs
-        "fromBlock": 102,
-        "toBlock": None,
-        "retry": 0,
-      },
-      {
-        // Continue fetching original partition
-        // without blocking
-        "fromBlock": 105,
-        "toBlock": None,
-        "retry": 0,
-      },
-    ]
     Assert.deepEqual(
-      (calls, sourceMock.getItemsOrThrowCalls),
-      (["101-0"], expectedGetItemsCallsAfterFirstBatch),
+      (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
+      (
+        ["101-0"],
+        [
+          {
+            // New partition for DCs
+            "fromBlock": 102,
+            "toBlock": None,
+            "retry": 0,
+            "p": "1",
+          },
+          {
+            // Continue fetching original partition
+            // without blocking
+            "fromBlock": 105,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
+        ],
+      ),
       ~message=`Creates a new partition for DCs and queries it in parallel with the original partition without blocking`,
     )
     Assert.deepEqual(
@@ -683,16 +688,23 @@ describe("E2E rollback tests", () => {
     )
     await indexerMock.getBatchWritePromise()
     Assert.deepEqual(
-      (calls, sourceMock.getItemsOrThrowCalls),
+      (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
       (
         ["101-0", "102-0", "102-1", "102-2"],
-        expectedGetItemsCallsAfterFirstBatch->Array.concat([
+        [
+          {
+            "fromBlock": 105,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
           {
             "fromBlock": 103,
             "toBlock": None,
             "retry": 0,
+            "p": "1",
           },
-        ]),
+        ],
       ),
       ~message=`Should process the block 102 after DC partition finished fetching it`,
     )
@@ -747,19 +759,19 @@ describe("E2E rollback tests", () => {
       {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
     ])
 
-    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
     await indexerMock.getRollbackReadyPromise()
 
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
         // Normal partition
         {
           "fromBlock": 103,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         },
         // DC partition queries
         // Since we already got 2 responses with 1 block range
@@ -768,22 +780,25 @@ describe("E2E rollback tests", () => {
           "fromBlock": 103,
           "toBlock": Some(103),
           "retry": 0,
+          "p": "1",
         },
         {
           "fromBlock": 104,
           "toBlock": Some(104),
           "retry": 0,
+          "p": "1",
         },
         // The last chunk has double range, to verify whether we can increase the next chunk size
         {
           "fromBlock": 105,
           "toBlock": Some(106),
           "retry": 0,
+          "p": "1",
         },
       ],
       ~message="Should rollback fetch state and re-request items",
     )
-    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
+
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
     await Utils.delay(0)
@@ -829,7 +844,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
     )
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
         // Every new query creates new chunks
         // if it doesn't exceed the concurrency limit
@@ -837,46 +852,61 @@ This might be wrong after we start exposing a block hash for progress block.`,
           "fromBlock": 105,
           "toBlock": Some(106),
           "retry": 0,
+          "p": "1",
+        },
+        {
+          "fromBlock": 105,
+          "toBlock": Some(106),
+          "retry": 0,
+          "p": "0",
         },
         {
           "fromBlock": 107,
           "toBlock": Some(108),
           "retry": 0,
+          "p": "0",
         },
         {
           "fromBlock": 109,
           "toBlock": Some(112),
           "retry": 0,
+          "p": "0",
         },
         {
           "fromBlock": 107,
           "toBlock": Some(107),
           "retry": 0,
+          "p": "1",
         },
         {
           "fromBlock": 108,
           "toBlock": Some(108),
           "retry": 0,
+          "p": "1",
         },
         {
           "fromBlock": 109,
           "toBlock": Some(110),
           "retry": 0,
+          "p": "1",
         },
         {
           "fromBlock": 113,
           "toBlock": Some(114),
           "retry": 0,
+          "p": "0",
         },
         {
           "fromBlock": 115,
           "toBlock": Some(118),
           "retry": 0,
+          "p": "0",
         },
         {
           "fromBlock": 119,
           "toBlock": Some(122),
           "retry": 0,
+          "p": "0",
         },
       ],
       ~message="Should correctly continue fetching from block 105 after rolling back the db",
@@ -1158,8 +1188,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
     ])
 
     // Clean up pending calls from before rollback
-    sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
-    sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
     sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
     sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
@@ -1193,23 +1221,29 @@ This might be wrong after we start exposing a block hash for progress block.`,
     )
 
     Assert.deepEqual(
-      (sourceMock100.getItemsOrThrowCalls, sourceMock1337.getItemsOrThrowCalls),
+      (
+        sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      ),
       (
         [
           {
             "fromBlock": 106,
             "toBlock": Some(108),
             "retry": 0,
+            "p": "0",
           },
           {
             "fromBlock": 109,
             "toBlock": Some(111),
             "retry": 0,
+            "p": "0",
           },
           {
             "fromBlock": 112,
             "toBlock": Some(117),
             "retry": 0,
+            "p": "0",
           },
         ],
         [
@@ -1217,16 +1251,19 @@ This might be wrong after we start exposing a block hash for progress block.`,
             "fromBlock": 106,
             "toBlock": Some(108),
             "retry": 0,
+            "p": "0",
           },
           {
             "fromBlock": 109,
             "toBlock": Some(111),
             "retry": 0,
+            "p": "0",
           },
           {
             "fromBlock": 112,
             "toBlock": Some(117),
             "retry": 0,
+            "p": "0",
           },
         ],
       ),
@@ -1616,8 +1653,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ])
 
       // Clean up pending calls from before rollback
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
-      sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
       sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
       sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
@@ -1625,19 +1660,21 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       Assert.deepEqual(
         (
-          sourceMock1337.getItemsOrThrowCalls->Utils.Array.first,
-          sourceMock100.getItemsOrThrowCalls->Utils.Array.first,
+          sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
+          sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
         (
           Some({
             "fromBlock": 106,
             "toBlock": Some(108),
             "retry": 0,
+            "p": "0",
           }),
           Some({
             "fromBlock": 106,
             "toBlock": Some(108),
             "retry": 0,
+            "p": "0",
           }),
         ),
         ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
@@ -2027,8 +2064,6 @@ Sorted by timestamp and chain id`,
       ])
 
       // Clean up pending calls from before rollback
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
-      sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
       sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
       sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
@@ -2053,19 +2088,21 @@ Sorted by timestamp and chain id`,
 
       Assert.deepEqual(
         (
-          sourceMock1337.getItemsOrThrowCalls->Utils.Array.first,
-          sourceMock100.getItemsOrThrowCalls->Utils.Array.first,
+          sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
+          sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
         (
           Some({
             "fromBlock": 103,
             "toBlock": Some(103),
             "retry": 0,
+            "p": "0",
           }),
           Some({
             "fromBlock": 103,
             "toBlock": Some(104),
             "retry": 0,
+            "p": "0",
           }),
         ),
         ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
@@ -2346,4 +2383,151 @@ Sorted by timestamp and chain id`,
       )
     },
   )
+
+  Async.it("Should NOT have duplicate queries after rollback with chunked partitions", async () => {
+    // 1. Setup mock source and indexer
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+    // 3. Process 2 queries to build chunk history (3+ block ranges each)
+    // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=103)
+    await indexerMock.getBatchWritePromise()
+
+    // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+    // After this, chunking will be enabled with chunkRange=min(3,3)=3
+    // A new query batch should be created with chunks
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=106)
+
+    await indexerMock.getBatchWritePromise()
+
+    // 4. Verify chunked queries are created (queries with toBlock set)
+    // Check that we have chunks with toBlock set (at least 3 chunks)
+    let chunkedQueries = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
+    Assert.deepEqual(
+      chunkedQueries->Array.length >= 3,
+      true,
+      ~message="Should create at least 3 chunked queries",
+    )
+    // Verify first 3 chunks have expected fromBlock/toBlock
+    Assert.deepEqual(
+      (
+        chunkedQueries->Array.getUnsafe(0),
+        chunkedQueries->Array.getUnsafe(1),
+        chunkedQueries->Array.getUnsafe(2),
+      ),
+      (
+        {"fromBlock": 107, "toBlock": Some(109), "retry": 0, "p": "0"},
+        {"fromBlock": 110, "toBlock": Some(112), "retry": 0, "p": "0"},
+        {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
+      ),
+      ~message="First 3 chunks should have correct fromBlock/toBlock",
+    )
+
+    // 5. Resolve LAST chunk FIRST with PARTIAL range: 113-115 instead of 113-118
+    // This creates a NEW partition with latestFetchedBlock=115, endBlock=118
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=115)
+
+    // 6. Resolve remaining chunks normally (107-109, 110-112)
+    // Main partition consumes all chunks in order
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=109)
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=112)
+
+    // // Clear calls to see new queries
+    //
+
+    await indexerMock.getBatchWritePromise()
+
+    // Now should have TWO partitions:
+    //   - Main: latestFetchedBlock=118, no endBlock (open-ended)
+    //   - New: latestFetchedBlock=115, endBlock=118
+
+    Js.log("AAAA")
+    Js.log(sourceMock.getItemsOrThrowCalls)
+
+    // 8. Trigger rollback via reorg detection to block 116
+
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~prevRangeLastBlock={
+        blockNumber: 118,
+        blockHash: "0x118-reorged",
+      },
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls->Utils.Array.last->Option.isSome,
+      true,
+      ~message="Should have called getBlockHashes to find rollback depth",
+    )
+
+    // Rollback to block 116 - keeps BOTH partitions
+    sourceMock.resolveGetBlockHashes([
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 115, blockHash: "0x115", blockTimestamp: 115},
+      {blockNumber: 116, blockHash: "0x116", blockTimestamp: 116},
+    ])
+
+    await indexerMock.getRollbackReadyPromise()
+
+    // 9. Verify NO duplicate queries after rollback
+    // BUG: Both partitions might query blocks 117-118
+    //   - Main partition would query from 117 onwards (open-ended)
+    //   - New partition would also query from 117 to 118
+    // EXPECTED: Only ONE partition should own the 117-118 range
+
+    let queriesAfterRollback = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
+
+    // Check for duplicate/overlapping queries
+    // Extract all block ranges from queries
+    let blockRanges = queriesAfterRollback->Array.map(
+      q => {
+        let fromBlock = q["fromBlock"]
+        let toBlock = q["toBlock"]->Option.getWithDefault(300) // Use high number for open-ended
+        (fromBlock, toBlock)
+      },
+    )
+
+    // Check if any ranges overlap
+    let hasOverlap = ref(false)
+    for i in 0 to blockRanges->Array.length - 1 {
+      for j in i + 1 to blockRanges->Array.length - 1 {
+        let (from1, to1) = blockRanges->Array.getUnsafe(i)
+        let (from2, to2) = blockRanges->Array.getUnsafe(j)
+
+        // Ranges overlap if one starts before the other ends
+        if from1 <= to2 && from2 <= to1 {
+          hasOverlap := true
+        }
+      }
+    }
+
+    Assert.deepEqual(
+      hasOverlap.contents,
+      false,
+      ~message=`Should NOT have overlapping queries after rollback. Queries: ${queriesAfterRollback
+        ->Array.map(
+          q =>
+            `${q["fromBlock"]->Int.toString}-${q["toBlock"]
+              ->Option.map(Int.toString)
+              ->Option.getWithDefault("None")}`,
+        )
+        ->Js.Array2.joinWith(", ")}`,
+    )
+  })
 })
