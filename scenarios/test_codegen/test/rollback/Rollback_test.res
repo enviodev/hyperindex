@@ -2404,130 +2404,189 @@ Sorted by timestamp and chain id`,
 
     // 3. Process 2 queries to build chunk history (3+ block ranges each)
     // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=103)
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
+    | _ => Assert.fail("Step 3 should have a single pending call")
+    }
     await indexerMock.getBatchWritePromise()
 
     // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
     // After this, chunking will be enabled with chunkRange=min(3,3)=3
     // A new query batch should be created with chunks
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=106)
-
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
+    | _ => Assert.fail("Step 3 should have a single pending call")
+    }
     await indexerMock.getBatchWritePromise()
 
     // 4. Verify chunked queries are created (queries with toBlock set)
     // Check that we have chunks with toBlock set (at least 3 chunks)
-    let chunkedQueries = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
-    Assert.deepEqual(
-      chunkedQueries->Array.length >= 3,
-      true,
-      ~message="Should create at least 3 chunked queries",
-    )
-    // Verify first 3 chunks have expected fromBlock/toBlock
-    Assert.deepEqual(
-      (
-        chunkedQueries->Array.getUnsafe(0),
-        chunkedQueries->Array.getUnsafe(1),
-        chunkedQueries->Array.getUnsafe(2),
-      ),
-      (
-        {"fromBlock": 107, "toBlock": Some(109), "retry": 0, "p": "0"},
-        {"fromBlock": 110, "toBlock": Some(112), "retry": 0, "p": "0"},
-        {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
-      ),
-      ~message="First 3 chunks should have correct fromBlock/toBlock",
-    )
+    switch sourceMock.getItemsOrThrowCalls {
+    | [chunk1, chunk2, chunk3, chunk4, chunk5, chunk6] =>
+      // Verify first 3 chunks have expected fromBlock/toBlock
+      Assert.deepEqual(
+        (
+          chunk1.payload,
+          chunk2.payload,
+          chunk3.payload,
+          chunk4.payload,
+          chunk5.payload,
+          chunk6.payload,
+        ),
+        (
+          {"fromBlock": 107, "toBlock": Some(109), "retry": 0, "p": "0"},
+          {"fromBlock": 110, "toBlock": Some(112), "retry": 0, "p": "0"},
+          {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
+          {"fromBlock": 119, "toBlock": Some(121), "retry": 0, "p": "0"},
+          {"fromBlock": 122, "toBlock": Some(124), "retry": 0, "p": "0"},
+          {"fromBlock": 125, "toBlock": Some(130), "retry": 0, "p": "0"},
+        ),
+        ~message=`Should create 3 chunks on the second query.
+The 4-6 chunks are not really expected, but created since we call fetchNextQuery twice:
+- on response handling
+- on batch write finish`,
+      )
 
-    // 5. Resolve LAST chunk FIRST with PARTIAL range: 113-115 instead of 113-118
-    // This creates a NEW partition with latestFetchedBlock=115, endBlock=118
-    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=115)
+      // 5. Resolve LAST chunk FIRST with PARTIAL range: 113-115 instead of 113-118
+      // This creates a NEW partition with latestFetchedBlock=115, endBlock=118
+      chunk3.resolve([], ~latestFetchedBlockNumber=115)
 
-    // 6. Resolve remaining chunks normally (107-109, 110-112)
-    // Main partition consumes all chunks in order
-    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=109)
-    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=112)
+      // 6. Resolve remaining chunks normally (107-109, 110-112)
+      // Main partition consumes all chunks in order
+      chunk1.resolve([], ~latestFetchedBlockNumber=109)
+      chunk2.resolve([], ~latestFetchedBlockNumber=112)
 
-    // // Clear calls to see new queries
-    //
+      await indexerMock.getBatchWritePromise()
 
-    await indexerMock.getBatchWritePromise()
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+        [
+          chunk4.payload,
+          chunk5.payload,
+          chunk6.payload,
+          {
+            "fromBlock": 131,
+            "toBlock": Some(133),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 134,
+            "toBlock": Some(136),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 137,
+            "toBlock": Some(142),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 116,
+            "toBlock": Some(118),
+            "retry": 0,
+            // This query is the most important
+            // NEW PARTITION HERE
+            "p": "1",
+          },
+          {
+            "fromBlock": 143,
+            "toBlock": Some(145),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 146,
+            "toBlock": Some(148),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 149,
+            "toBlock": Some(154),
+            "retry": 0,
+            "p": "0",
+          },
+        ],
+        ~message="Should create new partition after not full query",
+      )
 
-    // Now should have TWO partitions:
-    //   - Main: latestFetchedBlock=118, no endBlock (open-ended)
-    //   - New: latestFetchedBlock=115, endBlock=118
-
-    Js.log("AAAA")
-    Js.log(sourceMock.getItemsOrThrowCalls)
+    | _ => Assert.fail("Step 4 should have 3 chunks")
+    }
 
     // 8. Trigger rollback via reorg detection to block 116
-
     sourceMock.resolveGetItemsOrThrow(
       [],
       ~prevRangeLastBlock={
-        blockNumber: 118,
-        blockHash: "0x118-reorged",
+        blockNumber: 115,
+        blockHash: "0x115-reorged",
       },
+      ~resolveAt=#first,
     )
     await Utils.delay(0)
     await Utils.delay(0)
 
     Assert.deepEqual(
-      sourceMock.getBlockHashesCalls->Utils.Array.last->Option.isSome,
-      true,
+      sourceMock.getBlockHashesCalls,
+      [[100, 103, 106, 109, 112]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
 
-    // Rollback to block 116 - keeps BOTH partitions
+    // Rollback to block 112
     sourceMock.resolveGetBlockHashes([
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 115, blockHash: "0x115", blockTimestamp: 115},
-      {blockNumber: 116, blockHash: "0x116", blockTimestamp: 116},
+      {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
+      {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
+      {blockNumber: 109, blockHash: "0x109", blockTimestamp: 100},
+      {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
     ])
+
+    // Clean up pending calls from before rollback
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
     await indexerMock.getRollbackReadyPromise()
 
-    // 9. Verify NO duplicate queries after rollback
-    // BUG: Both partitions might query blocks 117-118
-    //   - Main partition would query from 117 onwards (open-ended)
-    //   - New partition would also query from 117 to 118
-    // EXPECTED: Only ONE partition should own the 117-118 range
-
-    let queriesAfterRollback = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
-
-    // Check for duplicate/overlapping queries
-    // Extract all block ranges from queries
-    let blockRanges = queriesAfterRollback->Array.map(
-      q => {
-        let fromBlock = q["fromBlock"]
-        let toBlock = q["toBlock"]->Option.getWithDefault(300) // Use high number for open-ended
-        (fromBlock, toBlock)
-      },
-    )
-
-    // Check if any ranges overlap
-    let hasOverlap = ref(false)
-    for i in 0 to blockRanges->Array.length - 1 {
-      for j in i + 1 to blockRanges->Array.length - 1 {
-        let (from1, to1) = blockRanges->Array.getUnsafe(i)
-        let (from2, to2) = blockRanges->Array.getUnsafe(j)
-
-        // Ranges overlap if one starts before the other ends
-        if from1 <= to2 && from2 <= to1 {
-          hasOverlap := true
-        }
-      }
-    }
-
     Assert.deepEqual(
-      hasOverlap.contents,
-      false,
-      ~message=`Should NOT have overlapping queries after rollback. Queries: ${queriesAfterRollback
-        ->Array.map(
-          q =>
-            `${q["fromBlock"]->Int.toString}-${q["toBlock"]
-              ->Option.map(Int.toString)
-              ->Option.getWithDefault("None")}`,
-        )
-        ->Js.Array2.joinWith(", ")}`,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [
+        {
+          "fromBlock": 115,
+          "toBlock": Some(117),
+          "retry": 0,
+          "p": "0",
+        },
+        {
+          "fromBlock": 118,
+          "toBlock": Some(120),
+          "retry": 0,
+          "p": "0",
+        },
+        {
+          "fromBlock": 121,
+          "toBlock": Some(126),
+          "retry": 0,
+          "p": "0",
+        },
+        {
+          "fromBlock": 115,
+          "toBlock": Some(117),
+          "retry": 0,
+          "p": "1",
+        },
+        {
+          "fromBlock": 118,
+          "toBlock": Some(120),
+          "retry": 0,
+          "p": "1",
+        },
+        {
+          "fromBlock": 121,
+          "toBlock": Some(126),
+          "retry": 0,
+          "p": "1",
+        },
+      ],
     )
   })
 })

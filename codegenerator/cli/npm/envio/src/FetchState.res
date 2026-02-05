@@ -1188,6 +1188,10 @@ let getNextQuery = (
                   Some(fromBlock + chunkRange - 1)
                 }
 
+                // FIXME:
+                // Since we sort by partition latest fetch block and
+                // the actual query start block might be much further,
+                // we must sort queries afterwards as well
                 queries->Array.push({
                   partitionId,
                   fromBlock,
