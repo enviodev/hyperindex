@@ -420,6 +420,13 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "How long to wait before cancelling an RPC request")]
         pub query_timeout_millis: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How frequently (in milliseconds) to check for new blocks in realtime. \
+                           Default is 1000ms. Note: Setting this higher than block time does not \
+                           reduce RPC usage as every block is still fetched to check for reorgs."
+        )]
+        pub polling_interval: Option<u32>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]

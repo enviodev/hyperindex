@@ -803,7 +803,7 @@ let make = (
     sourceFor,
     chain,
     poweredByHyperSync: false,
-    pollingInterval: 1000,
+    pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
     getHeightOrThrow: () => {
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)

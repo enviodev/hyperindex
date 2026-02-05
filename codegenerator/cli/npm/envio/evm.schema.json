@@ -458,6 +458,15 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "polling_interval": {
+          "description": "How frequently (in milliseconds) to check for new blocks in realtime. Default is 1000ms. Note: Setting this higher than block time does not reduce RPC usage as every block is still fetched to check for reorgs.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         }
       },
       "additionalProperties": false,
@@ -547,6 +556,15 @@
         },
         "query_timeout_millis": {
           "description": "How long to wait before cancelling an RPC request",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "polling_interval": {
+          "description": "How frequently (in milliseconds) to check for new blocks in realtime. Default is 1000ms. Note: Setting this higher than block time does not reduce RPC usage as every block is still fetched to check for reorgs.",
           "type": [
             "integer",
             "null"

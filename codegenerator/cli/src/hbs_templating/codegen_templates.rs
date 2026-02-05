@@ -114,6 +114,8 @@ struct InternalRpcConfig {
     fallback_stall_timeout: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     query_timeout_millis: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    polling_interval: Option<u32>,
 }
 
 #[derive(Serialize, Debug)]
@@ -1489,6 +1491,10 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                         .sync_config
                                         .as_ref()
                                         .and_then(|c| c.query_timeout_millis),
+                                    polling_interval: rpc
+                                        .sync_config
+                                        .as_ref()
+                                        .and_then(|c| c.polling_interval),
                                 })
                                 .collect();
                             (hypersync_url, rpc_configs, None)
