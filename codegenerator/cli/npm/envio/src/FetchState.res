@@ -1071,7 +1071,7 @@ let getNextQuery = (
     // We want to limit the buffer size to targetBufferSize (usually 3 * batchSize)
     // To make sure the processing always has some buffer
     // and not increase the memory usage too much
-    // If a partition fetched further than 3 * batchSize,
+    // If a partition fetched further
     // it should be skipped until the buffer is consumed
     let maxQueryBlockNumber = {
       switch buffer->Array.get(targetBufferSize - 1) {
@@ -1081,6 +1081,7 @@ let getNextQuery = (
       | None => knownHeight
       }
     }
+
     let queries = []
 
     let partitionsCount = optimizedPartitions.idsInAscOrder->Js.Array2.length
@@ -1422,6 +1423,8 @@ let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) =
         blockTimestamp: 0,
       }
     : p.latestFetchedBlock
+
+  // FIXME: Check it
   // Clear endBlock when rolling back below it
   let endBlock = switch p.endBlock {
   | Some(endBlock) if targetBlockNumber < endBlock => None
