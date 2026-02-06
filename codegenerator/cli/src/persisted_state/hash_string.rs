@@ -83,7 +83,7 @@ mod test {
         let hash = HashString::from_file_path(config1_path).unwrap();
         assert_eq!(
             hash.inner(),
-            "ce24ad960ae67a65b38820f58c39a4dd625870793daefd50aeda95d4739b7e57".to_string()
+            "a352f06fdd3e2722c068bcfda4ac722790dd3763b3c544da0109b1892aff4fe1".to_string()
         );
     }
     #[test]
@@ -93,7 +93,7 @@ mod test {
         let hash = HashString::from_file_paths(vec![config1_path, config2_path], true).unwrap();
         assert_eq!(
             hash.inner(),
-            "4d778a6dc2b1e50b21a962799245e11ca02bc91c358d445c5fcbe09a42d84af1".to_string()
+            "a42585fffe715ae795d6a401ded00ca31792dfb1440082ead6f4fd2594cada33".to_string()
         );
     }
 
