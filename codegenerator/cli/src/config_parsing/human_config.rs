@@ -387,9 +387,40 @@ pub mod evm {
         pub url: String,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum For {
+        #[schemars(
+            description = "Use RPC as the main data-source for both historical sync and real-time \
+                           chain indexing."
+        )]
+        Sync,
+        #[schemars(
+            description = "Use RPC as a backup for the main data-source. Currently, it acts as a \
+                           fallback when real-time indexing stalls, with potential for more cases \
+                           in the future."
+        )]
+        Fallback,
+        #[schemars(
+            description = "Use RPC for real-time indexing only. HyperSync will be used for \
+                           historical sync, then automatically switch to this RPC once synced \
+                           for lower latency."
+        )]
+        Live,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct RpcSyncConfig {
+    pub struct Rpc {
+        #[schemars(description = "The RPC endpoint URL.")]
+        pub url: String,
+        #[schemars(
+            description = "Determines if this RPC is for historical sync, real-time chain \
+                           indexing, or as a fallback. If not specified, defaults to \"fallback\" \
+                           when HyperSync is available for the chain, or \"sync\" otherwise."
+        )]
+        #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
+        pub source_for: Option<For>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The starting interval in range of blocks per query")]
         pub initial_block_interval: Option<u32>,
@@ -427,45 +458,6 @@ pub mod evm {
                            reduce RPC usage as every block is still fetched to check for reorgs."
         )]
         pub polling_interval: Option<u32>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "lowercase")]
-    pub enum For {
-        #[schemars(
-            description = "Use RPC as the main data-source for both historical sync and real-time \
-                           chain indexing."
-        )]
-        Sync,
-        #[schemars(
-            description = "Use RPC as a backup for the main data-source. Currently, it acts as a \
-                           fallback when real-time indexing stalls, with potential for more cases \
-                           in the future."
-        )]
-        Fallback,
-        #[schemars(
-            description = "Use RPC for real-time indexing only. HyperSync will be used for \
-                           historical sync, then automatically switch to this RPC once synced \
-                           for lower latency."
-        )]
-        Live,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct Rpc {
-        #[schemars(description = "The RPC endpoint URL.")]
-        pub url: String,
-        #[schemars(
-            description = "Determines if this RPC is for historical sync, real-time chain \
-                           indexing, or as a fallback. If not specified, defaults to \"fallback\" \
-                           when HyperSync is available for the chain, or \"sync\" otherwise."
-        )]
-        #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
-        pub source_for: Option<For>,
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Options for RPC data-source indexing.")]
-        pub sync_config: Option<RpcSyncConfig>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
