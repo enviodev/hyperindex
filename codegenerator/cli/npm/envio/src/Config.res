@@ -232,7 +232,7 @@ let fromPublic = (
       | Some(events) => events->Array.map(eventItem => eventItem["event"])
       | None => []
       }
-      (contractName, (abi, eventSignatures))
+      (contractName->Utils.String.capitalize, (abi, eventSignatures))
     })
     ->Js.Dict.fromArray
   | None => Js.Dict.empty()
