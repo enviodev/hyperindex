@@ -251,7 +251,7 @@ jobs:
           if [ "${OS}" = "windows-2022" ]; then
             bin="${bin}.exe"
           fi
-          cp "../../target/${TARGET}/release/${internal_name}" "${node_pkg}/bin"
+          cp "../../target/${TARGET}/release/${bin}" "${node_pkg}/bin"
           cp ../README.md "${node_pkg}"
           cd "${node_pkg}"
           npm publish --access public
