@@ -1459,9 +1459,9 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                 .map(|rpc| InternalRpcConfig {
                                     url: rpc.url.clone(),
                                     source_for: match rpc.source_for {
-                                        For::Sync => "sync",
-                                        For::Fallback => "fallback",
-                                        For::Live => "live",
+                                        Some(For::Sync) => "sync",
+                                        Some(For::Fallback) | None => "fallback",
+                                        Some(For::Live) => "live",
                                     },
                                     initial_block_interval: rpc
                                         .sync_config

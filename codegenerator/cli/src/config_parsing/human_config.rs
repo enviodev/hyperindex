@@ -164,7 +164,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract};
-    use crate::{config_parsing::human_config::BaseConfig, utils::normalized_list::SingleOrList};
+    use crate::config_parsing::human_config::BaseConfig;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -430,20 +430,6 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct RpcConfig {
-        #[schemars(
-            description = "URL of the RPC endpoint. Can be a single URL or an array of URLs. If \
-                           multiple URLs are provided, the first one will be used as the primary \
-                           RPC endpoint and the rest will be used as fallbacks."
-        )]
-        pub url: SingleOrList<String>,
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Config options for RPC syncing")]
-        pub sync_config: Option<RpcSyncConfig>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase")]
     pub enum For {
         #[schemars(
@@ -472,10 +458,11 @@ pub mod evm {
         pub url: String,
         #[schemars(
             description = "Determines if this RPC is for historical sync, real-time chain \
-                           indexing, or as a fallback."
+                           indexing, or as a fallback. If not specified, defaults to \"fallback\" \
+                           when HyperSync is available for the chain, or \"sync\" otherwise."
         )]
-        #[serde(rename = "for")]
-        pub source_for: For,
+        #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
+        pub source_for: Option<For>,
         #[serde(flatten, skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Options for RPC data-source indexing.")]
         pub sync_config: Option<RpcSyncConfig>,
@@ -494,14 +481,6 @@ pub mod evm {
     pub struct Chain {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "RPC configuration for utilizing as the chain's data-source. \
-                           Typically optional for chains with HyperSync support, which is highly \
-                           recommended. HyperSync dramatically enhances performance, providing up \
-                           to a 1000x speed boost over traditional RPC."
-        )]
-        pub rpc_config: Option<RpcConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
                                   otherwise, for chains supported by HyperSync, RPC serves as \
@@ -1071,7 +1050,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             Chain {
                 id: 1,
                 hypersync_config: None,
-                rpc_config: None,
                 rpc: None,
                 start_block: 2_000,
                 max_reorg_depth: None,

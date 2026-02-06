@@ -11,10 +11,11 @@ expression: project_template.internal_config_json_code
       "ethereumMainnet": {
         "id": 1,
         "startBlock": 0,
+        "hypersync": "https://1.hypersync.xyz",
         "rpcs": [
           {
             "url": "https://eth.com",
-            "for": "sync",
+            "for": "fallback",
             "initialBlockInterval": 10000,
             "backoffMultiplicative": 0.8,
             "accelerationAdditive": 2000,

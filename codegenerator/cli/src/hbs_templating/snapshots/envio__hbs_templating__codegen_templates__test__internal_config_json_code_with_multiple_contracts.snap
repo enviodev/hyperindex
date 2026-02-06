@@ -24,23 +24,18 @@ expression: project_template.internal_config_json_code
           },
           {
             "url": "https://eth.com/fallback",
-            "for": "sync",
-            "initialBlockInterval": 10000,
-            "backoffMultiplicative": 0.8,
-            "accelerationAdditive": 2000,
-            "intervalCeiling": 10000,
-            "backoffMillis": 5000,
-            "queryTimeoutMillis": 20000
+            "for": "fallback"
           }
         ]
       },
       "ethereumMainnet": {
         "id": 1,
         "startBlock": 0,
+        "hypersync": "https://1.hypersync.xyz",
         "rpcs": [
           {
             "url": "https://eth.com",
-            "for": "sync",
+            "for": "fallback",
             "initialBlockInterval": 10000,
             "backoffMultiplicative": 0.8,
             "accelerationAdditive": 2000,
