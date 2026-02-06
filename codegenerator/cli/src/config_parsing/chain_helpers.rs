@@ -343,6 +343,9 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Sei = 1329,
+
     #[subenum(HypersyncNetwork)]
     Sentient = 6767,
 
@@ -529,6 +532,7 @@ impl Network {
             | Network::Rsk
             | Network::Scroll
             | Network::ScrollSepolia
+            | Network::Sei
             | Network::Sepolia
             | Network::SentientTestnet
             | Network::ShimmerEvm
@@ -623,7 +627,7 @@ impl HypersyncNetwork {
         use ChainTier::*;
         use HypersyncNetwork::*;
         match self {
-            EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Base => Gold,
+            EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Base | Sei => Gold,
 
             Xdc | Polygon | ArbitrumOne | MegaethTestnet | MegaethTestnet2 | Sonic => Silver,
 
