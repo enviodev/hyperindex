@@ -1946,6 +1946,27 @@ mod test {
     }
 
     #[test]
+    fn test_lowercase_contract_name_parses_successfully() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_root = test_dir.as_str();
+        let config_dir = "configs/lowercase-contract-name.yaml";
+        let generated = "generated/";
+        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+            .expect("Failed creating parsed_paths");
+
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+
+        // The contract should be stored with the original lowercase name
+        let contract = config
+            .get_contract(&"contract1".to_string())
+            .expect("Should find contract with lowercase name");
+
+        assert_eq!(contract.name, "contract1");
+        assert_eq!(contract.events.len(), 2);
+    }
+
+    #[test]
     fn parse_event_sig_with_event_prefix() {
         let event_string = "event MyEvent(uint256 myArg)".to_string();
 

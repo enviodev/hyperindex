@@ -66,7 +66,7 @@ struct InternalConfigJson<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<InternalEvmConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    fuel: Option<InternalFuelConfig<'a>>,
+    fuel: Option<InternalFuelConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     svm: Option<InternalSvmConfig>,
 }
@@ -76,16 +76,16 @@ struct InternalConfigJson<'a> {
 struct InternalEvmConfig<'a> {
     chains: std::collections::BTreeMap<String, InternalChainConfig>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
+    contracts: std::collections::BTreeMap<String, InternalContractConfig>,
     address_format: &'a str,
 }
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct InternalFuelConfig<'a> {
+struct InternalFuelConfig {
     chains: std::collections::BTreeMap<String, InternalChainConfig>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
+    contracts: std::collections::BTreeMap<String, InternalContractConfig>,
 }
 
 #[derive(Serialize, Debug)]
@@ -1528,10 +1528,10 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                 .collect();
 
             // Build contracts map
-            let contracts: std::collections::BTreeMap<&str, InternalContractConfig> = cfg
+            let contracts: std::collections::BTreeMap<String, InternalContractConfig> = cfg
                 .contracts
                 .values()
-                .map(|contract| -> Result<(&str, InternalContractConfig)> {
+                .map(|contract| -> Result<(String, InternalContractConfig)> {
                     // Parse and re-serialize compactly to ensure one-liner format
                     let abi_str = match &contract.abi {
                         Abi::Evm(abi) => &abi.raw,
@@ -1550,7 +1550,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                         Abi::Fuel(_) => vec![],
                     };
                     Ok((
-                        contract.name.as_str(),
+                        contract.name.capitalize(),
                         InternalContractConfig {
                             abi: abi_raw,
                             handler: contract.handler_path.clone(),
@@ -2429,5 +2429,24 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
         // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
         let project_template = get_project_template_helper("config2.yaml");
         insta::assert_snapshot!(project_template.indexer_code);
+    }
+
+    #[test]
+    fn internal_config_uses_capitalized_contract_name_as_key() {
+        // Lowercase contract name in config should produce capitalized key in internal config
+        // to match the capitalized name used in Generated.res.hbs templates
+        let project_template = get_project_template_helper("lowercase-contract-name.yaml");
+        let internal_config: serde_json::Value =
+            serde_json::from_str(&project_template.internal_config_json_code).unwrap();
+        let contracts = internal_config["evm"]["contracts"].as_object().unwrap();
+        assert!(
+            contracts.contains_key("Contract1"),
+            "Internal config should use capitalized contract name as key, found keys: {:?}",
+            contracts.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !contracts.contains_key("contract1"),
+            "Internal config should NOT use the original lowercase contract name as key"
+        );
     }
 }
