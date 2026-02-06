@@ -39,10 +39,11 @@ type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,
   syncConfig: option<sourceSyncOptions>,
+  ws: option<string>,
 }
 
 type sourceConfig =
-  | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>, ws: option<string>})
+  | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
   | SvmSourceConfig({rpc: string})
   // For tests: pass custom sources directly
@@ -104,6 +105,7 @@ let rpcConfigSchema = S.schema(s =>
   {
     "url": s.matches(S.string),
     "for": s.matches(rpcSourceForSchema),
+    "ws": s.matches(S.option(S.string)),
     "initialBlockInterval": s.matches(S.option(S.int)),
     "backoffMultiplicative": s.matches(S.option(S.float)),
     "accelerationAdditive": s.matches(S.option(S.int)),
@@ -126,8 +128,6 @@ let publicConfigChainSchema = S.schema(s =>
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
     // SVM source config
     "rpc": s.matches(S.option(S.string)),
-    // Optional WebSocket URL for real-time block tracking
-    "ws": s.matches(S.option(S.string)),
   }
 )
 
@@ -356,9 +356,10 @@ let fromPublic = (
               url: rpcConfig["url"],
               sourceFor: parseRpcSourceFor(rpcConfig["for"]),
               syncConfig,
+              ws: rpcConfig["ws"],
             }
           })
-        EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs, ws: publicChainConfig["ws"]})
+        EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
       | Ecosystem.Fuel =>
         switch publicChainConfig["hypersync"] {
         | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})

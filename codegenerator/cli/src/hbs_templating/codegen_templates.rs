@@ -100,6 +100,9 @@ struct InternalRpcConfig {
     url: String,
     #[serde(rename = "for")]
     source_for: &'static str,
+    // Optional WebSocket URL for real-time block tracking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ws: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -135,9 +138,6 @@ struct InternalChainConfig {
     // SVM-specific source config
     #[serde(skip_serializing_if = "Option::is_none")]
     rpc: Option<String>,
-    // Optional WebSocket URL for real-time block tracking
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ws: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -1466,6 +1466,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                         For::Fallback => "fallback",
                                         For::Live => "live",
                                     },
+                                    ws: rpc.ws.clone(),
                                     initial_block_interval: rpc
                                         .sync_config
                                         .as_ref()
@@ -1521,7 +1522,6 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                             hypersync,
                             rpcs,
                             rpc,
-                            ws: network.ws.clone(),
                         },
                     )
                 })

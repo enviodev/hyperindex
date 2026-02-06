@@ -662,22 +662,6 @@ impl SystemConfig {
                         })
                         .collect();
 
-                    // Validate ws URL protocol if provided
-                    let ws = match &network.ws {
-                        Some(ws_url) => {
-                            if ws_url.starts_with("wss://") || ws_url.starts_with("ws://") {
-                                Some(ws_url.trim_end_matches('/').to_string())
-                            } else {
-                                Err(anyhow!(
-                                    "The WebSocket URL \"{}\" is in incorrect format. \
-                                     Expected wss:// or ws:// protocol.",
-                                    ws_url
-                                ))?
-                            }
-                        }
-                        None => None,
-                    };
-
                     let network = Network {
                         id: network.id,
                         max_reorg_depth: network
@@ -687,7 +671,6 @@ impl SystemConfig {
                         end_block: network.end_block,
                         sync_source,
                         contracts,
-                        ws,
                     };
 
                     unique_hashmap::try_insert(&mut chains, network.id, network)
@@ -844,7 +827,6 @@ impl SystemConfig {
                         max_reorg_depth: None,
                         sync_source,
                         contracts,
-                        ws: None,
                     };
 
                     unique_hashmap::try_insert(&mut chains, network.id, network)
@@ -884,7 +866,6 @@ impl SystemConfig {
                         max_reorg_depth: None,
                         sync_source,
                         contracts: vec![],
-                        ws: None,
                     };
 
                     unique_hashmap::try_insert(&mut chains, network.id, network)
@@ -1036,6 +1017,7 @@ impl DataSource {
                   Some(_) => For::Fallback,
                   None => For::Sync,
                 },
+                ws: None,
                 sync_config: None,
             }],
             (None, Some(RpcSelection::Single(rpc))) => vec![rpc],
@@ -1047,6 +1029,7 @@ impl DataSource {
               .map(|url| Rpc {
                   url: url.to_string(),
                   source_for: For::Sync,
+                  ws: None,
                   sync_config: rpc_config.sync_config.clone(),
               })
               .collect()
@@ -1058,10 +1041,28 @@ impl DataSource {
         for rpc in raw_rpcs.iter() {
             match parse_url(rpc.url.as_str()) {
               None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
-              Some(url) => rpcs.push(Rpc {
-                  url,
-                  ..rpc.clone()
-              })
+              Some(url) => {
+                // Validate ws URL protocol if provided
+                let ws = match &rpc.ws {
+                    Some(ws_url) => {
+                        if ws_url.starts_with("wss://") || ws_url.starts_with("ws://") {
+                            Some(ws_url.trim_end_matches('/').to_string())
+                        } else {
+                            return Err(anyhow!(
+                                "The WebSocket URL \"{}\" is in incorrect format. \
+                                 Expected wss:// or ws:// protocol.",
+                                ws_url
+                            ));
+                        }
+                    }
+                    None => None,
+                };
+                rpcs.push(Rpc {
+                    url,
+                    ws,
+                    ..rpc.clone()
+                })
+              }
             }
         }
 
@@ -1112,8 +1113,6 @@ pub struct Network {
     pub end_block: Option<u64>,
     pub max_reorg_depth: Option<i32>,
     pub contracts: Vec<NetworkContract>,
-    /// Optional WebSocket URL for real-time block tracking via eth_subscribe("newHeads")
-    pub ws: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2051,7 +2050,6 @@ mod test {
             }),
             rpc_config: None,
             rpc: None,
-            ws: None,
             start_block: 0,
             end_block: None,
             max_reorg_depth: None,
@@ -2132,7 +2130,6 @@ mod test {
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,
-                ws: None,
                 start_block: 0,
                 end_block: None,
                 max_reorg_depth: None,
@@ -2182,7 +2179,6 @@ mod test {
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,
-                ws: None,
                 start_block: 0,
                 end_block: None,
                 max_reorg_depth: None,
