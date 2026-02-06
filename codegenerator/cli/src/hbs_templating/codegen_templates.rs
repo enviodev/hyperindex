@@ -244,6 +244,7 @@ pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub type_code: String,
     pub schema_code: String,
+    pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
     pub composite_indices: Vec<Vec<String>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
@@ -305,11 +306,41 @@ impl EntityRecordTypeTemplate {
 
         let composite_indices = entity.get_composite_indices();
 
+        // Generate getWhereFilter type code for ReScript
+        let get_where_filter_fields: Vec<String> = params
+            .iter()
+            .filter(|p| p.is_queryable_field)
+            .map(|p| {
+                let (field_name, as_name) = if p.is_entity_field {
+                    (
+                        format!(
+                            "{}_id",
+                            RecordField::to_valid_rescript_name(
+                                &p.field_name.uncapitalized
+                            )
+                        ),
+                        format!("{}_id", p.field_name.original),
+                    )
+                } else {
+                    (
+                        RecordField::to_valid_rescript_name(&p.field_name.uncapitalized),
+                        p.field_name.original.clone(),
+                    )
+                };
+                format!(
+                    "@as(\"{}\") {}?: Envio.whereOperator<{}>",
+                    as_name, field_name, p.field_type
+                )
+            })
+            .collect();
+        let get_where_filter_code = format!("{{{}}}", get_where_filter_fields.join(", "));
+
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
             type_code,
             schema_code,
+            get_where_filter_code,
             derived_fields,
             composite_indices,
             params,
@@ -1776,6 +1807,53 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                 format!(
                     "export type Entities = {{\n{}\n}};",
                     entity_entries.join("\n")
+                )
+            });
+
+            // Generate WhereOperator generic type
+            parts.push(
+                "export type WhereOperator<T> = {\n  readonly _eq?: T;\n  readonly _gt?: T;\n  readonly _lt?: T;\n};"
+                    .to_string(),
+            );
+
+            // Generate GetWhereFilter type with per-entity filter definitions
+            let get_where_filter_entries: Vec<String> = entities
+                .iter()
+                .map(|entity| {
+                    let filter_fields: Vec<String> = entity
+                        .params
+                        .iter()
+                        .filter(|param| param.is_queryable_field)
+                        .map(|param| {
+                            let ts_type = param.field_type.to_ts_type_string();
+                            let (field_name, field_type) = if param.is_entity_field {
+                                (
+                                    format!("{}_id", param.field_name.original),
+                                    "string".to_string(),
+                                )
+                            } else {
+                                (param.field_name.original.clone(), ts_type)
+                            };
+                            format!("    {}?: WhereOperator<{}>;", field_name, field_type)
+                        })
+                        .collect();
+                    if filter_fields.is_empty() {
+                        format!("  \"{}\": {{}};", entity.name.capitalized)
+                    } else {
+                        format!(
+                            "  \"{}\": {{\n{}\n  }};",
+                            entity.name.capitalized,
+                            filter_fields.join("\n")
+                        )
+                    }
+                })
+                .collect();
+            parts.push(if get_where_filter_entries.is_empty() {
+                "export type GetWhereFilter = {};".to_string()
+            } else {
+                format!(
+                    "export type GetWhereFilter = {{\n{}\n}};",
+                    get_where_filter_entries.join("\n")
                 )
             });
 

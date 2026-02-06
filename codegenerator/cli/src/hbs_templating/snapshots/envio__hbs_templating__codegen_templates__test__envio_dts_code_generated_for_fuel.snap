@@ -1,6 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2444
+assertion_line: 2477
 expression: project_template.envio_dts_code
 ---
 export type EvmChains = {};
@@ -18,4 +18,12 @@ export type Entities = {
     readonly "id": string;
     readonly "emptyField": string;
   };
+};
+export type WhereOperator<T> = {
+  readonly _eq?: T;
+  readonly _gt?: T;
+  readonly _lt?: T;
+};
+export type GetWhereFilter = {
+  "EmptyEntity": {};
 };

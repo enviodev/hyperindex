@@ -131,7 +131,7 @@ Indexer.ERC20.Transfer.handler(async ({event, context}) => {
 
 Indexer.ERC20Factory.DeleteUser.handler(async ({event, context}) => {
   let account_id = event.params.user->Address.toString
-  let accountTokens = await context.accountToken.getWhere.account_id.eq(account_id)
+  let accountTokens = await context.accountToken.getWhere({account_id: {_eq: account_id}})
 
   context.account.deleteUnsafe(event.params.user->Address.toString)
   accountTokens->Belt.Array.forEach(accountToken => {
