@@ -355,8 +355,12 @@ let getSingleIndices = (table): array<string> => {
   ->getUnfilteredCompositeIndicesUnsafe
   //get all composite indices with only 1 field defined
   //this is still a single index
-  ->Array.keep(cidx => cidx->Array.length == 1)
-  ->Array.map(cidx => cidx->Array.map(f => f.fieldName))
+  ->Array.keepMap(cidx =>
+    switch cidx {
+    | [{fieldName}] => Some([fieldName])
+    | _ => None
+    }
+  )
   ->Array.concat([indexFields])
   ->Array.concatMany
   ->Set.String.fromArray
