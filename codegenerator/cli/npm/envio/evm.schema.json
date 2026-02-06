@@ -340,6 +340,13 @@
             }
           ]
         },
+        "ws": {
+          "description": "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block header notifications via eth_subscribe(\"newHeads\"). Provides lower latency than HTTP polling for detecting new blocks.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "max_reorg_depth": {
           "description": "The number of blocks from the head that the indexer should account for in case of reorgs.",
           "type": [

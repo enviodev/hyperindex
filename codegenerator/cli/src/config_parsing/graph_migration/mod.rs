@@ -304,6 +304,7 @@ pub async fn generate_config_from_subgraph_id(
             // TODO: update to the final rpc url
             rpc_config: None,
             rpc: None,
+            ws: None,
             start_block: 0,
             end_block: None,
             max_reorg_depth: None,

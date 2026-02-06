@@ -129,6 +129,7 @@ pub mod evm {
                                 hypersync_config: None,
                                 rpc_config: None,
                                 rpc,
+                                ws: None,
                                 start_block: selected_chain.network.get_start_block(),
                                 end_block,
                                 max_reorg_depth: None,

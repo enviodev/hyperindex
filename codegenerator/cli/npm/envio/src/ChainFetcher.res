@@ -200,7 +200,7 @@ let make = (
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let lowercaseAddresses = config.lowercaseAddresses
   let sources = switch chainConfig.sourceConfig {
-  | Config.EvmSourceConfig({hypersync, rpcs}) =>
+  | Config.EvmSourceConfig({hypersync, rpcs, ws}) =>
     // Build Internal.evmContractConfig from contracts for EvmChain.makeSources
     let evmContracts: array<Internal.evmContractConfig> =
       chainConfig.contracts->Array.map((contract): Internal.evmContractConfig => {
@@ -230,6 +230,7 @@ let make = (
       ~allEventSignatures,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
+      ~ws?,
     )
   | Config.FuelSourceConfig({hypersync}) => [HyperFuelSource.make({chain, endpointUrl: hypersync})]
   | Config.SvmSourceConfig({rpc}) => [Svm.makeRPCSource(~chain, ~rpc)]

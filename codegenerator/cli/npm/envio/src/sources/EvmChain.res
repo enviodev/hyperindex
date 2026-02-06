@@ -52,11 +52,24 @@ let makeSources = (
   ~allEventSignatures,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
+  ~ws=?,
 ) => {
   let eventRouter =
     contracts
     ->Belt.Array.flatMap(contract => contract.events)
     ->EventRouter.fromEvmEventModsOrThrow(~chain)
+
+  let chainId = chain->ChainMap.Chain.toChainId
+
+  // Create WebSocket height subscription factory if ws URL is configured
+  let createWsHeightSubscription = switch ws {
+  | Some(wsUrl) =>
+    Some(
+      (~onHeight) =>
+        RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight),
+    )
+  | None => None
+  }
 
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
@@ -76,17 +89,24 @@ let makeSources = (
   | _ => []
   }
   rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor}) => {
-    let _ = sources->Js.Array2.push(
-      RpcSource.make({
-        chain,
-        sourceFor,
-        syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
-        url,
-        eventRouter,
-        allEventSignatures,
-        lowercaseAddresses,
-      }),
-    )
+    let source = RpcSource.make({
+      chain,
+      sourceFor,
+      syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
+      url,
+      eventRouter,
+      allEventSignatures,
+      lowercaseAddresses,
+    })
+    // Attach WebSocket height subscription to RPC sources if configured
+    let sourceWithWs = switch createWsHeightSubscription {
+    | Some(createSub) => {
+        ...source,
+        createHeightSubscription: createSub,
+      }
+    | None => source
+    }
+    let _ = sources->Js.Array2.push(sourceWithWs)
   })
 
   sources

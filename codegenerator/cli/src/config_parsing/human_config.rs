@@ -514,6 +514,13 @@ pub mod evm {
         pub hypersync_config: Option<HypersyncConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
+            description = "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block \
+                           header notifications via eth_subscribe(\"newHeads\"). Provides lower \
+                           latency than HTTP polling for detecting new blocks."
+        )]
+        pub ws: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
             description = "The number of blocks from the head that the indexer should account for \
                            in case of reorgs."
         )]
@@ -1073,6 +1080,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 hypersync_config: None,
                 rpc_config: None,
                 rpc: None,
+                ws: None,
                 start_block: 2_000,
                 max_reorg_depth: None,
                 end_block: Some(2_000_000),
