@@ -1071,37 +1071,38 @@ let pushQueriesForRange = (
         | Some(eb) => eb
         | None => maxQueryBlockNumber
         }
-        let remainingBlocks = maxBlock - rangeFromBlock + 1
-        let chunksNeeded = Js.Math.ceil_int(remainingBlocks->Int.toFloat /. chunkRange->Int.toFloat)
-        let chunksLimit = Pervasives.min(3, chunksNeeded)
-
-        let chunkIdx = ref(0)
-        while chunkIdx.contents < chunksLimit {
-          let fromBlock = rangeFromBlock + chunkIdx.contents * chunkRange
-          let nextChunkIdx = chunkIdx.contents + 1
-          let isLastNeeded = nextChunkIdx === chunksNeeded
-          let isLastAllowed = nextChunkIdx === chunksLimit
-
-          let chunkToBlock = if isLastNeeded {
-            rangeEndBlock
-          } else if isLastAllowed {
-            // For the last allowed chunk, fetch double range,
-            // so we can reevaluate the chunk range in the next query
-            Some(Pervasives.min(fromBlock + chunkRange * 2 - 1, maxBlock))
-          } else {
-            Some(fromBlock + chunkRange - 1)
-          }
-
+        let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
+        if rangeFromBlock + 2 * chunkSize - 1 <= maxBlock {
+          // Create 2 chunks of ceil(1.8 * chunkRange) each
           queries->Array.push({
             partitionId,
-            fromBlock,
-            toBlock: chunkToBlock,
-            isChunk: chunkToBlock !== None,
+            fromBlock: rangeFromBlock,
+            toBlock: Some(rangeFromBlock + chunkSize - 1),
+            isChunk: true,
             selection,
             addressesByContractName,
             indexingContracts,
           })
-          chunkIdx := nextChunkIdx
+          queries->Array.push({
+            partitionId,
+            fromBlock: rangeFromBlock + chunkSize,
+            toBlock: Some(rangeFromBlock + 2 * chunkSize - 1),
+            isChunk: true,
+            selection,
+            addressesByContractName,
+            indexingContracts,
+          })
+        } else {
+          // Not enough room for 2 chunks, fall back to a single query
+          queries->Array.push({
+            partitionId,
+            fromBlock: rangeFromBlock,
+            toBlock: rangeEndBlock,
+            selection,
+            isChunk: rangeEndBlock !== None,
+            addressesByContractName,
+            indexingContracts,
+          })
         }
       }
     }
