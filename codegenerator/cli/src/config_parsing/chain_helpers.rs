@@ -199,10 +199,10 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Hoodi = 560048,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Hyperliquid = 999,
 
     IncoGentryTestnet = 9090,
@@ -309,7 +309,7 @@ pub enum Network {
 
     PharosDevnet = 50002,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Plasma = 9745,
 
     #[subenum(HypersyncNetwork)]
@@ -352,7 +352,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Sei = 1329,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     SeiTestnet = 1328,
 
     #[subenum(HypersyncNetwork)]
@@ -373,7 +373,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Sonic = 146,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     SonicTestnet = 14601,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
