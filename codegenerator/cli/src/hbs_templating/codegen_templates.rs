@@ -10,7 +10,10 @@ use crate::{
     config_parsing::{
         chain_helpers::Network,
         entity_parsing::{Entity, Field, GraphQLEnum},
-        event_parsing::{abi_to_rescript_type, EthereumEventParam},
+        event_parsing::{
+            abi_to_rescript_type, abi_to_rescript_type_with_structs, hypersync_field_conversion,
+            AuxTypeDecl, EthereumEventParam,
+        },
         field_types,
         human_config::{evm::For, HumanConfig},
         system_config::{
@@ -323,6 +326,8 @@ pub struct EventMod {
     pub topic_count: usize,
     pub event_name: String,
     pub data_type: String,
+    /// Auxiliary type declarations for Solidity struct types (type + schema + fromArray + default)
+    pub aux_type_decls_code: String,
     pub parse_event_filters_code: String,
     pub params_raw_event_schema: String,
     pub convert_hyper_sync_event_args_code: String,
@@ -343,6 +348,7 @@ impl EventMod {
         let topic_count = &self.topic_count;
         let event_name = &self.event_name;
         let data_type = &self.data_type;
+        let aux_type_decls_code = &self.aux_type_decls_code;
         let params_raw_event_schema = &self.params_raw_event_schema;
         let convert_hyper_sync_event_args_code = &self.convert_hyper_sync_event_args_code;
         let event_filter_type = &self.event_filter_type;
@@ -458,7 +464,7 @@ let sighash = "{sighash}"
 let name = "{event_name}"
 let contractName = contractName
 
-@genType
+{aux_type_decls_code}@genType
 type eventArgs = {data_type}
 @genType
 type block = {block_type}
@@ -570,37 +576,44 @@ impl EventTemplate {
         )
     }
 
-    pub fn generate_convert_hyper_sync_event_args_code(params: &[EventParam]) -> String {
+    pub fn generate_convert_hyper_sync_event_args_code(
+        params: &[EventParam],
+        param_type_idents: &[TypeIdent],
+    ) -> String {
         if params.is_empty() {
             return Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string();
         }
-        let indexed_params = params
+        let indexed_params: Vec<_> = params
             .iter()
-            .filter(|param| param.indexed)
-            .collect::<Vec<_>>();
+            .zip(param_type_idents.iter())
+            .filter(|(param, _)| param.indexed)
+            .collect();
 
-        let body_params = params
+        let body_params: Vec<_> = params
             .iter()
-            .filter(|param| !param.indexed)
-            .collect::<Vec<_>>();
+            .zip(param_type_idents.iter())
+            .filter(|(param, _)| !param.indexed)
+            .collect();
 
         let mut code = String::from("(decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {");
 
-        for (index, param) in indexed_params.into_iter().enumerate() {
+        for (index, (param, type_ident)) in indexed_params.into_iter().enumerate() {
+            let conversion = hypersync_field_conversion(type_ident);
             code.push_str(&format!(
-                "{}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
-               toUnderlying->Utils.magic, ",
+                "{}: decodedEvent.indexed->Js.Array2.unsafe_get({})->{}, ",
                 RecordField::to_valid_rescript_name(&param.name),
-                index
+                index,
+                conversion
             ));
         }
 
-        for (index, param) in body_params.into_iter().enumerate() {
+        for (index, (param, type_ident)) in body_params.into_iter().enumerate() {
+            let conversion = hypersync_field_conversion(type_ident);
             code.push_str(&format!(
-                "{}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
-               toUnderlying->Utils.magic, ",
+                "{}: decodedEvent.body->Js.Array2.unsafe_get({})->{}, ",
                 RecordField::to_valid_rescript_name(&param.name),
-                index
+                index,
+                conversion
             ));
         }
 
@@ -620,6 +633,7 @@ impl EventTemplate {
             event_name: event_name.clone(),
             parse_event_filters_code: "".to_string(),
             data_type: "Internal.fuelSupplyParams".to_string(),
+            aux_type_decls_code: String::new(),
             params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
                 .to_string(),
@@ -646,6 +660,7 @@ impl EventTemplate {
             event_name: event_name.clone(),
             parse_event_filters_code: "".to_string(),
             data_type: "Internal.fuelTransferParams".to_string(),
+            aux_type_decls_code: String::new(),
             params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
                 .to_string(),
@@ -664,18 +679,31 @@ impl EventTemplate {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
+                // Collect struct-aware type conversions for all params
+                let mut all_aux_decls: Vec<AuxTypeDecl> = vec![];
+                let param_type_idents: Vec<TypeIdent> = params
+                    .iter()
+                    .map(|p| {
+                        let (type_ident, aux_decls) =
+                            abi_to_rescript_type_with_structs(p, "eventArgs");
+                        all_aux_decls.extend(aux_decls);
+                        type_ident
+                    })
+                    .collect();
+
                 let template_params = params
                     .iter()
-                    .map(|input| {
-                        let res_type = abi_to_rescript_type(&input.into());
+                    .zip(param_type_idents.iter())
+                    .map(|(input, res_type)| {
                         let js_name = input.name.to_string();
                         EventParamTypeTemplate {
                             res_name: RecordField::to_valid_rescript_name(&js_name),
                             js_name,
                             default_value_rescript: res_type.get_default_value_rescript(),
-                            default_value_non_rescript: res_type.get_default_value_non_rescript(),
+                            default_value_non_rescript: res_type
+                                .get_default_value_non_rescript(),
                             res_type: res_type.to_string(),
-                            is_eth_address: res_type == TypeIdent::Address,
+                            is_eth_address: *res_type == TypeIdent::Address,
                         }
                     })
                     .collect::<Vec<_>>();
@@ -686,14 +714,32 @@ impl EventTemplate {
                     TypeExpr::Record(
                         params
                             .iter()
-                            .map(|p| {
-                                RecordField::new(
-                                    p.name.to_string(),
-                                    abi_to_rescript_type(&p.into()),
-                                )
+                            .zip(param_type_idents.iter())
+                            .map(|(p, type_ident)| {
+                                RecordField::new(p.name.to_string(), type_ident.clone())
                             })
                             .collect(),
                     )
+                };
+
+                // Generate auxiliary type declarations code for struct types
+                let aux_type_decls_code = if all_aux_decls.is_empty() {
+                    String::new()
+                } else {
+                    let mut parts: Vec<String> = vec![];
+                    for decl in &all_aux_decls {
+                        parts.push(decl.to_type_decl_string());
+                    }
+                    for decl in &all_aux_decls {
+                        parts.push(decl.to_schema_decl_string(&SchemaMode::ForDb));
+                    }
+                    for decl in &all_aux_decls {
+                        parts.push(decl.to_from_array_decl_string());
+                    }
+                    for decl in &all_aux_decls {
+                        parts.push(decl.to_default_decl_string());
+                    }
+                    format!("{}\n", parts.join("\n"))
                 };
 
                 let event_mod = EventMod {
@@ -703,11 +749,15 @@ impl EventTemplate {
                         .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc }),
                     event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
+                    aux_type_decls_code,
                     parse_event_filters_code: Self::generate_parse_event_filters_code(params),
                     params_raw_event_schema: data_type_expr
                         .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
                     convert_hyper_sync_event_args_code:
-                        Self::generate_convert_hyper_sync_event_args_code(params),
+                        Self::generate_convert_hyper_sync_event_args_code(
+                            params,
+                            &param_type_idents,
+                        ),
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
                     fuel_event_kind: None,
@@ -729,6 +779,7 @@ impl EventTemplate {
                             event_name: event_name.clone(),
                             parse_event_filters_code: "".to_string(),
                             data_type: type_indent.to_string(),
+                            aux_type_decls_code: String::new(),
                             params_raw_event_schema: format!(
                                 "{}->Utils.Schema.coerceToJsonPgType",
                                 type_indent.to_rescript_schema(&SchemaMode::ForDb)

@@ -5,14 +5,17 @@
 //! ethers-based implementation.
 
 use alloy_dyn_abi::DynSolType;
-use alloy_json_abi::{Event as AlloyEvent, EventParam as AlloyEventParam};
+use alloy_json_abi::{
+    Event as AlloyEvent, EventParam as AlloyEventParam, Param as AlloyParam,
+};
 use anyhow::{anyhow, Context, Result};
 use std::str::FromStr;
 
 /// A wrapper around an event parameter that provides a similar API to the old ethers EventParam.
 ///
 /// This struct stores the parsed `DynSolType` directly, unlike alloy's `EventParam`
-/// which stores the type as a string.
+/// which stores the type as a string. It also preserves component names from struct
+/// types, enabling generation of named object types instead of unnamed tuples.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventParam {
     /// The parameter's name
@@ -21,12 +24,17 @@ pub struct EventParam {
     pub kind: DynSolType,
     /// Whether the parameter is indexed
     pub indexed: bool,
+    /// Named components for struct (tuple) types.
+    /// When a Solidity struct is ABI-encoded, it becomes a tuple with named components.
+    /// Preserving these names allows generating object types with named fields
+    /// instead of positional tuple types.
+    pub components: Vec<EventParam>,
 }
 
 impl EventParam {
     /// Create a new EventParam from alloy's EventParam.
     ///
-    /// This parses the type string into a DynSolType.
+    /// This parses the type string into a DynSolType and preserves component names.
     pub fn try_from_alloy(param: &AlloyEventParam) -> Result<Self> {
         let type_str = param.selector_type();
         let kind = DynSolType::parse(&type_str).with_context(|| {
@@ -35,10 +43,38 @@ impl EventParam {
                 type_str, param.name
             )
         })?;
+        let components = param
+            .components
+            .iter()
+            .map(Self::try_from_alloy_param)
+            .collect::<Result<Vec<_>>>()?;
         Ok(EventParam {
             name: param.name.clone(),
             kind,
             indexed: param.indexed,
+            components,
+        })
+    }
+
+    /// Create a new EventParam from alloy's Param (used for nested components).
+    fn try_from_alloy_param(param: &AlloyParam) -> Result<Self> {
+        let type_str = param.selector_type();
+        let kind = DynSolType::parse(&type_str).with_context(|| {
+            format!(
+                "Failed to parse type '{}' for parameter '{}'",
+                type_str, param.name
+            )
+        })?;
+        let components = param
+            .components
+            .iter()
+            .map(Self::try_from_alloy_param)
+            .collect::<Result<Vec<_>>>()?;
+        Ok(EventParam {
+            name: param.name.clone(),
+            kind,
+            indexed: false,
+            components,
         })
     }
 
@@ -48,6 +84,7 @@ impl EventParam {
             name,
             kind,
             indexed,
+            components: vec![],
         }
     }
 }
@@ -125,6 +162,47 @@ mod tests {
         assert_eq!(event.name, "MyEvent");
         assert_eq!(event.inputs.len(), 1);
         assert!(matches!(event.inputs[0].kind, DynSolType::Tuple(_)));
+        // Unnamed tuple components should have empty names
+        assert_eq!(event.inputs[0].components.len(), 2);
+        assert_eq!(event.inputs[0].components[0].name, "");
+        assert_eq!(event.inputs[0].components[1].name, "");
+    }
+
+    #[test]
+    fn test_parse_event_with_named_tuple_components() {
+        // Simulates a struct with named fields parsed from JSON ABI
+        use alloy_json_abi::{Event as AlloyEvent, EventParam as AlloyEventParam, Param};
+
+        let alloy_event = AlloyEvent {
+            name: "MyEvent".to_string(),
+            inputs: vec![AlloyEventParam {
+                ty: "tuple".to_string(),
+                name: "data".to_string(),
+                indexed: false,
+                components: vec![
+                    Param {
+                        ty: "address".to_string(),
+                        name: "funder".to_string(),
+                        components: vec![],
+                        internal_type: None,
+                    },
+                    Param {
+                        ty: "uint256".to_string(),
+                        name: "amount".to_string(),
+                        components: vec![],
+                        internal_type: None,
+                    },
+                ],
+                internal_type: None,
+            }],
+            anonymous: false,
+        };
+
+        let event = Event::try_from_alloy(&alloy_event).unwrap();
+        assert_eq!(event.inputs.len(), 1);
+        assert_eq!(event.inputs[0].components.len(), 2);
+        assert_eq!(event.inputs[0].components[0].name, "funder");
+        assert_eq!(event.inputs[0].components[1].name, "amount");
     }
 
     #[test]

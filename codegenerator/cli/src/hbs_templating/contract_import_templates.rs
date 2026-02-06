@@ -31,6 +31,7 @@ mod nested_params {
                                 kind: p.clone(),
                                 //Tuple fields can't be indexed
                                 indexed: false,
+                                components: vec![],
                             };
                             //Recursively get the inner NestedEventParam type
                             Self::TupleParam(i, Box::new(Self::from(inner_event_input, param_index)))
@@ -165,6 +166,7 @@ mod nested_params {
                     name: name.to_string(),
                     kind,
                     indexed,
+                    components: vec![],
                 },
                 accessor_indexes,
             }
@@ -670,11 +672,13 @@ mod test {
                 name: "user".to_string(),
                 kind: DynSolType::Address,
                 indexed: false,
+                components: vec![],
             },
             EventParam {
                 name: "myTupleParam".to_string(),
                 kind: DynSolType::Tuple(vec![DynSolType::Uint(256), DynSolType::Bool]),
                 indexed: false,
+                components: vec![],
             },
         ];
 
@@ -708,6 +712,7 @@ mod test {
                 name: "".to_string(),
                 kind: DynSolType::Address,
                 indexed: false,
+                components: vec![],
             },
             EventParam {
                 name: "myTupleParam".to_string(),
@@ -716,12 +721,14 @@ mod test {
                     DynSolType::Bool,
                 ]),
                 indexed: false,
+                components: vec![],
             },
             EventParam {
                 //param named "id" should compute to "event_id"
                 name: "id".to_string(),
                 kind: DynSolType::String,
                 indexed: false,
+                components: vec![],
             },
         ];
 
