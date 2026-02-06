@@ -188,6 +188,13 @@ module OptimizedPartitions = {
       // which is worth merging
       {endBlock: Some(_)} =>
         newPartitions->Js.Array2.push(p)->ignore
+      // TODO: Skipping fetching partitions might result in
+      // never merging them, which is not good.
+      // But merging them to the last pending chunk toBlock is also not right,
+      // since the pending chunks might create new quereis and result to duplicated events.
+      // As a potential solution we can always create a new partition when merging,
+      // instead of updating the existing one + set endBlock for the existing partition.
+      // Should check production prom metrics to see how it goes.
       | _ if isFetching => newPartitions->Js.Array2.push(p)->ignore
       | {dynamicContract: Some(contractName)} =>
         let pAddressesCount =
