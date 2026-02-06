@@ -847,7 +847,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
         // Every new query creates new chunks
-        // if it doesn't exceed the concurrency limit
+        // Queries are sorted by fromBlock across partitions (lower blocks get priority)
         {
           "fromBlock": 105,
           "toBlock": Some(106),
@@ -891,20 +891,20 @@ This might be wrong after we start exposing a block hash for progress block.`,
           "p": "1",
         },
         {
+          "fromBlock": 111,
+          "toBlock": Some(111),
+          "retry": 0,
+          "p": "1",
+        },
+        {
+          "fromBlock": 112,
+          "toBlock": Some(112),
+          "retry": 0,
+          "p": "1",
+        },
+        {
           "fromBlock": 113,
           "toBlock": Some(114),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 115,
-          "toBlock": Some(118),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 119,
-          "toBlock": Some(122),
           "retry": 0,
           "p": "0",
         },
@@ -2384,209 +2384,194 @@ Sorted by timestamp and chain id`,
     },
   )
 
-  Async.it("Should NOT have duplicate queries after rollback with chunked partitions", async () => {
-    // 1. Setup mock source and indexer
-    let sourceMock = Mock.Source.make(
-      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
-    )
-    let indexerMock = await Mock.Indexer.make(
-      ~chains=[
-        {
-          chain: #1337,
-          sourceConfig: Config.CustomSources([sourceMock.source]),
-        },
-      ],
-    )
-    await Utils.delay(0)
+  Async.it(
+    "Should NOT have duplicate queries after rollback with chunked partitions",
+    async () => {
+      // 1. Setup mock source and indexer
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+      await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
 
-    // 3. Process 2 queries to build chunk history (3+ block ranges each)
-    // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
-    switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
-    | _ => Assert.fail("Step 3 should have a single pending call")
-    }
-    await indexerMock.getBatchWritePromise()
+      // 3. Process 2 queries to build chunk history (3+ block ranges each)
+      // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+      switch sourceMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
+      | _ => Assert.fail("Step 3 should have a single pending call")
+      }
+      await indexerMock.getBatchWritePromise()
 
-    // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
-    // After this, chunking will be enabled with chunkRange=min(3,3)=3
-    // A new query batch should be created with chunks
-    switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
-    | _ => Assert.fail("Step 3 should have a single pending call")
-    }
-    await indexerMock.getBatchWritePromise()
+      // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+      // After this, chunking will be enabled with chunkRange=min(3,3)=3
+      // A new query batch should be created with chunks
+      switch sourceMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
+      | _ => Assert.fail("Step 3 should have a single pending call")
+      }
+      await indexerMock.getBatchWritePromise()
 
-    // 4. Verify chunked queries are created (queries with toBlock set)
-    // Check that we have chunks with toBlock set (at least 3 chunks)
-    switch sourceMock.getItemsOrThrowCalls {
-    | [chunk1, chunk2, chunk3, chunk4, chunk5, chunk6] =>
-      // Verify first 3 chunks have expected fromBlock/toBlock
-      Assert.deepEqual(
-        (
-          chunk1.payload,
-          chunk2.payload,
-          chunk3.payload,
-          chunk4.payload,
-          chunk5.payload,
-          chunk6.payload,
-        ),
-        (
-          {"fromBlock": 107, "toBlock": Some(109), "retry": 0, "p": "0"},
-          {"fromBlock": 110, "toBlock": Some(112), "retry": 0, "p": "0"},
-          {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
-          {"fromBlock": 119, "toBlock": Some(121), "retry": 0, "p": "0"},
-          {"fromBlock": 122, "toBlock": Some(124), "retry": 0, "p": "0"},
-          {"fromBlock": 125, "toBlock": Some(130), "retry": 0, "p": "0"},
-        ),
-        ~message=`Should create 3 chunks on the second query.
+      // 4. Verify chunked queries are created (queries with toBlock set)
+      // Check that we have chunks with toBlock set (at least 3 chunks)
+      switch sourceMock.getItemsOrThrowCalls {
+      | [chunk1, chunk2, chunk3, chunk4, chunk5, chunk6] =>
+        // Verify first 3 chunks have expected fromBlock/toBlock
+        Assert.deepEqual(
+          (
+            chunk1.payload,
+            chunk2.payload,
+            chunk3.payload,
+            chunk4.payload,
+            chunk5.payload,
+            chunk6.payload,
+          ),
+          (
+            {"fromBlock": 107, "toBlock": Some(109), "retry": 0, "p": "0"},
+            {"fromBlock": 110, "toBlock": Some(112), "retry": 0, "p": "0"},
+            {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
+            {"fromBlock": 119, "toBlock": Some(121), "retry": 0, "p": "0"},
+            {"fromBlock": 122, "toBlock": Some(124), "retry": 0, "p": "0"},
+            {"fromBlock": 125, "toBlock": Some(130), "retry": 0, "p": "0"},
+          ),
+          ~message=`Should create 3 chunks on the second query.
 The 4-6 chunks are not really expected, but created since we call fetchNextQuery twice:
 - on response handling
 - on batch write finish`,
+        )
+
+        // 5. Resolve LAST chunk FIRST with PARTIAL range: 113-115 instead of 113-118
+        // This leaves a gap at 116-118 in the same partition (no new partition created)
+        chunk3.resolve([], ~latestFetchedBlockNumber=115)
+
+        // 6. Resolve remaining chunks normally (107-109, 110-112)
+        // Main partition consumes up to 115, detects gap before 119, creates gap-fill query
+        chunk1.resolve([], ~latestFetchedBlockNumber=109)
+        chunk2.resolve([], ~latestFetchedBlockNumber=112)
+
+        await indexerMock.getBatchWritePromise()
+
+        Assert.deepEqual(
+          sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+          [
+            chunk4.payload,
+            chunk5.payload,
+            chunk6.payload,
+            {
+              "fromBlock": 116,
+              "toBlock": Some(118),
+              "retry": 0,
+              // Gap-fill query for the partial chunk range, same partition
+              "p": "0",
+            },
+            {
+              "fromBlock": 131,
+              "toBlock": Some(133),
+              "retry": 0,
+              "p": "0",
+            },
+            {
+              "fromBlock": 134,
+              "toBlock": Some(136),
+              "retry": 0,
+              "p": "0",
+            },
+            {
+              "fromBlock": 137,
+              "toBlock": Some(142),
+              "retry": 0,
+              "p": "0",
+            },
+            {
+              "fromBlock": 143,
+              "toBlock": Some(145),
+              "retry": 0,
+              "p": "0",
+            },
+            {
+              "fromBlock": 146,
+              "toBlock": Some(148),
+              "retry": 0,
+              "p": "0",
+            },
+            {
+              "fromBlock": 149,
+              "toBlock": Some(154),
+              "retry": 0,
+              "p": "0",
+            },
+          ],
+          ~message="Should create gap-fill query for partial chunk range in same partition",
+        )
+
+      | _ => Assert.fail("Step 4 should have 3 chunks")
+      }
+
+      // 8. Trigger rollback via reorg detection to block 116
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={
+          blockNumber: 115,
+          blockHash: "0x115-reorged",
+        },
+        ~resolveAt=#first,
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      Assert.deepEqual(
+        sourceMock.getBlockHashesCalls,
+        [[100, 103, 106, 109, 112]],
+        ~message="Should have called getBlockHashes to find rollback depth",
       )
 
-      // 5. Resolve LAST chunk FIRST with PARTIAL range: 113-115 instead of 113-118
-      // This creates a NEW partition with latestFetchedBlock=115, endBlock=118
-      chunk3.resolve([], ~latestFetchedBlockNumber=115)
+      // Rollback to block 112
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
+        {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
+        {blockNumber: 109, blockHash: "0x109", blockTimestamp: 100},
+        {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
+      ])
 
-      // 6. Resolve remaining chunks normally (107-109, 110-112)
-      // Main partition consumes all chunks in order
-      chunk1.resolve([], ~latestFetchedBlockNumber=109)
-      chunk2.resolve([], ~latestFetchedBlockNumber=112)
+      // Clean up pending calls from before rollback
+      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexerMock.getBatchWritePromise()
+      await indexerMock.getRollbackReadyPromise()
 
       Assert.deepEqual(
         sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
         [
-          chunk4.payload,
-          chunk5.payload,
-          chunk6.payload,
           {
-            "fromBlock": 131,
-            "toBlock": Some(133),
+            "fromBlock": 115,
+            "toBlock": Some(117),
             "retry": 0,
             "p": "0",
           },
           {
-            "fromBlock": 134,
-            "toBlock": Some(136),
+            "fromBlock": 118,
+            "toBlock": Some(120),
             "retry": 0,
             "p": "0",
           },
           {
-            "fromBlock": 137,
-            "toBlock": Some(142),
-            "retry": 0,
-            "p": "0",
-          },
-          {
-            "fromBlock": 116,
-            "toBlock": Some(118),
-            "retry": 0,
-            // This query is the most important
-            // NEW PARTITION HERE
-            "p": "1",
-          },
-          {
-            "fromBlock": 143,
-            "toBlock": Some(145),
-            "retry": 0,
-            "p": "0",
-          },
-          {
-            "fromBlock": 146,
-            "toBlock": Some(148),
-            "retry": 0,
-            "p": "0",
-          },
-          {
-            "fromBlock": 149,
-            "toBlock": Some(154),
+            "fromBlock": 121,
+            "toBlock": Some(126),
             "retry": 0,
             "p": "0",
           },
         ],
-        ~message="Should create new partition after not full query",
+        ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
       )
-
-    | _ => Assert.fail("Step 4 should have 3 chunks")
-    }
-
-    // 8. Trigger rollback via reorg detection to block 116
-    sourceMock.resolveGetItemsOrThrow(
-      [],
-      ~prevRangeLastBlock={
-        blockNumber: 115,
-        blockHash: "0x115-reorged",
-      },
-      ~resolveAt=#first,
-    )
-    await Utils.delay(0)
-    await Utils.delay(0)
-
-    Assert.deepEqual(
-      sourceMock.getBlockHashesCalls,
-      [[100, 103, 106, 109, 112]],
-      ~message="Should have called getBlockHashes to find rollback depth",
-    )
-
-    // Rollback to block 112
-    sourceMock.resolveGetBlockHashes([
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
-      {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
-      {blockNumber: 109, blockHash: "0x109", blockTimestamp: 100},
-      {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
-    ])
-
-    // Clean up pending calls from before rollback
-    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
-
-    await indexerMock.getRollbackReadyPromise()
-
-    Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [
-        {
-          "fromBlock": 115,
-          "toBlock": Some(117),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 118,
-          "toBlock": Some(120),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 121,
-          "toBlock": Some(126),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 115,
-          "toBlock": Some(117),
-          "retry": 0,
-          "p": "1",
-        },
-        {
-          "fromBlock": 118,
-          "toBlock": Some(120),
-          "retry": 0,
-          "p": "1",
-        },
-        {
-          "fromBlock": 121,
-          "toBlock": Some(126),
-          "retry": 0,
-          "p": "1",
-        },
-      ],
-    )
-  })
+    },
+  )
 })

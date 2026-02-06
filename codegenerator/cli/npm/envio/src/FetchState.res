@@ -304,17 +304,21 @@ module OptimizedPartitions = {
   }
 
   // Helper to process fetched queries from the front of the queue
-  // Removes consecutive fetched queries and returns the last fetchedBlock
+  // Removes consecutive fetched queries and returns the last fetchedBlock.
+  // Stops if the next query's fromBlock is not contiguous with the current
+  // latestFetchedBlock (gap from a partial chunk fetch).
   @inline
   let consumeFetchedQueries = (
     mutPendingQueries: array<pendingQuery>,
-    ~initialLatestFetchedBlock,
+    ~initialLatestFetchedBlock: blockNumberAndTimestamp,
   ) => {
     let latestFetchedBlock = ref(initialLatestFetchedBlock)
 
     while (
-      mutPendingQueries->Array.length > 0 &&
-        (mutPendingQueries->Utils.Array.firstUnsafe).fetchedBlock !== None
+      mutPendingQueries->Array.length > 0 && {
+          let pq = mutPendingQueries->Utils.Array.firstUnsafe
+          pq.fetchedBlock !== None && pq.fromBlock <= latestFetchedBlock.contents.blockNumber + 1
+        }
     ) {
       let removedQuery = mutPendingQueries->Js.Array2.shift->Option.getUnsafe
       latestFetchedBlock := removedQuery.fetchedBlock->Option.getUnsafe
@@ -348,7 +352,6 @@ module OptimizedPartitions = {
     ~knownHeight,
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) => {
-    let nextPartitionIndexRef = ref(optimizedPartitions.nextPartitionIndex)
     let p = optimizedPartitions->getOrThrow(~partitionId=query.partitionId)
     let mutEntities = optimizedPartitions.entities->Utils.Dict.shallowCopy
 
@@ -363,31 +366,6 @@ module OptimizedPartitions = {
     }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
-
-    // Create remaining partition only for chunks that didn't reach toBlock
-    switch query.toBlock {
-    | Some(queryToBlock) if query.isChunk && latestFetchedBlock.blockNumber < queryToBlock =>
-      // FIXME: During rollback this might result in two duplicate partitions
-      // Let's keep a single partition instead and update query logic to finish fetching the remaining blocks
-      let newPartitionId = nextPartitionIndexRef.contents->Int.toString
-      nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
-      mutEntities->Js.Dict.set(
-        newPartitionId,
-        {
-          id: newPartitionId,
-          latestFetchedBlock,
-          selection: p.selection,
-          addressesByContractName: p.addressesByContractName,
-          endBlock: Some(queryToBlock),
-          dynamicContract: p.dynamicContract,
-          mutPendingQueries: [],
-          prevQueryRange: updatedPrevQueryRange,
-          prevPrevQueryRange: updatedPrevPrevQueryRange,
-        },
-      )
-
-    | _ => ()
-    }
 
     // Process fetched queries from front of queue for main partition
     let updatedLatestFetchedBlock = consumeFetchedQueries(
@@ -418,7 +396,7 @@ module OptimizedPartitions = {
     make(
       ~partitions=mutEntities->Js.Dict.values,
       ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
-      ~nextPartitionIndex=nextPartitionIndexRef.contents,
+      ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
       ~dynamicContracts=optimizedPartitions.dynamicContracts,
     )
   }
@@ -997,19 +975,32 @@ type nextQuery =
   | Ready(array<query>)
 
 let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) => {
-  queries->Array.forEach(q => {
+  for qIdx in 0 to queries->Array.length - 1 {
+    let q = queries->Js.Array2.unsafe_get(qIdx)
     let p = optimizedPartitions->OptimizedPartitions.getOrThrow(~partitionId=q.partitionId)
 
-    // Add query to mutPendingQueries - will be removed when response arrives
-    p.mutPendingQueries
-    ->Array.push({
+    let pq = {
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
       fetchedBlock: None,
-    })
-    ->ignore
-  })
+    }
+
+    // Insert in sorted order by fromBlock to maintain queue invariant.
+    // Gap-fill queries may have lower fromBlock than existing pending queries.
+    let inserted = ref(false)
+    let i = ref(0)
+    while i.contents < p.mutPendingQueries->Array.length && !inserted.contents {
+      if (p.mutPendingQueries->Js.Array2.unsafe_get(i.contents)).fromBlock > q.fromBlock {
+        p.mutPendingQueries->Js.Array2.spliceInPlace(~pos=i.contents, ~remove=0, ~add=[pq])->ignore
+        inserted := true
+      }
+      i := i.contents + 1
+    }
+    if !inserted.contents {
+      p.mutPendingQueries->Array.push(pq)->ignore
+    }
+  }
 }
 
 let addressesByContractNameCount = (addressesByContractName: dict<array<Address.t>>) => {
@@ -1038,6 +1029,75 @@ let getChunkRangeFromHistory = (p: partition) => {
   switch (p.prevQueryRange, p.prevPrevQueryRange) {
   | (0, _) | (_, 0) => None
   | (a, b) => Some(a < b ? a : b)
+  }
+}
+
+@inline
+let pushQueriesForRange = (
+  queries: array<query>,
+  ~partitionId: string,
+  ~rangeFromBlock: int,
+  ~rangeEndBlock: option<int>,
+  ~maxQueryBlockNumber: int,
+  ~maybeChunkRange: option<int>,
+  ~selection: selection,
+  ~addressesByContractName: dict<array<Address.t>>,
+  ~indexingContracts: dict<Internal.indexingContract>,
+) => {
+  if rangeFromBlock <= maxQueryBlockNumber {
+    switch rangeEndBlock {
+    | Some(endBlock) if rangeFromBlock > endBlock => ()
+    | _ =>
+      switch maybeChunkRange {
+      | None =>
+        queries->Array.push({
+          partitionId,
+          fromBlock: rangeFromBlock,
+          toBlock: rangeEndBlock,
+          selection,
+          isChunk: false,
+          addressesByContractName,
+          indexingContracts,
+        })
+      | Some(chunkRange) =>
+        let maxBlock = switch rangeEndBlock {
+        | Some(eb) => eb
+        | None => maxQueryBlockNumber
+        }
+        let remainingBlocks = maxBlock - rangeFromBlock + 1
+        let chunksNeeded = Js.Math.ceil_int(remainingBlocks->Int.toFloat /. chunkRange->Int.toFloat)
+        let chunksLimit = Pervasives.min(3, chunksNeeded)
+
+        let chunkIdx = ref(0)
+        while chunkIdx.contents < chunksLimit {
+          let fromBlock = rangeFromBlock + chunkIdx.contents * chunkRange
+          let nextChunkIdx = chunkIdx.contents + 1
+          let isLastNeeded = nextChunkIdx === chunksNeeded
+          let isLastAllowed = nextChunkIdx === chunksLimit
+
+          let chunkToBlock = if isLastNeeded {
+            rangeEndBlock
+          } else if isLastAllowed {
+            // For the last allowed chunk, fetch double range,
+            // so we can reevaluate the chunk range in the next query
+            Some(Pervasives.min(fromBlock + chunkRange * 2 - 1, maxBlock))
+          } else {
+            Some(fromBlock + chunkRange - 1)
+          }
+
+          queries->Array.push({
+            partitionId,
+            fromBlock,
+            toBlock: chunkToBlock,
+            isChunk: chunkToBlock !== None,
+            selection,
+            addressesByContractName,
+            indexingContracts,
+          })
+          chunkIdx := nextChunkIdx
+        }
+      }
+    }
   }
 }
 
@@ -1086,7 +1146,7 @@ let getNextQuery = (
 
     let partitionsCount = optimizedPartitions.idsInAscOrder->Js.Array2.length
     let idxRef = ref(0)
-    while idxRef.contents < partitionsCount && queries->Js.Array2.length < concurrencyLimit {
+    while idxRef.contents < partitionsCount {
       let idx = idxRef.contents
       let partitionId = optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
       let p = optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
@@ -1103,109 +1163,73 @@ let getNextQuery = (
         shouldWaitForNewBlock := false
       }
 
-      // Allow creating new queries even if fetching, as long as no open-ended query exists
-      let nextFromBlock = switch p.mutPendingQueries->Utils.Array.last {
-      | Some({toBlock: Some(lastChunkToBlock), isChunk: true}) => Some(lastChunkToBlock + 1)
-      | Some({isChunk: false}) => None // Non-chunk query is open-ended, so we can't create new chunks for the partition
+      // Compute queryEndBlock for this partition
+      let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.endBlock)
+      let queryEndBlock = switch blockLag {
+      | 0 => queryEndBlock
       | _ =>
-        switch p.latestFetchedBlock.blockNumber {
-        | 0 => Some(0)
-        | latestFetchedBlockNumber => Some(latestFetchedBlockNumber + 1)
-        }
+        // Force head block as an endBlock when blockLag is set
+        // because otherwise HyperSync might return bigger range
+        Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
+      }
+      // Enforce the response range up until target block
+      // Otherwise for indexers with 100+ partitions
+      // we might blow up the buffer size to more than 600k events
+      // simply because of HyperSync returning extra blocks
+      let queryEndBlock = switch (queryEndBlock, maxQueryBlockNumber < knownHeight) {
+      | (Some(endBlock), true) => Some(Pervasives.min(maxQueryBlockNumber, endBlock))
+      | (None, true) => Some(maxQueryBlockNumber)
+      | (_, false) => queryEndBlock
       }
 
-      switch nextFromBlock {
-      | None => ()
-      | Some(nextFromBlock) => {
-          let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.endBlock)
-          let queryEndBlock = switch blockLag {
-          | 0 => queryEndBlock
-          | _ =>
-            // Force head block as an endBlock when blockLag is set
-            // because otherwise HyperSync might return bigger range
-            Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
-          }
-          // Enforce the respose range up until target block
-          // Otherwise for indexers with 100+ partitions
-          // we might blow up the buffer size to more than 600k events
-          // simply because of HyperSync returning extra blocks
-          let queryEndBlock = switch (queryEndBlock, maxQueryBlockNumber < knownHeight) {
-          | (Some(endBlock), true) => Some(Pervasives.min(maxQueryBlockNumber, endBlock))
-          | (None, true) => Some(maxQueryBlockNumber)
-          | (_, false) => queryEndBlock
-          }
+      let maybeChunkRange = getChunkRangeFromHistory(p)
 
-          switch queryEndBlock {
-          | _ if nextFromBlock > maxQueryBlockNumber => ()
-          | Some(endBlock)
-            if nextFromBlock > endBlock => // The query should wait for the execution.
-            // This is a valid case when endBlock is artifitially limited
-            ()
-          | _ =>
-            // Calculate chunk range from history for multi-query creation
-            let maybeChunkRange = getChunkRangeFromHistory(p)
+      // Walk pending queries to find open ranges and create queries for each
+      let cursor = ref(
+        p.latestFetchedBlock.blockNumber === 0 ? 0 : p.latestFetchedBlock.blockNumber + 1,
+      )
+      let canContinue = ref(true)
+      let pqIdx = ref(0)
+      while pqIdx.contents < p.mutPendingQueries->Array.length && canContinue.contents {
+        let pq = p.mutPendingQueries->Js.Array2.unsafe_get(pqIdx.contents)
 
-            switch maybeChunkRange {
-            | None =>
-              // No chunking - create single query
-              queries->Array.push({
-                partitionId,
-                fromBlock: nextFromBlock,
-                toBlock: queryEndBlock,
-                selection: p.selection,
-                isChunk: false,
-                addressesByContractName: p.addressesByContractName,
-                indexingContracts,
-              })
-            | Some(chunkRange) =>
-              // Create multiple queries for this partition based on chunk range
-              let maxBlock = switch queryEndBlock {
-              | Some(eb) => eb
-              | None => maxQueryBlockNumber
-              }
-              let remainingBlocks = maxBlock - nextFromBlock + 1
-              let chunksNeeded = Js.Math.ceil_int(
-                remainingBlocks->Int.toFloat /. chunkRange->Int.toFloat,
-              )
-              // Don't create more than 3 queries for the same partition
-              let chunksLimit = Pervasives.min(3, concurrencyLimit - queries->Js.Array2.length)
-
-              let chunkIdx = ref(0)
-
-              while chunkIdx.contents < chunksLimit && chunkIdx.contents < chunksNeeded {
-                let fromBlock = nextFromBlock + chunkIdx.contents * chunkRange
-                let nextChunkIdx = chunkIdx.contents + 1
-                let isLastNeeded = nextChunkIdx === chunksNeeded
-                let isLastAllowed = nextChunkIdx === chunksLimit
-
-                let chunkToBlock = if isLastNeeded {
-                  queryEndBlock
-                } else if isLastAllowed {
-                  // For the last allowed chunk, fetch double range,
-                  // so we can reevaluate the chunk range in the next query
-                  Some(Pervasives.min(fromBlock + chunkRange * 2 - 1, maxBlock))
-                } else {
-                  Some(fromBlock + chunkRange - 1)
-                }
-
-                // FIXME:
-                // Since we sort by partition latest fetch block and
-                // the actual query start block might be much further,
-                // we must sort queries afterwards as well
-                queries->Array.push({
-                  partitionId,
-                  fromBlock,
-                  toBlock: chunkToBlock,
-                  isChunk: chunkToBlock !== None,
-                  selection: p.selection,
-                  addressesByContractName: p.addressesByContractName,
-                  indexingContracts,
-                })
-                chunkIdx := nextChunkIdx
-              }
-            }
-          }
+        // Gap before this pending query → create queries for the gap range
+        if pq.fromBlock > cursor.contents {
+          pushQueriesForRange(
+            queries,
+            ~partitionId,
+            ~rangeFromBlock=cursor.contents,
+            ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
+            ~maxQueryBlockNumber,
+            ~maybeChunkRange,
+            ~selection=p.selection,
+            ~addressesByContractName=p.addressesByContractName,
+            ~indexingContracts,
+          )
         }
+        switch pq {
+        | {isChunk: true, toBlock: Some(toBlock), fetchedBlock: Some({blockNumber})}
+          if blockNumber < toBlock =>
+          cursor := blockNumber + 1
+        | {isChunk: true, toBlock: Some(toBlock)} => cursor := toBlock + 1
+        | _ => canContinue := false
+        }
+        pqIdx := pqIdx.contents + 1
+      }
+
+      // Tail range after all pending queries
+      if canContinue.contents {
+        pushQueriesForRange(
+          queries,
+          ~partitionId,
+          ~rangeFromBlock=cursor.contents,
+          ~rangeEndBlock=queryEndBlock,
+          ~maxQueryBlockNumber,
+          ~maybeChunkRange,
+          ~selection=p.selection,
+          ~addressesByContractName=p.addressesByContractName,
+          ~indexingContracts,
+        )
       }
 
       idxRef := idxRef.contents + 1
@@ -1218,7 +1242,13 @@ let getNextQuery = (
         NothingToQuery
       }
     } else {
-      // No need to sort - queries are generated in ascending order from idsInAscOrder
+      // Enforce concurrency limit: sort by fromBlock and take the first concurrencyLimit
+      let queries = if queries->Array.length > concurrencyLimit {
+        queries->Js.Array2.sortInPlaceWith((a, b) => a.fromBlock - b.fromBlock)->ignore
+        queries->Js.Array2.slice(~start=0, ~end_=concurrencyLimit)
+      } else {
+        queries
+      }
       Ready(queries)
     }
   }

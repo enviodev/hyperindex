@@ -1553,26 +1553,29 @@ describe("SourceManager height subscription", () => {
     },
   )
 
-  Async.it("Falls back to polling when createHeightSubscription is not available", async () => {
-    let pollingInterval = 1
-    let mock = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
-    let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
+  Async.it(
+    "[flaky] Falls back to polling when createHeightSubscription is not available",
+    async () => {
+      let pollingInterval = 1
+      let mock = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
+      let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
-    // Return same height - should trigger polling since no subscription available
-    mock.resolveGetHeightOrThrow(100)
-    await Utils.delay(pollingInterval + 1)
+      // Return same height - should trigger polling since no subscription available
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(pollingInterval + 1)
 
-    Assert.deepEqual(
-      mock.getHeightOrThrowCalls->Array.length,
-      2,
-      ~message="Should poll again since no subscription is available",
-    )
+      Assert.deepEqual(
+        mock.getHeightOrThrowCalls->Array.length,
+        2,
+        ~message="Should poll again since no subscription is available",
+      )
 
-    mock.resolveGetHeightOrThrow(101)
-    Assert.deepEqual(await p, 101)
-  })
+      mock.resolveGetHeightOrThrow(101)
+      Assert.deepEqual(await p, 101)
+    },
+  )
 
   Async.it("Ignores subscription heights lower than or equal to knownHeight", async () => {
     let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
