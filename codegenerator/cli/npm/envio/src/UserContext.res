@@ -122,18 +122,22 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     Js.Exn.raiseError(
       `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
     )
-  | Some(field) =>
-    let fieldValueSchema = switch field {
-    | Field({fieldSchema}) => fieldSchema
-    | DerivedFrom(_) => S.string->S.toUnknown
-    }
+  | Some(DerivedFrom(_)) =>
+    Js.Exn.raiseError(
+      `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
+    )
+  | Some(Field({isIndex: false})) =>
+    Js.Exn.raiseError(
+      `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
+    )
+  | Some(Field({fieldSchema, isIndex: true})) =>
     LoadLayer.loadByField(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
       ~operator,
       ~entityConfig,
       ~fieldName=dbFieldName,
-      ~fieldValueSchema,
+      ~fieldValueSchema=fieldSchema,
       ~inMemoryStore=params.inMemoryStore,
       ~shouldGroup=params.isPreload,
       ~item=params.item,

@@ -2,8 +2,8 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller } from "envio";
-import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, GetWhereFilter } from "../envio.d.ts";
+import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter } from "envio";
+import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities } from "../envio.d.ts";
 
 // Utility type to check if an object type is empty
 type IsEmptyObject<T> = keyof T extends never ? true : false;
@@ -131,7 +131,7 @@ export type HandlerContext = {
      * Supports Hasura-style operators: _eq, _gt, _lt.
      * Currently only one filter field with one operator is supported per call.
      */
-    readonly getWhere: (filter: GetWhereFilter["{{entity.name.capitalized}}"]) => Promise<Entities["{{entity.name.capitalized}}"][]>,
+    readonly getWhere: (filter: GetWhereFilter<Entities["{{entity.name.capitalized}}"]>) => Promise<Entities["{{entity.name.capitalized}}"][]>,
     /**
      * Returns the entity {{entity.name.original}} from the storage by ID.
      * If the entity is not found, creates it using provided parameters and returns it.
