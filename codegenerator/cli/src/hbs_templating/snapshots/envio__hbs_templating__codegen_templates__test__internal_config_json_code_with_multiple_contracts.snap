@@ -24,7 +24,13 @@ expression: project_template.internal_config_json_code
           },
           {
             "url": "https://eth.com/fallback",
-            "for": "fallback"
+            "for": "sync",
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
           }
         ]
       },

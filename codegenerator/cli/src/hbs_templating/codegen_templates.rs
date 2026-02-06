@@ -1460,8 +1460,9 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                     url: rpc.url.clone(),
                                     source_for: match rpc.source_for {
                                         Some(For::Sync) => "sync",
-                                        Some(For::Fallback) | None => "fallback",
+                                        Some(For::Fallback) => "fallback",
                                         Some(For::Live) => "live",
+                                        None => unreachable!("source_for should be resolved by from_evm_network_config"),
                                     },
                                     initial_block_interval: rpc
                                         .sync_config

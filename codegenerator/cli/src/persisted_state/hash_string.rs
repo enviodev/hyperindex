@@ -93,7 +93,7 @@ mod test {
         let hash = HashString::from_file_paths(vec![config1_path, config2_path], true).unwrap();
         assert_eq!(
             hash.inner(),
-            "a42585fffe715ae795d6a401ded00ca31792dfb1440082ead6f4fd2594cada33".to_string()
+            "378d1bf0a073e94dd0da1e9a39531093f72ee0e9f6907e5cc9573bab0bc4c01d".to_string()
         );
     }
 
