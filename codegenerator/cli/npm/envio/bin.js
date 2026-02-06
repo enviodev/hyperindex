@@ -8,11 +8,11 @@ const require = createRequire(import.meta.url);
 
 /**
  * Returns the executable path for envio located inside node_modules
- * The naming convention is envio-${os}-${arch}
+ * The naming convention is @envio-dev/envio-${os}-${arch}
  * If the platform is `win32` or `cygwin`, executable will include a `.exe` extension
  * @see https://nodejs.org/api/os.html#osarch
  * @see https://nodejs.org/api/os.html#osplatform
- * @example "x/xx/node_modules/envio-darwin-arm64"
+ * @example "x/xx/node_modules/@envio-dev/envio-darwin-arm64"
  */
 function getExePath() {
   const arch = process.arch;
@@ -28,10 +28,10 @@ function getExePath() {
 
   try {
     // Since the bin will be located inside `node_modules`, we can simply call require.resolve
-    return require.resolve(`envio-${os}-${arch}/bin/envio${extension}`);
+    return require.resolve(`@envio-dev/envio-${os}-${arch}/bin/envio${extension}`);
   } catch (e) {
     throw new Error(
-      `Couldn't find envio binary inside node_modules for ${os}-${arch}`
+      `Couldn't find envio binary (@envio-dev/envio-${os}-${arch}) inside node_modules for ${os}-${arch}`
     );
   }
 }
