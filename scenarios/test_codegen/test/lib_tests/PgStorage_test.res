@@ -37,6 +37,69 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
+  describe("makeCreateCompositeIndexQuery", () => {
+    Async.it(
+      "Should create composite index SQL with ASC direction (default, omitted in SQL)",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Asc},
+            {fieldName: "field2", direction: Table.Asc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1", "field2");`,
+          ~message="Should generate correct composite index SQL with ASC (default) direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create composite index SQL with DESC direction",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Desc},
+            {fieldName: "field2", direction: Table.Asc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1" DESC, "field2");`,
+          ~message="Should generate correct composite index SQL with DESC direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create composite index SQL with all DESC",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Desc},
+            {fieldName: "field2", direction: Table.Desc},
+            {fieldName: "field3", direction: Table.Desc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2_field3" ON "test_schema"."test_table"("field1" DESC, "field2" DESC, "field3" DESC);`,
+          ~message="Should generate correct composite index SQL with all DESC direction",
+        )
+      },
+    )
+  })
+
   describe("makeCreateTableIndicesQuery", () => {
     Async.it(
       "Should create indices for A entity table",

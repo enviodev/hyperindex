@@ -147,10 +147,17 @@ let getPgFieldType = (
   columnType ++ (isArray ? "[]" : "")
 }
 
+type indexFieldDirection = Asc | Desc
+
+type compositeIndexField = {
+  fieldName: string,
+  direction: indexFieldDirection,
+}
+
 type table = {
   tableName: string,
   fields: array<fieldOrDerived>,
-  compositeIndices: array<array<string>>,
+  compositeIndices: array<array<compositeIndexField>>,
 }
 
 let mkTable = (tableName, ~compositeIndices=[], ~fields) => {
@@ -226,14 +233,15 @@ exception NonExistingTableField(string)
 Gets all composite indicies (whether they are single indices or not)
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getUnfilteredCompositeIndicesUnsafe = (table): array<array<string>> => {
+let getUnfilteredCompositeIndicesUnsafe = (table): array<array<compositeIndexField>> => {
   table.compositeIndices->Array.map(compositeIndex =>
-    compositeIndex->Array.map(userDefinedFieldName =>
-      switch table->getFieldByName(userDefinedFieldName) {
+    compositeIndex->Array.map(indexField => {
+      let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
       | Some(field) => field->getFieldName
-      | None => raise(NonExistingTableField(userDefinedFieldName)) //Unexpected should be validated in schema parser
+      | None => raise(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
       }
-    )
+      {fieldName: dbFieldName, direction: indexField.direction}
+    })
   )
 }
 
@@ -348,6 +356,7 @@ let getSingleIndices = (table): array<string> => {
   //get all composite indices with only 1 field defined
   //this is still a single index
   ->Array.keep(cidx => cidx->Array.length == 1)
+  ->Array.map(cidx => cidx->Array.map(f => f.fieldName))
   ->Array.concat([indexFields])
   ->Array.concatMany
   ->Set.String.fromArray
@@ -359,7 +368,7 @@ let getSingleIndices = (table): array<string> => {
 Gets all composite indicies
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getCompositeIndices = (table): array<array<string>> => {
+let getCompositeIndices = (table): array<array<compositeIndexField>> => {
   table
   ->getUnfilteredCompositeIndicesUnsafe
   ->Array.keep(ind => ind->Array.length > 1)

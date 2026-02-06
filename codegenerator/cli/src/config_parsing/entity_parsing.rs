@@ -405,13 +405,48 @@ impl Entity {
                         let index_fields = fields
                             .iter()
                             .map(|v| {
-                                if let Value::String(field_name) = v {
-                                    Ok(field_name.clone())
-                                } else {
-                                    Err(anyhow!("Listed index field should be a string"))
+                                match v {
+                                    // Simple string: "fieldName" (default ASC)
+                                    Value::String(field_name) => {
+                                        Ok(IndexField::from_name(field_name.clone()))
+                                    }
+                                    // List with direction: ["fieldName", "DESC"]
+                                    Value::List(parts) => {
+                                        if parts.len() != 2 {
+                                            return Err(anyhow!(
+                                                "Index field with direction must be a list of exactly 2 elements: \
+                                                 [\"fieldName\", \"ASC\" or \"DESC\"]. Got {} elements.",
+                                                parts.len()
+                                            ));
+                                        }
+                                        let field_name = match &parts[0] {
+                                            Value::String(name) => name.clone(),
+                                            _ => return Err(anyhow!(
+                                                "First element of index field must be a string field name"
+                                            )),
+                                        };
+                                        let direction = match &parts[1] {
+                                            Value::String(dir) => match dir.to_uppercase().as_str() {
+                                                "ASC" => IndexFieldDirection::Asc,
+                                                "DESC" => IndexFieldDirection::Desc,
+                                                _ => return Err(anyhow!(
+                                                    "Index direction must be \"ASC\" or \"DESC\", got \"{}\"",
+                                                    dir
+                                                )),
+                                            },
+                                            _ => return Err(anyhow!(
+                                                "Second element of index field must be a string direction (\"ASC\" or \"DESC\")"
+                                            )),
+                                        };
+                                        Ok(IndexField::new(field_name, direction))
+                                    }
+                                    _ => Err(anyhow!(
+                                        "Listed index field should be a string or a list of \
+                                         [\"fieldName\", \"ASC\" or \"DESC\"]"
+                                    )),
                                 }
                             })
-                            .collect::<anyhow::Result<Vec<String>>>()
+                            .collect::<anyhow::Result<Vec<IndexField>>>()
                             .context("Failed to get fields in index")?;
 
                         Ok(MultiFieldIndex::new(index_fields))
@@ -419,7 +454,8 @@ impl Entity {
                     _ => Err(anyhow!(
                         "Invalid @index directive. Please ensure index has a key of fields with a \
                          list of strings matching field names in your entity. Eg. @index(fields: \
-                         [\"fieldA\", \"fieldB\"])"
+                         [\"fieldA\", \"fieldB\"]) or @index(fields: [[\"fieldA\", \"DESC\"], \
+                         [\"fieldB\", \"ASC\"]])"
                     )),
                 },
             )
@@ -518,7 +554,7 @@ impl Entity {
 
     ///Returns defined multi field indices where definitions
     ///have > 1 fields.
-    pub fn get_composite_indices(&self) -> Vec<Vec<String>> {
+    pub fn get_composite_indices(&self) -> Vec<Vec<IndexField>> {
         self.multi_field_indexes
             .iter()
             .cloned()
@@ -866,21 +902,60 @@ impl Field {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MultiFieldIndex(Vec<String>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IndexFieldDirection {
+    Asc,
+    Desc,
+}
 
-impl MultiFieldIndex {
-    fn new(field_names: Vec<String>) -> Self {
-        Self(field_names.into_iter().collect())
+impl fmt::Display for IndexFieldDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IndexFieldDirection::Asc => write!(f, "asc"),
+            IndexFieldDirection::Desc => write!(f, "desc"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IndexField {
+    pub name: String,
+    pub direction: IndexFieldDirection,
+}
+
+impl IndexField {
+    fn new(name: String, direction: IndexFieldDirection) -> Self {
+        Self { name, direction }
     }
 
-    pub fn get_field_names(&self) -> &Vec<String> {
+    fn from_name(name: String) -> Self {
+        Self {
+            name,
+            direction: IndexFieldDirection::Asc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MultiFieldIndex(Vec<IndexField>);
+
+impl MultiFieldIndex {
+    fn new(index_fields: Vec<IndexField>) -> Self {
+        Self(index_fields)
+    }
+
+    pub fn get_field_names(&self) -> Vec<&String> {
+        self.0.iter().map(|f| &f.name).collect()
+    }
+
+    pub fn get_index_fields(&self) -> &Vec<IndexField> {
         &self.0
     }
 
     fn get_single_field_index(&self) -> Option<String> {
         if self.0.len() == 1 {
-            self.0.first().cloned()
+            self.0.first().map(|f| f.name.clone())
         } else {
             None
         }
@@ -899,13 +974,13 @@ impl MultiFieldIndex {
         fields: &[Field],
         allowed_names: &[String],
     ) -> anyhow::Result<Self> {
-        for field_name in &self.0 {
-            let field_exists = fields.iter().any(|f| &f.name == field_name);
-            if !field_exists && !allowed_names.contains(field_name) {
+        for index_field in &self.0 {
+            let field_exists = fields.iter().any(|f| f.name == index_field.name);
+            if !field_exists && !allowed_names.contains(&index_field.name) {
                 return Err(anyhow!(
                     "Index error: Field '{}' does not exist in entity, please remove it from the \
                      `@index` directive.",
-                    field_name,
+                    index_field.name,
                 ));
             }
         }
@@ -914,12 +989,13 @@ impl MultiFieldIndex {
 
     fn validate_no_duplicates(self, fields: &[Field]) -> anyhow::Result<Self> {
         let mut field_names_set = HashSet::new();
-        for field_name in &self.0 {
+        for index_field in &self.0 {
             //Check for duplicate fields inside multi field index
-            let is_new_insert = field_names_set.insert(field_name);
+            let is_new_insert = field_names_set.insert(&index_field.name);
             if !is_new_insert {
                 return Err(anyhow!(
-                    "Field {field_name} is listed multiple times in index"
+                    "Field {} is listed multiple times in index",
+                    index_field.name
                 ));
             }
         }
@@ -942,13 +1018,13 @@ impl MultiFieldIndex {
     }
 
     fn validate_no_index_on_derived_field(self, fields: &[Field]) -> anyhow::Result<Self> {
-        for field_name in &self.0 {
-            if let Some(field) = fields.iter().find(|f| &f.name == field_name) {
+        for index_field in &self.0 {
+            if let Some(field) = fields.iter().find(|f| f.name == index_field.name) {
                 if field.field_type.is_derived_from() {
                     return Err(anyhow!(
                         "Index error: Field '{}' is a @derivedFrom field and cannot be indexed, \
                          please remove it from the `@index` directive.",
-                        field_name
+                        index_field.name
                     ));
                 }
             }
@@ -1478,7 +1554,8 @@ impl GqlScalar {
 #[cfg(test)]
 mod tests {
     use super::{
-        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
+        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, IndexField, IndexFieldDirection,
+        Schema, UserDefinedFieldType,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
@@ -2362,12 +2439,12 @@ type TestEntity {
 
         assert_eq!(entity.multi_field_indexes.len(), 2);
         assert_eq!(
-            entity.multi_field_indexes[0].0,
-            vec!["a".to_string(), "b".to_string()]
+            entity.multi_field_indexes[0].get_field_names(),
+            vec![&"a".to_string(), &"b".to_string()]
         );
         assert_eq!(
-            entity.multi_field_indexes[1].0,
-            vec!["b".to_string(), "a".to_string()]
+            entity.multi_field_indexes[1].get_field_names(),
+            vec![&"b".to_string(), &"a".to_string()]
         );
     }
 
@@ -2474,5 +2551,147 @@ type TestEntity {
         // Verify field content
         let name_field = entity.get_field("name").unwrap();
         assert_eq!(name_field.name, "name");
+    }
+
+    #[test]
+    fn test_index_with_sort_direction_desc() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: [["tokenId", "DESC"], ["collection", "ASC"]]) {
+  id: ID!
+  tokenId: BigInt!
+  collection: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
+
+        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
+        let index = &parsed_entity.multi_field_indexes[0];
+        let fields = index.get_index_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "tokenId");
+        assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
+        assert_eq!(fields[1].name, "collection");
+        assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
+    }
+
+    #[test]
+    fn test_index_with_mixed_string_and_direction() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: ["tokenId", ["collection", "DESC"]]) {
+  id: ID!
+  tokenId: BigInt!
+  collection: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
+
+        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
+        let index = &parsed_entity.multi_field_indexes[0];
+        let fields = index.get_index_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "tokenId");
+        assert_eq!(fields[0].direction, IndexFieldDirection::Asc);
+        assert_eq!(fields[1].name, "collection");
+        assert_eq!(fields[1].direction, IndexFieldDirection::Desc);
+    }
+
+    #[test]
+    fn test_index_plain_strings_default_to_asc() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: ["tokenId", "collection"]) {
+  id: ID!
+  tokenId: BigInt!
+  collection: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
+
+        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
+        let index = &parsed_entity.multi_field_indexes[0];
+        let fields = index.get_index_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].direction, IndexFieldDirection::Asc);
+        assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
+    }
+
+    #[test]
+    fn test_index_with_invalid_direction() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: [["tokenId", "INVALID"]]) {
+  id: ID!
+  tokenId: BigInt!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let result = Entity::from_object(&first_entity_schema);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        assert!(err_message.contains("Index direction must be \"ASC\" or \"DESC\""));
+    }
+
+    #[test]
+    fn test_index_with_wrong_list_length() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: [["tokenId", "DESC", "extra"]]) {
+  id: ID!
+  tokenId: BigInt!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let result = Entity::from_object(&first_entity_schema);
+
+        assert!(result.is_err());
+        let err_message = format!("{:?}", result.unwrap_err());
+        assert!(err_message.contains("exactly 2 elements"));
+    }
+
+    #[test]
+    fn test_get_composite_indices_with_direction() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: [["tokenId", "DESC"], "collection"]) {
+  id: ID!
+  tokenId: BigInt!
+  collection: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
+
+        let composite_indices = parsed_entity.get_composite_indices();
+        assert_eq!(composite_indices.len(), 1);
+        assert_eq!(composite_indices[0].len(), 2);
+        assert_eq!(composite_indices[0][0].name, "tokenId");
+        assert_eq!(composite_indices[0][0].direction, IndexFieldDirection::Desc);
+        assert_eq!(composite_indices[0][1].name, "collection");
+        assert_eq!(composite_indices[0][1].direction, IndexFieldDirection::Asc);
+    }
+
+    #[test]
+    fn test_index_case_insensitive_direction() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: [["tokenId", "desc"], ["collection", "asc"]]) {
+  id: ID!
+  tokenId: BigInt!
+  collection: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
+
+        let index = &parsed_entity.multi_field_indexes[0];
+        let fields = index.get_index_fields();
+        assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
+        assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
     }
 }
