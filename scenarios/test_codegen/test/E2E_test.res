@@ -1093,4 +1093,233 @@ describe("E2E tests", () => {
       )
     },
   )
+
+  Async.it("Partition queries adjust ranges depending on responses", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Step 1: Resolve height (blockLag=200 by default, headBlock=9800)
+    sourceMock.resolveGetHeightOrThrow(10_000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // Step 2: Query 1 — resolve at block 500 (range=501)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 0, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Step 2 should have initial query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
+    await indexerMock.getBatchWritePromise()
+
+    // Step 3: Query 2 — resolve at block 800 (range=300)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Step 3 should have follow-up query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
+    await indexerMock.getBatchWritePromise()
+
+    // Chunking activates: chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
+    // 4 chunks of size 540
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [
+        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+        {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
+        {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
+      ],
+      ~message="Should have 4 chunks of size 540",
+    )
+
+    // Phase A — chunks grow:
+    // Resolve chunk1 and chunk2 at full range.
+    // With the fix, full-range split chunks update block range (540 >= chunkRange 300).
+    switch sourceMock.getItemsOrThrowCalls {
+    | [chunk1, chunk2, _, _] =>
+      chunk1.resolve([], ~latestFetchedBlockNumber=1340)
+      chunk2.resolve([], ~latestFetchedBlockNumber=1880)
+    | _ => Assert.fail("Expected 4 chunks")
+    }
+    await indexerMock.getBatchWritePromise()
+
+    // After: prevQueryRange=540, prevPrevQueryRange=540
+    // chunkRange=min(540,540)=540, chunkSize=ceil(540*1.8)=972
+    // Assert: new tail chunks have size 972
+    let grownChunks =
+      sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
+        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(972),
+      )
+    Assert.ok(
+      grownChunks->Array.length >= 2,
+      ~message=`Chunks should have grown to size 972, found ${grownChunks
+        ->Array.length
+        ->Int.toString} such chunks`,
+    )
+
+    // Phase B — chunks shrink on partial response:
+    // Resolve the first pending chunk (at queue front) at partial range so the
+    // partition actually advances and a batch is written.
+    let firstPending = sourceMock.getItemsOrThrowCalls->Array.get(0)->Option.getExn
+    firstPending.resolve([], ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99)
+    await indexerMock.getBatchWritePromise()
+
+    // After: prevQueryRange=100, prevPrevQueryRange=540
+    // chunkRange=min(100,540)=100, chunkSize=ceil(100*1.8)=180
+    // Assert: new tail chunks have size 180
+    let shrunkChunks =
+      sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
+        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(180),
+      )
+    Assert.ok(
+      shrunkChunks->Array.length >= 2,
+      ~message=`Chunks should have shrunk to size 180, found ${shrunkChunks
+        ->Array.length
+        ->Int.toString} such chunks`,
+    )
+  })
+
+  Async.it("Items from later chunk wait for earlier chunk to complete", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Setup: same preamble — get to 4 chunked queries
+    sourceMock.resolveGetHeightOrThrow(10_000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 0, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Should have initial query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
+    await indexerMock.getBatchWritePromise()
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Should have follow-up query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
+    await indexerMock.getBatchWritePromise()
+
+    // 4 chunks: (801,1340), (1341,1880), (1881,2420), (2421,2960)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [
+        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+        {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
+        {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
+      ],
+      ~message="Should have 4 chunks of size 540",
+    )
+    switch sourceMock.getItemsOrThrowCalls {
+    | [chunk1, chunk2, _, _] =>
+      // Step 1: Resolve chunk2 FIRST (out of order) with item at block 1500
+      chunk2.resolve([
+        {
+          blockNumber: 1500,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.simpleEntity.set({id: "item-1500", value: "from-chunk2"})
+          },
+        },
+      ])
+      // Wait for chunk2's response to be processed
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Item at 1500 should NOT be in DB yet — chunk1 hasn't completed,
+      // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
+      Assert.deepEqual(
+        await indexerMock.query(module(Entities.SimpleEntity)),
+        [],
+        ~message="Item at block 1500 should not be ready while chunk1 is pending",
+      )
+
+      // Step 2: Resolve chunk1 at HALF range (801-1070) with item at block 850.
+      // Only chunk1's first half is consumed; chunk2 still blocked.
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls
+        ->Js.Array2.map(c => c.payload)
+        ->Js.Array2.slice(~start=0, ~end_=3),
+        [
+          {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+          {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
+          {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
+        ],
+        ~message="After chunk2 resolved, chunk1/3/4 should remain pending",
+      )
+      chunk1.resolve(
+        [
+          {
+            blockNumber: 850,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "item-850", value: "from-chunk1"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=1070,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Only item-850 should be in DB — chunk1 didn't finish its full range,
+      // so chunk2's item at 1500 is still beyond the buffer.
+      Assert.deepEqual(
+        await indexerMock.query(module(Entities.SimpleEntity)),
+        [{Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}],
+        ~message="Only item-850 should be in DB after partial chunk1 resolve",
+      )
+
+      // Step 3: A finishing query for the remainder of chunk1 (1071-1340) should exist.
+      let finishingQuery =
+        sourceMock.getItemsOrThrowCalls->Js.Array2.find(c => c.payload["fromBlock"] === 1071)
+      Assert.deepEqual(
+        finishingQuery->Option.map(c => c.payload),
+        Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}),
+        ~message="Should have a finishing query for the rest of chunk1",
+      )
+
+      // Step 4: Resolve the finishing query — now chunk1's full range is consumed,
+      // then chunk2 is consumed too. bufferBlockNumber advances to 1880.
+      (finishingQuery->Option.getExn).resolve([], ~latestFetchedBlockNumber=1340)
+      await indexerMock.getBatchWritePromise()
+
+      // Both items should now be in DB
+      Assert.deepEqual(
+        await indexerMock.query(module(Entities.SimpleEntity)),
+        [
+          {Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
+          {Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
+        ],
+        ~message="Both items should be in DB after chunk1 fully completes",
+      )
+    | _ => Assert.fail("Expected 4 chunks")
+    }
+  })
 })

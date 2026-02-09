@@ -55,6 +55,14 @@ type query = {
   indexingContracts: dict<Internal.indexingContract>,
 }
 
+// Calculate the chunk range from history using min-of-last-3-ranges heuristic
+let getMinHistoryRange = (p: partition) => {
+  switch (p.prevQueryRange, p.prevPrevQueryRange) {
+  | (0, _) | (_, 0) => None
+  | (a, b) => Some(a < b ? a : b)
+  }
+}
+
 module OptimizedPartitions = {
   type t = {
     idsInAscOrder: array<string>,
@@ -369,7 +377,16 @@ module OptimizedPartitions = {
     let blockRange = latestFetchedBlock.blockNumber - query.fromBlock + 1
     let shouldUpdateBlockRange = switch query.toBlock {
     | None => latestFetchedBlock.blockNumber < knownHeight - 10 // Don't update block range when very close to the head
-    | Some(queryToBlock) => latestFetchedBlock.blockNumber < queryToBlock
+    | Some(queryToBlock) =>
+      // Update on partial response (direct capacity evidence),
+      // or when the query's intended range covers at least the partition's
+      // current chunk range — meaning it was a capacity-based split chunk,
+      // not a small gap-fill whose toBlock is an artificial boundary.
+      latestFetchedBlock.blockNumber < queryToBlock ||
+        switch getMinHistoryRange(p) {
+        | None => false // Chunking not active yet, don't update
+        | Some(minHistoryRange) => queryToBlock - query.fromBlock + 1 >= minHistoryRange
+        }
     }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
@@ -1140,14 +1157,6 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
   }
 }
 
-// Calculate the chunk range from history using min-of-last-3-ranges heuristic
-let getChunkRangeFromHistory = (p: partition) => {
-  switch (p.prevQueryRange, p.prevPrevQueryRange) {
-  | (0, _) | (_, 0) => None
-  | (a, b) => Some(a < b ? a : b)
-  }
-}
-
 @inline
 let pushQueriesForRange = (
   queries: array<query>,
@@ -1299,7 +1308,7 @@ let getNextQuery = (
       | (_, false) => queryEndBlock
       }
 
-      let maybeChunkRange = getChunkRangeFromHistory(p)
+      let maybeChunkRange = getMinHistoryRange(p)
 
       // Walk pending queries to find open ranges and create queries for each
       let cursor = ref(
