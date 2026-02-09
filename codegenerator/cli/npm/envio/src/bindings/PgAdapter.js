@@ -13,6 +13,67 @@ function getQueryName(text) {
   return name;
 }
 
+function getRows(result) {
+  return result.rows;
+}
+
+// Marker symbol for SQL fragments produced by sql(obj)
+const SQL_FRAGMENT = Symbol("sqlFragment");
+
+function createInsertHelper(obj) {
+  const keys = Object.keys(obj);
+  const values = keys.map((k) => obj[k]);
+  return {
+    [SQL_FRAGMENT]: true,
+    values,
+    toSql(startIndex) {
+      const cols = keys.map((k) => `"${k}"`).join(", ");
+      const placeholders = keys
+        .map((_, i) => `$${startIndex + i}`)
+        .join(", ");
+      return `(${cols}) VALUES(${placeholders})`;
+    },
+  };
+}
+
+function makeSqlTaggedTemplate(queryable) {
+  // Tagged template literal handler: sql`SELECT ...`
+  // Also handles sql(obj) for INSERT helpers
+  function sql(strings, ...values) {
+    // sql(obj) call — not a tagged template literal
+    if (!Array.isArray(strings) || strings.raw === undefined) {
+      return createInsertHelper(strings);
+    }
+
+    // Tagged template literal: build parameterized query
+    let text = "";
+    const params = [];
+    let paramIndex = 1;
+
+    for (let i = 0; i < strings.length; i++) {
+      text += strings[i];
+      if (i < values.length) {
+        const val = values[i];
+        if (val && val[SQL_FRAGMENT]) {
+          text += val.toSql(paramIndex);
+          params.push(...val.values);
+          paramIndex += val.values.length;
+        } else {
+          text += `$${paramIndex++}`;
+          params.push(val);
+        }
+      }
+    }
+
+    if (params.length > 0) {
+      return queryable.query(text, params).then(getRows);
+    }
+    return queryable.query(text).then(getRows);
+  }
+
+  return sql;
+}
+
 function makeSqlMethods(queryable) {
   return {
     unsafe(query, params, options) {
@@ -29,15 +90,12 @@ function makeSqlMethods(queryable) {
   };
 }
 
-function getRows(result) {
-  return result.rows;
-}
-
 /**
  * Creates a connection pool with an API compatible with postgres.js.
  *
  * @param {object} config - Pool configuration
- * @returns {object} sql object with unsafe() and begin() methods
+ * @returns {object} sql object with unsafe() and begin() methods,
+ *   also callable as a tagged template literal: sql`SELECT ...`
  */
 export default function createPool(config) {
   const pgConfig = {
@@ -99,47 +157,48 @@ export default function createPool(config) {
 
   const methods = makeSqlMethods(pool);
 
-  return {
-    unsafe: methods.unsafe,
+  // Create the sql tagged template function and attach methods
+  const sql = makeSqlTaggedTemplate(pool);
+  sql.unsafe = methods.unsafe;
 
-    async begin(callback) {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const txMethods = makeSqlMethods(client);
-        const txSql = {
-          unsafe: txMethods.unsafe,
-          // Nested begin uses savepoints
-          async begin(innerCallback) {
-            const savepointName = `sp_${Date.now()}`;
-            await client.query(`SAVEPOINT ${savepointName}`);
-            try {
-              const result = await innerCallback(txSql);
-              await client.query(`RELEASE SAVEPOINT ${savepointName}`);
-              return result;
-            } catch (e) {
-              await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
-              throw e;
-            }
-          },
-        };
-        const result = await callback(txSql);
-        await client.query("COMMIT");
-        return result;
-      } catch (e) {
+  sql.begin = async function begin(callback) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const txMethods = makeSqlMethods(client);
+      const txSql = makeSqlTaggedTemplate(client);
+      txSql.unsafe = txMethods.unsafe;
+      // Nested begin uses savepoints
+      txSql.begin = async function beginNested(innerCallback) {
+        const savepointName = `sp_${Date.now()}`;
+        await client.query(`SAVEPOINT ${savepointName}`);
         try {
-          await client.query("ROLLBACK");
-        } catch (_) {
-          // Ignore rollback errors
+          const result = await innerCallback(txSql);
+          await client.query(`RELEASE SAVEPOINT ${savepointName}`);
+          return result;
+        } catch (e) {
+          await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+          throw e;
         }
-        throw e;
-      } finally {
-        client.release();
+      };
+      const result = await callback(txSql);
+      await client.query("COMMIT");
+      return result;
+    } catch (e) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Ignore rollback errors
       }
-    },
-
-    async end() {
-      await pool.end();
-    },
+      throw e;
+    } finally {
+      client.release();
+    }
   };
+
+  sql.end = async function end() {
+    await pool.end();
+  };
+
+  return sql;
 }
