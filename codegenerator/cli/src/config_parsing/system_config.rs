@@ -561,17 +561,14 @@ impl SystemConfig {
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
                 let has_rpc_sync_src = evm_config.chains.iter().any(|n| {
-                    let has_hypersync = n.hypersync_config.is_some()
-                        || hypersync_endpoints::get_default_hypersync_endpoint(n.id).is_ok();
-                    let is_sync = |source_for: &Option<For>| match source_for {
-                        Some(For::Sync) => true,
-                        None => !has_hypersync,
-                        _ => false,
+                    let default_for = default_rpc_for(n);
+                    let is_sync = |source_for: &Option<For>| {
+                        matches!(source_for.as_ref().unwrap_or(&default_for), For::Sync)
                     };
                     match &n.rpc {
                         Some(RpcSelection::Single(rpc)) => is_sync(&rpc.source_for),
                         Some(RpcSelection::List(rpcs)) => rpcs.iter().any(|r| is_sync(&r.source_for)),
-                        Some(RpcSelection::Url(_)) => !has_hypersync,
+                        Some(RpcSelection::Url(_)) => default_for == For::Sync,
                         None => false,
                     }
                 });
@@ -1017,15 +1014,24 @@ fn parse_url(url: &str) -> Option<String> {
     Some(trimmed_url)
 }
 
+/// Returns the default `For` value for an RPC on a chain:
+/// `Fallback` if HyperSync is available, `Sync` otherwise.
+fn default_rpc_for(chain: &EvmChain) -> For {
+    let has_hypersync = chain.hypersync_config.is_some()
+        || hypersync_endpoints::get_default_hypersync_endpoint(chain.id).is_ok();
+    if has_hypersync {
+        For::Fallback
+    } else {
+        For::Sync
+    }
+}
+
 impl DataSource {
     fn from_evm_network_config(network: EvmChain) -> Result<Self> {
+        let default_for = default_rpc_for(&network);
         let hypersync_endpoint_url = match &network.hypersync_config {
             Some(config) => Some(config.url.to_string()),
             None => hypersync_endpoints::get_default_hypersync_endpoint(network.id).ok(),
-        };
-        let default_for = match &hypersync_endpoint_url {
-            Some(_) => For::Fallback,
-            None => For::Sync,
         };
         let resolve_for = |rpc: Rpc| Rpc {
             source_for: Some(rpc.source_for.unwrap_or(default_for.clone())),
