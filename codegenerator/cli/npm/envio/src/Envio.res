@@ -27,9 +27,9 @@ type onBlockOptions<'chain> = {
 }
 
 type whereOperator<'fieldType> = {
-  @as("_eq") _eq?: 'fieldType,
-  @as("_gt") _gt?: 'fieldType,
-  @as("_lt") _lt?: 'fieldType,
+  _eq?: 'fieldType,
+  _gt?: 'fieldType,
+  _lt?: 'fieldType,
 }
 
 @genType.import(("./Types.ts", "Logger"))
