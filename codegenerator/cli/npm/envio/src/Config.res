@@ -426,7 +426,7 @@ let fromPublic = (
     ->Js.Dict.entries
     ->Js.Array2.map(((contractName, contractConfig)) => {
       {
-        name: contractName,
+        name: contractName->Utils.String.capitalize,
         handler: contractConfig["handler"],
       }
     })
