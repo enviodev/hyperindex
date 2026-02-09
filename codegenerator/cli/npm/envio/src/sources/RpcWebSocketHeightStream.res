@@ -6,6 +6,9 @@ Falls back behavior is handled by SourceManager when subscription fails.
 
 let retryCount = 9
 let baseDuration = 125
+// Close and reconnect if no new block head arrives within this period.
+// Detects silently dropped server-side subscriptions.
+let staleTimeMillis = 60_000
 
 type wsMessage =
   | NewHead(int)
@@ -51,8 +54,47 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let wsRef: ref<option<WebSocket.t>> = ref(None)
   let isUnsubscribed = ref(false)
   let errorCount = ref(0)
+  let staleTimeoutId: ref<option<Js.Global.timeoutId>> = ref(None)
 
-  let rec startConnection = () => {
+  let clearStaleTimeout = () => {
+    switch staleTimeoutId.contents {
+    | Some(id) =>
+      Js.Global.clearTimeout(id)
+      staleTimeoutId := None
+    | None => ()
+    }
+  }
+
+  let resetStaleTimeout = () => {
+    clearStaleTimeout()
+    staleTimeoutId :=
+      Some(
+        Js.Global.setTimeout(() => {
+          // Connection went stale - close to trigger reconnect
+          switch wsRef.contents {
+          | Some(ws) => ws->WebSocket.close
+          | None => ()
+          }
+        }, staleTimeMillis),
+      )
+  }
+
+  let rec scheduleReconnect = () => {
+    if !isUnsubscribed.contents && errorCount.contents < retryCount {
+      let duration =
+        baseDuration *
+        Js.Math.pow_float(
+          ~base=2.0,
+          ~exp=errorCount.contents->Belt.Int.toFloat,
+        )->Belt.Float.toInt
+      let _ = Js.Global.setTimeout(() => {
+        if !isUnsubscribed.contents {
+          startConnection()
+        }
+      }, duration)
+    }
+  }
+  and startConnection = () => {
     if isUnsubscribed.contents || errorCount.contents >= retryCount {
       ()
     } else {
@@ -61,6 +103,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
 
       ws->WebSocket.onopen(() => {
         ws->WebSocket.send(subscribeRequestJson)
+        resetStaleTimeout()
       })
 
       ws->WebSocket.onmessage(event => {
@@ -68,9 +111,11 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
           switch event.data->Js.Json.parseExn->S.parseOrThrow(wsMessageSchema) {
           | NewHead(blockNumber) =>
             errorCount := 0
+            resetStaleTimeout()
             Prometheus.SourceRequestCount.increment(~sourceName="WebSocket", ~chainId)
             onHeight(blockNumber)
-          | SubscriptionConfirmed(_) => ()
+          | SubscriptionConfirmed(_) =>
+            resetStaleTimeout()
           | ErrorResponse =>
             if errorCount.contents < retryCount {
               errorCount := errorCount.contents + 1
@@ -90,33 +135,18 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
           errorCount := errorCount.contents + 1
         }
         switch wsRef.contents {
-        | Some(ws) if ws->WebSocket.readyState === WebSocket.open_ => ws->WebSocket.close
+        | Some(ws) if ws->WebSocket.readyState === Open => ws->WebSocket.close
         | _ =>
           wsRef := None
-          if !isUnsubscribed.contents && errorCount.contents < retryCount {
-            let duration =
-              baseDuration *
-              Js.Math.pow_float(
-                ~base=2.0,
-                ~exp=errorCount.contents->Belt.Int.toFloat,
-              )->Belt.Float.toInt
-            let _ = Js.Global.setTimeout(() => startConnection(), duration)
-          }
+          clearStaleTimeout()
+          scheduleReconnect()
         }
       })
 
       ws->WebSocket.onclose(() => {
         wsRef := None
-
-        if !isUnsubscribed.contents && errorCount.contents < retryCount {
-          let duration =
-            baseDuration *
-            Js.Math.pow_float(
-              ~base=2.0,
-              ~exp=errorCount.contents->Belt.Int.toFloat,
-            )->Belt.Float.toInt
-          let _ = Js.Global.setTimeout(() => startConnection(), duration)
-        }
+        clearStaleTimeout()
+        scheduleReconnect()
       })
     }
   }
@@ -125,6 +155,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
 
   () => {
     isUnsubscribed := true
+    clearStaleTimeout()
     switch wsRef.contents {
     | Some(ws) => ws->WebSocket.close
     | None => ()
