@@ -37,9 +37,19 @@ let directionToSql = (direction: Table.indexFieldDirection) =>
   | Desc => " DESC"
   }
 
+let directionToIndexName = (direction: Table.indexFieldDirection) =>
+  switch direction {
+  | Asc => ""
+  | Desc => "_desc"
+  }
+
 let makeCreateCompositeIndexQuery = (~tableName, ~indexFields: array<Table.compositeIndexField>, ~pgSchema) => {
   let indexName =
-    tableName ++ "_" ++ indexFields->Js.Array2.map(f => f.fieldName)->Js.Array2.joinWith("_")
+    tableName ++
+    "_" ++
+    indexFields
+    ->Js.Array2.map(f => f.fieldName ++ directionToIndexName(f.direction))
+    ->Js.Array2.joinWith("_")
   let index =
     indexFields
     ->Belt.Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)

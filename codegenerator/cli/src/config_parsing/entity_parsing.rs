@@ -949,7 +949,7 @@ impl MultiFieldIndex {
         self.0.iter().map(|f| &f.name).collect()
     }
 
-    pub fn get_index_fields(&self) -> &Vec<IndexField> {
+    pub fn get_index_fields(&self) -> &[IndexField] {
         &self.0
     }
 
@@ -2693,5 +2693,29 @@ type TestEntity
         let fields = index.get_index_fields();
         assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
         assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
+    }
+
+    #[test]
+    fn test_single_field_index_with_direction() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: [["tokenId", "DESC"]]) {
+  id: ID!
+  tokenId: BigInt!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
+
+        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
+        let index = &parsed_entity.multi_field_indexes[0];
+        let fields = index.get_index_fields();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "tokenId");
+        assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
+
+        // Single-field index should not appear in composite indices
+        let composite = parsed_entity.get_composite_indices();
+        assert_eq!(composite.len(), 0);
     }
 }
