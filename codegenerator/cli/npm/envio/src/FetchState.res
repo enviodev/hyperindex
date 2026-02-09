@@ -800,54 +800,54 @@ OptimizedPartitions.t => {
       let currentPBlock = currentP.latestFetchedBlock.blockNumber
       let nextPBlock = nextP.latestFetchedBlock.blockNumber
 
-      let isTooFar = currentPBlock + OptimizedPartitions.tooFarBlockRange < nextPBlock
-      if isTooFar {
+      // Compute total count WITHOUT mutating any arrays
+      let totalCount =
+        currentP.addressesByContractName->addressesByContractNameCount +
+          nextP.addressesByContractName->addressesByContractNameCount
+
+      if totalCount > maxAddrInPartition {
+        // Exceeds address limit - don't merge, keep partitions separate
         mergedNonDynamic->Js.Array2.push(currentP)->ignore
         currentPRef := nextP
       } else {
-        // Compute total count WITHOUT mutating any arrays
-        let totalCount =
-          currentP.addressesByContractName->addressesByContractNameCount +
-            nextP.addressesByContractName->addressesByContractNameCount
+        // Build merged addresses using Array.concat (non-mutating)
+        let mergedAddresses = nextP.addressesByContractName->Utils.Dict.shallowCopy
+        let currentContractNames = currentP.addressesByContractName->Js.Dict.keys
+        for jdx in 0 to currentContractNames->Js.Array2.length - 1 {
+          let cn = currentContractNames->Js.Array2.unsafe_get(jdx)
+          let currentAddrs = currentP.addressesByContractName->Js.Dict.unsafeGet(cn)
+          switch mergedAddresses->Utils.Dict.dangerouslyGetNonOption(cn) {
+          | Some(existingAddrs) =>
+            // Use concat (non-mutating) to avoid corrupting nextP's arrays
+            mergedAddresses->Js.Dict.set(cn, existingAddrs->Array.concat(currentAddrs))
+          | None => mergedAddresses->Js.Dict.set(cn, currentAddrs)
+          }
+        }
 
-        if totalCount > maxAddrInPartition {
-          // Exceeds limit - don't merge, keep partitions separate
-          mergedNonDynamic->Js.Array2.push(currentP)->ignore
-          currentPRef := nextP
-        } else {
-          // Build merged addresses using Array.concat (non-mutating)
-          let mergedAddresses = nextP.addressesByContractName->Utils.Dict.shallowCopy
-          let currentContractNames = currentP.addressesByContractName->Js.Dict.keys
-          for jdx in 0 to currentContractNames->Js.Array2.length - 1 {
-            let cn = currentContractNames->Js.Array2.unsafe_get(jdx)
-            let currentAddrs = currentP.addressesByContractName->Js.Dict.unsafeGet(cn)
-            switch mergedAddresses->Utils.Dict.dangerouslyGetNonOption(cn) {
-            | Some(existingAddrs) =>
-              // Use concat (non-mutating) to avoid corrupting nextP's arrays
-              mergedAddresses->Js.Dict.set(cn, existingAddrs->Array.concat(currentAddrs))
-            | None => mergedAddresses->Js.Dict.set(cn, currentAddrs)
+        let nextContractName = nextP.addressesByContractName->Js.Dict.keys->Utils.Array.firstUnsafe
+        let hasFilterByAddresses = (
+          contractConfigs->Js.Dict.unsafeGet(nextContractName)
+        ).filterByAddresses
+        let isTooFar = currentPBlock + OptimizedPartitions.tooFarBlockRange < nextPBlock
+
+        if isTooFar || hasFilterByAddresses {
+          // Too far or address-filtered: endBlock on current, merge addresses into next
+          mergedNonDynamic
+          ->Js.Array2.push({
+            ...currentP,
+            endBlock: currentPBlock < nextPBlock ? Some(nextPBlock) : None,
+          })
+          ->ignore
+          currentPRef := {
+              ...nextP,
+              addressesByContractName: mergedAddresses,
             }
-          }
-
-          if currentPBlock < nextPBlock {
-            // Different blocks: set endBlock on current, merge addresses into next
-            mergedNonDynamic
-            ->Js.Array2.push({
+        } else {
+          // Close and not address-filtered: push next's addresses into current
+          currentPRef := {
               ...currentP,
-              endBlock: Some(nextPBlock),
-            })
-            ->ignore
-            currentPRef := {
-                ...nextP,
-                addressesByContractName: mergedAddresses,
-              }
-          } else {
-            // Same block: merge addresses into current (preserves earlier ID)
-            currentPRef := {
-                ...currentP,
-                addressesByContractName: mergedAddresses,
-              }
-          }
+              addressesByContractName: mergedAddresses,
+            }
         }
       }
 

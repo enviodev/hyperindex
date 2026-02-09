@@ -455,6 +455,346 @@ describe("FetchState.make", () => {
       )
     },
   )
+
+  it("Two static contracts with different names merge based on block distance", () => {
+    let contractAEventConfig = (Mock.evmEventConfig(
+      ~id="0",
+      ~contractName="ContractA",
+    ) :> Internal.eventConfig)
+    let contractBEventConfig = (Mock.evmEventConfig(
+      ~id="0",
+      ~contractName="ContractB",
+    ) :> Internal.eventConfig)
+
+    // --- Close startBlocks: direct push into current partition ---
+    let closeFetchState = FetchState.make(
+      ~eventConfigs=[contractAEventConfig, contractBEventConfig],
+      ~contracts=[
+        {
+          address: mockAddress0,
+          contractName: "ContractA",
+          startBlock: 0,
+          registrationBlock: None,
+        },
+        {
+          address: mockAddress1,
+          contractName: "ContractB",
+          startBlock: 19_999,
+          registrationBlock: None,
+        },
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~targetBufferSize,
+      ~chainId,
+      ~knownHeight,
+    )
+
+    // Phase 1: ContractA partition (block -1), ContractB partition (block 19_998)
+    // Phase 2: not too far, not filterByAddresses -> push ContractB addresses into ContractA partition
+    let closePartitions = closeFetchState.optimizedPartitions
+    Assert.deepEqual(
+      closePartitions.idsInAscOrder,
+      ["0"],
+      ~message="Close startBlocks: should merge into a single partition (direct push)",
+    )
+    Assert.deepEqual(
+      (closePartitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
+      Js.Dict.fromArray([("ContractA", [mockAddress0]), ("ContractB", [mockAddress1])]),
+      ~message="Close startBlocks: single partition has both contracts' addresses",
+    )
+    Assert.deepEqual(
+      (closePartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+      None,
+      ~message="Close startBlocks: no endBlock needed",
+    )
+
+    // --- Far startBlocks: endBlock on current, merge addresses into next ---
+    let farFetchState = FetchState.make(
+      ~eventConfigs=[contractAEventConfig, contractBEventConfig],
+      ~contracts=[
+        {
+          address: mockAddress0,
+          contractName: "ContractA",
+          startBlock: 0,
+          registrationBlock: None,
+        },
+        {
+          address: mockAddress1,
+          contractName: "ContractB",
+          startBlock: 20_002,
+          registrationBlock: None,
+        },
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~targetBufferSize,
+      ~chainId,
+      ~knownHeight,
+    )
+
+    // Phase 1: ContractA partition (block -1), ContractB partition (block 20_001)
+    // Phase 2: too far -> endBlock on earlier, merge addresses into later
+    let farPartitions = farFetchState.optimizedPartitions
+    Assert.deepEqual(
+      farPartitions.idsInAscOrder,
+      ["0", "1"],
+      ~message="Far startBlocks: should have 2 partitions with endBlock on earlier",
+    )
+    Assert.deepEqual(
+      (farPartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+      Some(20_001),
+      ~message="Far startBlocks: earlier partition has endBlock",
+    )
+    Assert.deepEqual(
+      (farPartitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
+      Js.Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]),
+      ~message="Far startBlocks: later partition has merged addresses from both contracts",
+    )
+  })
+
+  it(
+    "Single contract with close startBlocks creates one partition, far startBlocks creates two with endBlock",
+    () => {
+      let gravatarEventConfig = (Mock.evmEventConfig(
+        ~id="0",
+        ~contractName="Gravatar",
+      ) :> Internal.eventConfig)
+
+      // --- Close startBlocks: Phase 1 merges into a single partition ---
+      let closeFetchState = FetchState.make(
+        ~eventConfigs=[gravatarEventConfig],
+        ~contracts=[
+          {
+            address: mockAddress0,
+            contractName: "Gravatar",
+            startBlock: 0,
+            registrationBlock: None,
+          },
+          {
+            address: mockAddress1,
+            contractName: "Gravatar",
+            startBlock: 19_999,
+            registrationBlock: None,
+          },
+        ],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~targetBufferSize,
+        ~chainId,
+        ~knownHeight,
+      )
+
+      let closePartitions = closeFetchState.optimizedPartitions
+      Assert.deepEqual(
+        closePartitions.idsInAscOrder,
+        ["0"],
+        ~message="Close startBlocks: Phase 1 groups into a single partition",
+      )
+      Assert.deepEqual(
+        (closePartitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
+        Js.Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]),
+        ~message="Close startBlocks: single partition has both addresses",
+      )
+      Assert.deepEqual(
+        (closePartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+        None,
+        ~message="Close startBlocks: no endBlock needed for single partition",
+      )
+
+      // --- Far startBlocks: Phase 1 splits, Phase 2 merges with endBlock ---
+      let farFetchState = FetchState.make(
+        ~eventConfigs=[gravatarEventConfig],
+        ~contracts=[
+          {
+            address: mockAddress0,
+            contractName: "Gravatar",
+            startBlock: 0,
+            registrationBlock: None,
+          },
+          {
+            address: mockAddress1,
+            contractName: "Gravatar",
+            startBlock: 20_002,
+            registrationBlock: None,
+          },
+        ],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~targetBufferSize,
+        ~chainId,
+        ~knownHeight,
+      )
+
+      // Phase 1: 2 partitions (same contract, far startBlocks)
+      // Phase 2: merges them with endBlock
+      let farPartitions = farFetchState.optimizedPartitions
+      Assert.deepEqual(
+        farPartitions.idsInAscOrder,
+        ["0", "1"],
+        ~message="Far startBlocks: Phase 1 splits into 2, Phase 2 merges with endBlock",
+      )
+      Assert.deepEqual(
+        (farPartitions.entities->Js.Dict.unsafeGet("0")).latestFetchedBlock.blockNumber,
+        -1,
+        ~message="Far startBlocks: earlier partition starts at block -1",
+      )
+      Assert.deepEqual(
+        (farPartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+        Some(20_001),
+        ~message="Far startBlocks: earlier partition has endBlock matching later partition's block",
+      )
+      Assert.deepEqual(
+        (farPartitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
+        Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
+        ~message="Far startBlocks: later partition has merged addresses",
+      )
+      Assert.deepEqual(
+        (farPartitions.entities->Js.Dict.unsafeGet("1")).endBlock,
+        None,
+        ~message="Far startBlocks: later partition has no endBlock",
+      )
+    },
+  )
+
+  it("Single contract with filterByAddresses keeps separate partitions per startBlock", () => {
+    let gravatarEventConfig = (Mock.evmEventConfig(
+      ~id="0",
+      ~contractName="Gravatar",
+      ~filterByAddresses=true,
+    ) :> Internal.eventConfig)
+
+    let fetchState = FetchState.make(
+      ~eventConfigs=[gravatarEventConfig],
+      ~contracts=[
+        {
+          address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock: 0,
+          registrationBlock: None,
+        },
+        {
+          address: mockAddress1,
+          contractName: "Gravatar",
+          startBlock: 100,
+          registrationBlock: None,
+        },
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~targetBufferSize,
+      ~chainId,
+      ~knownHeight,
+    )
+
+    // Phase 1: filterByAddresses=true -> separate partitions per startBlock
+    // Phase 2: hasFilterByAddresses -> endBlock on earlier, merge addresses into later
+    let partitions = fetchState.optimizedPartitions
+    Assert.deepEqual(
+      partitions.idsInAscOrder,
+      ["0", "1"],
+      ~message="filterByAddresses: should create separate partitions per startBlock",
+    )
+    Assert.deepEqual(
+      (partitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
+      Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      ~message="filterByAddresses: first partition has only first address",
+    )
+    Assert.deepEqual(
+      (partitions.entities->Js.Dict.unsafeGet("0")).latestFetchedBlock.blockNumber,
+      -1,
+      ~message="filterByAddresses: first partition starts at block -1",
+    )
+    Assert.deepEqual(
+      (partitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+      Some(99),
+      ~message="filterByAddresses: first partition has endBlock matching second partition's block",
+    )
+    Assert.deepEqual(
+      (partitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
+      Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
+      ~message="filterByAddresses: second partition has merged addresses from both",
+    )
+    Assert.deepEqual(
+      (partitions.entities->Js.Dict.unsafeGet("1")).latestFetchedBlock.blockNumber,
+      99,
+      ~message="filterByAddresses: second partition starts at block 99",
+    )
+  })
+
+  it(
+    "Different contracts with filterByAddresses use endBlock strategy and merge addresses into later partition",
+    () => {
+      let contractAEventConfig = (Mock.evmEventConfig(
+        ~id="0",
+        ~contractName="ContractA",
+        ~filterByAddresses=true,
+      ) :> Internal.eventConfig)
+      let contractBEventConfig = (Mock.evmEventConfig(
+        ~id="0",
+        ~contractName="ContractB",
+        ~filterByAddresses=true,
+      ) :> Internal.eventConfig)
+
+      let fetchState = FetchState.make(
+        ~eventConfigs=[contractAEventConfig, contractBEventConfig],
+        ~contracts=[
+          {
+            address: mockAddress0,
+            contractName: "ContractA",
+            startBlock: 0,
+            registrationBlock: None,
+          },
+          {
+            address: mockAddress1,
+            contractName: "ContractB",
+            startBlock: 100,
+            registrationBlock: None,
+          },
+        ],
+        ~startBlock=0,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~targetBufferSize,
+        ~chainId,
+        ~knownHeight,
+      )
+
+      // Phase 1: ContractA partition (block -1), ContractB partition (block 99)
+      // Phase 2: hasFilterByAddresses -> endBlock on earlier, merge addresses into later
+      let partitions = fetchState.optimizedPartitions
+      Assert.deepEqual(
+        partitions.idsInAscOrder,
+        ["0", "1"],
+        ~message="filterByAddresses cross-contract: should have 2 partitions",
+      )
+      Assert.deepEqual(
+        (partitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
+        Js.Dict.fromArray([("ContractA", [mockAddress0])]),
+        ~message="filterByAddresses cross-contract: first partition has only ContractA address",
+      )
+      Assert.deepEqual(
+        (partitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+        Some(99),
+        ~message="filterByAddresses cross-contract: first partition has endBlock",
+      )
+      Assert.deepEqual(
+        (partitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
+        Js.Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]),
+        ~message="filterByAddresses cross-contract: second partition has merged addresses from both contracts",
+      )
+      Assert.deepEqual(
+        (partitions.entities->Js.Dict.unsafeGet("1")).latestFetchedBlock.blockNumber,
+        99,
+        ~message="filterByAddresses cross-contract: second partition starts at block 99",
+      )
+    },
+  )
 })
 
 describe("FetchState.registerDynamicContracts", () => {
