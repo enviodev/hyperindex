@@ -314,6 +314,148 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     },
   )
 
+  // Reproduces the issue: gasUsed, cumulativeGasUsed, and effectiveGasPrice are receipt-only fields
+  // available in eth_getTransactionReceipt but NOT in eth_getTransactionByHash.
+  // RpcSource only calls eth_getTransactionByHash, so these fields are undefined in the response.
+  // The mock below simulates a typical eth_getTransactionByHash response (no receipt fields).
+  Async.it(
+    "Fails when requesting gasUsed - a receipt-only field not available via eth_getTransactionByHash",
+    async () => {
+      // Mock getTransactionFields that returns data matching eth_getTransactionByHash
+      // (which does NOT include receipt fields like gasUsed, cumulativeGasUsed, effectiveGasPrice)
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              from: "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.unsafeFromString,
+              to: "0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.unsafeFromString,
+              gas: 21000n,
+              gasPrice: 17699339493n,
+              input: "0x",
+              nonce: 1n,
+              transactionIndex: 1,
+              value: 0n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+      )
+
+      let result = try {
+        let _ =
+          await mockEthersLog()->getEventTransactionOrThrow(
+            ~transactionSchema=S.schema(
+              s =>
+                {
+                  "gasUsed": s.matches(BigInt.nativeSchema),
+                },
+            ),
+          )
+        Ok()
+      } catch {
+      | Js.Exn.Error(err) => Error(err->Js.Exn.message)
+      }
+      Assert.deepEqual(
+        result,
+        Error(
+          Some(
+            `Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint, received undefined`,
+          ),
+        ),
+        ~message="gasUsed should fail because it's only available in eth_getTransactionReceipt, not eth_getTransactionByHash",
+      )
+    },
+  )
+
+  Async.it(
+    "Fails when requesting cumulativeGasUsed - a receipt-only field not available via eth_getTransactionByHash",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+      )
+
+      let result = try {
+        let _ =
+          await mockEthersLog()->getEventTransactionOrThrow(
+            ~transactionSchema=S.schema(
+              s =>
+                {
+                  "cumulativeGasUsed": s.matches(BigInt.nativeSchema),
+                },
+            ),
+          )
+        Ok()
+      } catch {
+      | Js.Exn.Error(err) => Error(err->Js.Exn.message)
+      }
+      Assert.deepEqual(
+        result,
+        Error(
+          Some(
+            `Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint, received undefined`,
+          ),
+        ),
+        ~message="cumulativeGasUsed should fail because it's only available in eth_getTransactionReceipt, not eth_getTransactionByHash",
+      )
+    },
+  )
+
+  Async.it(
+    "Fails when requesting effectiveGasPrice - a receipt-only field not available via eth_getTransactionByHash",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+      )
+
+      let result = try {
+        let _ =
+          await mockEthersLog()->getEventTransactionOrThrow(
+            ~transactionSchema=S.schema(
+              s =>
+                {
+                  "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+                },
+            ),
+          )
+        Ok()
+      } catch {
+      | Js.Exn.Error(err) => Error(err->Js.Exn.message)
+      }
+      Assert.deepEqual(
+        result,
+        Error(
+          Some(
+            `Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint, received undefined`,
+          ),
+        ),
+        ~message="effectiveGasPrice should fail because it's only available in eth_getTransactionReceipt, not eth_getTransactionByHash",
+      )
+    },
+  )
+
   Async.it("Error with a value not matching the schema", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
