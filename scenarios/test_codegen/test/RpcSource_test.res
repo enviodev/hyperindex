@@ -61,10 +61,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   it("Panics with invalid schema", () => {
     Assert.throws(
       () => {
-        RpcSource.makeThrowingGetEventTransaction(~getTransactionFields=neverGetTransactionFields)(
-          mockEthersLog(),
-          ~transactionSchema=S.string,
-        )
+        RpcSource.makeThrowingGetEventTransaction(
+          ~getTransactionFields=neverGetTransactionFields,
+          ~getReceiptFields=None,
+        )(mockEthersLog(), ~transactionSchema=S.string)
       },
       ~error={
         "message": "Unexpected internal error: transactionSchema is not an object",
@@ -77,6 +77,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async () => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionFields=neverGetTransactionFields,
+        ~getReceiptFields=None,
       )
       Assert.deepEqual(
         await mockEthersLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
@@ -88,6 +89,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Works with a single transactionIndex field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -107,6 +109,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Works with a single hash field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -126,6 +129,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Works with a only transactionIndex & hash field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -146,6 +150,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     // In different fields order in the schema
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -180,6 +185,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
@@ -314,144 +320,183 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     },
   )
 
-  // Reproduces the issue: gasUsed, cumulativeGasUsed, and effectiveGasPrice are receipt-only fields
+  // gasUsed, cumulativeGasUsed, and effectiveGasPrice are receipt-only fields
   // available in eth_getTransactionReceipt but NOT in eth_getTransactionByHash.
-  // RpcSource only calls eth_getTransactionByHash, so these fields are undefined in the response.
-  // The mock below simulates a typical eth_getTransactionByHash response (no receipt fields).
+  // When getReceiptFields is provided, receipt fields are fetched and merged with transaction fields.
   Async.it(
-    "Fails when requesting gasUsed - a receipt-only field not available via eth_getTransactionByHash",
+    "Fetches gasUsed from receipt via getReceiptFields",
     async () => {
-      // Mock getTransactionFields that returns data matching eth_getTransactionByHash
-      // (which does NOT include receipt fields like gasUsed, cumulativeGasUsed, effectiveGasPrice)
       let mockGetTransactionFields = _log =>
         Promise.resolve(
           (
             {
               hash: "0xabc",
-              from: "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.unsafeFromString,
-              to: "0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.unsafeFromString,
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let mockGetReceiptFields = _log =>
+        Promise.resolve(
+          (
+            {
+              gasUsed: 21000n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
+      )
+
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "gasUsed": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"gasUsed": 21000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches cumulativeGasUsed from receipt via getReceiptFields",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let mockGetReceiptFields = _log =>
+        Promise.resolve(
+          (
+            {
+              cumulativeGasUsed: 500000n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
+      )
+
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "cumulativeGasUsed": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"cumulativeGasUsed": 500000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches effectiveGasPrice from receipt via getReceiptFields",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let mockGetReceiptFields = _log =>
+        Promise.resolve(
+          (
+            {
+              effectiveGasPrice: 17699339493n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
+      )
+
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"effectiveGasPrice": 17699339493n},
+      )
+    },
+  )
+
+  Async.it(
+    "Merges transaction and receipt fields when both are needed",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
               gas: 21000n,
-              gasPrice: 17699339493n,
-              input: "0x",
-              nonce: 1n,
-              transactionIndex: 1,
-              value: 0n,
+              value: 1000n,
             }: Internal.evmTransactionFields
           ),
         )
 
-      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-        ~getTransactionFields=mockGetTransactionFields,
-      )
-
-      let result = try {
-        let _ =
-          await mockEthersLog()->getEventTransactionOrThrow(
-            ~transactionSchema=S.schema(
-              s =>
-                {
-                  "gasUsed": s.matches(BigInt.nativeSchema),
-                },
-            ),
-          )
-        Ok()
-      } catch {
-      | Js.Exn.Error(err) => Error(err->Js.Exn.message)
-      }
-      Assert.deepEqual(
-        result,
-        Error(
-          Some(
-            `Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint, received undefined`,
-          ),
-        ),
-        ~message="gasUsed should fail because it's only available in eth_getTransactionReceipt, not eth_getTransactionByHash",
-      )
-    },
-  )
-
-  Async.it(
-    "Fails when requesting cumulativeGasUsed - a receipt-only field not available via eth_getTransactionByHash",
-    async () => {
-      let mockGetTransactionFields = _log =>
+      let mockGetReceiptFields = _log =>
         Promise.resolve(
           (
             {
-              hash: "0xabc",
-              transactionIndex: 1,
+              gasUsed: 21000n,
+              effectiveGasPrice: 17699339493n,
+              status: 1,
             }: Internal.evmTransactionFields
           ),
         )
 
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
       )
 
-      let result = try {
-        let _ =
-          await mockEthersLog()->getEventTransactionOrThrow(
-            ~transactionSchema=S.schema(
-              s =>
-                {
-                  "cumulativeGasUsed": s.matches(BigInt.nativeSchema),
-                },
-            ),
-          )
-        Ok()
-      } catch {
-      | Js.Exn.Error(err) => Error(err->Js.Exn.message)
-      }
       Assert.deepEqual(
-        result,
-        Error(
-          Some(
-            `Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint, received undefined`,
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "hash": s.matches(S.string),
+                "gas": s.matches(BigInt.nativeSchema),
+                "gasUsed": s.matches(BigInt.nativeSchema),
+                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+                "status": s.matches(S.int),
+              },
           ),
         ),
-        ~message="cumulativeGasUsed should fail because it's only available in eth_getTransactionReceipt, not eth_getTransactionByHash",
-      )
-    },
-  )
-
-  Async.it(
-    "Fails when requesting effectiveGasPrice - a receipt-only field not available via eth_getTransactionByHash",
-    async () => {
-      let mockGetTransactionFields = _log =>
-        Promise.resolve(
-          (
-            {
-              hash: "0xabc",
-              transactionIndex: 1,
-            }: Internal.evmTransactionFields
-          ),
-        )
-
-      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-        ~getTransactionFields=mockGetTransactionFields,
-      )
-
-      let result = try {
-        let _ =
-          await mockEthersLog()->getEventTransactionOrThrow(
-            ~transactionSchema=S.schema(
-              s =>
-                {
-                  "effectiveGasPrice": s.matches(BigInt.nativeSchema),
-                },
-            ),
-          )
-        Ok()
-      } catch {
-      | Js.Exn.Error(err) => Error(err->Js.Exn.message)
-      }
-      Assert.deepEqual(
-        result,
-        Error(
-          Some(
-            `Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint, received undefined`,
-          ),
-        ),
-        ~message="effectiveGasPrice should fail because it's only available in eth_getTransactionReceipt, not eth_getTransactionByHash",
+        {
+          "hash": "0xabc",
+          "gas": 21000n,
+          "gasUsed": 21000n,
+          "effectiveGasPrice": 17699339493n,
+          "status": 1,
+        },
       )
     },
   )
@@ -459,6 +504,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Error with a value not matching the schema", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.throws(
       () => {

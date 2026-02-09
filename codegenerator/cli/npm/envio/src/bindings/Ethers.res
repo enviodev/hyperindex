@@ -104,7 +104,7 @@ module JsonRpcProvider = {
 
   let makeGetTransactionFields = (~getTransactionByHash, ~lowercaseAddresses: bool) => async (
     log: log,
-  ): promise<Internal.evmTransactionFields> => {
+  ): Internal.evmTransactionFields => {
     let transaction: Internal.evmTransactionFields = await getTransactionByHash(log.transactionHash)
     // Mutating should be fine, since the transaction isn't used anywhere else outside the function
     let fields: {..} = transaction->Obj.magic
@@ -132,6 +132,25 @@ module JsonRpcProvider = {
     | Undefined => ()
     | Null => ()
     }
+    switch fields["contractAddress"] {
+    | Value(contractAddress) =>
+      fields["contractAddress"] = lowercaseAddresses
+        ? contractAddress->Js.String2.toLowerCase->Address.unsafeFromString
+        : contractAddress->Address.Evm.fromStringOrThrow
+    | Undefined => ()
+    | Null => ()
+    }
+
+    fields->Obj.magic
+  }
+
+  let makeGetReceiptFields = (~getTransactionReceipt, ~lowercaseAddresses: bool) => async (
+    log: log,
+  ): Internal.evmTransactionFields => {
+    let receipt: Internal.evmTransactionFields = await getTransactionReceipt(log.transactionHash)
+    let fields: {..} = receipt->Obj.magic
+
+    open Js.Nullable
     switch fields["contractAddress"] {
     | Value(contractAddress) =>
       fields["contractAddress"] = lowercaseAddresses
