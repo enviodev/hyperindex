@@ -3,6 +3,6 @@
 /* eslint-disable */
 /* tslint:disable */
 
-import type {Sql as $$sql} from 'postgres';
+import type {Sql as $$sql} from './PgAdapter.js';
 
 export type sql = $$sql;
