@@ -12,6 +12,15 @@ type wsMessage =
   | SubscriptionConfirmed(string)
   | ErrorResponse
 
+let subscribeRequestSchema = S.object(s => {
+  let _ = s.field("jsonrpc", S.literal("2.0"))
+  let _ = s.field("id", S.literal(1))
+  let _ = s.field("method", S.literal("eth_subscribe"))
+  let _ = s.field("params", S.tuple1(S.literal("newHeads")))
+})
+
+let subscribeRequestJson = ()->S.reverseConvertToJsonStringOrThrow(subscribeRequestSchema)
+
 let wsMessageSchema = S.union([
   S.object(s => {
     let _ = s.field("method", S.literal("eth_subscription"))
@@ -51,20 +60,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
       wsRef := Some(ws)
 
       ws->WebSocket.onopen(() => {
-        let subscribeRequest = Js.Json.serializeExn(
-          Js.Json.object_(
-            Js.Dict.fromArray([
-              ("jsonrpc", Js.Json.string("2.0")),
-              ("id", Js.Json.number(1.0)),
-              ("method", Js.Json.string("eth_subscribe")),
-              (
-                "params",
-                Js.Json.array([Js.Json.string("newHeads")]),
-              ),
-            ]),
-          ),
-        )
-        ws->WebSocket.send(subscribeRequest)
+        ws->WebSocket.send(subscribeRequestJson)
       })
 
       ws->WebSocket.onmessage(event => {
