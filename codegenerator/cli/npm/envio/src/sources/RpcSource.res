@@ -395,7 +395,7 @@ let makeThrowingGetEventBlock = (~getBlock) => {
 }
 
 // Fields that only exist in eth_getTransactionReceipt, not in eth_getTransactionByHash
-let receiptFieldLocations = [
+let receiptFieldLocations = Utils.Set.fromArray([
   "gasUsed",
   "cumulativeGasUsed",
   "effectiveGasPrice",
@@ -408,7 +408,7 @@ let receiptFieldLocations = [
   "l1GasUsed",
   "l1FeeScalar",
   "gasUsedForL1",
-]
+])
 
 // Merges receipt fields into transaction fields. Receipt keys override transaction keys.
 let mergeTransactionAndReceipt: (
@@ -444,9 +444,8 @@ let makeThrowingGetEventTransaction = (~getTransactionFields, ~getReceiptFields)
             }
           }
 
-          let needsReceipt = transactionFieldItems->Js.Array2.some(item =>
-            receiptFieldLocations->Js.Array2.includes(item.location)
-          )
+          let requestedLocations = transactionFieldItems->Array.map(item => item.location)->Utils.Set.fromArray
+          let needsReceipt = receiptFieldLocations->Utils.Set.intersection(requestedLocations)->Utils.Set.size > 0
 
           let fn = switch transactionFieldItems {
           | [] => _ => %raw(`{}`)->Promise.resolve
