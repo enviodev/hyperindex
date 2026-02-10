@@ -16,47 +16,50 @@ let getKnownBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getKnownBlockWithBackoff = async (
+let getKnownBlockWithBackoff = async (
   ~provider,
   ~sourceName,
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
   ~lowercaseAddresses: bool,
-) =>
-  switch await getKnownBlock(provider, blockNumber) {
-  | exception err =>
-    Logging.warn({
-      "err": err->Utils.prettifyExn,
-      "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-      "source": sourceName,
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "type": "EXPONENTIAL_BACKOFF",
-    })
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-    await getKnownBlockWithBackoff(
-      ~provider,
-      ~sourceName,
-      ~chain,
-      ~blockNumber,
-      ~backoffMsOnFailure=backoffMsOnFailure * 2,
-      ~lowercaseAddresses,
-    )
-  | result => // NOTE: this is wasteful if these fields are not selected in the users config.
-    //       There might be a better way to do this based on the block schema.
-    //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-    // Mutation would be cheaper,
-    // BUT "result" is an Ethers.js Block object,
-    // which has the fields as readonly.
-    {
-      ...result,
-      miner: if lowercaseAddresses {
-        result.miner->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        result.miner->Address.Evm.fromAddressOrThrow
-      },
+) => {
+  let currentBackoff = ref(backoffMsOnFailure)
+  let result = ref(None)
+
+  while result.contents->Option.isNone {
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId)
+    switch await getKnownBlock(provider, blockNumber) {
+    | exception err =>
+      Logging.warn({
+        "err": err->Utils.prettifyExn,
+        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Belt.Int.toString}ms and try again.`,
+        "source": sourceName,
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "type": "EXPONENTIAL_BACKOFF",
+      })
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
+      currentBackoff := currentBackoff.contents * 2
+    | block =>
+      // NOTE: this is wasteful if these fields are not selected in the users config.
+      //       There might be a better way to do this based on the block schema.
+      //       However this is not extremely expensive and good enough for now (only on rpc sync also).
+      // Mutation would be cheaper,
+      // BUT "block" is an Ethers.js Block object,
+      // which has the fields as readonly.
+      result :=
+        Some({
+          ...block,
+          miner: if lowercaseAddresses {
+            block.miner->Address.Evm.fromAddressLowercaseOrThrow
+          } else {
+            block.miner->Address.Evm.fromAddressOrThrow
+          },
+        })
     }
   }
+  result.contents->Option.getExn
+}
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
   let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
@@ -507,10 +510,6 @@ let make = (
   let makeBlockLoader = () =>
     LazyLoader.make(
       ~loaderFn=blockNumber => {
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-        )
         getKnownBlockWithBackoff(
           ~provider,
           ~sourceName=name,
@@ -518,8 +517,7 @@ let make = (
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~lowercaseAddresses,
-        )
-      },
+        ),
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -808,7 +806,7 @@ let make = (
     sourceFor,
     chain,
     poweredByHyperSync: false,
-    pollingInterval: 1000,
+    pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
     getHeightOrThrow: () => {
       Prometheus.SourceRequestCount.increment(

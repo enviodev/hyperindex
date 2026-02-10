@@ -53,7 +53,8 @@ type NftCollection {
 
 type Token
   @index(fields: ["id", "tokenId"])
-  @index(fields: ["tokenId", "collection"]) {
+  @index(fields: ["tokenId", "collection"])
+  @index(fields: [["tokenId", "DESC"], ["owner", "ASC"]]) {
   id: ID!
   tokenId: BigInt! @index
   collection: NftCollection! @index

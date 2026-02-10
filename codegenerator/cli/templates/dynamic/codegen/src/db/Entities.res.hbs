@@ -74,8 +74,8 @@ module {{entity.name.capitalized}} = {
     ~compositeIndices=[
   {{#each entity.composite_indices as | composite_index |}}
       [
-    {{#each composite_index as | index |}}
-      "{{index}}",
+    {{#each composite_index as | idx_field |}}
+      {fieldName: "{{idx_field.field_name}}", direction: {{idx_field.direction}}},
     {{/each}}
       ],
   {{/each}}
