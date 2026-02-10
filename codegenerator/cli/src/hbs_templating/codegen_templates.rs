@@ -1486,42 +1486,19 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                 .map(|rpc| InternalRpcConfig {
                                     url: rpc.url.clone(),
                                     source_for: match rpc.source_for {
-                                        For::Sync => "sync",
-                                        For::Fallback => "fallback",
-                                        For::Live => "live",
+                                        Some(For::Sync) => "sync",
+                                        Some(For::Fallback) => "fallback",
+                                        Some(For::Live) => "live",
+                                        None => unreachable!("source_for should be resolved by from_evm_network_config"),
                                     },
-                                    initial_block_interval: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.initial_block_interval),
-                                    backoff_multiplicative: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.backoff_multiplicative),
-                                    acceleration_additive: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.acceleration_additive),
-                                    interval_ceiling: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.interval_ceiling),
-                                    backoff_millis: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.backoff_millis),
-                                    fallback_stall_timeout: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.fallback_stall_timeout),
-                                    query_timeout_millis: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.query_timeout_millis),
-                                    polling_interval: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.polling_interval),
+                                    initial_block_interval: rpc.initial_block_interval,
+                                    backoff_multiplicative: rpc.backoff_multiplicative,
+                                    acceleration_additive: rpc.acceleration_additive,
+                                    interval_ceiling: rpc.interval_ceiling,
+                                    backoff_millis: rpc.backoff_millis,
+                                    fallback_stall_timeout: rpc.fallback_stall_timeout,
+                                    query_timeout_millis: rpc.query_timeout_millis,
+                                    polling_interval: rpc.polling_interval,
                                 })
                                 .collect();
                             (hypersync_url, rpc_configs, None)
