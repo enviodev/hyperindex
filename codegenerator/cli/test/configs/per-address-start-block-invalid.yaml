@@ -3,8 +3,9 @@ name: PerAddressStartBlockTest
 chains:
   - id: 1
     start_block: 1000
-    rpc_config:
+    rpc:
       url: http://localhost:8545
+      for: sync
     contracts:
       - name: TestContract
         address: "0x1234567890123456789012345678901234567890"
