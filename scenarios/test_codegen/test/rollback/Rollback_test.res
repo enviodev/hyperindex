@@ -834,7 +834,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     let payloads = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
     Assert.deepEqual(
       payloads->Js.Array2.map(p => (p["p"], p["fromBlock"], p["toBlock"])),
-      [("0", 105, None), ("1", 105, None)],
+      [("2", 105, None), ("0", 105, None)],
       ~message="Should correctly continue fetching from block 105 after rolling back the db",
     )
   })
@@ -2513,12 +2513,23 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
         ~message="Should create chunked queries",
       )
 
-      // Resolve both chunks in order
-      chunk1.resolve([], ~latestFetchedBlockNumber=112)
-      chunk2.resolve([], ~latestFetchedBlockNumber=118)
+      // Resolve chunk1 to half its range, chunk2 to half its range
+      chunk1.resolve([], ~latestFetchedBlockNumber=109) // half of 107-112
+      chunk2.resolve([], ~latestFetchedBlockNumber=115) // first half of 113-118, stores checkpoint at 115
       await indexerMock.getBatchWritePromise()
+      // lfb=109 (chunk2 unconsumed due to gap 110-112)
 
-      // Now lfb=118. Trigger rollback to block 112 (between chunk1 and chunk2)
+      // Resolve chunk2's second half: continuation from 116+ resolves to 118
+      // This stores a reorg checkpoint at block 118
+      let continuationCall = sourceMock.getItemsOrThrowCalls->Array.getUnsafe(1)
+      Assert.ok(
+        continuationCall.payload["fromBlock"] >= 116,
+        ~message=`Continuation should start from >= 116, got ${continuationCall.payload["fromBlock"]->Int.toString}`,
+      )
+      continuationCall.resolve([], ~latestFetchedBlockNumber=118)
+      await Utils.delay(0)
+
+      // Trigger rollback: prevRangeLastBlock at 118 with reorged hash
       sourceMock.resolveGetItemsOrThrow(
         [],
         ~prevRangeLastBlock={
@@ -2530,18 +2541,21 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       await Utils.delay(0)
       await Utils.delay(0)
 
+      // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 109, 112, 115]
       Assert.deepEqual(
         sourceMock.getBlockHashesCalls,
-        [[100, 103, 106, 112]],
+        [[100, 103, 106, 109, 112, 115]],
         ~message="Should have called getBlockHashes to find rollback depth",
       )
 
-      // Rollback to block 112 - blocks up to 112 are valid
+      // All blocks up to 115 are valid -> rollback target = 115
       sourceMock.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
         {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
         {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
+        {blockNumber: 109, blockHash: "0x109", blockTimestamp: 100},
         {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
+        {blockNumber: 115, blockHash: "0x115", blockTimestamp: 100},
       ])
 
       // Clean up pending calls from before rollback
@@ -2549,21 +2563,38 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
 
       await indexerMock.getRollbackReadyPromise()
 
-      // After rollback to 112, partition is recreated with lfb=112.
-      // The resolveGetItemsOrThrow(~resolveAt=#all) also resolves old chunk calls
-      // (which advance lfb via their default latestFetchedBlockNumber=toBlock).
-      // The key assertion: fromBlock >= 113 (rollback target + 1), proving we don't
-      // refetch from the beginning (107 or 101).
-      let firstQuery =
-        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first
-      switch firstQuery {
-      | Some(q) =>
-        Assert.ok(
-          q["fromBlock"] >= 113,
-          ~message=`Should refetch from >= 113 (rollback target + 1), not from 107 or 101. Got ${q["fromBlock"]->Int.toString}`,
-        )
-      | None => Assert.fail("Should have at least one query after rollback")
-      }
+      // After rollback to 115:
+      // - lfb=109 (unchanged), chunk2 survives with fetchedBlock=115
+      // - continuation(116+) removed (fromBlock > 115)
+      // Two queries expected:
+      //   1. Gap-fill finishing chunk1 range (fromBlock=110)
+      //   2. After rollback target (fromBlock=116)
+      let queries = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
+
+      Assert.deepEqual(
+        queries,
+        [
+          {
+            "fromBlock": 110,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(112),
+          },
+          {
+            "fromBlock": 116,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(121),
+          },
+          {
+            "fromBlock": 122,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(127),
+          },
+        ],
+        ~message="First query should finish chunk1 range starting from block 110, Second query should start after rollback target at block 116",
+      )
     },
   )
 })
