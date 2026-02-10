@@ -147,12 +147,14 @@ module OptimizedPartitions = {
       completed->Js.Array2.push({...continuingBase, addressesByContractName: abcFull})->ignore
       let restId = nextPartitionIndexRef.contents->Js.Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
-      completed->Js.Array2.push({
+      completed
+      ->Js.Array2.push({
         ...continuingBase,
         id: restId,
         addressesByContractName: abcRest,
         mutPendingQueries: [],
-      })->ignore
+      })
+      ->ignore
       completed
     } else {
       let abc = Js.Dict.empty()
@@ -207,8 +209,8 @@ module OptimizedPartitions = {
           p.addressesByContractName->Js.Dict.unsafeGet(contractName)->Js.Array2.length
         // Compute merge block: last pending query's toBlock, or lfb if idle
         let mergeBlock = switch p.mutPendingQueries->Utils.Array.last {
-        | Some({toBlock: Some(toBlock)}) => Some(toBlock)
-        | Some({toBlock: None}) => None // unbounded query -- can't merge
+        | Some({isChunk: true, toBlock: Some(toBlock)}) => Some(toBlock)
+        | Some(_) => None // unbounded query -- can't merge
         | None => Some(p.latestFetchedBlock.blockNumber)
         }
         switch mergeBlock {
@@ -1643,7 +1645,10 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
 
   {
     ...fetchState,
-    latestOnBlockBlockNumber: targetBlockNumber, // FIXME: This is not tested. I assume there might be a possible issue of it skipping some blocks
+    latestOnBlockBlockNumber: Pervasives.min(
+      fetchState.latestOnBlockBlockNumber,
+      targetBlockNumber,
+    ), // TODO: Test this. Currently it's not tested.
   }->updateInternal(
     ~optimizedPartitions,
     ~indexingContracts,
