@@ -15,14 +15,10 @@ type wsMessage =
   | SubscriptionConfirmed(string)
   | ErrorResponse
 
-let subscribeRequestSchema = S.object(s => {
-  let _ = s.field("jsonrpc", S.literal("2.0"))
-  let _ = s.field("id", S.literal(1))
-  let _ = s.field("method", S.literal("eth_subscribe"))
-  let _ = s.field("params", S.tuple1(S.literal("newHeads")))
-})
-
-let subscribeRequestJson = () => ()->S.reverseConvertToJsonStringOrThrow(subscribeRequestSchema)
+let subscribeRequestJson =
+  {"jsonrpc": "2.0", "id": 1, "method": "eth_subscribe", "params": ["newHeads"]}
+  ->(Utils.magic: {"jsonrpc": string, "id": int, "method": string, "params": array<string>} => Js.Json.t)
+  ->Js.Json.serializeExn
 
 let wsMessageSchema = S.union([
   S.object(s => {
@@ -102,7 +98,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
       wsRef := Some(ws)
 
       ws->WebSocket.onopen(() => {
-        ws->WebSocket.send(subscribeRequestJson())
+        ws->WebSocket.send(subscribeRequestJson)
         resetStaleTimeout()
       })
 
