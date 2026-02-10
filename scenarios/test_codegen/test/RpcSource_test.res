@@ -221,7 +221,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               "l1Fee": s.matches(S.option(BigInt.nativeSchema)),
               "l1GasPrice": s.matches(S.option(BigInt.nativeSchema)),
               "l1GasUsed": s.matches(S.option(BigInt.nativeSchema)),
-              "l1FeeScalar": s.matches(S.option(S.float)),
+              "l1FeeScalar": s.matches(S.option(S.int)),
               "gasUsedForL1": s.matches(S.option(BigInt.nativeSchema)),
             },
         ),
@@ -497,67 +497,6 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
           "effectiveGasPrice": 17699339493n,
           "status": 1,
         },
-      )
-    },
-  )
-
-  // l1FeeScalar is returned by Optimism as a decimal string (e.g. "0.684"), not hex-encoded.
-  // The receipt schema must parse it correctly as a float.
-  Async.it(
-    "Parses l1FeeScalar decimal string from receipt (Optimism-style)",
-    async () => {
-      let receiptJson = %raw(`{
-        "gasUsed": "0x5208",
-        "cumulativeGasUsed": "0x5208",
-        "effectiveGasPrice": "0x3b9aca00",
-        "status": "0x1",
-        "l1Fee": "0x1234",
-        "l1GasPrice": "0x5678",
-        "l1GasUsed": "0x9abc",
-        "l1FeeScalar": "0.684"
-      }`)
-      let parsed = receiptJson->S.parseOrThrow(Rpc.GetTransactionReceipt.receiptSchema)
-      Assert.deepEqual(parsed.l1FeeScalar, Some(0.684))
-    },
-  )
-
-  Async.it(
-    "Fetches l1FeeScalar from receipt via getReceiptFields",
-    async () => {
-      let mockGetTransactionFields = _log =>
-        Promise.resolve(
-          (
-            {
-              hash: "0xabc",
-              transactionIndex: 1,
-            }: Internal.evmTransactionFields
-          ),
-        )
-
-      let mockGetReceiptFields = _log =>
-        Promise.resolve(
-          (
-            {
-              l1FeeScalar: 0.684,
-            }: Internal.evmTransactionFields
-          ),
-        )
-
-      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-        ~getTransactionFields=mockGetTransactionFields,
-        ~getReceiptFields=Some(mockGetReceiptFields),
-      )
-
-      Assert.deepEqual(
-        await mockEthersLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "l1FeeScalar": s.matches(S.float),
-              },
-          ),
-        ),
-        {"l1FeeScalar": 0.684},
       )
     },
   )

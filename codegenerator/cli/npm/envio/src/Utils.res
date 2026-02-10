@@ -598,9 +598,6 @@ module Set = {
   @send
   external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
 
-  @send
-  external isDisjointFrom: (t<'value>, t<'value>) => bool = "isDisjointFrom"
-
   /*
    * Iteration methods
    */

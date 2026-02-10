@@ -39,7 +39,7 @@ type evmTransactionFields = {
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
-  l1FeeScalar?: float,
+  l1FeeScalar?: int,
   gasUsedForL1?: bigint,
 }
 
