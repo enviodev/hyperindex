@@ -394,7 +394,29 @@ let makeThrowingGetEventBlock = (~getBlock) => {
   }
 }
 
-let makeThrowingGetEventTransaction = (~getTransactionFields) => {
+// Fields that only exist in eth_getTransactionReceipt, not in eth_getTransactionByHash
+let receiptFieldLocations = Utils.Set.fromArray([
+  "gasUsed",
+  "cumulativeGasUsed",
+  "effectiveGasPrice",
+  "logsBloom",
+  "contractAddress",
+  "root",
+  "status",
+  "l1Fee",
+  "l1GasPrice",
+  "l1GasUsed",
+  "l1FeeScalar",
+  "gasUsedForL1",
+])
+
+// Merges receipt fields into transaction fields. Receipt keys override transaction keys.
+let mergeTransactionAndReceipt: (
+  Internal.evmTransactionFields,
+  Internal.evmTransactionFields,
+) => Internal.evmTransactionFields = %raw(`(tx, receipt) => ({...tx, ...receipt})`)
+
+let makeThrowingGetEventTransaction = (~getTransactionFields, ~getReceiptFields) => {
   let fnsCache = Utils.WeakMap.make()
   (log, ~transactionSchema) => {
     (
@@ -422,6 +444,9 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
             }
           }
 
+          let requestedLocations = transactionFieldItems->Array.map(item => item.location)->Utils.Set.fromArray
+          let needsReceipt = receiptFieldLocations->Utils.Set.intersection(requestedLocations)->Utils.Set.size > 0
+
           let fn = switch transactionFieldItems {
           | [] => _ => %raw(`{}`)->Promise.resolve
           | [{location: "transactionIndex"}] =>
@@ -436,6 +461,22 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
               }
               ->parseOrThrowReadableError
               ->Promise.resolve
+          | _ if needsReceipt =>
+            switch getReceiptFields {
+            | Some(getReceiptFields) =>
+              log =>
+                Promise.all2((
+                  log->getTransactionFields,
+                  log->getReceiptFields,
+                ))->Promise.thenResolve(((tx, receipt)) =>
+                  mergeTransactionAndReceipt(tx, receipt)->parseOrThrowReadableError
+                )
+            | None =>
+              log =>
+                log
+                ->getTransactionFields
+                ->Promise.thenResolve(parseOrThrowReadableError)
+            }
           | _ =>
             log =>
               log
@@ -537,8 +578,32 @@ let make = (
       },
     )
 
+  let makeReceiptLoader = () =>
+    LazyLoader.make(
+      ~loaderFn=transactionHash => {
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+        Rpc.GetTransactionReceipt.route->Rest.fetch(transactionHash, ~client)
+      },
+      ~onError=(am, ~exn) => {
+        Logging.error({
+          "err": exn->Utils.prettifyExn,
+          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+          "source": name,
+          "chainId": chain->ChainMap.Chain.toChainId,
+          "metadata": {
+            {
+              "asyncTaskName": "receiptLoader: fetching transaction receipt - `getTransactionReceipt` rpc call",
+              "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
+            }
+          },
+        })
+      },
+    )
+
   let blockLoader = ref(makeBlockLoader())
   let transactionLoader = ref(makeTransactionLoader())
+  let receiptLoader = ref(makeReceiptLoader())
 
   let getEventBlockOrThrow = makeThrowingGetEventBlock(~getBlock=blockNumber =>
     blockLoader.contents->LazyLoader.get(blockNumber)
@@ -553,6 +618,15 @@ let make = (
       },
       ~lowercaseAddresses,
     ),
+    ~getReceiptFields=Some(Ethers.JsonRpcProvider.makeGetReceiptFields(
+      ~getTransactionReceipt=async transactionHash => {
+        switch await receiptLoader.contents->LazyLoader.get(transactionHash) {
+        | Some(receipt) => receipt
+        | None => Js.Exn.raiseError(`Transaction receipt not found for hash: ${transactionHash}`)
+        }
+      },
+      ~lowercaseAddresses,
+    )),
   )
 
   let convertEthersLogToHyperSyncEvent = (log: Ethers.log): HyperSyncClient.ResponseTypes.event => {
@@ -787,6 +861,7 @@ let make = (
     // function when a reorg is detected
     blockLoader := makeBlockLoader()
     transactionLoader := makeTransactionLoader()
+    receiptLoader := makeReceiptLoader()
 
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))

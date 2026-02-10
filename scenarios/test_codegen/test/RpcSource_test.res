@@ -61,10 +61,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   it("Panics with invalid schema", () => {
     Assert.throws(
       () => {
-        RpcSource.makeThrowingGetEventTransaction(~getTransactionFields=neverGetTransactionFields)(
-          mockEthersLog(),
-          ~transactionSchema=S.string,
-        )
+        RpcSource.makeThrowingGetEventTransaction(
+          ~getTransactionFields=neverGetTransactionFields,
+          ~getReceiptFields=None,
+        )(mockEthersLog(), ~transactionSchema=S.string)
       },
       ~error={
         "message": "Unexpected internal error: transactionSchema is not an object",
@@ -77,6 +77,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async () => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionFields=neverGetTransactionFields,
+        ~getReceiptFields=None,
       )
       Assert.deepEqual(
         await mockEthersLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
@@ -88,6 +89,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Works with a single transactionIndex field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -107,6 +109,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Works with a single hash field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -126,6 +129,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   Async.it("Works with a only transactionIndex & hash field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -146,6 +150,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     // In different fields order in the schema
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog()->getEventTransactionOrThrow(
@@ -180,6 +185,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.deepEqual(
       await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
@@ -215,7 +221,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               "l1Fee": s.matches(S.option(BigInt.nativeSchema)),
               "l1GasPrice": s.matches(S.option(BigInt.nativeSchema)),
               "l1GasUsed": s.matches(S.option(BigInt.nativeSchema)),
-              "l1FeeScalar": s.matches(S.option(S.float)),
+              "l1FeeScalar": s.matches(S.option(S.int)),
               "gasUsedForL1": s.matches(S.option(BigInt.nativeSchema)),
             },
         ),
@@ -314,9 +320,191 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     },
   )
 
+  // gasUsed, cumulativeGasUsed, and effectiveGasPrice are receipt-only fields
+  // available in eth_getTransactionReceipt but NOT in eth_getTransactionByHash.
+  // When getReceiptFields is provided, receipt fields are fetched and merged with transaction fields.
+  Async.it(
+    "Fetches gasUsed from receipt via getReceiptFields",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let mockGetReceiptFields = _log =>
+        Promise.resolve(
+          (
+            {
+              gasUsed: 21000n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
+      )
+
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "gasUsed": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"gasUsed": 21000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches cumulativeGasUsed from receipt via getReceiptFields",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let mockGetReceiptFields = _log =>
+        Promise.resolve(
+          (
+            {
+              cumulativeGasUsed: 500000n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
+      )
+
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "cumulativeGasUsed": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"cumulativeGasUsed": 500000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches effectiveGasPrice from receipt via getReceiptFields",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let mockGetReceiptFields = _log =>
+        Promise.resolve(
+          (
+            {
+              effectiveGasPrice: 17699339493n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
+      )
+
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"effectiveGasPrice": 17699339493n},
+      )
+    },
+  )
+
+  Async.it(
+    "Merges transaction and receipt fields when both are needed",
+    async () => {
+      let mockGetTransactionFields = _log =>
+        Promise.resolve(
+          (
+            {
+              hash: "0xabc",
+              transactionIndex: 1,
+              gas: 21000n,
+              value: 1000n,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let mockGetReceiptFields = _log =>
+        Promise.resolve(
+          (
+            {
+              gasUsed: 21000n,
+              effectiveGasPrice: 17699339493n,
+              status: 1,
+            }: Internal.evmTransactionFields
+          ),
+        )
+
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionFields=mockGetTransactionFields,
+        ~getReceiptFields=Some(mockGetReceiptFields),
+      )
+
+      Assert.deepEqual(
+        await mockEthersLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "hash": s.matches(S.string),
+                "gas": s.matches(BigInt.nativeSchema),
+                "gasUsed": s.matches(BigInt.nativeSchema),
+                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+                "status": s.matches(S.int),
+              },
+          ),
+        ),
+        {
+          "hash": "0xabc",
+          "gas": 21000n,
+          "gasUsed": 21000n,
+          "effectiveGasPrice": 17699339493n,
+          "status": 1,
+        },
+      )
+    },
+  )
+
   Async.it("Error with a value not matching the schema", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionFields=neverGetTransactionFields,
+      ~getReceiptFields=None,
     )
     Assert.throws(
       () => {

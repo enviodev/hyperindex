@@ -222,3 +222,28 @@ module GetTransactionByHash = {
     S.null(transactionSchema),
   )
 }
+
+module GetTransactionReceipt = {
+  // Parses receipt-only fields into evmTransactionFields.
+  // Only receipt-specific fields are included; other fields in the receipt JSON are ignored.
+  let receiptSchema = S.object((s): Internal.evmTransactionFields => {
+    gasUsed: ?s.field("gasUsed", S.nullable(hexBigintSchema)),
+    cumulativeGasUsed: ?s.field("cumulativeGasUsed", S.nullable(hexBigintSchema)),
+    effectiveGasPrice: ?s.field("effectiveGasPrice", S.nullable(hexBigintSchema)),
+    contractAddress: ?s.field("contractAddress", S.nullable(S.string)),
+    logsBloom: ?s.field("logsBloom", S.nullable(S.string)),
+    root: ?s.field("root", S.nullable(S.string)),
+    status: ?s.field("status", S.nullable(hexIntSchema)),
+    l1Fee: ?s.field("l1Fee", S.nullable(hexBigintSchema)),
+    l1GasPrice: ?s.field("l1GasPrice", S.nullable(hexBigintSchema)),
+    l1GasUsed: ?s.field("l1GasUsed", S.nullable(hexBigintSchema)),
+    l1FeeScalar: ?s.field("l1FeeScalar", S.nullable(hexIntSchema)),
+    gasUsedForL1: ?s.field("gasUsedForL1", S.nullable(hexBigintSchema)),
+  })
+
+  let route = makeRpcRoute(
+    "eth_getTransactionReceipt",
+    S.tuple1(S.string),
+    S.null(receiptSchema),
+  )
+}

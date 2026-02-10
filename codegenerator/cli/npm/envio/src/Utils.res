@@ -612,6 +612,9 @@ module Set = {
     return new Set([...set, value])
   }`)
 
+  @send
+  external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
+
   /*
    * Iteration methods
    */
