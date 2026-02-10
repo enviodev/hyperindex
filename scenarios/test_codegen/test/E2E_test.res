@@ -1117,7 +1117,7 @@ describe("E2E tests", () => {
     // Step 2: Query 1 — resolve at block 500 (range=501)
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 0, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
       ~message="Step 2 should have initial query",
     )
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
@@ -1213,7 +1213,7 @@ describe("E2E tests", () => {
     await Utils.delay(0)
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 0, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
       ~message="Should have initial query",
     )
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
@@ -1345,7 +1345,7 @@ describe("E2E tests", () => {
 
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 0, "toBlock": Some(99800), "retry": 0, "p": "0"}],
+      [{"fromBlock": 1, "toBlock": Some(99800), "retry": 0, "p": "0"}],
       ~message="Step 1: initial query for partition 0",
     )
 

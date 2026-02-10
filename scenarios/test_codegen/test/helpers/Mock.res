@@ -818,7 +818,8 @@ module Helper = {
 
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
-      [{"fromBlock": 0, "toBlock": Some(100), "retry": 0, "p": "0"}],
+      // fromBlock 1 since it's in the config.yaml start_block is 1
+      [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}],
       ~message="Should request items until reorg threshold",
     )
     sourceMock.resolveGetItemsOrThrow([])

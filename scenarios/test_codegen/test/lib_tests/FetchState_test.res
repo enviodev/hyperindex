@@ -1765,7 +1765,7 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
-          fromBlock: 0,
+          fromBlock: 1,
           indexingContracts: fetchStateWithDcs.indexingContracts,
         },
         {

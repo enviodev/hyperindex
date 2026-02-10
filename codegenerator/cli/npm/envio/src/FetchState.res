@@ -1313,9 +1313,7 @@ let getNextQuery = (
       let maybeChunkRange = getMinHistoryRange(p)
 
       // Walk pending queries to find open ranges and create queries for each
-      let cursor = ref(
-        p.latestFetchedBlock.blockNumber === 0 ? 0 : p.latestFetchedBlock.blockNumber + 1,
-      )
+      let cursor = ref(p.latestFetchedBlock.blockNumber + 1)
       let canContinue = ref(true)
       let pqIdx = ref(0)
       while pqIdx.contents < p.mutPendingQueries->Array.length && canContinue.contents {
