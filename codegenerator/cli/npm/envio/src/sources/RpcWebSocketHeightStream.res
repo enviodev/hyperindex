@@ -22,7 +22,7 @@ let subscribeRequestSchema = S.object(s => {
   let _ = s.field("params", S.tuple1(S.literal("newHeads")))
 })
 
-let subscribeRequestJson = ()->S.reverseConvertToJsonStringOrThrow(subscribeRequestSchema)
+let subscribeRequestJson = () => ()->S.reverseConvertToJsonStringOrThrow(subscribeRequestSchema)
 
 let wsMessageSchema = S.union([
   S.object(s => {
@@ -102,7 +102,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
       wsRef := Some(ws)
 
       ws->WebSocket.onopen(() => {
-        ws->WebSocket.send(subscribeRequestJson)
+        ws->WebSocket.send(subscribeRequestJson())
         resetStaleTimeout()
       })
 
@@ -136,17 +136,15 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
         }
         switch wsRef.contents {
         | Some(ws) if ws->WebSocket.readyState === Open => ws->WebSocket.close
-        | _ =>
-          wsRef := None
-          clearStaleTimeout()
-          scheduleReconnect()
+        | _ => ()
         }
+        clearStaleTimeout()
+        scheduleReconnect()
       })
 
       ws->WebSocket.onclose(() => {
         wsRef := None
         clearStaleTimeout()
-        scheduleReconnect()
       })
     }
   }
