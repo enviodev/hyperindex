@@ -614,20 +614,30 @@ impl EventTemplate {
         let mut code = String::from("(decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {");
 
         for (index, param) in indexed_params.into_iter().enumerate() {
+            let array_access = if index == 0 {
+                "Utils.Array.firstUnsafe".to_string()
+            } else {
+                format!("Js.Array2.unsafe_get({})", index)
+            };
             code.push_str(&format!(
-                "{}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                "{}: decodedEvent.indexed->{}->HyperSyncClient.Decoder.\
                toUnderlying->Utils.magic, ",
                 RecordField::to_valid_rescript_name(&param.name),
-                index
+                array_access
             ));
         }
 
         for (index, param) in body_params.into_iter().enumerate() {
+            let array_access = if index == 0 {
+                "Utils.Array.firstUnsafe".to_string()
+            } else {
+                format!("Js.Array2.unsafe_get({})", index)
+            };
             code.push_str(&format!(
-                "{}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                "{}: decodedEvent.body->{}->HyperSyncClient.Decoder.\
                toUnderlying->Utils.magic, ",
                 RecordField::to_valid_rescript_name(&param.name),
-                index
+                array_access
             ));
         }
 

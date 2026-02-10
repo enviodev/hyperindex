@@ -517,7 +517,8 @@ let make = (
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~lowercaseAddresses,
-        ),
+        )
+      },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
