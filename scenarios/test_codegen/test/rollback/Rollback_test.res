@@ -226,6 +226,7 @@ describe("E2E rollback tests", () => {
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
+        // IDs reset on rollback, recreated partition starts at 0
         "p": "0",
       }),
       ~message="Should rollback fetch state",
@@ -513,6 +514,7 @@ describe("E2E rollback tests", () => {
           "fromBlock": 101,
           "toBlock": None,
           "retry": 0,
+          // IDs reset on rollback, recreated partition starts at 0
           "p": "0",
         },
       ],
@@ -766,25 +768,17 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
-        // Normal partition
+        // Normal partition (recreated fresh, no chunking)
         {
           "fromBlock": 103,
           "toBlock": None,
           "retry": 0,
           "p": "0",
         },
-        // DC partition queries
-        // Since we already got 2 responses with 1 block range
-        // the logic assumes that we can chunk the next query
+        // DC partition (recreated fresh, no chunking since chunk history lost)
         {
           "fromBlock": 103,
-          "toBlock": Some(104),
-          "retry": 0,
-          "p": "2",
-        },
-        {
-          "fromBlock": 105,
-          "toBlock": Some(106),
+          "toBlock": None,
           "retry": 0,
           "p": "2",
         },
@@ -836,72 +830,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
       ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
     )
+    // After the db rollback, both partitions continue from block 105 (no chunk history yet)
+    let payloads = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [
-        // Every new query creates new chunks
-        // Queries are sorted by fromBlock across partitions (lower blocks get priority)
-        {
-          "fromBlock": 105,
-          "toBlock": Some(108),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 109,
-          "toBlock": Some(112),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 107,
-          "toBlock": Some(108),
-          "retry": 0,
-          "p": "2",
-        },
-        {
-          "fromBlock": 109,
-          "toBlock": Some(110),
-          "retry": 0,
-          "p": "2",
-        },
-        {
-          "fromBlock": 113,
-          "toBlock": Some(116),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 117,
-          "toBlock": Some(120),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 111,
-          "toBlock": Some(112),
-          "retry": 0,
-          "p": "2",
-        },
-        {
-          "fromBlock": 113,
-          "toBlock": Some(114),
-          "retry": 0,
-          "p": "2",
-        },
-        {
-          "fromBlock": 115,
-          "toBlock": Some(116),
-          "retry": 0,
-          "p": "2",
-        },
-        {
-          "fromBlock": 105,
-          "toBlock": Some(106),
-          "retry": 0,
-          "p": "2",
-        },
-      ],
+      payloads->Js.Array2.map(p => (p["p"], p["fromBlock"], p["toBlock"])),
+      [("0", 105, None), ("1", 105, None)],
       ~message="Should correctly continue fetching from block 105 after rolling back the db",
     )
   })
@@ -1219,6 +1152,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       ),
       (
+        // Chain 100: partition KEPT (lfb <= target), chunk history preserved
         [
           {
             "fromBlock": 106,
@@ -1233,16 +1167,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
             "p": "0",
           },
         ],
+        // Chain 1337: partition DELETED (lfb > target), recreated fresh
         [
           {
             "fromBlock": 106,
-            "toBlock": Some(111),
-            "retry": 0,
-            "p": "0",
-          },
-          {
-            "fromBlock": 112,
-            "toBlock": Some(117),
+            "toBlock": None,
             "retry": 0,
             "p": "0",
           },
@@ -1645,12 +1574,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
         (
+          // Chain 1337: partition DELETED, recreated fresh (no chunking)
           Some({
             "fromBlock": 106,
-            "toBlock": Some(111),
+            "toBlock": None,
             "retry": 0,
             "p": "0",
           }),
+          // Chain 100: partition KEPT, chunk history preserved
           Some({
             "fromBlock": 106,
             "toBlock": Some(111),
@@ -2073,12 +2004,14 @@ Sorted by timestamp and chain id`,
           sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
         (
+          // Chain 1337: partition DELETED (lfb > target), recreated fresh
           Some({
             "fromBlock": 103,
-            "toBlock": Some(104),
+            "toBlock": None,
             "retry": 0,
             "p": "0",
           }),
+          // Chain 100: partition KEPT (lfb <= target), chunk history preserved
           Some({
             "fromBlock": 103,
             "toBlock": Some(106),
@@ -2518,15 +2451,10 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
+        // Partition recreated fresh (no chunk history), single unchunked query
         {
           "fromBlock": 115,
-          "toBlock": Some(120),
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 121,
-          "toBlock": Some(126),
+          "toBlock": None,
           "retry": 0,
           "p": "0",
         },
@@ -2534,4 +2462,108 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
     )
   })
+
+  Async.it(
+    "Should efficiently refetch only blocks after rollback target with chunked partitions",
+    async () => {
+      // Setup mock source and indexer
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+      // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+      switch sourceMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
+      | _ => Assert.fail("Should have a single pending call for query 1")
+      }
+      await indexerMock.getBatchWritePromise()
+
+      // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+      // After this, chunking will be enabled with chunkRange=min(3,3)=3
+      switch sourceMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
+      | _ => Assert.fail("Should have a single pending call for query 2")
+      }
+      await indexerMock.getBatchWritePromise()
+
+      // Chunked queries: chunk1=107-112, chunk2=113-118
+      // chunkRange=3, chunkSize=ceil(5.4)=6
+      let calls = sourceMock.getItemsOrThrowCalls
+      Assert.ok(calls->Array.length >= 2, ~message="Should have at least 2 chunked queries")
+      let chunk1 = calls->Array.getUnsafe(0)
+      let chunk2 = calls->Array.getUnsafe(1)
+      Assert.deepEqual(
+        (chunk1.payload, chunk2.payload),
+        (
+          {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
+          {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
+        ),
+        ~message="Should create chunked queries",
+      )
+
+      // Resolve both chunks in order
+      chunk1.resolve([], ~latestFetchedBlockNumber=112)
+      chunk2.resolve([], ~latestFetchedBlockNumber=118)
+      await indexerMock.getBatchWritePromise()
+
+      // Now lfb=118. Trigger rollback to block 112 (between chunk1 and chunk2)
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={
+          blockNumber: 118,
+          blockHash: "0x118-reorged",
+        },
+        ~resolveAt=#first,
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      Assert.deepEqual(
+        sourceMock.getBlockHashesCalls,
+        [[100, 103, 106, 112]],
+        ~message="Should have called getBlockHashes to find rollback depth",
+      )
+
+      // Rollback to block 112 - blocks up to 112 are valid
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
+        {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
+        {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
+      ])
+
+      // Clean up pending calls from before rollback
+      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
+
+      await indexerMock.getRollbackReadyPromise()
+
+      // After rollback to 112, partition is recreated with lfb=112.
+      // The resolveGetItemsOrThrow(~resolveAt=#all) also resolves old chunk calls
+      // (which advance lfb via their default latestFetchedBlockNumber=toBlock).
+      // The key assertion: fromBlock >= 113 (rollback target + 1), proving we don't
+      // refetch from the beginning (107 or 101).
+      let firstQuery =
+        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first
+      switch firstQuery {
+      | Some(q) =>
+        Assert.ok(
+          q["fromBlock"] >= 113,
+          ~message=`Should refetch from >= 113 (rollback target + 1), not from 107 or 101. Got ${q["fromBlock"]->Int.toString}`,
+        )
+      | None => Assert.fail("Should have at least one query after rollback")
+      }
+    },
+  )
 })

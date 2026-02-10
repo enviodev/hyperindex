@@ -2100,6 +2100,9 @@ describe("FetchState.getNextQuery & integration", () => {
   it("Correctly rollbacks fetch state", () => {
     let fetchState = makeIntermidiateDcMerge()
 
+    // Rollback to block 2: both DCs survive (regBlock <= 2)
+    // Partition "0" (lfb=10 > 2) -> DELETED, addresses recreated as partition "1"
+    // Partition "2" (lfb=2 <= 2) -> KEPT as partition "0" (IDs reset)
     let fetchStateAfterRollback1 = fetchState->FetchState.rollback(~targetBlockNumber=2)
     Assert.deepEqual(
       fetchStateAfterRollback1,
@@ -2118,13 +2121,11 @@ describe("FetchState.getNextQuery & integration", () => {
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
               selection: fetchState.normalSelection,
-              addressesByContractName: Js.Dict.fromArray([
-                ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
-              ]),
+              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
               endBlock: None,
             },
             {
-              id: "2",
+              id: "1",
               latestFetchedBlock: {
                 blockNumber: 2,
                 blockTimestamp: 0,
@@ -2134,18 +2135,22 @@ describe("FetchState.getNextQuery & integration", () => {
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
               selection: fetchState.normalSelection,
-              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
+              addressesByContractName: Js.Dict.fromArray([
+                ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+              ]),
               endBlock: None,
             },
           ],
-          ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex,
+          ~nextPartitionIndex=2,
           ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
         ),
       },
-      ~message=`Rollbacks partittions state, but keeps all addresses`,
+      ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
     )
 
+    // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
+    // Both partitions deleted (lfb > 1), surviving addresses [addr0, addr1] recreated
     let fetchStateAfterRollback2 = fetchState->FetchState.rollback(~targetBlockNumber=1)
     Assert.deepEqual(
       fetchStateAfterRollback2,
@@ -2173,22 +2178,23 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             // Removed partition "2"
           ],
-          ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex,
+          ~nextPartitionIndex=1,
           ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
         ),
         // Removed an item here
+
         buffer: [mockEvent(~blockNumber=1)],
       },
-      ~message=`Should delete partition if there are no more contracts in it`,
+      ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
     )
 
-    // Rollback even more to see the removal of the last dc
+    // Rollback to block -1: all DCs removed, only static addr0 survives
     let fetchStateAfterRollback3 = fetchState->FetchState.rollback(~targetBlockNumber=-1)
     Assert.deepEqual(
       fetchStateAfterRollback3,
       {
-        ...fetchStateAfterRollback1,
+        ...fetchState,
         indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
         optimizedPartitions: FetchState.OptimizedPartitions.make(
           ~partitions=[
@@ -2207,13 +2213,13 @@ describe("FetchState.getNextQuery & integration", () => {
               endBlock: None,
             },
           ],
-          ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex,
+          ~nextPartitionIndex=1,
           ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
         ),
         buffer: [],
       },
-      ~message=`Partition "2" should be removed, but the partition "0" should be kept`,
+      ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
     )
   })
 
@@ -2267,7 +2273,9 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Should have 2 partitions before rollback`,
     )
 
-    let fetchStateAfterRollback = fetchState->FetchState.rollback(~targetBlockNumber=1)
+    // resetPendingQueries must be called before rollback (removes in-flight queries)
+    let fetchStateReset = fetchState->FetchState.resetPendingQueries
+    let fetchStateAfterRollback = fetchStateReset->FetchState.rollback(~targetBlockNumber=1)
 
     Assert.deepEqual(
       fetchStateAfterRollback,
@@ -2294,7 +2302,8 @@ describe("FetchState.getNextQuery & integration", () => {
               endBlock: None,
             },
           ],
-          ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex,
+          // IDs reset on rollback
+          ~nextPartitionIndex=1,
           ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
         ),

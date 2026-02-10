@@ -1560,61 +1560,38 @@ let make = (
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
 
-/**
-Rolls back partitions to the given valid block
-*/
-let rollbackPartition = (p: partition, ~targetBlockNumber, ~addressesToRemove) => {
-  let shouldRollbackFetched = p.latestFetchedBlock.blockNumber > targetBlockNumber
-  let latestFetchedBlock = shouldRollbackFetched
-    ? {
-        blockNumber: targetBlockNumber,
-        blockTimestamp: 0,
+let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlockNumber) => {
+  // - Remove queries where fromBlock > target
+  // - Cap fetchedBlock at target where fetchedBlock > target
+  let adjusted = []
+  for qIdx in 0 to mutPendingQueries->Array.length - 1 {
+    let pq = mutPendingQueries->Js.Array2.unsafe_get(qIdx)
+    if pq.fromBlock <= targetBlockNumber {
+      switch pq.fetchedBlock {
+      | Some({blockNumber}) if blockNumber > targetBlockNumber =>
+        adjusted
+        ->Js.Array2.push({
+          ...pq,
+          fetchedBlock: Some({blockNumber: targetBlockNumber, blockTimestamp: 0}),
+        })
+        ->ignore
+      | Some(_) => adjusted->Js.Array2.push(pq)->ignore
+      | None => Js.Exn.raiseError("Internal error: Must not have a fetching query during rollback")
       }
-    : p.latestFetchedBlock
-
-  // FIXME: Check it
-  // Clear endBlock when rolling back below it
-  let endBlock = switch p.endBlock {
-  | Some(endBlock) if targetBlockNumber < endBlock => None
-  | other => other
-  }
-  switch p {
-  | {selection: {dependsOnAddresses: false}} =>
-    Some({
-      ...p,
-      latestFetchedBlock,
-      endBlock,
-      mutPendingQueries: [],
-    })
-  | {addressesByContractName} =>
-    let rollbackedAddressesByContractName = Js.Dict.empty()
-    addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
-      let keptAddresses =
-        addresses->Array.keep(address => !(addressesToRemove->Utils.Set.has(address)))
-      if keptAddresses->Array.length > 0 {
-        rollbackedAddressesByContractName->Js.Dict.set(contractName, keptAddresses)
-      }
-    })
-
-    if rollbackedAddressesByContractName->Js.Dict.keys->Array.length === 0 {
-      None
-    } else {
-      Some({
-        id: p.id,
-        selection: p.selection,
-        addressesByContractName: rollbackedAddressesByContractName,
-        latestFetchedBlock,
-        endBlock,
-        dynamicContract: p.dynamicContract,
-        mutPendingQueries: [],
-        prevQueryRange: p.prevQueryRange,
-        prevPrevQueryRange: p.prevPrevQueryRange,
-      })
     }
   }
+  adjusted
 }
 
+/**
+Rolls back fetch state to the given valid block.
+Always recreates optimized partitions to avoid duplicate addresses:
+- Wildcard: only rollback latestFetchedBlock
+- Non-wildcard with lfb <= target: keep, adjust pending queries and endBlock
+- Non-wildcard with lfb > target: delete, track addresses for recreation
+*/
 let rollback = (fetchState: t, ~targetBlockNumber) => {
+  // Step 1: Build addressesToRemove and surviving indexingContracts
   let addressesToRemove = Utils.Set.make()
   let indexingContracts = Js.Dict.empty()
 
@@ -1623,30 +1600,111 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   ->Array.forEach(address => {
     let indexingContract = fetchState.indexingContracts->Js.Dict.unsafeGet(address)
     switch indexingContract.registrationBlock {
-    | Some(registrationBlock) if registrationBlock > targetBlockNumber => {
-        //If the registration block is later than the first change event,
-        //Do not keep it and add to the removed addresses
-        let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
-      }
+    | Some(registrationBlock) if registrationBlock > targetBlockNumber =>
+      let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
     | _ => indexingContracts->Js.Dict.set(address, indexingContract)
     }
   })
 
-  let optimizedPartitions = OptimizedPartitions.make(
-    ~partitions=fetchState.optimizedPartitions.entities
-    ->Js.Dict.values
-    ->Array.keepMap(p => p->rollbackPartition(~targetBlockNumber, ~addressesToRemove)),
-    ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-    ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex,
+  // Step 2: Categorize partitions
+  let keptPartitions = []
+  let nextKeptIdRef = ref(0)
+  let registeringContractsByContract: dict<dict<Internal.indexingContract>> = Js.Dict.empty()
+
+  let partitions = fetchState.optimizedPartitions.entities->Js.Dict.values
+  for idx in 0 to partitions->Array.length - 1 {
+    let p = partitions->Js.Array2.unsafe_get(idx)
+    switch p {
+    // Wildcard: rollback latestFetchedBlock and adjust pending queries
+    | {selection: {dependsOnAddresses: false}} =>
+      let id = nextKeptIdRef.contents->Int.toString
+      nextKeptIdRef := nextKeptIdRef.contents + 1
+      keptPartitions
+      ->Js.Array2.push({
+        ...p,
+        id,
+        latestFetchedBlock: p.latestFetchedBlock.blockNumber > targetBlockNumber
+          ? {blockNumber: targetBlockNumber, blockTimestamp: 0}
+          : p.latestFetchedBlock,
+        mutPendingQueries: rollbackPendingQueries(p.mutPendingQueries, ~targetBlockNumber),
+      })
+      ->ignore
+
+    // Non-wildcard with lfb > target: delete, collect addresses for recreation
+    | _ if p.latestFetchedBlock.blockNumber > targetBlockNumber =>
+      p.addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
+        addresses->Array.forEach(address => {
+          if (
+            !(addressesToRemove->Utils.Set.has(address)) &&
+            indexingContracts
+            ->Utils.Dict.dangerouslyGetNonOption(address->Address.toString)
+            ->Option.isSome
+          ) {
+            let registeringContracts =
+              registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
+            registeringContracts->Js.Dict.set(
+              address->Address.toString,
+              indexingContracts->Js.Dict.unsafeGet(address->Address.toString),
+            )
+          }
+        })
+      })
+
+    // Non-wildcard with lfb <= target: keep, adjust pending queries and endBlock
+    | {addressesByContractName} => {
+        // Cap endBlock at target
+        let endBlock = switch p.endBlock {
+        | Some(endBlock) if endBlock > targetBlockNumber => Some(targetBlockNumber)
+        | other => other
+        }
+
+        // Remove addresses that should be removed
+        let rollbackedAddressesByContractName = Js.Dict.empty()
+        addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
+          let keptAddresses =
+            addresses->Array.keep(address => !(addressesToRemove->Utils.Set.has(address)))
+          if keptAddresses->Array.length > 0 {
+            rollbackedAddressesByContractName->Js.Dict.set(contractName, keptAddresses)
+          }
+        })
+
+        if rollbackedAddressesByContractName->Js.Dict.keys->Array.length > 0 {
+          let id = nextKeptIdRef.contents->Int.toString
+          nextKeptIdRef := nextKeptIdRef.contents + 1
+          keptPartitions
+          ->Js.Array2.push({
+            ...p,
+            id,
+            addressesByContractName: rollbackedAddressesByContractName,
+            mutPendingQueries: rollbackPendingQueries(p.mutPendingQueries, ~targetBlockNumber),
+            endBlock,
+          })
+          ->ignore
+        }
+      }
+    }
+  }
+
+  // Step 3: Recreate partitions from deleted partition addresses
+  let optimizedPartitions = createPartitionsFromIndexingAddresses(
+    ~registeringContractsByContract,
+    ~contractConfigs=fetchState.contractConfigs,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+    ~normalSelection=fetchState.normalSelection,
+    ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+    ~nextPartitionIndex=nextKeptIdRef.contents,
+    ~existingPartitions=keptPartitions,
+    ~progressBlockNumber=targetBlockNumber,
   )
 
+  // Step 4: Update state
   {
     ...fetchState,
+    // TODO: Test this. Currently it's not tested.
     latestOnBlockBlockNumber: Pervasives.min(
       fetchState.latestOnBlockBlockNumber,
       targetBlockNumber,
-    ), // TODO: Test this. Currently it's not tested.
+    ),
   }->updateInternal(
     ~optimizedPartitions,
     ~indexingContracts,
@@ -1660,14 +1718,10 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   )
 }
 
-// Reset pending queries. If there are fetched queries in the middle (out-of-order completion),
-// it means we already have the events for those ranges, so we don't need to fetch them again.
-// We rollback to the earliest such query's fromBlock - 1. Otherwise just clear mutPendingQueries.
-// This is not the most efficient in terms of overfetching, but the simplest to implement.
-// Ideally we shouldn't stop handling queries on rollback.
+// Reset pending queries by removing in-flight queries (ones without fetchedBlock).
+// Completed queries (with fetchedBlock) are kept so rollback can handle them.
+// Since we can continue fetching partitions with holes, this works correctly.
 let resetPendingQueries = (fetchState: t) => {
-  // Track earliest "fetched in middle" query's fromBlock for potential rollback
-  let earliestFetchedInMiddleFromBlock = ref(None)
   let newEntities = fetchState.optimizedPartitions.entities->Utils.Dict.shallowCopy
 
   for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
@@ -1675,44 +1729,18 @@ let resetPendingQueries = (fetchState: t) => {
     let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
 
     if partition.mutPendingQueries->Array.length > 0 {
-      // Look for pattern: [fetching, fetched, ...] and track earliest fromBlock
-      let sawUnfetched = ref(false)
-      for qIdx in 0 to partition.mutPendingQueries->Array.length - 1 {
-        let pq = partition.mutPendingQueries->Js.Array2.unsafe_get(qIdx)
-        switch pq.fetchedBlock {
-        | None => sawUnfetched := true
-        | Some(_) if sawUnfetched.contents =>
-          earliestFetchedInMiddleFromBlock :=
-            Some(
-              switch earliestFetchedInMiddleFromBlock.contents {
-              | None => pq.fromBlock
-              | Some(existing) => Pervasives.min(existing, pq.fromBlock)
-              },
-            )
-        | Some(_) => ()
-        }
-      }
-
-      newEntities->Js.Dict.set(
-        partitionId,
-        {
-          ...partition,
-          mutPendingQueries: [],
-        },
-      )
+      // Keep only completed queries (with fetchedBlock)
+      let kept = partition.mutPendingQueries->Array.keep(pq => pq.fetchedBlock !== None)
+      newEntities->Js.Dict.set(partitionId, {...partition, mutPendingQueries: kept})
     }
   }
 
-  switch earliestFetchedInMiddleFromBlock.contents {
-  | Some(fromBlock) => fetchState->rollback(~targetBlockNumber=fromBlock - 1)
-  | None => // No fetched queries in middle - just use cleared pending queries
-    {
-      ...fetchState,
-      optimizedPartitions: {
-        ...fetchState.optimizedPartitions,
-        entities: newEntities,
-      },
-    }
+  {
+    ...fetchState,
+    optimizedPartitions: {
+      ...fetchState.optimizedPartitions,
+      entities: newEntities,
+    },
   }
 }
 
