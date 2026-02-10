@@ -9,7 +9,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     config_parsing::{
         chain_helpers::Network,
-        entity_parsing::{Entity, Field, GraphQLEnum},
+        entity_parsing::{Entity, Field, GraphQLEnum, IndexField, IndexFieldDirection},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
         field_types,
         human_config::{evm::For, HumanConfig},
@@ -240,12 +240,30 @@ pub struct DerivedFieldTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct CompositeIndexFieldTemplate {
+    pub field_name: String,
+    pub direction: String,
+}
+
+impl CompositeIndexFieldTemplate {
+    fn from_index_field(index_field: &IndexField) -> Self {
+        Self {
+            field_name: index_field.name.clone(),
+            direction: match index_field.direction {
+                IndexFieldDirection::Asc => "Asc".to_string(),
+                IndexFieldDirection::Desc => "Desc".to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub type_code: String,
     pub schema_code: String,
     pub postgres_fields: Vec<field_types::Field>,
-    pub composite_indices: Vec<Vec<String>>,
+    pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
 }
@@ -303,7 +321,16 @@ impl EntityRecordTypeTemplate {
             .filter_map(|gql_field| gql_field.get_derived_from_field())
             .collect();
 
-        let composite_indices = entity.get_composite_indices();
+        let composite_indices = entity
+            .get_composite_indices()
+            .into_iter()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .map(CompositeIndexFieldTemplate::from_index_field)
+                    .collect()
+            })
+            .collect();
 
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
