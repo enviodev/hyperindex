@@ -1322,4 +1322,159 @@ describe("E2E tests", () => {
     | _ => Assert.fail("Expected 4 chunks")
     }
   })
+
+  Async.it("Partition merging works for fetching partitions via mergeBlock", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Step 1: Resolve height
+    sourceMock.resolveGetHeightOrThrow(100_000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 0, "toBlock": Some(99800), "retry": 0, "p": "0"}],
+      ~message="Step 1: initial query for partition 0",
+    )
+
+    // Step 2: Register DC1 at block 5000, DC2 at block 25100
+    // Gap = 25099 - 4999 = 20100 > tooFarBlockRange(20000) → separate partitions
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 5000,
+          logIndex: 0,
+          contractRegister: async ({context}) => {
+            context.addGravatar(
+              "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
+            )
+          },
+        },
+        {
+          blockNumber: 25100,
+          logIndex: 0,
+          contractRegister: async ({context}) => {
+            context.addGravatar(
+              "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=25100,
+    )
+    // Batch writes because P0 advances and items at blocks 5000,25100 are processable
+    await indexerMock.getBatchWritePromise()
+
+    // DC1 = partition "2" at lfb=4999, DC2 = partition "3" at lfb=25099
+    // (partition "1" is created from splitting existing partition for the new dynamic contract)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
+      [("2", 5000), ("3", 25100), ("0", 25101)],
+      ~message="Step 2: queries for DC1(5000), DC2(25100), P0(25101)",
+    )
+
+    // Step 3: Resolve DC2 at lfb=25600 (range=501, first chunk history entry)
+    // Buffer block stays 4999 (DC1 is earliest) → no batch write
+    let dc2Call1 =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "3")
+      ->Option.getExn
+    dc2Call1.resolve([], ~latestFetchedBlockNumber=25600)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
+      [("2", 5000), ("0", 25101), ("3", 25601)],
+      ~message="Step 3: DC2 new query from 25601",
+    )
+
+    // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates
+    // chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
+    // Chunks: (25901,26440),(26441,26980) — concurrency limited → chunk1 only
+    // Buffer block stays 4999 → no batch write
+    let dc2Call2 =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "3")
+      ->Option.getExn
+    dc2Call2.resolve([], ~latestFetchedBlockNumber=25900)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      [
+        ("2", 5000, Some(99800)),
+        ("0", 25101, Some(99800)),
+        ("3", 25901, Some(26440)),
+        ("3", 26441, Some(26980)),
+      ],
+      ~message="Step 4: DC2 has 2 chunks (25901-26440, 26441-26980)",
+    )
+
+    // Step 5: Resolve DC1 at lfb=7000 → merge triggers
+    // DC1 mergeBlock=7000 (idle), DC2 mergeBlock=26980 (last chunk toBlock)
+    // 7000 + 20000 = 27000 > 26980 → within range → MERGE
+    // Both lfb < mergeBlock → (true,true): both get endBlock=26980, new partition "4"
+    // Buffer empty → no batch write
+    let dc1Call =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "2")
+      ->Option.getExn
+    dc1Call.resolve([], ~latestFetchedBlockNumber=7000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // After merge:
+    // DC1("2"): endBlock=26980, query 7001→26980
+    // DC2("3"): endBlock=26980, chunks still pending
+    // P0("0"): still pending 25101→99800
+    // New("4"): lfb=26980, both addresses, query 26981→99800
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      [
+        ("2", 7001, Some(26980)),
+        ("0", 25101, Some(99800)),
+        ("3", 25901, Some(26440)),
+        ("3", 26441, Some(26980)),
+        ("4", 26981, Some(99800)),
+      ],
+      ~message="After merge: DC1 queries to endBlock, DC2 chunks pending, new partition '4'",
+    )
+
+    // Verify merged partition "4" has both DC addresses
+    let partition4Call =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "4")
+      ->Option.getExn
+    let addresses = partition4Call.payload->Mock.Source.CallPayload.addresses
+    Assert.deepEqual(
+      addresses->Js.Dict.unsafeGet("Gravatar")->Array.length,
+      2,
+      ~message="Merged partition should have addresses from both DCs",
+    )
+  })
 })

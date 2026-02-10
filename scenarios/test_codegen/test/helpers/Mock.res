@@ -468,6 +468,10 @@ module Indexer = {
 }
 
 module Source = {
+  module CallPayload = {
+    @get external addresses: {..} => dict<array<Address.t>> = "addresses"
+  }
+
   type method = [
     | #getBlockHashes
     | #getHeightOrThrow
@@ -649,7 +653,7 @@ module Source = {
           getItemsOrThrow: implement(#getItemsOrThrow, (
             ~fromBlock,
             ~toBlock,
-            ~addressesByContractName as _,
+            ~addressesByContractName as _addressesByContractName,
             ~indexingContracts as _,
             ~knownHeight,
             ~partitionId,
@@ -658,13 +662,15 @@ module Source = {
             ~logger as _,
           ) => {
             keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
+              let payload = {
+                "fromBlock": fromBlock,
+                "toBlock": toBlock,
+                "retry": retry,
+                "p": partitionId,
+              }
+              let _ = %raw(`Object.defineProperty(payload, 'addresses', { value: _addressesByContractName })`)
               {
-                payload: {
-                  "fromBlock": fromBlock,
-                  "toBlock": toBlock,
-                  "retry": retry,
-                  "p": partitionId,
-                },
+                payload,
                 resolve: (
                   items,
                   ~latestFetchedBlockNumber=?,
