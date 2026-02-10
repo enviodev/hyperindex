@@ -100,6 +100,9 @@ struct InternalRpcConfig {
     url: String,
     #[serde(rename = "for")]
     source_for: &'static str,
+    // Optional WebSocket URL for real-time block tracking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ws: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1501,6 +1504,7 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                         Some(For::Live) => "live",
                                         None => unreachable!("source_for should be resolved by from_evm_network_config"),
                                     },
+                                    ws: rpc.ws.clone(),
                                     initial_block_interval: rpc.initial_block_interval,
                                     backoff_multiplicative: rpc.backoff_multiplicative,
                                     acceleration_additive: rpc.acceleration_additive,

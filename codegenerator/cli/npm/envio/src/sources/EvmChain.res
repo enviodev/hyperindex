@@ -4,6 +4,7 @@ type rpc = {
   url: string,
   sourceFor: Source.sourceFor,
   syncConfig?: Config.sourceSyncOptions,
+  ws?: string,
 }
 
 let getSyncConfig = (
@@ -75,18 +76,18 @@ let makeSources = (
     ]
   | _ => []
   }
-  rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor}) => {
-    let _ = sources->Js.Array2.push(
-      RpcSource.make({
-        chain,
-        sourceFor,
-        syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
-        url,
-        eventRouter,
-        allEventSignatures,
-        lowercaseAddresses,
-      }),
-    )
+  rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+    let source = RpcSource.make({
+      chain,
+      sourceFor,
+      syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
+      url,
+      eventRouter,
+      allEventSignatures,
+      lowercaseAddresses,
+      ?ws,
+    })
+    let _ = sources->Js.Array2.push(source)
   })
 
   sources

@@ -422,6 +422,13 @@ pub mod evm {
         #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
         pub source_for: Option<For>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block \
+                           header notifications via eth_subscribe(\"newHeads\"). Provides lower \
+                           latency than HTTP polling for detecting new blocks."
+        )]
+        pub ws: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The starting interval in range of blocks per query")]
         pub initial_block_interval: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]

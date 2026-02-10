@@ -458,10 +458,11 @@ type options = {
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   allEventSignatures: array<string>,
   lowercaseAddresses: bool,
+  ws?: string,
 }
 
 let make = (
-  {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses}: options,
+  {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses, ?ws}: options,
 ): t => {
   let chainId = chain->ChainMap.Chain.toChainId
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
@@ -802,6 +803,10 @@ let make = (
     ->Promise.catch(exn => exn->Error->Promise.resolve)
   }
 
+  let createHeightSubscription = ws->Belt.Option.map(wsUrl =>
+    (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+  )
+
   {
     name,
     sourceFor,
@@ -817,5 +822,6 @@ let make = (
       Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
     },
     getItemsOrThrow,
+    ?createHeightSubscription,
   }
 }

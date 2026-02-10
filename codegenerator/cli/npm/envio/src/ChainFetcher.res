@@ -217,10 +217,12 @@ let make = (
     // Convert rpcs to EvmChain.rpc format
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
       let syncConfig = rpc.syncConfig
+      let ws = rpc.ws
       {
         url: rpc.url,
         sourceFor: rpc.sourceFor,
         ?syncConfig,
+        ?ws,
       }
     })
     EvmChain.makeSources(
