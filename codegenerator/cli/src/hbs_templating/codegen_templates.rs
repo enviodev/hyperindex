@@ -308,25 +308,18 @@ impl EntityRecordTypeTemplate {
 
         // Generate getWhereFilter type code for ReScript (all non-derived fields)
         // Non-indexed fields will throw a user-friendly error at runtime
+        // Entity fields use original name (e.g. "owner") with @as("owner_id") to avoid
+        // name collision with entity record type t which uses "owner_id" as field name
         let get_where_filter_fields: Vec<String> = params
             .iter()
             .filter(|p| !p.is_derived_field)
             .map(|p| {
-                let (field_name, as_name) = if p.is_entity_field {
-                    (
-                        format!(
-                            "{}_id",
-                            RecordField::to_valid_rescript_name(
-                                &p.field_name.uncapitalized
-                            )
-                        ),
-                        format!("{}_id", p.field_name.original),
-                    )
+                let field_name =
+                    RecordField::to_valid_rescript_name(&p.field_name.uncapitalized);
+                let as_name = if p.is_entity_field {
+                    format!("{}_id", p.field_name.original)
                 } else {
-                    (
-                        RecordField::to_valid_rescript_name(&p.field_name.uncapitalized),
-                        p.field_name.original.clone(),
-                    )
+                    p.field_name.original.clone()
                 };
                 format!(
                     "@as(\"{}\") {}?: Envio.whereOperator<{}>",

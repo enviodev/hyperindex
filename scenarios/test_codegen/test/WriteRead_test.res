@@ -251,7 +251,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           })
 
           // Execute getWhere queries
-          whereEqOwnerTest := (await context.token.getWhere({owner_id: {_eq: testUserId}}))
+          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
           whereEqTokenIdTest := (await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
           whereTokenIdGt50Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
           whereTokenIdGt49Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
@@ -303,7 +303,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           context.token.deleteUnsafe("token-1")
 
           // Execute getWhere query after deletion
-          whereEqOwnerTest := (await context.token.getWhere({owner_id: {_eq: testUserId}}))
+          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
         },
       },
     ])
