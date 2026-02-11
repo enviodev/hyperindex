@@ -134,13 +134,12 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
         | Some(ws) if ws->WebSocket.readyState === Open => ws->WebSocket.close
         | _ => ()
         }
-        clearStaleTimeout()
-        scheduleReconnect()
       })
 
       ws->WebSocket.onclose(() => {
         wsRef := None
         clearStaleTimeout()
+        scheduleReconnect()
       })
     }
   }
