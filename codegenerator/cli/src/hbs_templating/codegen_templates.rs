@@ -2430,4 +2430,10 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
         let project_template = get_project_template_helper("config2.yaml");
         insta::assert_snapshot!(project_template.indexer_code);
     }
+
+    #[test]
+    fn internal_config_json_code_with_lowercase_contract_name() {
+        let project_template = get_project_template_helper("lowercase-contract-name.yaml");
+        insta::assert_snapshot!(project_template.internal_config_json_code);
+    }
 }
