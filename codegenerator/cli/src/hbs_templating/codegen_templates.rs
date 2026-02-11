@@ -265,6 +265,7 @@ pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub type_code: String,
     pub schema_code: String,
+    pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
     pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
@@ -335,11 +336,35 @@ impl EntityRecordTypeTemplate {
             })
             .collect();
 
+        // Generate getWhereFilter type code for ReScript (all non-derived fields)
+        // Non-indexed fields will throw a user-friendly error at runtime
+        // Entity fields use original name (e.g. "owner") with @as("owner_id") to avoid
+        // name collision with entity record type t which uses "owner_id" as field name
+        let get_where_filter_fields: Vec<String> = params
+            .iter()
+            .filter(|p| !p.is_derived_field)
+            .map(|p| {
+                let field_name =
+                    RecordField::to_valid_rescript_name(&p.field_name.uncapitalized);
+                let as_name = if p.is_entity_field {
+                    format!("{}_id", p.field_name.original)
+                } else {
+                    p.field_name.original.clone()
+                };
+                format!(
+                    "@as(\"{}\") {}?: Envio.whereOperator<{}>",
+                    as_name, field_name, p.field_type
+                )
+            })
+            .collect();
+        let get_where_filter_code = format!("{{{}}}", get_where_filter_fields.join(", "));
+
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
             type_code,
             schema_code,
+            get_where_filter_code,
             derived_fields,
             composite_indices,
             params,

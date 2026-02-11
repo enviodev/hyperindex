@@ -18,6 +18,30 @@ export type { EffectCaller, Address } from "./src/Types.ts";
 /** Utility type to expand/flatten complex types for better IDE display. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 
+/**
+ * Operator for filtering entity fields in getWhere queries.
+ * Only fields with `@index` in the schema can be queried at runtime.
+ */
+export type WhereOperator<T> = {
+  /** Matches entities where the field equals the given value. */
+  readonly _eq?: T;
+  /** Matches entities where the field is greater than the given value. */
+  readonly _gt?: T;
+  /** Matches entities where the field is less than the given value. */
+  readonly _lt?: T;
+};
+
+/**
+ * Constructs a getWhere filter type from an entity type.
+ * Each field can be filtered using {@link WhereOperator} (`_eq`, `_gt`, `_lt`).
+ *
+ * Note: only fields with `@index` in the schema can be queried at runtime.
+ * Attempting to filter on a non-indexed field will throw a descriptive error.
+ */
+export type GetWhereFilter<E> = {
+  [K in keyof E]?: WhereOperator<E[K]>;
+};
+
 import type {
   effect as Effect,
   effectArgs as EffectArgs,

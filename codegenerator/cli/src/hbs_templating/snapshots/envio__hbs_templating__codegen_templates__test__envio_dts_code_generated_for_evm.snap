@@ -1,6 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2427
+assertion_line: 2425
 expression: project_template.envio_dts_code
 ---
 export type EvmChains = {

@@ -38,12 +38,7 @@ module {{entity.name.capitalized}} = {
 
   let rowsSchema = S.array(schema)
 
-  @genType
-  type indexedFieldOperations = {
-    {{#each entity.params as | param |}}{{#if param.is_queryable_field}}
-      @as("{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}") {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: Envio.whereOperations<t, {{param.res_type}}>,
-    {{/if}}{{/each}}
-  }
+  type getWhereFilter = {{{entity.get_where_filter_code}}}
 
   let table = mkTable(
     name,

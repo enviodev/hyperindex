@@ -14,10 +14,10 @@ type contractRegistrations = {
 }
 
 @genType
-type entityHandlerContext<'entity, 'indexedFieldOperations> = {
+type entityHandlerContext<'entity, 'getWhereFilter> = {
   get: id => promise<option<'entity>>,
   getOrThrow: (id, ~message: string=?) => promise<'entity>,
-  getWhere: 'indexedFieldOperations,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   getOrCreate: ('entity) => promise<'entity>,
   set: 'entity => unit,
   deleteUnsafe: id => unit,
@@ -30,7 +30,7 @@ type handlerContext = {
   isPreload: bool,
   chain: Internal.chainInfo,
   {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.getWhereFilter>,
   {{/each}}
 }
 

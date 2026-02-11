@@ -26,11 +26,10 @@ type onBlockOptions<'chain> = {
   endBlock?: int,
 }
 
-@genType
-type whereOperations<'entity, 'fieldType> = {
-  eq: 'fieldType => promise<array<'entity>>,
-  gt: 'fieldType => promise<array<'entity>>,
-  lt: 'fieldType => promise<array<'entity>>,
+type whereOperator<'fieldType> = {
+  _eq?: 'fieldType,
+  _gt?: 'fieldType,
+  _lt?: 'fieldType,
 }
 
 @genType.import(("./Types.ts", "Logger"))
