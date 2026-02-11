@@ -1,55 +1,79 @@
-// Only needed for some old tests
-// Remove @genType in the future
-@genType.import(("postgres", "Sql"))
+@genType.import(("pg", "Pool"))
 type sql
 
-type undefinedTransform = | @as(undefined) Undefined | @as(null) Null
+type queryResult<'a> = {rows: array<'a>}
 
-type transformConfig = {
-  undefined?: undefinedTransform, // Transforms undefined values (eg. to null) (default: undefined)
-  // column?: 'c => 'd, // Transforms incoming column names (default: fn)
-  // value?: 'e => 'f, // Transforms incoming row values (default: fn)
-  // row?: 'g => 'h, // Transforms entire rows (default: fn)
-}
-
-type connectionConfig = {
-  applicationName?: string, // Default application_name (default: 'postgres.js')
-  // Other connection parameters, see https://www.postgresql.org/docs/current/runtime-config-client.html
-}
-type streamDuplex
-type buffer
-type secureContext
-
-type onread = {
-  buffer: Js.Nullable.t<array<int>> => array<int>,
-  callback: (int, array<int>) => unit,
-}
-
-type tlsConnectOptions = {
-  enableTrace?: bool,
-  host?: string /* Default: "localhost" */,
+type poolConfig = {
+  host?: string,
   port?: int,
-  path?: string,
-  socket?: streamDuplex,
-  allowHalfOpen?: bool /* Default: false */,
-  rejectUnauthorized?: bool /* Default: true */,
-  pskCallback?: unit => unit,
-  @as("ALPNProtocols") alpnProtocols?: array<string>, //| array<Buffer> | array<typedArray> | array<DataView> | Buffer | typedArray | DataView,
-  servername?: string,
-  checkServerIdentity?: 'a. (string, 'a) => option<Js.Exn.t>,
-  session?: buffer,
-  minDHSize?: int /* Default: 1024 */,
-  highWaterMark?: int /* Default: 16 * 1024 */,
-  secureContext?: secureContext,
-  onread?: onread,
-  /* Additional properties from tls.createSecureContext() and socket.connect() */
-  // [key: string]: Js.Json.t,
+  user?: string,
+  password?: string,
+  database?: string,
+  ssl?: unknown,
+  max?: int,
+}
+
+@module("pg") @new
+external makeSql: poolConfig => sql = "Pool"
+
+// .query() works on both Pool and PoolClient
+@send external _query: (sql, string) => promise<queryResult<'a>> = "query"
+@send external _queryWithParams: (sql, string, unknown) => promise<queryResult<'a>> = "query"
+
+type namedQuery = {name: string, text: string, values: unknown}
+@send external _queryNamed: (sql, namedQuery) => promise<queryResult<'a>> = "query"
+
+// Pool-only: get a client for transactions
+@send external _connect: sql => promise<sql> = "connect"
+// PoolClient-only: return to pool
+@send external _release: sql => unit = "release"
+
+type notice = {message: string}
+@send external onNotice: (sql, @as("notice") _, notice => unit) => unit = "on"
+
+// Prepared statement name cache
+let _counter = ref(0)
+let _names: dict<string> = Js.Dict.empty()
+
+let _getName = query =>
+  switch _names->Js.Dict.get(query) {
+  | Some(n) => n
+  | None =>
+    _counter := _counter.contents + 1
+    let n = `q${_counter.contents->Belt.Int.toString}`
+    _names->Js.Dict.set(query, n)
+    n
+  }
+
+let unsafe = async (sql, query) =>
+  (await sql->_query(query)).rows->Utils.magic
+
+let preparedUnsafe = async (sql, query, params) =>
+  (await sql->_queryNamed({name: _getName(query), text: query, values: params})).rows->Utils.magic
+
+let beginSql = async (sql, callback) => {
+  let client = await sql->_connect
+  try {
+    let _ = await client->_query("BEGIN")
+    let result = await callback(client)
+    let _ = await client->_query("COMMIT")
+    client->_release
+    result
+  } catch {
+  | exn =>
+    (try {
+      let _ = await client->_query("ROLLBACK")
+    } catch {
+    | _ => ()
+    })
+    client->_release
+    raise(exn)
+  }
 }
 
 @unboxed
 type sslOptions =
   | Bool(bool)
-  | TLSConnectOptions(tlsConnectOptions)
   | @as("require") Require
   | @as("allow") Allow
   | @as("prefer") Prefer
@@ -62,46 +86,14 @@ let sslOptionsSchema: S.schema<sslOptions> = S.enum([
   Allow,
   Prefer,
   VerifyFull,
-  //No schema created for tlsConnectOptions obj
 ])
 
-type poolConfig = {
-  host?: string, // Postgres ip address[es] or domain name[s] (default: '')
-  port?: int, // Postgres server port[s] (default: 5432)
-  path?: string, // unix socket path (usually '/tmp') (default: '')
-  database?: string, // Name of database to connect to (default: '')
-  username?: string, // Username of database user (default: '')
-  password?: string, // Password of database user (default: '')
-  ssl?: sslOptions, // true, prefer, require, tls.connect options (default: false)
-  max?: int, // Max number of connections (default: 10)
-  maxLifetime?: option<int>, // Max lifetime in seconds (more info below) (default: null)
-  idleTimeout?: int, // Idle connection timeout in seconds (default: 0)
-  connectTimeout?: int, // Connect timeout in seconds (default: 30)
-  prepare?: bool, // Automatic creation of prepared statements (default: true)
-  // types?: array<'a>, // Array of custom types, see more below (default: [])
-  onnotice?: string => unit, // Default console.log, set false to silence NOTICE (default: fn)
-  onParameter?: (string, string) => unit, // (key, value) when server param change (default: fn)
-  debug?: (~connection: unknown, ~query: unknown, ~params: unknown, ~types: unknown) => unit, // Is called with (connection, query, params, types)
-  socket?: unit => unit, // fn returning custom socket to use (default: fn)
-  transform?: transformConfig,
-  connection?: connectionConfig,
-  targetSessionAttrs?: option<string>, // Use 'read-write' with multiple hosts to ensure only connecting to primary (default: null)
-  fetchTypes?: bool, // Automatically fetches types on connect on initial connection. (default: true)
-}
-
-@module("postgres")
-external makeSql: (~config: poolConfig) => sql = "default"
-
-@send external beginSql: (sql, sql => promise<'result>) => promise<'result> = "begin"
-
-// TODO: can explore this approach (https://forum.rescript-lang.org/t/rfc-support-for-tagged-template-literals/3744)
-// @send @variadic
-// external sql:  array<string>  => (sql, array<string>) => int = "sql"
-
-@send external unsafe: (sql, string) => promise<'a> = "unsafe"
-@send
-external preparedUnsafe: (sql, string, unknown, @as(json`{prepare: true}`) _) => promise<'a> =
-  "unsafe"
+let sslToConfig = (ssl: sslOptions): unknown =>
+  switch ssl {
+  | Bool(v) => v->(Utils.magic: bool => unknown)
+  | Require | Allow | Prefer => {"rejectUnauthorized": false}->(Utils.magic: {"rejectUnauthorized": bool} => unknown)
+  | VerifyFull => true->(Utils.magic: bool => unknown)
+  }
 
 @unboxed
 type columnType =

@@ -17,11 +17,11 @@ describe("Raw Events Table Migrations", () => {
   });
 
   it("Raw events table should migrate successfully", async () => {
-    let rawEventsColumnsRes = await sql`
+    let { rows: rawEventsColumnsRes } = await sql.query(`
       SELECT COLUMN_NAME, DATA_TYPE
       FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_NAME = 'raw_events';
-    `;
+    `);
 
     let expectedColumns = [
       { column_name: "chain_id", data_type: "integer" },
@@ -44,16 +44,17 @@ describe("Raw Events Table Migrations", () => {
   //in the future, raw events can be converted into an entity (with managed history) like dynamic
   //contracts.
   it("Inserting 2 rows with the the same pk should pass", async () => {
-    let first_valid_row_query = sql`INSERT INTO raw_events ${sql(
-      mockRawEventRow as any
-    )}`;
+    const row = mockRawEventRow as Record<string, any>;
+    const cols = Object.keys(row);
+    const vals = Object.values(row);
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+    const colNames = cols.map((c) => `"${c}"`).join(", ");
+    const insertQuery = `INSERT INTO raw_events (${colNames}) VALUES(${placeholders})`;
 
+    let first_valid_row_query = sql.query(insertQuery, vals);
     await expect(first_valid_row_query).to.eventually.be.fulfilled;
 
-    let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
-      mockRawEventRow as any
-    )}`;
-
+    let second_valid_row_query = sql.query(insertQuery, vals);
     await expect(second_valid_row_query).to.eventually.be.fulfilled;
   });
 });

@@ -3,6 +3,6 @@
 /* eslint-disable */
 /* tslint:disable */
 
-import type {Sql as $$sql} from 'postgres';
+import type {Pool as $$sql} from 'pg';
 
 export type sql = $$sql;

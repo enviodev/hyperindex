@@ -1,28 +1,21 @@
 let getCacheRowCountFnName = "get_cache_row_count"
 
-// Only needed for some old tests
-// Remove @genType in the future
 @genType
 let makeClient = () => {
-  Postgres.makeSql(
-    ~config={
-      host: Env.Db.host,
-      port: Env.Db.port,
-      username: Env.Db.user,
-      password: Env.Db.password,
-      database: Env.Db.database,
-      ssl: Env.Db.ssl,
-      // TODO: think how we want to pipe these logs to pino.
-      onnotice: ?(
-        Env.userLogLevel == Some(#warn) || Env.userLogLevel == Some(#error)
-          ? None
-          : Some(_str => ())
-      ),
-      transform: {undefined: Null},
-      max: Env.Db.maxConnections,
-      // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
-    },
-  )
+  let pool = Postgres.makeSql({
+    host: Env.Db.host,
+    port: Env.Db.port,
+    user: Env.Db.user,
+    password: Env.Db.password,
+    database: Env.Db.database,
+    ssl: Postgres.sslToConfig(Env.Db.ssl),
+    max: Env.Db.maxConnections,
+  })
+  // Suppress notice logs unless at warn/error level
+  if !(Env.userLogLevel == Some(#warn) || Env.userLogLevel == Some(#error)) {
+    pool->Postgres.onNotice(_notice => ())
+  }
+  pool
 }
 
 let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
