@@ -1041,6 +1041,7 @@ impl DataSource {
             Some(RpcSelection::Url(url)) => vec![Rpc {
                 url: url.to_string(),
                 source_for: Some(default_for.clone()),
+                ws: None,
                 initial_block_interval: None,
                 backoff_multiplicative: None,
                 acceleration_additive: None,
@@ -1059,10 +1060,28 @@ impl DataSource {
         for rpc in raw_rpcs.iter() {
             match parse_url(rpc.url.as_str()) {
               None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
-              Some(url) => rpcs.push(Rpc {
-                  url,
-                  ..rpc.clone()
-              })
+              Some(url) => {
+                // Validate ws URL protocol if provided
+                let ws = match &rpc.ws {
+                    Some(ws_url) => {
+                        if ws_url.starts_with("wss://") || ws_url.starts_with("ws://") {
+                            Some(ws_url.trim_end_matches('/').to_string())
+                        } else {
+                            return Err(anyhow!(
+                                "The WebSocket URL \"{}\" is in incorrect format. \
+                                 Expected wss:// or ws:// protocol.",
+                                ws_url
+                            ));
+                        }
+                    }
+                    None => None,
+                };
+                rpcs.push(Rpc {
+                    url,
+                    ws,
+                    ..rpc.clone()
+                })
+              }
             }
         }
 
