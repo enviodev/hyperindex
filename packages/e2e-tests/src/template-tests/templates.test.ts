@@ -70,15 +70,13 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
   });
 
   it("initializes successfully", async () => {
+    const apiToken = process.env.ENVIO_API_TOKEN ?? "";
     const result = await runCommand(
       ENVIO_BIN,
-      ["init", "-n", name, "-d", projectDir, ...initArgs],
+      ["init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
       {
         cwd: projectDir,
         timeout: config.timeouts.codegen,
-        env: {
-          ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
-        },
       }
     );
 
@@ -105,9 +103,6 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
     const result = await runCommand(ENVIO_BIN, ["codegen"], {
       cwd: projectDir,
       timeout: config.timeouts.codegen,
-      env: {
-        ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
-      },
     });
 
     if (result.exitCode !== 0) {
@@ -116,14 +111,17 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("builds successfully", async () => {
-    const result = await runCommand("pnpm", ["build"], {
+  it("type-checks successfully", async () => {
+    // TypeScript templates don't have a build script, use tsc --noEmit to verify compilation
+    const result = await runCommand("pnpm", ["exec", "tsc", "--noEmit"], {
       cwd: projectDir,
       timeout: config.timeouts.test,
     });
 
     if (result.exitCode !== 0) {
-      console.error(`[${name}] build failed:`, result.stderr);
+      console.error(`[${name}] type-check failed (exit code ${result.exitCode}):`);
+      console.error(`[${name}] stdout:`, result.stdout);
+      console.error(`[${name}] stderr:`, result.stderr);
     }
     expect(result.exitCode).toBe(0);
   });
