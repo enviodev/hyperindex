@@ -162,7 +162,7 @@ describe("FetchState.make", () => {
               },
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-              endBlock: None,
+              mergeBlock: None,
               dynamicContract: None,
               mutPendingQueries: [],
               prevQueryRange: 0,
@@ -240,7 +240,7 @@ describe("FetchState.make", () => {
                 addressesByContractName: Js.Dict.fromArray([
                   ("Gravatar", [mockAddress1, mockAddress2]),
                 ]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: Some("Gravatar"),
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -300,7 +300,7 @@ describe("FetchState.make", () => {
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: None,
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -314,7 +314,7 @@ describe("FetchState.make", () => {
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress2])]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: Some("Gravatar"),
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -386,7 +386,7 @@ describe("FetchState.make", () => {
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: None,
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -400,7 +400,7 @@ describe("FetchState.make", () => {
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress2])]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: None,
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -414,7 +414,7 @@ describe("FetchState.make", () => {
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: Some("Gravatar"),
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -428,7 +428,7 @@ describe("FetchState.make", () => {
                 },
                 selection: fetchState.normalSelection,
                 addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4])]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: Some("Gravatar"),
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -505,12 +505,12 @@ describe("FetchState.make", () => {
       ~message="Close startBlocks: single partition has both contracts' addresses",
     )
     Assert.deepEqual(
-      (closePartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+      (closePartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
       None,
-      ~message="Close startBlocks: no endBlock needed",
+      ~message="Close startBlocks: no mergeBlock needed",
     )
 
-    // --- Far startBlocks: endBlock on current, merge addresses into next ---
+    // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
     let farFetchState = FetchState.make(
       ~eventConfigs=[contractAEventConfig, contractBEventConfig],
       ~contracts=[
@@ -536,17 +536,17 @@ describe("FetchState.make", () => {
     )
 
     // Phase 1: ContractA partition (block -1), ContractB partition (block 20_001)
-    // Phase 2: too far -> endBlock on earlier, merge addresses into later
+    // Phase 2: too far -> mergeBlock on earlier, merge addresses into later
     let farPartitions = farFetchState.optimizedPartitions
     Assert.deepEqual(
       farPartitions.idsInAscOrder,
       ["0", "1"],
-      ~message="Far startBlocks: should have 2 partitions with endBlock on earlier",
+      ~message="Far startBlocks: should have 2 partitions with mergeBlock on earlier",
     )
     Assert.deepEqual(
-      (farPartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+      (farPartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
       Some(20_001),
-      ~message="Far startBlocks: earlier partition has endBlock",
+      ~message="Far startBlocks: earlier partition has mergeBlock",
     )
     Assert.deepEqual(
       (farPartitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
@@ -556,7 +556,7 @@ describe("FetchState.make", () => {
   })
 
   it(
-    "Single contract with close startBlocks creates one partition, far startBlocks creates two with endBlock",
+    "Single contract with close startBlocks creates one partition, far startBlocks creates two with mergeBlock",
     () => {
       let gravatarEventConfig = (Mock.evmEventConfig(
         ~id="0",
@@ -600,12 +600,12 @@ describe("FetchState.make", () => {
         ~message="Close startBlocks: single partition has both addresses",
       )
       Assert.deepEqual(
-        (closePartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+        (closePartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
         None,
-        ~message="Close startBlocks: no endBlock needed for single partition",
+        ~message="Close startBlocks: no mergeBlock needed for single partition",
       )
 
-      // --- Far startBlocks: Phase 1 splits, Phase 2 merges with endBlock ---
+      // --- Far startBlocks: Phase 1 splits, Phase 2 merges with mergeBlock ---
       let farFetchState = FetchState.make(
         ~eventConfigs=[gravatarEventConfig],
         ~contracts=[
@@ -631,12 +631,12 @@ describe("FetchState.make", () => {
       )
 
       // Phase 1: 2 partitions (same contract, far startBlocks)
-      // Phase 2: merges them with endBlock
+      // Phase 2: merges them with mergeBlock
       let farPartitions = farFetchState.optimizedPartitions
       Assert.deepEqual(
         farPartitions.idsInAscOrder,
         ["0", "1"],
-        ~message="Far startBlocks: Phase 1 splits into 2, Phase 2 merges with endBlock",
+        ~message="Far startBlocks: Phase 1 splits into 2, Phase 2 merges with mergeBlock",
       )
       Assert.deepEqual(
         (farPartitions.entities->Js.Dict.unsafeGet("0")).latestFetchedBlock.blockNumber,
@@ -644,9 +644,9 @@ describe("FetchState.make", () => {
         ~message="Far startBlocks: earlier partition starts at block -1",
       )
       Assert.deepEqual(
-        (farPartitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+        (farPartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
         Some(20_001),
-        ~message="Far startBlocks: earlier partition has endBlock matching later partition's block",
+        ~message="Far startBlocks: earlier partition has mergeBlock matching later partition's block",
       )
       Assert.deepEqual(
         (farPartitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
@@ -654,9 +654,9 @@ describe("FetchState.make", () => {
         ~message="Far startBlocks: later partition has merged addresses",
       )
       Assert.deepEqual(
-        (farPartitions.entities->Js.Dict.unsafeGet("1")).endBlock,
+        (farPartitions.entities->Js.Dict.unsafeGet("1")).mergeBlock,
         None,
-        ~message="Far startBlocks: later partition has no endBlock",
+        ~message="Far startBlocks: later partition has no mergeBlock",
       )
     },
   )
@@ -693,7 +693,7 @@ describe("FetchState.make", () => {
     )
 
     // Phase 1: filterByAddresses=true -> separate partitions per startBlock
-    // Phase 2: hasFilterByAddresses -> endBlock on earlier, merge addresses into later
+    // Phase 2: hasFilterByAddresses -> mergeBlock on earlier, merge addresses into later
     let partitions = fetchState.optimizedPartitions
     Assert.deepEqual(
       partitions.idsInAscOrder,
@@ -711,9 +711,9 @@ describe("FetchState.make", () => {
       ~message="filterByAddresses: first partition starts at block -1",
     )
     Assert.deepEqual(
-      (partitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+      (partitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
       Some(99),
-      ~message="filterByAddresses: first partition has endBlock matching second partition's block",
+      ~message="filterByAddresses: first partition has mergeBlock matching second partition's block",
     )
     Assert.deepEqual(
       (partitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
@@ -728,7 +728,7 @@ describe("FetchState.make", () => {
   })
 
   it(
-    "Different contracts with filterByAddresses use endBlock strategy and merge addresses into later partition",
+    "Different contracts with filterByAddresses use mergeBlock strategy and merge addresses into later partition",
     () => {
       let contractAEventConfig = (Mock.evmEventConfig(
         ~id="0",
@@ -766,7 +766,7 @@ describe("FetchState.make", () => {
       )
 
       // Phase 1: ContractA partition (block -1), ContractB partition (block 99)
-      // Phase 2: hasFilterByAddresses -> endBlock on earlier, merge addresses into later
+      // Phase 2: hasFilterByAddresses -> mergeBlock on earlier, merge addresses into later
       let partitions = fetchState.optimizedPartitions
       Assert.deepEqual(
         partitions.idsInAscOrder,
@@ -779,9 +779,9 @@ describe("FetchState.make", () => {
         ~message="filterByAddresses cross-contract: first partition has only ContractA address",
       )
       Assert.deepEqual(
-        (partitions.entities->Js.Dict.unsafeGet("0")).endBlock,
+        (partitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
         Some(99),
-        ~message="filterByAddresses cross-contract: first partition has endBlock",
+        ~message="filterByAddresses cross-contract: first partition has mergeBlock",
       )
       Assert.deepEqual(
         (partitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
@@ -913,7 +913,7 @@ describe("FetchState.registerDynamicContracts", () => {
       [
         {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-          endBlock: Some(1),
+          mergeBlock: Some(1),
           dynamicContract: Some("Gravatar"),
         },
         {
@@ -926,7 +926,7 @@ describe("FetchState.registerDynamicContracts", () => {
           addressesByContractName: Js.Dict.fromArray([
             ("Gravatar", [mockAddress1, mockAddress2, mockAddress3]),
           ]),
-          endBlock: None,
+          mergeBlock: None,
           dynamicContract: Some("Gravatar"),
           mutPendingQueries: [],
           prevQueryRange: 0,
@@ -940,7 +940,7 @@ describe("FetchState.registerDynamicContracts", () => {
           },
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4, mockAddress0])]),
-          endBlock: None,
+          mergeBlock: None,
           dynamicContract: Some("Gravatar"),
           mutPendingQueries: [],
           prevQueryRange: 0,
@@ -973,7 +973,7 @@ describe("FetchState.registerDynamicContracts", () => {
       [
         {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-          endBlock: Some(1),
+          mergeBlock: Some(1),
           dynamicContract: Some("Gravatar"),
         },
         {
@@ -986,7 +986,7 @@ describe("FetchState.registerDynamicContracts", () => {
           addressesByContractName: Js.Dict.fromArray([
             ("NftFactory", [mockAddress1, mockAddress4]),
           ]),
-          endBlock: None,
+          mergeBlock: None,
           dynamicContract: Some("NftFactory"),
           mutPendingQueries: [],
           prevQueryRange: 0,
@@ -1002,7 +1002,7 @@ describe("FetchState.registerDynamicContracts", () => {
           addressesByContractName: Js.Dict.fromArray([
             ("Gravatar", [mockAddress2, mockAddress3, mockAddress0]),
           ]),
-          endBlock: None,
+          mergeBlock: None,
           dynamicContract: Some("Gravatar"),
           mutPendingQueries: [],
           prevQueryRange: 0,
@@ -1108,7 +1108,7 @@ describe("FetchState.registerDynamicContracts", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-            endBlock: Some(9),
+            mergeBlock: Some(9),
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
             prevQueryRange: 0,
@@ -1120,7 +1120,7 @@ describe("FetchState.registerDynamicContracts", () => {
               blockNumber: 2,
               blockTimestamp: 0,
             },
-            endBlock: Some(4),
+            mergeBlock: Some(4),
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([
               ("SimpleNft", [mockAddress2, mockAddress3]),
@@ -1140,7 +1140,7 @@ describe("FetchState.registerDynamicContracts", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("SimpleNft", [mockAddress4, mockAddress2, mockAddress3]),
             ]),
-            endBlock: None,
+            mergeBlock: None,
             dynamicContract: Some("SimpleNft"),
             mutPendingQueries: [],
             prevQueryRange: 0,
@@ -1154,7 +1154,7 @@ describe("FetchState.registerDynamicContracts", () => {
             },
             selection: fetchState.normalSelection,
             addressesByContractName: Js.Dict.fromArray([("NftFactory", [mockAddress5])]),
-            endBlock: None,
+            mergeBlock: None,
             dynamicContract: Some("NftFactory"),
             mutPendingQueries: [],
             prevQueryRange: 0,
@@ -1195,7 +1195,7 @@ describe("FetchState.registerDynamicContracts", () => {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           dynamicContract: Some("Gravatar"),
-          endBlock: Some(9),
+          mergeBlock: Some(9),
         },
         {
           id: "1",
@@ -1205,7 +1205,7 @@ describe("FetchState.registerDynamicContracts", () => {
           },
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
-          endBlock: None,
+          mergeBlock: None,
           dynamicContract: Some("Gravatar"),
           mutPendingQueries: [],
           prevQueryRange: 0,
@@ -1245,7 +1245,7 @@ describe("FetchState.registerDynamicContracts", () => {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
           dynamicContract: Some("Gravatar"),
-          endBlock: Some(1),
+          mergeBlock: Some(1),
         },
         {
           id: "1",
@@ -1253,7 +1253,7 @@ describe("FetchState.registerDynamicContracts", () => {
             blockNumber: 1,
             blockTimestamp: 0,
           },
-          endBlock: None,
+          mergeBlock: None,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([
             ("Gravatar", [mockAddress1, mockAddress2, mockAddress0]),
@@ -1269,7 +1269,7 @@ describe("FetchState.registerDynamicContracts", () => {
             blockNumber: 299_999,
             blockTimestamp: 0,
           },
-          endBlock: None,
+          mergeBlock: None,
           selection: fetchState.normalSelection,
           // The partition is too far, so we don't merge addresses from the prev partition too early
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -1350,7 +1350,7 @@ describe("FetchState.registerDynamicContracts", () => {
                   eventConfigs: [wildcard1, wildcard2],
                 },
                 addressesByContractName: Js.Dict.empty(),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: None,
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -1369,7 +1369,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 addressesByContractName: Js.Dict.fromArray([
                   ("NftFactory", [mockAddress0, mockAddress1, mockAddress5]),
                 ]),
-                endBlock: None,
+                mergeBlock: None,
                 dynamicContract: Some("NftFactory"),
                 mutPendingQueries: [],
                 prevQueryRange: 0,
@@ -1421,7 +1421,7 @@ describe("FetchState.getNextQuery & integration", () => {
             prevPrevQueryRange: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-            endBlock: None,
+            mergeBlock: None,
           },
         ],
         ~nextPartitionIndex=1,
@@ -1472,7 +1472,7 @@ describe("FetchState.getNextQuery & integration", () => {
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
             ]),
-            endBlock: None,
+            mergeBlock: None,
           },
           {
             id: "2",
@@ -1486,7 +1486,7 @@ describe("FetchState.getNextQuery & integration", () => {
             prevPrevQueryRange: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-            endBlock: None,
+            mergeBlock: None,
           },
         ],
         ~nextPartitionIndex=3,
@@ -1731,13 +1731,13 @@ describe("FetchState.getNextQuery & integration", () => {
           },
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
-          endBlock: Some(10),
+          mergeBlock: Some(10),
           dynamicContract: Some("Gravatar"),
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
         },
-        // Creates a new partition for this without merging, since 0 is full and 1 has endBlock
+        // Creates a new partition for this without merging, since 0 is full and 1 has mergeBlock
         {
           FetchState.id: "2",
           latestFetchedBlock: {
@@ -1746,7 +1746,7 @@ describe("FetchState.getNextQuery & integration", () => {
           },
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-          endBlock: None,
+          mergeBlock: None,
           dynamicContract: Some("Gravatar"),
           mutPendingQueries: [],
           prevQueryRange: 0,
@@ -2017,7 +2017,7 @@ describe("FetchState.getNextQuery & integration", () => {
               addressesByContractName: Js.Dict.fromArray([
                 ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
               ]),
-              endBlock: None,
+              mergeBlock: None,
             },
           ],
           ~nextPartitionIndex=fetchStateWithResponse1.optimizedPartitions.nextPartitionIndex,
@@ -2025,7 +2025,7 @@ describe("FetchState.getNextQuery & integration", () => {
           ~dynamicContracts=fetchStateWithResponse1.optimizedPartitions.dynamicContracts,
         ),
       },
-      ~message="Partition 2 should come to endBlock and be removed",
+      ~message="Partition 2 should come to mergeBlock and be removed",
     )
   })
 
@@ -2122,7 +2122,7 @@ describe("FetchState.getNextQuery & integration", () => {
               prevPrevQueryRange: 0,
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-              endBlock: None,
+              mergeBlock: None,
             },
             {
               id: "1",
@@ -2138,7 +2138,7 @@ describe("FetchState.getNextQuery & integration", () => {
               addressesByContractName: Js.Dict.fromArray([
                 ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
               ]),
-              endBlock: None,
+              mergeBlock: None,
             },
           ],
           ~nextPartitionIndex=2,
@@ -2174,7 +2174,7 @@ describe("FetchState.getNextQuery & integration", () => {
               addressesByContractName: Js.Dict.fromArray([
                 ("Gravatar", [mockAddress0, mockAddress1]),
               ]),
-              endBlock: None,
+              mergeBlock: None,
             },
             // Removed partition "2"
           ],
@@ -2210,7 +2210,7 @@ describe("FetchState.getNextQuery & integration", () => {
               prevPrevQueryRange: 0,
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-              endBlock: None,
+              mergeBlock: None,
             },
           ],
           ~nextPartitionIndex=1,
@@ -2299,7 +2299,7 @@ describe("FetchState.getNextQuery & integration", () => {
                 eventConfigs: wildcardEventConfigs,
               },
               addressesByContractName: Js.Dict.empty(),
-              endBlock: None,
+              mergeBlock: None,
             },
           ],
           // IDs reset on rollback
@@ -2333,7 +2333,7 @@ describe("FetchState unit tests for specific cases", () => {
             prevPrevQueryRange: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
-            endBlock: None,
+            mergeBlock: None,
           },
           {
             id: "1",
@@ -2347,7 +2347,7 @@ describe("FetchState unit tests for specific cases", () => {
             prevPrevQueryRange: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
-            endBlock: None,
+            mergeBlock: None,
           },
         ],
         ~nextPartitionIndex=2,
@@ -2657,7 +2657,7 @@ describe("FetchState unit tests for specific cases", () => {
             prevPrevQueryRange: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
-            endBlock: None,
+            mergeBlock: None,
           },
           {
             id: "1",
@@ -2668,7 +2668,7 @@ describe("FetchState unit tests for specific cases", () => {
             prevPrevQueryRange: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
-            endBlock: None,
+            mergeBlock: None,
           },
         ],
         ~nextPartitionIndex=2,
