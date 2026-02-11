@@ -126,11 +126,11 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     Js.Exn.raiseError(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
     )
-  | Some(Field({isIndex: false})) =>
+  | Some(Field({isIndex: false, linkedEntity: None})) =>
     Js.Exn.raiseError(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
     )
-  | Some(Field({fieldSchema, isIndex: true})) =>
+  | Some(Field({fieldSchema})) =>
     LoadLayer.loadByField(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
