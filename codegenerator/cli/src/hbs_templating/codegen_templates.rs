@@ -193,6 +193,217 @@ impl GraphQlEnumTypeTemplate {
     }
 }
 
+fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
+    let mut code = String::new();
+
+    for gql_enum in gql_enums {
+        writeln!(code, "module {} = {{", gql_enum.name.capitalized).unwrap();
+        writeln!(code, "  @genType").unwrap();
+        write!(code, "  type t =\n").unwrap();
+        for param in &gql_enum.params {
+            writeln!(code, "    | @as(\"{}\") {}", param.original, param.capitalized).unwrap();
+        }
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "  let name = \"{}\"",
+            gql_enum.name.original
+        )
+        .unwrap();
+        write!(code, "  let variants = [\n").unwrap();
+        for param in &gql_enum.params {
+            writeln!(code, "    {},", param.capitalized).unwrap();
+        }
+        writeln!(code, "  ]").unwrap();
+        writeln!(code, "  let config = Table.makeEnumConfig(~name, ~variants)").unwrap();
+        writeln!(code, "}}").unwrap();
+    }
+
+    writeln!(code).unwrap();
+    write!(code, "let allEnums: array<Table.enumConfig<Table.enum>> = ([\n").unwrap();
+    for gql_enum in gql_enums {
+        writeln!(
+            code,
+            "  {}.config->Table.fromGenericEnumConfig,",
+            gql_enum.name.capitalized
+        )
+        .unwrap();
+    }
+    writeln!(code, "])").unwrap();
+
+    code
+}
+
+fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
+    let mut code = String::new();
+
+    // Header
+    writeln!(code, "open Table").unwrap();
+    writeln!(code, "type id = string").unwrap();
+    writeln!(code).unwrap();
+    writeln!(code, "type internalEntity = Internal.entity").unwrap();
+    writeln!(code, "module type Entity = {{").unwrap();
+    writeln!(code, "  type t").unwrap();
+    writeln!(code, "  let index: int").unwrap();
+    writeln!(code, "  let name: string").unwrap();
+    writeln!(code, "  let schema: S.t<t>").unwrap();
+    writeln!(code, "  let rowsSchema: S.t<array<t>>").unwrap();
+    writeln!(code, "  let table: Table.table").unwrap();
+    writeln!(code, "}}").unwrap();
+    writeln!(
+        code,
+        "external entityModToInternal: module(Entity with type t = 'a) => Internal.entityConfig = \"%identity\""
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "external entityModsToInternal: array<module(Entity)> => array<Internal.entityConfig> = \"%identity\""
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "external entitiesToInternal: array<'a> => array<Internal.entity> = \"%identity\""
+    )
+    .unwrap();
+    writeln!(code).unwrap();
+    writeln!(code, "@get").unwrap();
+    writeln!(
+        code,
+        "external getEntityId: internalEntity => string = \"id\""
+    )
+    .unwrap();
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "// Use InMemoryTable.Entity.getEntityIdUnsafe instead of duplicating the logic"
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "let getEntityIdUnsafe = InMemoryTable.Entity.getEntityIdUnsafe"
+    )
+    .unwrap();
+    writeln!(code).unwrap();
+    writeln!(code, "//shorthand for punning").unwrap();
+    writeln!(code, "let isPrimaryKey = true").unwrap();
+    writeln!(code, "let isNullable = true").unwrap();
+    writeln!(code, "let isArray = true").unwrap();
+    writeln!(code, "let isIndex = true").unwrap();
+
+    // Entity modules
+    for (index, entity) in entities.iter().enumerate() {
+        writeln!(code).unwrap();
+        writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
+        writeln!(code, "  let name = \"{}\"", entity.name.capitalized).unwrap();
+        writeln!(code, "  let index = {}", index).unwrap();
+        writeln!(code, "  @genType").unwrap();
+        writeln!(code, "  type t = {}", entity.type_code).unwrap();
+        writeln!(code).unwrap();
+        writeln!(code, "  let schema = {}", entity.schema_code).unwrap();
+        writeln!(code).unwrap();
+        writeln!(code, "  let rowsSchema = S.array(schema)").unwrap();
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "  type getWhereFilter = {}",
+            entity.get_where_filter_code
+        )
+        .unwrap();
+        writeln!(code).unwrap();
+        writeln!(code, "  let table = mkTable(").unwrap();
+        writeln!(code, "    name,").unwrap();
+        writeln!(code, "    ~fields=[").unwrap();
+
+        // Postgres fields
+        for pg_field in &entity.postgres_fields {
+            write!(
+                code,
+                "      mkField(\n      \"{}\",\n      {},\n      ~fieldSchema={},\n",
+                pg_field.field_name, pg_field.field_type, pg_field.res_schema_code
+            )
+            .unwrap();
+            if pg_field.is_primary_key {
+                writeln!(code, "      ~isPrimaryKey,").unwrap();
+            }
+            if pg_field.is_nullable {
+                writeln!(code, "      ~isNullable,").unwrap();
+            }
+            if pg_field.is_array {
+                writeln!(code, "      ~isArray,").unwrap();
+            }
+            if pg_field.is_index {
+                writeln!(code, "      ~isIndex,").unwrap();
+            }
+            if let Some(ref linked_entity) = pg_field.linked_entity {
+                writeln!(code, "      ~linkedEntity=\"{}\",", linked_entity).unwrap();
+            }
+            writeln!(code, "      ),").unwrap();
+        }
+
+        // Derived fields
+        for derived_field in &entity.derived_fields {
+            write!(
+                code,
+                "      mkDerivedFromField(\n      \"{}\",\n      ~derivedFromEntity=\"{}\",\n      ~derivedFromField=\"{}\",\n      ),\n",
+                derived_field.field_name,
+                derived_field.derived_from_entity,
+                derived_field.derived_from_field
+            )
+            .unwrap();
+        }
+
+        writeln!(code, "    ],").unwrap();
+
+        // Composite indices
+        if !entity.composite_indices.is_empty() {
+            writeln!(code, "    ~compositeIndices=[").unwrap();
+            for composite_index in &entity.composite_indices {
+                writeln!(code, "      [").unwrap();
+                for idx_field in composite_index {
+                    writeln!(
+                        code,
+                        "      {{fieldName: \"{}\", direction: {}}},",
+                        idx_field.field_name, idx_field.direction
+                    )
+                    .unwrap();
+                }
+                writeln!(code, "      ],").unwrap();
+            }
+            writeln!(code, "    ],").unwrap();
+        }
+
+        writeln!(code, "  )").unwrap();
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "  external castToInternal: t => Internal.entity = \"%identity\""
+        )
+        .unwrap();
+        writeln!(code, "}}").unwrap();
+    }
+
+    // userEntities
+    writeln!(code).unwrap();
+    writeln!(code, "let userEntities = [").unwrap();
+    for entity in entities {
+        writeln!(code, "  module({}),", entity.name.capitalized).unwrap();
+    }
+    writeln!(code, "]->entityModsToInternal").unwrap();
+    writeln!(code).unwrap();
+
+    // allEntities
+    writeln!(code, "let allEntities =").unwrap();
+    writeln!(code, "  userEntities->Js.Array2.concat(").unwrap();
+    writeln!(
+        code,
+        "    [module(InternalTable.DynamicContractRegistry)]->entityModsToInternal,"
+    )
+    .unwrap();
+    writeln!(code, "  )").unwrap();
+
+    code
+}
+
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
@@ -1430,9 +1641,16 @@ switch chainId {{
             get_chain_by_id_cases
         );
 
+        // Generate Enums and Entities modules
+        let enums_module_code = generate_enums_code(&gql_enums);
+        let entities_module_code = generate_entities_code(&entities);
+
         // Combine all parts into indexer_code
+        // Enums must come before Entities since Entities references Enums
         let indexer_code = format!(
-            "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            "module Enums = {{\n{}}}\n\nmodule Entities = {{\n{}}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            enums_module_code,
+            entities_module_code,
             contract_modules,
             chain_id_type,
             indexer_contract_type,

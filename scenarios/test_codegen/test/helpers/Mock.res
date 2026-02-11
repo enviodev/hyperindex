@@ -6,12 +6,12 @@ module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityMod, entity) => {
     let inMemTable =
       inMemoryStore->InMemoryStore.getInMemTable(
-        ~entityConfig=entityMod->Entities.entityModToInternal,
+        ~entityConfig=entityMod->Indexer.Entities.entityModToInternal,
       )
-    let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
+    let entity = entity->(Utils.magic: 'a => Indexer.Entities.internalEntity)
     inMemTable->InMemoryTable.Entity.set(
       Set({
-        entityId: entity->Entities.getEntityId,
+        entityId: entity->Indexer.Entities.getEntityId,
         checkpointId: 0.,
         entity,
       }),
@@ -22,7 +22,7 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
     entities->Js.Array2.forEach(((entityMod, items)) => {
       items->Js.Array2.forEach(entity => {
         inMemoryStore->setEntity(~entityMod, entity)
@@ -235,8 +235,8 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
-    query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
-    queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
+    query: 'entity. module(Indexer.Entities.Entity with type t = 'entity) => promise<array<'entity>>,
+    queryHistory: 'entity. module(Indexer.Entities.Entity with type t = 'entity) => promise<
       array<Change.t<'entity>>,
     >,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
@@ -373,7 +373,7 @@ module Indexer = {
         })
       },
       query: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
+        let entityConfig = entityMod->Indexer.Entities.entityModToInternal
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
@@ -384,7 +384,7 @@ module Indexer = {
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryHistory: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
+        let entityConfig = entityMod->Indexer.Entities.entityModToInternal
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(

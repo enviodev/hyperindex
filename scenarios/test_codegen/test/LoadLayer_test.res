@@ -3,14 +3,14 @@ open RescriptMocha
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async () => {
     let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
     let loadManager = LoadManager.make()
 
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->Mock.Storage.toPersistence,
-        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -36,13 +36,13 @@ describe("LoadLayer", () => {
     async () => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+      let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
 
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+          ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -75,12 +75,12 @@ describe("LoadLayer", () => {
     async () => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+      let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+          ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -112,7 +112,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->Mock.Storage.toPersistence,
-        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
         ~inMemoryStore,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -161,7 +161,7 @@ describe("LoadLayer", () => {
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+          ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -196,15 +196,15 @@ describe("LoadLayer", () => {
           address: "",
           gravatar_id: None,
           updatesCountOnUserForTesting: 0,
-        }: Entities.User.t
+        }: Indexer.Entities.User.t
       )
 
-      let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1])])
+      let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Indexer.Entities.User), [user1])])
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+          ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -213,7 +213,7 @@ describe("LoadLayer", () => {
 
       let users = await Promise.all([getUser("1"), getUser("2")])
 
-      Assert.deepEqual(users, [Some(user1->Entities.User.castToInternal), None])
+      Assert.deepEqual(users, [Some(user1->Indexer.Entities.User.castToInternal), None])
       Assert.deepEqual(
         storageMock.loadByIdsOrThrowCalls,
         [
@@ -241,14 +241,14 @@ describe("LoadLayer", () => {
           address: "",
           gravatar_id: None,
           updatesCountOnUserForTesting: 0,
-        }: Entities.User.t
+        }: Indexer.Entities.User.t
       )
 
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+          ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -262,12 +262,12 @@ describe("LoadLayer", () => {
       // So skip a microtask to bypass the check
       await Promise.resolve()
 
-      inMemoryStore->Mock.InMemoryStore.setEntity(~entityMod=module(Entities.User), user1)
+      inMemoryStore->Mock.InMemoryStore.setEntity(~entityMod=module(Indexer.Entities.User), user1)
 
       let user = await userPromise
 
       // It's Some(user1) even though from db we get None
-      Assert.deepEqual(user, Some(user1->Entities.User.castToInternal))
+      Assert.deepEqual(user, Some(user1->Indexer.Entities.User.castToInternal))
       Assert.deepEqual(
         storageMock.loadByIdsOrThrowCalls,
         [
@@ -293,16 +293,16 @@ describe("LoadLayer", () => {
           address: "",
           gravatar_id: None,
           updatesCountOnUserForTesting: 0,
-        }: Entities.User.t
+        }: Indexer.Entities.User.t
       )
 
-      let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1])])
+      let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Indexer.Entities.User), [user1])])
 
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+          ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
           ~inMemoryStore,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -348,7 +348,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByField(
         ~loadManager,
         ~persistence=storageMock->Mock.Storage.toPersistence,
-        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
         ~operator=Eq,
         ~inMemoryStore,
         ~fieldName="id",
@@ -361,7 +361,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByField(
         ~loadManager,
         ~persistence=storageMock->Mock.Storage.toPersistence,
-        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
         ~operator=Gt,
         ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
@@ -399,7 +399,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByField(
         ~loadManager,
         ~persistence=storageMock->Mock.Storage.toPersistence,
-        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
         ~operator=Lt,
         ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
@@ -431,14 +431,14 @@ describe("LoadLayer", () => {
     let storageMock = Mock.Storage.make([#loadByIdsOrThrow, #loadByFieldOrThrow])
     let loadManager = LoadManager.make()
 
-    let user1: Entities.User.t = {
+    let user1: Indexer.Entities.User.t = {
       id: "1",
       accountType: USER,
       address: "",
       gravatar_id: None,
       updatesCountOnUserForTesting: 0,
     }
-    let user2: Entities.User.t = {
+    let user2: Indexer.Entities.User.t = {
       id: "2",
       accountType: USER,
       address: "",
@@ -446,14 +446,14 @@ describe("LoadLayer", () => {
       updatesCountOnUserForTesting: 1,
     }
 
-    let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1, user2])])
+    let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Indexer.Entities.User), [user1, user2])])
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
       LoadLayer.loadByField(
         ~loadManager,
         ~persistence=storageMock->Mock.Storage.toPersistence,
-        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
         ~operator=Eq,
         ~inMemoryStore,
         ~fieldName="id",
@@ -467,7 +467,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByField(
         ~loadManager,
         ~persistence=storageMock->Mock.Storage.toPersistence,
-        ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+        ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
         ~operator=Gt,
         ~inMemoryStore,
         ~fieldName="updatesCountOnUserForTesting",
@@ -477,10 +477,10 @@ describe("LoadLayer", () => {
         ~shouldGroup=true,
       )
 
-    Assert.deepEqual(await getUsersWithId("1"), [user1->Entities.User.castToInternal])
+    Assert.deepEqual(await getUsersWithId("1"), [user1->Indexer.Entities.User.castToInternal])
     Assert.deepEqual(
       await getUsersWithUpdates(0),
-      [user2->Entities.User.castToInternal],
+      [user2->Indexer.Entities.User.castToInternal],
       ~message="Should have loaded user2",
     )
     Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
@@ -503,8 +503,8 @@ describe("LoadLayer", () => {
     )
 
     // The second time gets from inMemoryStore
-    Assert.deepEqual(await getUsersWithId("1"), [user1->Entities.User.castToInternal])
-    Assert.deepEqual(await getUsersWithUpdates(0), [user2->Entities.User.castToInternal])
+    Assert.deepEqual(await getUsersWithId("1"), [user1->Indexer.Entities.User.castToInternal])
+    Assert.deepEqual(await getUsersWithUpdates(0), [user2->Indexer.Entities.User.castToInternal])
     Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
     Assert.deepEqual(
       storageMock.loadByFieldOrThrowCalls->Array.length,
@@ -513,7 +513,7 @@ describe("LoadLayer", () => {
     )
 
     inMemoryStore->Mock.InMemoryStore.setEntity(
-      ~entityMod=module(Entities.User),
+      ~entityMod=module(Indexer.Entities.User),
       {...user2, updatesCountOnUserForTesting: 0},
     )
 
@@ -544,7 +544,7 @@ describe("LoadLayer", () => {
           address: "",
           gravatar_id: None,
           updatesCountOnUserForTesting: 0,
-        }: Entities.User.t
+        }: Indexer.Entities.User.t
       )
 
       let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -552,7 +552,7 @@ describe("LoadLayer", () => {
         LoadLayer.loadByField(
           ~loadManager,
           ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=module(Entities.User)->Entities.entityModToInternal,
+          ~entityConfig=module(Indexer.Entities.User)->Indexer.Entities.entityModToInternal,
           ~operator=Eq,
           ~inMemoryStore,
           ~fieldName="id",
@@ -576,11 +576,11 @@ describe("LoadLayer", () => {
       Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
       Assert.deepEqual(storageMock.loadByFieldOrThrowCalls, loadEntitiesByFieldSingleDbCall)
 
-      inMemoryStore->Mock.InMemoryStore.setEntity(~entityMod=module(Entities.User), user1)
+      inMemoryStore->Mock.InMemoryStore.setEntity(~entityMod=module(Indexer.Entities.User), user1)
 
       // The second time gets from inMemoryStore
       let users = await getUsersWithId("1")
-      Assert.deepEqual(users, [user1->Entities.User.castToInternal])
+      Assert.deepEqual(users, [user1->Indexer.Entities.User.castToInternal])
       Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
       Assert.deepEqual(storageMock.loadByFieldOrThrowCalls, loadEntitiesByFieldSingleDbCall)
     },

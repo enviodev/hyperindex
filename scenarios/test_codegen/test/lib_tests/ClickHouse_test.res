@@ -2,14 +2,14 @@ open RescriptMocha
 
 describe("Test makeClickHouseEntitySchema", () => {
   Async.it("Should serialize Date fields using getTime() instead of ISO string", async () => {
-    let entityConfig = module(Entities.EntityWithAllTypes)->Entities.entityModToInternal
+    let entityConfig = module(Indexer.Entities.EntityWithAllTypes)->Indexer.Entities.entityModToInternal
 
     // Create a schema using makeClickHouseEntitySchema
     let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
 
     // Create a test entity with nullable timestamp
     let testDate = Js.Date.fromFloat(1234567890123.0)
-    let testEntity: Entities.EntityWithAllTypes.t = {
+    let testEntity: Indexer.Entities.EntityWithAllTypes.t = {
       id: "test-id",
       string: "test",
       optString: None,
@@ -39,7 +39,7 @@ describe("Test makeClickHouseEntitySchema", () => {
     // Serialize the entity using the ClickHouse schema
     let serialized =
       testEntity
-      ->Entities.EntityWithAllTypes.castToInternal
+      ->Indexer.Entities.EntityWithAllTypes.castToInternal
       ->S.reverseConvertToJsonOrThrow(clickHouseSchema)
 
     Assert.deepEqual(
@@ -101,7 +101,7 @@ ORDER BY (id)`
     Async.it(
       "Should create SQL for A entity history table",
       async () => {
-        let entityConfig = module(Entities.EntityWithAllTypes)->Entities.entityModToInternal
+        let entityConfig = module(Indexer.Entities.EntityWithAllTypes)->Indexer.Entities.entityModToInternal
         let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` (
@@ -148,7 +148,7 @@ ORDER BY (id, envio_checkpoint_id)`
     Async.it(
       "Should create SQL for A entity view",
       async () => {
-        let entity = module(Entities.EntityWithAllTypes)->Entities.entityModToInternal
+        let entity = module(Indexer.Entities.EntityWithAllTypes)->Indexer.Entities.entityModToInternal
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
         let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` AS

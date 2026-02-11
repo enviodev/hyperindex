@@ -26,7 +26,7 @@ describe("Write/read tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    let entityWithAllTypes: Entities.EntityWithAllTypes.t = {
+    let entityWithAllTypes: Indexer.Entities.EntityWithAllTypes.t = {
       id: "1",
       string: "string",
       optString: Some("optString"),
@@ -56,7 +56,7 @@ describe("Write/read tests", () => {
       enumField: ADMIN,
       optEnumField: Some(ADMIN),
     }
-    let entityWithAllNonArrayTypes: Entities.EntityWithAllNonArrayTypes.t = {
+    let entityWithAllNonArrayTypes: Indexer.Entities.EntityWithAllNonArrayTypes.t = {
       id: "1",
       string: "string",
       optString: Some("optString"),
@@ -98,11 +98,11 @@ describe("Write/read tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(module(Entities.EntityWithAllTypes)),
+      await indexerMock.query(module(Indexer.Entities.EntityWithAllTypes)),
       [entityWithAllTypes],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(module(Entities.EntityWithAllTypes)),
+      await indexerMock.queryHistory(module(Indexer.Entities.EntityWithAllTypes)),
       [
         Set({
           checkpointId: 1.,
@@ -112,11 +112,11 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.query(module(Entities.EntityWithAllNonArrayTypes)),
+      await indexerMock.query(module(Indexer.Entities.EntityWithAllNonArrayTypes)),
       [entityWithAllNonArrayTypes],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(module(Entities.EntityWithAllNonArrayTypes)),
+      await indexerMock.queryHistory(module(Indexer.Entities.EntityWithAllNonArrayTypes)),
       [
         Set({
           checkpointId: 1.,
@@ -128,7 +128,7 @@ describe("Write/read tests", () => {
 
     Assert.deepEqual(
       await indexerMock.query(
-        module(Entities.EntityWith63LenghtName______________________________________one),
+        module(Indexer.Entities.EntityWith63LenghtName______________________________________one),
       ),
       [
         {
@@ -138,7 +138,7 @@ describe("Write/read tests", () => {
     )
     Assert.deepEqual(
       await indexerMock.queryHistory(
-        module(Entities.EntityWith63LenghtName______________________________________one),
+        module(Indexer.Entities.EntityWith63LenghtName______________________________________one),
       ),
       [
         Set({
@@ -152,7 +152,7 @@ describe("Write/read tests", () => {
     )
     Assert.deepEqual(
       await indexerMock.query(
-        module(Entities.EntityWith63LenghtName______________________________________two),
+        module(Indexer.Entities.EntityWith63LenghtName______________________________________two),
       ),
       [
         {
@@ -162,7 +162,7 @@ describe("Write/read tests", () => {
     )
     Assert.deepEqual(
       await indexerMock.queryHistory(
-        module(Entities.EntityWith63LenghtName______________________________________two),
+        module(Indexer.Entities.EntityWith63LenghtName______________________________________two),
       ),
       [
         Set({

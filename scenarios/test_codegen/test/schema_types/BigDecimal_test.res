@@ -15,26 +15,26 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
 
     let sql = PgStorage.makeClient()
     /// Setup DB
-    let testEntity1: Entities.EntityWithBigDecimal.t = {
+    let testEntity1: Indexer.Entities.EntityWithBigDecimal.t = {
       id: "testEntity",
       bigDecimal: BigDecimal.fromFloat(123.456),
     }
-    let testEntity2: Entities.EntityWithBigDecimal.t = {
+    let testEntity2: Indexer.Entities.EntityWithBigDecimal.t = {
       id: "testEntity2",
       bigDecimal: BigDecimal.fromFloat(654.321),
     }
 
     await sql->PgStorage.setOrThrow(
       ~items=[
-        testEntity1->Entities.EntityWithBigDecimal.castToInternal,
-        testEntity2->Entities.EntityWithBigDecimal.castToInternal,
+        testEntity1->Indexer.Entities.EntityWithBigDecimal.castToInternal,
+        testEntity2->Indexer.Entities.EntityWithBigDecimal.castToInternal,
       ],
-      ~table=Entities.EntityWithBigDecimal.table,
-      ~itemSchema=Entities.EntityWithBigDecimal.schema,
+      ~table=Indexer.Entities.EntityWithBigDecimal.table,
+      ~itemSchema=Indexer.Entities.EntityWithBigDecimal.schema,
       ~pgSchema=Generated.storagePgSchema,
     )
 
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
     let loadManager = LoadManager.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem

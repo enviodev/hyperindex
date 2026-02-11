@@ -97,8 +97,8 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+        indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
       )),
       (
         [
@@ -119,15 +119,15 @@ describe("E2E rollback tests", () => {
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "value-2",
           },
           {
-            Entities.SimpleEntity.id: "2",
+            Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
           },
           {
-            Entities.SimpleEntity.id: "3",
+            Indexer.Entities.SimpleEntity.id: "3",
             value: "value-1",
           },
         ],
@@ -136,7 +136,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "value-2",
             },
           }),
@@ -144,7 +144,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId,
             entityId: "2",
             entity: {
-              Entities.SimpleEntity.id: "2",
+              Indexer.Entities.SimpleEntity.id: "2",
               value: "value-2",
             },
           }),
@@ -152,7 +152,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId +. 1.,
             entityId: "3",
             entity: {
-              Entities.SimpleEntity.id: "3",
+              Indexer.Entities.SimpleEntity.id: "3",
               value: "value-1",
             },
           }),
@@ -160,7 +160,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId,
             entityId: "4",
             entity: {
-              Entities.SimpleEntity.id: "4",
+              Indexer.Entities.SimpleEntity.id: "4",
               value: "value-1",
             },
           }),
@@ -251,8 +251,8 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+        indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
       )),
       (
         [
@@ -266,11 +266,11 @@ describe("E2E rollback tests", () => {
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "value-1",
           },
           {
-            Entities.SimpleEntity.id: "2",
+            Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
           },
         ],
@@ -279,7 +279,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId +. 3.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "value-1",
             },
           }),
@@ -287,7 +287,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId +. 3.,
             entityId: "2",
             entity: {
-              Entities.SimpleEntity.id: "2",
+              Indexer.Entities.SimpleEntity.id: "2",
               value: "value-2",
             },
           }),
@@ -925,8 +925,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+        indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
       )),
       (
         [
@@ -977,7 +977,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "call-5",
           },
         ],
@@ -986,7 +986,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 3.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
             },
           }),
@@ -994,7 +994,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 4.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
             },
           }),
@@ -1002,7 +1002,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 5.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-3",
             },
           }),
@@ -1010,7 +1010,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 6.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
             },
           }),
@@ -1018,7 +1018,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 7.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-5",
             },
           }),
@@ -1154,8 +1154,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+        indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
       )),
       (
         [
@@ -1186,7 +1186,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "call-4",
           },
         ],
@@ -1195,7 +1195,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 3.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
             },
           }),
@@ -1203,7 +1203,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 4.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
             },
           }),
@@ -1211,7 +1211,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 10.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
             },
           }),
@@ -1330,8 +1330,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+          indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
         )),
         (
           [
@@ -1382,7 +1382,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-5",
             },
           ],
@@ -1391,7 +1391,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 3.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1399,7 +1399,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-2",
               },
             }),
@@ -1407,7 +1407,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 5.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-3",
               },
             }),
@@ -1415,7 +1415,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 6.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-4",
               },
             }),
@@ -1423,7 +1423,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 7.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-5",
               },
             }),
@@ -1433,8 +1433,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(module(Indexer.Entities.EntityWithBigDecimal)),
+          indexerMock.queryHistory(module(Indexer.Entities.EntityWithBigDecimal)),
         )),
         (
           [
@@ -1448,7 +1448,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 6.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -1530,8 +1530,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+          indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
         )),
         (
           [
@@ -1562,7 +1562,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
             },
           ],
@@ -1571,7 +1571,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 3.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1579,7 +1579,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-2",
               },
             }),
@@ -1587,7 +1587,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 10.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-4",
               },
             }),
@@ -1596,8 +1596,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(module(Indexer.Entities.EntityWithBigDecimal)),
+          indexerMock.queryHistory(module(Indexer.Entities.EntityWithBigDecimal)),
         )),
         (
           [
@@ -1611,7 +1611,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 10.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -1714,8 +1714,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+          indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
         )),
         (
           [
@@ -1764,7 +1764,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
             },
           ],
@@ -1773,7 +1773,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1781,7 +1781,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 6.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-1",
               },
             }),
@@ -1789,7 +1789,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 7.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-2",
               },
             }),
@@ -1800,8 +1800,8 @@ Sorted by timestamp and chain id`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(module(Indexer.Entities.EntityWithBigDecimal)),
+          indexerMock.queryHistory(module(Indexer.Entities.EntityWithBigDecimal)),
         )),
         (
           [
@@ -1815,7 +1815,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 5.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -1932,8 +1932,8 @@ Sorted by timestamp and chain id`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+          indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
         )),
         (
           [
@@ -1977,7 +1977,7 @@ Sorted by timestamp and chain id`,
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-3",
             },
           ],
@@ -1986,7 +1986,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1994,7 +1994,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 10.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-3",
               },
             }),
@@ -2003,8 +2003,8 @@ Sorted by timestamp and chain id`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(module(Indexer.Entities.EntityWithBigDecimal)),
+          indexerMock.queryHistory(module(Indexer.Entities.EntityWithBigDecimal)),
         )),
         (
           [
@@ -2018,7 +2018,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 9.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -2136,7 +2136,7 @@ Sorted by timestamp and chain id`,
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(module(Entities.SimpleEntity)),
+      await indexerMock.query(module(Indexer.Entities.SimpleEntity)),
       [],
       ~message="Should have all entities rolled back",
     )

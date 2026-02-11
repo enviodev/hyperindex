@@ -5,8 +5,8 @@ TestIndexer.initTestWorker(
   ~makeGeneratedConfig=Generated.makeGeneratedConfig,
   ~makePersistence=(~storage) =>
     Persistence.make(
-      ~userEntities=Entities.userEntities,
-      ~allEnums=Enums.allEnums,
+      ~userEntities=Indexer.Entities.userEntities,
+      ~allEnums=Indexer.Enums.allEnums,
       ~storage,
     ),
 )

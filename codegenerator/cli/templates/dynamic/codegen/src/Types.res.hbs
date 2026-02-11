@@ -30,7 +30,7 @@ type handlerContext = {
   isPreload: bool,
   chain: Internal.chainInfo,
   {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.getWhereFilter>,
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Indexer.Entities.{{entity.name.capitalized}}.t, Indexer.Entities.{{entity.name.capitalized}}.getWhereFilter>,
   {{/each}}
 }
 
