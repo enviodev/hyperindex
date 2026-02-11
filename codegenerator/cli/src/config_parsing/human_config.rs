@@ -164,7 +164,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract};
-    use crate::{config_parsing::human_config::BaseConfig, utils::normalized_list::SingleOrList};
+    use crate::config_parsing::human_config::BaseConfig;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -201,11 +201,6 @@ pub mod evm {
                            relatively to other chains (default: unordered)"
         )]
         pub multichain: Option<Multichain>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "The event decoder to use for the indexer (default: hypersync-client)"
-        )]
-        pub event_decoder: Option<EventDecoder>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "A flag to indicate if the indexer should rollback to the last known \
@@ -381,13 +376,6 @@ pub mod evm {
         Evm,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-    #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-    pub enum EventDecoder {
-        Viem,
-        HypersyncClient,
-    }
-
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
@@ -397,55 +385,6 @@ pub mod evm {
                            endpoint for the network)"
         )]
         pub url: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct RpcSyncConfig {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "The starting interval in range of blocks per query")]
-        pub initial_block_interval: Option<u32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "After an RPC error, how much to scale back the number of blocks \
-                           requested at once"
-        )]
-        pub backoff_multiplicative: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Without RPC errors or timeouts, how much to increase the number of \
-                           blocks requested by for the next batch"
-        )]
-        pub acceleration_additive: Option<u32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Do not further increase the block interval past this limit")]
-        pub interval_ceiling: Option<u32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "After an error, how long to wait before retrying")]
-        pub backoff_millis: Option<u32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "If a fallback RPC is provided, the amount of time in ms to wait before \
-                           kicking off the next provider"
-        )]
-        pub fallback_stall_timeout: Option<u32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "How long to wait before cancelling an RPC request")]
-        pub query_timeout_millis: Option<u32>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct RpcConfig {
-        #[schemars(
-            description = "URL of the RPC endpoint. Can be a single URL or an array of URLs. If \
-                           multiple URLs are provided, the first one will be used as the primary \
-                           RPC endpoint and the rest will be used as fallbacks."
-        )]
-        pub url: SingleOrList<String>,
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Config options for RPC syncing")]
-        pub sync_config: Option<RpcSyncConfig>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -477,13 +416,55 @@ pub mod evm {
         pub url: String,
         #[schemars(
             description = "Determines if this RPC is for historical sync, real-time chain \
-                           indexing, or as a fallback."
+                           indexing, or as a fallback. If not specified, defaults to \"fallback\" \
+                           when HyperSync is available for the chain, or \"sync\" otherwise."
         )]
-        #[serde(rename = "for")]
-        pub source_for: For,
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Options for RPC data-source indexing.")]
-        pub sync_config: Option<RpcSyncConfig>,
+        #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
+        pub source_for: Option<For>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block \
+                           header notifications via eth_subscribe(\"newHeads\"). Provides lower \
+                           latency than HTTP polling for detecting new blocks."
+        )]
+        pub ws: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "The starting interval in range of blocks per query")]
+        pub initial_block_interval: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "After an RPC error, how much to scale back the number of blocks \
+                           requested at once"
+        )]
+        pub backoff_multiplicative: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Without RPC errors or timeouts, how much to increase the number of \
+                           blocks requested by for the next batch"
+        )]
+        pub acceleration_additive: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Do not further increase the block interval past this limit")]
+        pub interval_ceiling: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "After an error, how long to wait before retrying")]
+        pub backoff_millis: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If a fallback RPC is provided, the amount of time in ms to wait before \
+                           kicking off the next provider"
+        )]
+        pub fallback_stall_timeout: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "How long to wait before cancelling an RPC request")]
+        pub query_timeout_millis: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How frequently (in milliseconds) to check for new blocks in realtime. \
+                           Default is 1000ms. Note: Setting this higher than block time does not \
+                           reduce RPC usage as every block is still fetched to check for reorgs."
+        )]
+        pub polling_interval: Option<u32>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -499,14 +480,6 @@ pub mod evm {
     pub struct Chain {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "RPC configuration for utilizing as the chain's data-source. \
-                           Typically optional for chains with HyperSync support, which is highly \
-                           recommended. HyperSync dramatically enhances performance, providing up \
-                           to a 1000x speed boost over traditional RPC."
-        )]
-        pub rpc_config: Option<RpcConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
                                   otherwise, for chains supported by HyperSync, RPC serves as \
@@ -777,7 +750,7 @@ pub mod svm {
 #[cfg(test)]
 mod tests {
     use super::{
-        evm::{Chain, ContractConfig, EventDecoder, HumanConfig},
+        evm::{Chain, ContractConfig, HumanConfig},
         ChainContract,
     };
     use crate::{
@@ -786,7 +759,6 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use schemars::{schema_for, Schema};
-    use serde_json::json;
     use std::path::PathBuf;
 
     #[test]
@@ -1062,26 +1034,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
-    fn deserializes_event_decoder() {
-        assert_eq!(
-            serde_json::from_value::<EventDecoder>(json!("viem")).unwrap(),
-            EventDecoder::Viem
-        );
-        assert_eq!(
-            serde_json::from_value::<EventDecoder>(json!("hypersync-client")).unwrap(),
-            EventDecoder::HypersyncClient
-        );
-        assert_eq!(
-            serde_json::to_value(&EventDecoder::HypersyncClient).unwrap(),
-            json!("hypersync-client")
-        );
-        assert_eq!(
-            serde_json::to_value(&EventDecoder::Viem).unwrap(),
-            json!("viem")
-        );
-    }
-
-    #[test]
     fn deserialize_underscores_between_numbers() {
         let num = serde_json::json!(2_000_000);
         let de: i32 = serde_json::from_value(num).unwrap();
@@ -1097,7 +1049,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             Chain {
                 id: 1,
                 hypersync_config: None,
-                rpc_config: None,
                 rpc: None,
                 start_block: 2_000,
                 max_reorg_depth: None,

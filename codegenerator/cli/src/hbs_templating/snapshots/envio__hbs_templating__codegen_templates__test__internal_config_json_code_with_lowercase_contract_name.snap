@@ -1,17 +1,12 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2433
 expression: project_template.internal_config_json_code
 ---
 {
   "version": "0.0.1-dev",
-  "name": "test-all-options",
-  "description": "Test config with all options set",
-  "handlers": "custom/handlers",
-  "multichain": "ordered",
-  "fullBatchSize": 1000,
-  "rollbackOnReorg": false,
-  "saveFullHistory": true,
-  "rawEvents": true,
+  "name": "lowercase-contract-name",
+  "description": "Test config with lowercase contract name",
   "evm": {
     "chains": {
       "ethereumMainnet": {
@@ -26,14 +21,13 @@ expression: project_template.internal_config_json_code
             "accelerationAdditive": 2000,
             "intervalCeiling": 10000,
             "backoffMillis": 5000,
-            "queryTimeoutMillis": 20000,
-            "pollingInterval": 2000
+            "queryTimeoutMillis": 20000
           }
         ]
       }
     },
     "contracts": {
-      "Contract1": {
+      "contract1": {
         "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
         "handler": "./src/EventHandler.js",
         "events": [

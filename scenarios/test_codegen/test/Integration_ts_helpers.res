@@ -10,6 +10,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       addresses: [nftFactoryContractAddress],
       events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
       startBlock: None,
+      eventSignatures: [],
     },
     {
       name: "SimpleNft",
@@ -17,6 +18,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       addresses: [],
       events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
       startBlock: None,
+      eventSignatures: [],
     },
   ]
   let evmContracts = contracts->Js.Array2.map((contract): Internal.evmContractConfig => {
@@ -33,11 +35,10 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     startBlock: 1,
     id: 1337,
     contracts,
-    sources: [
+    sourceConfig: Config.CustomSources([
       RpcSource.make({
         chain,
         sourceFor: Sync,
-        contracts: evmContracts,
         syncConfig: {
           initialBlockInterval: 10000,
           backoffMultiplicative: 10000.,
@@ -46,16 +47,16 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
           backoffMillis: 10000,
           queryTimeoutMillis: 10000,
           fallbackStallTimeout: 1000,
+          pollingInterval: 1000,
         },
         url: "http://127.0.0.1:8545",
         eventRouter: evmContracts
         ->Belt.Array.flatMap(contract => contract.events)
         ->EventRouter.fromEvmEventModsOrThrow(~chain),
-        allEventSignatures: [], // Not used by viem.
-        shouldUseHypersyncClientDecoder: false, // stick to viem.
+        allEventSignatures: [],
         lowercaseAddresses: false,
       }),
-    ],
+    ]),
   }
 }
 

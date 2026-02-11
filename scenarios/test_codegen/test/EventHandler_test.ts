@@ -9,6 +9,7 @@ import {
   type EvmChainName,
   type FuelChainId,
   type SvmChainId,
+  type TestIndexer,
 } from "generated";
 import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -754,4 +755,132 @@ describe("Use Envio test framework to test event handlers", () => {
       }
     );
   });
+
+  it("TestIndexer result type is properly typed", async () => {
+    const indexer = createTestIndexer();
+
+    // Verify TestIndexer type matches createTestIndexer return type
+    expectType<TypeEqual<typeof indexer, TestIndexer>>(true);
+
+    const result = await indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    const change = result.changes[0];
+    if (change) {
+      // Verify change has expected metadata fields
+      expectType<TypeEqual<typeof change.block, number>>(true);
+      expectType<TypeEqual<typeof change.chainId, number>>(true);
+      expectType<TypeEqual<typeof change.eventsProcessed, number>>(true);
+      expectType<TypeEqual<typeof change.blockHash, string | undefined>>(true);
+
+      // Verify entity changes have expected structure
+      const userChange = change.User;
+      if (userChange) {
+        expectType<
+          TypeEqual<typeof userChange.sets, readonly User[] | undefined>
+        >(true);
+        expectType<
+          TypeEqual<typeof userChange.deleted, readonly string[] | undefined>
+        >(true);
+      }
+    }
+  });
+
+  it("TestIndexer.Entity.set stores entity and .get retrieves it", async () => {
+    const indexer = createTestIndexer();
+
+    const user: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    // Set entity
+    indexer.User.set(user);
+
+    // Get entity
+    const retrieved = await indexer.User.get("test-user-1");
+    assert.deepEqual(retrieved, user);
+  });
+
+  it("TestIndexer.Entity.get returns undefined for non-existent entity", async () => {
+    const indexer = createTestIndexer();
+
+    const retrieved = await indexer.User.get("non-existent");
+    assert.strictEqual(retrieved, undefined);
+  });
+
+  it("TestIndexer.Entity.set overwrites existing entity", async () => {
+    const indexer = createTestIndexer();
+
+    const user1: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    const user2: User = {
+      id: "test-user-1",
+      address: "0x5678",
+      updatesCountOnUserForTesting: 10,
+      gravatar_id: "gravatar-1",
+      accountType: "ADMIN",
+    };
+
+    indexer.User.set(user1);
+    indexer.User.set(user2);
+
+    const retrieved = await indexer.User.get("test-user-1");
+    assert.deepEqual(retrieved, user2);
+  });
+
+  it("TestIndexer.Entity.get throws when called during processing", () => {
+    const indexer = createTestIndexer();
+
+    // Start processing (don't await - we're testing the error during processing)
+    indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // The error is thrown synchronously when calling get during processing
+    assert.throws(() => indexer.User.get("test-user-1"), {
+      message:
+        "Cannot call User.get() while indexer.process() is running. Wait for process() to complete before accessing entities directly.",
+    });
+  });
+
+  it("TestIndexer.Entity.set throws when called during processing", () => {
+    const indexer = createTestIndexer();
+
+    const user: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    // Start processing (don't await - we're testing the error during processing)
+    indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // Try to call set during processing
+    assert.throws(() => indexer.User.set(user), {
+      message:
+        "Cannot call User.set() while indexer.process() is running. Wait for process() to complete before modifying entities directly.",
+    });
+  });
+
 });

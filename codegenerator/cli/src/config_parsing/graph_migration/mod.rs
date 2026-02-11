@@ -272,7 +272,6 @@ pub async fn generate_config_from_subgraph_id(
         contracts: None,
         chains: vec![],
         multichain: None,
-        event_decoder: None,
         rollback_on_reorg: None,
         save_full_history: None,
         field_selection: None,
@@ -302,8 +301,6 @@ pub async fn generate_config_from_subgraph_id(
         let mut chain = Chain {
             id: chain_helpers::Network::from(*graph_network).get_network_id(),
             hypersync_config: None,
-            // TODO: update to the final rpc url
-            rpc_config: None,
             rpc: None,
             start_block: 0,
             end_block: None,

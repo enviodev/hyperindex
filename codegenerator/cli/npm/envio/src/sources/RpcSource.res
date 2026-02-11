@@ -16,49 +16,50 @@ let getKnownBlock = (provider, blockNumber) =>
     }
   )
 
-let rec getKnownBlockWithBackoff = async (
+let getKnownBlockWithBackoff = async (
   ~provider,
   ~sourceName,
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
   ~lowercaseAddresses: bool,
-) =>
-  switch await getKnownBlock(provider, blockNumber) {
-  | exception err =>
-    Logging.warn({
-      "err": err->Utils.prettifyExn,
-      "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-      "source": sourceName,
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "type": "EXPONENTIAL_BACKOFF",
-    })
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-    await getKnownBlockWithBackoff(
-      ~provider,
-      ~sourceName,
-      ~chain,
-      ~blockNumber,
-      ~backoffMsOnFailure=backoffMsOnFailure * 2,
-      ~lowercaseAddresses,
-    )
-  | result =>
-    if lowercaseAddresses {
+) => {
+  let currentBackoff = ref(backoffMsOnFailure)
+  let result = ref(None)
+
+  while result.contents->Option.isNone {
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId)
+    switch await getKnownBlock(provider, blockNumber) {
+    | exception err =>
+      Logging.warn({
+        "err": err->Utils.prettifyExn,
+        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Belt.Int.toString}ms and try again.`,
+        "source": sourceName,
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "type": "EXPONENTIAL_BACKOFF",
+      })
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
+      currentBackoff := currentBackoff.contents * 2
+    | block =>
       // NOTE: this is wasteful if these fields are not selected in the users config.
       //       There might be a better way to do this based on the block schema.
       //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-
-      {
-        ...result,
-        // Mutation would be cheaper,
-        // BUT "result" is an Ethers.js Block object,
-        // which has the fields as readonly.
-        miner: result.miner->Address.Evm.fromAddressLowercaseOrThrow,
-      }
-    } else {
-      result
+      // Mutation would be cheaper,
+      // BUT "block" is an Ethers.js Block object,
+      // which has the fields as readonly.
+      result :=
+        Some({
+          ...block,
+          miner: if lowercaseAddresses {
+            block.miner->Address.Evm.fromAddressLowercaseOrThrow
+          } else {
+            block.miner->Address.Evm.fromAddressOrThrow
+          },
+        })
     }
   }
+  result.contents->Option.getExn
+}
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
   let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
@@ -222,6 +223,8 @@ let getNextPage = (
   ~provider,
   ~mutSuggestedBlockIntervals,
   ~partitionId,
+  ~sourceName,
+  ~chainId,
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
@@ -234,6 +237,7 @@ let getNextPage = (
     )
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
+  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId)
   let logsPromise =
     provider
     ->Ethers.JsonRpcProvider.getLogs(
@@ -446,52 +450,25 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
   }
 }
 
-let sanitizeUrl = (url: string) => {
-  // Regular expression requiring protocol and capturing hostname
-  // - (https?:\/\/) : Required http:// or https:// (capturing group)
-  // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
-  // - .* : Match rest of the string
-  let regex = %re("/https?:\/\/([^\/?]+).*/")
-
-  switch Js.Re.exec_(regex, url) {
-  | Some(result) =>
-    switch Js.Re.captures(result)->Belt.Array.get(1) {
-    | Some(host) => host->Js.Nullable.toOption
-    | None => None
-    }
-  | None => None
-  }
-}
-
 type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  contracts: array<Internal.evmContractConfig>,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   allEventSignatures: array<string>,
-  shouldUseHypersyncClientDecoder: bool,
   lowercaseAddresses: bool,
+  ws?: string,
 }
 
 let make = (
-  {
-    sourceFor,
-    syncConfig,
-    url,
-    chain,
-    contracts,
-    eventRouter,
-    allEventSignatures,
-    shouldUseHypersyncClientDecoder,
-    lowercaseAddresses,
-  }: options,
+  {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses, ?ws}: options,
 ): t => {
-  let urlHost = switch sanitizeUrl(url) {
+  let chainId = chain->ChainMap.Chain.toChainId
+  let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     Js.Exn.raiseError(
-      `EE109: The RPC url "${url}" is incorrect format. The RPC url needs to start with either http:// or https://`,
+      `EE109: The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
@@ -507,8 +484,10 @@ let make = (
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
-      ~loaderFn=transactionHash =>
-        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client),
+      ~loaderFn=transactionHash => {
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client)
+      },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -571,11 +550,6 @@ let make = (
       ~lowercaseAddresses,
     ),
   )
-
-  let contractNameAbiMapping = Js.Dict.empty()
-  contracts->Belt.Array.forEach(contract => {
-    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
-  })
 
   let convertEthersLogToHyperSyncEvent = (log: Ethers.log): HyperSyncClient.ResponseTypes.event => {
     let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
@@ -654,6 +628,8 @@ let make = (
       ~provider,
       ~mutSuggestedBlockIntervals,
       ~partitionId,
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
     )
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
@@ -676,26 +652,26 @@ let make = (
       )
     }
 
-    let parsedQueueItems = if shouldUseHypersyncClientDecoder {
-      // Convert Ethers logs to HyperSync events
-      let hyperSyncEvents = logs->Belt.Array.map(convertEthersLogToHyperSyncEvent)
+    // Convert Ethers logs to HyperSync events
+    let hyperSyncEvents = logs->Belt.Array.map(convertEthersLogToHyperSyncEvent)
 
-      // Decode using HyperSyncClient decoder
-      let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
-      | exn =>
-        raise(
-          Source.GetItemsError(
-            FailedGettingItems({
-              exn,
-              attemptedToBlock: toBlock,
-              retry: ImpossibleForTheQuery({
-                message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
-              }),
+    // Decode using HyperSyncClient decoder
+    let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
+    | exn =>
+      raise(
+        Source.GetItemsError(
+          FailedGettingItems({
+            exn,
+            attemptedToBlock: toBlock,
+            retry: ImpossibleForTheQuery({
+              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
             }),
-          ),
-        )
-      }
+          }),
+        ),
+      )
+    }
 
+    let parsedQueueItems =
       await logs
       ->Array.zip(parsedEvents)
       ->Array.keepMap(((
@@ -706,7 +682,7 @@ let make = (
         let routedAddress = if lowercaseAddresses {
           log.address->Address.Evm.fromAddressLowercaseOrThrow
         } else {
-          log.address
+          log.address->Address.Evm.fromAddressOrThrow
         }
 
         switch eventRouter->EventRouter.get(
@@ -771,92 +747,6 @@ let make = (
         }
       })
       ->Promise.all
-    } else {
-      // Decode using Viem
-      await logs
-      ->Belt.Array.keepMap(log => {
-        let topic0 = log.topics->Js.Array2.unsafe_get(0)
-
-        switch eventRouter->EventRouter.get(
-          ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0->EvmTypes.Hex.toString,
-            ~topicCount=log.topics->Array.length,
-          ),
-          ~indexingContracts,
-          ~contractAddress=log.address,
-          ~blockNumber=log.blockNumber,
-        ) {
-        | None => None //ignore events that aren't registered
-        | Some(eventConfig) =>
-          let blockNumber = log.blockNumber
-          let logIndex = log.logIndex
-          Some(
-            (
-              async () => {
-                let (block, transaction) = try await Promise.all2((
-                  log->getEventBlockOrThrow,
-                  log->getEventTransactionOrThrow(~transactionSchema=eventConfig.transactionSchema),
-                )) catch {
-                // Promise.catch won't work here, because the error
-                // might be thrown before a microtask is created
-                | exn =>
-                  raise(
-                    Source.GetItemsError(
-                      FailedGettingFieldSelection({
-                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                        exn,
-                        blockNumber,
-                        logIndex,
-                      }),
-                    ),
-                  )
-                }
-
-                let decodedEvent = try contractNameAbiMapping->Viem.parseLogOrThrow(
-                  ~contractName=eventConfig.contractName,
-                  ~topics=log.topics,
-                  ~data=log.data,
-                ) catch {
-                | exn =>
-                  raise(
-                    Source.GetItemsError(
-                      FailedGettingItems({
-                        exn,
-                        attemptedToBlock: toBlock,
-                        retry: ImpossibleForTheQuery({
-                          message: `Failed to parse event with viem, please double-check your ABI. Block number: ${blockNumber->Int.toString}, log index: ${logIndex->Int.toString}`,
-                        }),
-                      }),
-                    ),
-                  )
-                }
-
-                Internal.Event({
-                  eventConfig: (eventConfig :> Internal.eventConfig),
-                  timestamp: block.timestamp,
-                  blockNumber: block.number,
-                  chain,
-                  logIndex: log.logIndex,
-                  event: {
-                    chainId: chain->ChainMap.Chain.toChainId,
-                    params: decodedEvent.args,
-                    transaction,
-                    // Unreliably expect that the Ethers block fields match the types in HyperIndex
-                    // I assume this is wrong in some cases, so we need to fix it in the future
-                    block: block->(
-                      Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
-                    ),
-                    srcAddress: log.address,
-                    logIndex: log.logIndex,
-                  }->Internal.fromGenericEvent,
-                })
-              }
-            )(),
-          )
-        }
-      })
-      ->Promise.all
-    }
 
     let optFirstBlockParent = await firstBlockParentPromise
 
@@ -909,14 +799,22 @@ let make = (
     ->Promise.catch(exn => exn->Error->Promise.resolve)
   }
 
+  let createHeightSubscription = ws->Belt.Option.map(wsUrl =>
+    (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+  )
+
   {
     name,
     sourceFor,
     chain,
     poweredByHyperSync: false,
-    pollingInterval: 1000,
+    pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
-    getHeightOrThrow: () => Rpc.GetBlockHeight.route->Rest.fetch((), ~client),
+    getHeightOrThrow: () => {
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+      Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+    },
     getItemsOrThrow,
+    ?createHeightSubscription,
   }
 }

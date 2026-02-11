@@ -4,8 +4,8 @@ use super::{
     human_config::{
         self,
         evm::{
-            Chain as EvmChain, EventConfig as EvmEventConfig, EventDecoder, For,
-            HumanConfig as EvmConfig, Rpc, RpcSelection,
+            Chain as EvmChain, EventConfig as EvmEventConfig, For, HumanConfig as EvmConfig, Rpc,
+            RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
@@ -238,7 +238,7 @@ chains:
             let config_string = r#"
 chains:
   - id: ${ENVIO_NETWORK_ID}
-    rpc_config:
+    rpc:
       url: ${ENVIO_ETH_RPC_URL}?api_key=${ENVIO_ETH_RPC_KEY}
 "#;
             let interpolated_config_string =
@@ -254,7 +254,7 @@ chains:
                 r#"
 chains:
   - id: 0
-    rpc_config:
+    rpc:
       url: https://eth.com?api_key=foo
 "#
             );
@@ -288,7 +288,7 @@ chains:
             let config_string = r#"
 chains:
   - id: ${ENVIO_NETWORK_ID}
-    rpc_config:
+    rpc:
       url: https://eth.com?api_key=${ENVIO_ETH_API_KEY}
 "#;
             let interpolated_config_string =
@@ -308,7 +308,7 @@ chains:
             let config_string = r#"
 chains:
   - id: ${ENVIO_NETWORK_ID}
-    rpc_config:
+    rpc:
       url: ${My RPC URL}?api_key=${}
 "#;
             let interpolated_config_string =
@@ -414,7 +414,6 @@ pub struct SystemConfig {
     pub enable_raw_events: bool,
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
-    pub should_use_hypersync_client_decoder: bool,
     pub handlers: Option<String>,
 }
 
@@ -561,7 +560,18 @@ impl SystemConfig {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
-                let has_rpc_sync_src = evm_config.chains.iter().any(|n| n.rpc_config.is_some());
+                let has_rpc_sync_src = evm_config.chains.iter().any(|n| {
+                    let default_for = default_rpc_for(n);
+                    let is_sync = |source_for: &Option<For>| {
+                        matches!(source_for.as_ref().unwrap_or(&default_for), For::Sync)
+                    };
+                    match &n.rpc {
+                        Some(RpcSelection::Single(rpc)) => is_sync(&rpc.source_for),
+                        Some(RpcSelection::List(rpcs)) => rpcs.iter().any(|r| is_sync(&r.source_for)),
+                        Some(RpcSelection::Url(_)) => default_for == For::Sync,
+                        None => false,
+                    }
+                });
 
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
@@ -648,10 +658,7 @@ impl SystemConfig {
                         }
                     }
 
-                    let sync_source = DataSource::from_evm_network_config(
-                        network.clone(),
-                        evm_config.event_decoder.clone(),
-                    )?;
+                    let sync_source = DataSource::from_evm_network_config(network.clone())?;
 
                     let contracts: Vec<NetworkContract> = network
                         .contracts
@@ -713,12 +720,6 @@ impl SystemConfig {
                         evm_config.address_format,
                         Some(super::human_config::evm::AddressFormat::Lowercase)
                     ),
-                    should_use_hypersync_client_decoder: match evm_config.event_decoder {
-                        Some(super::human_config::evm::EventDecoder::Viem) => false,
-                        Some(super::human_config::evm::EventDecoder::HypersyncClient) | None => {
-                            true
-                        }
-                    },
                     handlers: base_config.handlers.clone(),
                     human_config,
                 })
@@ -859,7 +860,6 @@ impl SystemConfig {
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
                     lowercase_addresses: false,
-                    should_use_hypersync_client_decoder: true,
                     handlers: base_config.handlers.clone(),
                     human_config,
                 })
@@ -900,7 +900,6 @@ impl SystemConfig {
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: false,
                     lowercase_addresses: false,
-                    should_use_hypersync_client_decoder: false,
                     handlers: None,
                     human_config,
                 })
@@ -994,7 +993,6 @@ pub enum MainEvmDataSource {
 pub enum DataSource {
     Evm {
         main: MainEvmDataSource,
-        is_client_decoder: bool,
         rpcs: Vec<Rpc>,
     },
     Fuel {
@@ -1016,57 +1014,78 @@ fn parse_url(url: &str) -> Option<String> {
     Some(trimmed_url)
 }
 
+/// Returns the default `For` value for an RPC on a chain:
+/// `Fallback` if HyperSync is available, `Sync` otherwise.
+fn default_rpc_for(chain: &EvmChain) -> For {
+    let has_hypersync = chain.hypersync_config.is_some()
+        || hypersync_endpoints::get_default_hypersync_endpoint(chain.id).is_ok();
+    if has_hypersync {
+        For::Fallback
+    } else {
+        For::Sync
+    }
+}
+
 impl DataSource {
-    fn from_evm_network_config(
-        network: EvmChain,
-        event_decoder: Option<EventDecoder>,
-    ) -> Result<Self> {
-        let is_client_decoder = match event_decoder {
-            Some(EventDecoder::HypersyncClient) | None => true,
-            Some(EventDecoder::Viem) => false,
-        };
+    fn from_evm_network_config(network: EvmChain) -> Result<Self> {
+        let default_for = default_rpc_for(&network);
         let hypersync_endpoint_url = match &network.hypersync_config {
             Some(config) => Some(config.url.to_string()),
             None => hypersync_endpoints::get_default_hypersync_endpoint(network.id).ok(),
         };
-        let raw_rpcs = match (network.rpc_config, network.rpc) {
-            (Some(_), Some(_)) => Err(anyhow!("EE106: Cannot define both rpc and deprecated rpc_config for the same network, please only use the rpc option. Read more in our docs https://docs.envio.dev/docs/configuration-file"))?,
-            (None, Some(RpcSelection::Url(url))) => vec![Rpc {
+        let resolve_for = |rpc: Rpc| Rpc {
+            source_for: Some(rpc.source_for.unwrap_or(default_for.clone())),
+            ..rpc
+        };
+        let raw_rpcs = match network.rpc {
+            Some(RpcSelection::Url(url)) => vec![Rpc {
                 url: url.to_string(),
-                source_for: match hypersync_endpoint_url {
-                  Some(_) => For::Fallback,
-                  None => For::Sync,
-                },
-                sync_config: None,
+                source_for: Some(default_for.clone()),
+                ws: None,
+                initial_block_interval: None,
+                backoff_multiplicative: None,
+                acceleration_additive: None,
+                interval_ceiling: None,
+                backoff_millis: None,
+                fallback_stall_timeout: None,
+                query_timeout_millis: None,
+                polling_interval: None,
             }],
-            (None, Some(RpcSelection::Single(rpc))) => vec![rpc],
-            (None, Some(RpcSelection::List(list))) => list,
-            (Some(rpc_config), None) => {
-              let urls: Vec<String> = rpc_config.url.into();
-              urls
-              .iter()
-              .map(|url| Rpc {
-                  url: url.to_string(),
-                  source_for: For::Sync,
-                  sync_config: rpc_config.sync_config.clone(),
-              })
-              .collect()
-            },
-            (None, None) => vec![],
+            Some(RpcSelection::Single(rpc)) => vec![resolve_for(rpc)],
+            Some(RpcSelection::List(list)) => list.into_iter().map(resolve_for).collect(),
+            None => vec![],
         };
 
         let mut rpcs = vec![];
         for rpc in raw_rpcs.iter() {
             match parse_url(rpc.url.as_str()) {
               None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
-              Some(url) => rpcs.push(Rpc {
-                  url,
-                  ..rpc.clone()
-              })
+              Some(url) => {
+                // Validate ws URL protocol if provided
+                let ws = match &rpc.ws {
+                    Some(ws_url) => {
+                        if ws_url.starts_with("wss://") || ws_url.starts_with("ws://") {
+                            Some(ws_url.trim_end_matches('/').to_string())
+                        } else {
+                            return Err(anyhow!(
+                                "The WebSocket URL \"{}\" is in incorrect format. \
+                                 Expected wss:// or ws:// protocol.",
+                                ws_url
+                            ));
+                        }
+                    }
+                    None => None,
+                };
+                rpcs.push(Rpc {
+                    url,
+                    ws,
+                    ..rpc.clone()
+                })
+              }
             }
         }
 
-        let rpc_for_sync = rpcs.iter().find(|rpc| rpc.source_for == For::Sync);
+        let rpc_for_sync = rpcs.iter().find(|rpc| rpc.source_for == Some(For::Sync));
 
         let main = match rpc_for_sync {
             Some(rpc) => {
@@ -1101,11 +1120,7 @@ impl DataSource {
             }
         };
 
-        Ok(Self::Evm {
-            main,
-            is_client_decoder,
-            rpcs,
-        })
+        Ok(Self::Evm { main, rpcs })
     }
 }
 
@@ -2035,11 +2050,10 @@ mod test {
         let cfg: EvmConfig = serde_yaml::from_str(&file_str).unwrap();
 
         // Both hypersync and rpc config should be present
-        assert!(cfg.chains[0].rpc_config.is_some());
+        assert!(cfg.chains[0].rpc.is_some());
         assert!(cfg.chains[0].hypersync_config.is_some());
 
-        let error = DataSource::from_evm_network_config(cfg.chains[0].clone(), cfg.event_decoder)
-            .unwrap_err();
+        let error = DataSource::from_evm_network_config(cfg.chains[0].clone()).unwrap_err();
 
         assert_eq!(error.to_string(), "EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
     }
@@ -2053,7 +2067,6 @@ mod test {
             hypersync_config: Some(HypersyncConfig {
                 url: "https://somechain.hypersync.xyz//".to_string(),
             }),
-            rpc_config: None,
             rpc: None,
             start_block: 0,
             end_block: None,
@@ -2061,7 +2074,7 @@ mod test {
             contracts: None,
         };
 
-        let sync_source = DataSource::from_evm_network_config(network, None).unwrap();
+        let sync_source = DataSource::from_evm_network_config(network).unwrap();
 
         assert_eq!(
             sync_source,
@@ -2069,7 +2082,6 @@ mod test {
                 main: MainEvmDataSource::HyperSync {
                     hypersync_endpoint_url: "https://somechain.hypersync.xyz".to_string(),
                 },
-                is_client_decoder: true,
                 rpcs: vec![],
             }
         );
@@ -2134,7 +2146,6 @@ mod test {
             chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
-                rpc_config: None,
                 rpc: None,
                 start_block: 0,
                 end_block: None,
@@ -2142,7 +2153,6 @@ mod test {
                 contracts: None,
             }],
             multichain: None,
-            event_decoder: None,
             rollback_on_reorg: None,
             save_full_history: None,
             field_selection: None,
@@ -2184,7 +2194,6 @@ mod test {
             chains: vec![EvmChain {
                 id: 1,
                 hypersync_config: None,
-                rpc_config: None,
                 rpc: None,
                 start_block: 0,
                 end_block: None,
@@ -2192,7 +2201,6 @@ mod test {
                 contracts: None,
             }],
             multichain: None,
-            event_decoder: None,
             rollback_on_reorg: None,
             save_full_history: None,
             field_selection: None,

@@ -196,11 +196,54 @@ let make = (
     }
   })
 
+  // Create sources lazily here - this is where API token validation happens
+  let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+  let lowercaseAddresses = config.lowercaseAddresses
+  let sources = switch chainConfig.sourceConfig {
+  | Config.EvmSourceConfig({hypersync, rpcs}) =>
+    // Build Internal.evmContractConfig from contracts for EvmChain.makeSources
+    let evmContracts: array<Internal.evmContractConfig> =
+      chainConfig.contracts->Array.map((contract): Internal.evmContractConfig => {
+        name: contract.name,
+        abi: contract.abi,
+        events: contract.events->(
+          Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
+        ),
+      })
+    // Collect all event signatures from contracts
+    let allEventSignatures =
+      chainConfig.contracts->Array.flatMap(contract => contract.eventSignatures)
+    // Convert rpcs to EvmChain.rpc format
+    let evmRpcs: array<EvmChain.rpc> =
+      rpcs->Array.map((rpc): EvmChain.rpc => {
+        let syncConfig = rpc.syncConfig
+        let ws = rpc.ws
+        {
+          url: rpc.url,
+          sourceFor: rpc.sourceFor,
+          ?syncConfig,
+          ?ws,
+        }
+      })
+    EvmChain.makeSources(
+      ~chain,
+      ~contracts=evmContracts,
+      ~hyperSync=hypersync,
+      ~allEventSignatures,
+      ~rpcs=evmRpcs,
+      ~lowercaseAddresses,
+    )
+  | Config.FuelSourceConfig({hypersync}) => [HyperFuelSource.make({chain, endpointUrl: hypersync})]
+  | Config.SvmSourceConfig({rpc}) => [Svm.makeRPCSource(~chain, ~rpc)]
+  // For tests: use ready-to-use sources directly
+  | Config.CustomSources(sources) => sources
+  }
+
   {
     logger,
     chainConfig,
     sourceManager: SourceManager.make(
-      ~sources=chainConfig.sources,
+      ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
     ),
     reorgDetection: ReorgDetection.make(

@@ -11,7 +11,7 @@ describe("Write/read tests", () => {
   Async.it("Test writing and reading entities with special cases", async () => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
-      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~saveFullHistory=true,
       ~enableHasura=true,
     )
@@ -201,7 +201,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   Async.it("Test getWhere queries with eq and gt operators", async () => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
-      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
     )
     await Utils.delay(0)
 
@@ -251,12 +251,12 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           })
 
           // Execute getWhere queries
-          whereEqOwnerTest := (await context.token.getWhere.owner_id.eq(testUserId))
-          whereEqTokenIdTest := (await context.token.getWhere.tokenId.eq(BigInt.fromInt(50)))
-          whereTokenIdGt50Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(50)))
-          whereTokenIdGt49Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(49)))
-          whereTokenIdLt50Test := (await context.token.getWhere.tokenId.lt(BigInt.fromInt(50)))
-          whereTokenIdLt51Test := (await context.token.getWhere.tokenId.lt(BigInt.fromInt(51)))
+          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
+          whereEqTokenIdTest := (await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
+          whereTokenIdGt50Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
+          whereTokenIdGt49Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
+          whereTokenIdLt50Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
+          whereTokenIdLt51Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
         },
       },
     ])
@@ -303,7 +303,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           context.token.deleteUnsafe("token-1")
 
           // Execute getWhere query after deletion
-          whereEqOwnerTest := (await context.token.getWhere.owner_id.eq(testUserId))
+          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
         },
       },
     ])

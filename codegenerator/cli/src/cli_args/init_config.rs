@@ -127,7 +127,6 @@ pub mod evm {
                             Chain {
                                 id: selected_chain.network.get_network_id(),
                                 hypersync_config: None,
-                                rpc_config: None,
                                 rpc,
                                 start_block: selected_chain.network.get_start_block(),
                                 end_block,
@@ -169,7 +168,6 @@ pub mod evm {
                 contracts,
                 chains: chains_map.into_values().sorted_by_key(|v| v.id).collect(),
                 multichain: None, // Default is Unordered
-                event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,
                 field_selection: None,

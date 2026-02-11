@@ -37,6 +37,96 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
+  describe("makeCreateCompositeIndexQuery", () => {
+    Async.it(
+      "Should create composite index SQL with ASC direction (default, omitted in SQL)",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Asc},
+            {fieldName: "field2", direction: Table.Asc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1", "field2");`,
+          ~message="Should generate correct composite index SQL with ASC (default) direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create composite index SQL with DESC direction",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Desc},
+            {fieldName: "field2", direction: Table.Asc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2" ON "test_schema"."test_table"("field1" DESC, "field2");`,
+          ~message="Should generate correct composite index SQL with DESC direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create composite index SQL with all DESC",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Desc},
+            {fieldName: "field2", direction: Table.Desc},
+            {fieldName: "field3", direction: Table.Desc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2_desc_field3_desc" ON "test_schema"."test_table"("field1" DESC, "field2" DESC, "field3" DESC);`,
+          ~message="Should generate correct composite index SQL with all DESC direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should encode direction in index name to avoid collisions",
+      async () => {
+        let queryAsc = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="t",
+          ~indexFields=[
+            {fieldName: "a", direction: Table.Asc},
+            {fieldName: "b", direction: Table.Asc},
+          ],
+          ~pgSchema="s",
+        )
+        let queryDesc = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="t",
+          ~indexFields=[
+            {fieldName: "a", direction: Table.Desc},
+            {fieldName: "b", direction: Table.Desc},
+          ],
+          ~pgSchema="s",
+        )
+
+        // Index names must differ so CREATE INDEX IF NOT EXISTS doesn't skip the second
+        Assert.notEqual(queryAsc, queryDesc, ~message="Same fields with different directions must produce different index names")
+        Assert.ok(queryAsc->Js.String2.includes("\"t_a_b\""), ~message="ASC index name has no suffix")
+        Assert.ok(queryDesc->Js.String2.includes("\"t_a_desc_b_desc\""), ~message="DESC index name encodes direction")
+      },
+    )
+  })
+
   describe("makeCreateTableIndicesQuery", () => {
     Async.it(
       "Should create indices for A entity table",
@@ -137,7 +227,7 @@ describe("Test PgStorage SQL generation functions", () => {
               endBlock: 200,
               maxReorgDepth: 10,
               contracts: [],
-              sources: [],
+              sourceConfig: Config.CustomSources([]),
             },
             {
               name: "Chain137",
@@ -145,7 +235,7 @@ describe("Test PgStorage SQL generation functions", () => {
               startBlock: 0,
               maxReorgDepth: 200,
               contracts: [],
-              sources: [],
+              sourceConfig: Config.CustomSources([]),
             },
           ],
           // Because of the line arrayOfBigInts and arrayOfBigDecimals should become TEXT[] instead of NUMERIC[]
@@ -533,12 +623,11 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
         let query = InternalTable.Chains.makeMetaFieldsUpdateQuery(~pgSchema="test_schema")
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
-SET "source_block" = $2,
-    "buffer_block" = $3,
-    "first_event_block" = $4,
-    "ready_at" = $5,
-    "_is_hyper_sync" = $6,
-    "_num_batches_fetched" = $7
+SET "buffer_block" = $2,
+    "first_event_block" = $3,
+    "ready_at" = $4,
+    "_is_hyper_sync" = $5,
+    "_num_batches_fetched" = $6
 WHERE "id" = $1;`
 
         Assert.equal(
@@ -558,7 +647,8 @@ WHERE "id" = $1;`
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
 SET "progress_block" = $2,
-    "events_processed" = $3
+    "events_processed" = $3,
+    "source_block" = $4
 WHERE "id" = $1;`
 
         Assert.equal(
@@ -632,7 +722,7 @@ WHERE cp."block_hash" IS NOT NULL
           endBlock: 200,
           maxReorgDepth: 5,
           contracts: [],
-          sources: [],
+          sourceConfig: Config.CustomSources([]),
         }
 
         let query = InternalTable.Chains.makeInitialValuesQuery(
@@ -660,7 +750,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           startBlock: 100,
           maxReorgDepth: 5,
           contracts: [],
-          sources: [],
+          sourceConfig: Config.CustomSources([]),
         }
 
         let query = InternalTable.Chains.makeInitialValuesQuery(
@@ -689,7 +779,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           endBlock: 200,
           maxReorgDepth: 5,
           contracts: [],
-          sources: [],
+          sourceConfig: Config.CustomSources([]),
         }
 
         let chainConfig2: Config.chain = {
@@ -698,7 +788,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           startBlock: 500,
           maxReorgDepth: 0,
           contracts: [],
-          sources: [],
+          sourceConfig: Config.CustomSources([]),
         }
 
         let query = InternalTable.Chains.makeInitialValuesQuery(

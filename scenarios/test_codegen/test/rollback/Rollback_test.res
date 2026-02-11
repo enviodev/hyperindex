@@ -297,107 +297,110 @@ describe("E2E rollback tests", () => {
     )
   }
 
-  Async.it("Should stay in reorg threshold on restart when progress is past threshold", async () => {
-    let sourceMock1337 = Mock.Source.make(
-      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
-    )
-    let sourceMock100 = Mock.Source.make(
-      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
-    )
-    let chains = [
-      {
-        Mock.Indexer.chain: #1337,
-        sources: [sourceMock1337.source],
-      },
-      {
-        Mock.Indexer.chain: #100,
-        sources: [sourceMock100.source],
-      },
-    ]
-    let indexerMock = await Mock.Indexer.make(~chains)
-    await Utils.delay(0)
+  Async.it(
+    "Should stay in reorg threshold on restart when progress is past threshold",
+    async () => {
+      let sourceMock1337 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let chains = [
+        {
+          Mock.Indexer.chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock1337.source]),
+        },
+        {
+          Mock.Indexer.chain: #100,
+          sourceConfig: Config.CustomSources([sourceMock100.source]),
+        },
+      ]
+      let indexerMock = await Mock.Indexer.make(~chains)
+      await Utils.delay(0)
 
-    let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
-    ))
+      let _ = await Promise.all2((
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+      ))
 
-    Assert.deepEqual(
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-      Some({
-        "fromBlock": 101,
-        "toBlock": None,
-        "retry": 0,
-      }),
-      ~message="Should enter reorg threshold and request now to the latest block",
-    )
-    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
-    await indexerMock.getBatchWritePromise()
+      Assert.deepEqual(
+        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 101,
+          "toBlock": None,
+          "retry": 0,
+        }),
+        ~message="Should enter reorg threshold and request now to the latest block",
+      )
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+      await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
-      await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "1", labels: Js.Dict.empty()}],
-    )
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "1", labels: Js.Dict.empty()}],
+      )
 
-    let indexerMock = await indexerMock.restart()
+      let indexerMock = await indexerMock.restart()
 
-    sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
-    sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
-    sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
-    sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
+      sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
 
-    // Allow async operations to settle
-    await Utils.delay(0)
-    await Utils.delay(0)
-    await Utils.delay(0)
+      // Allow async operations to settle
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
 
-    // After restart, we should still be in reorg threshold because
-    // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
-    Assert.deepEqual(
-      await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "1", labels: Js.Dict.empty()}],
-    )
+      // After restart, we should still be in reorg threshold because
+      // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "1", labels: Js.Dict.empty()}],
+      )
 
-    // After restart, both chains have knownHeight from sourceBlockNumber,
-    // so they don't need to call getHeightOrThrow
-    Assert.deepEqual(
-      sourceMock1337.getHeightOrThrowCalls->Array.length,
-      0,
-      ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
-    )
+      // After restart, both chains have knownHeight from sourceBlockNumber,
+      // so they don't need to call getHeightOrThrow
+      Assert.deepEqual(
+        sourceMock1337.getHeightOrThrowCalls->Array.length,
+        0,
+        ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
+      )
 
-    // Both chains are ready immediately, so chain 1337 should continue fetching
-    Assert.deepEqual(
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-      Some({
-        "fromBlock": 111,
-        "toBlock": None,
-        "retry": 0,
-      }),
-      ~message="Should continue indexing from where we left off",
-    )
+      // Both chains are ready immediately, so chain 1337 should continue fetching
+      Assert.deepEqual(
+        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 111,
+          "toBlock": None,
+          "retry": 0,
+        }),
+        ~message="Should continue indexing from where we left off",
+      )
 
-    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
 
-    await indexerMock.getBatchWritePromise()
+      await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-      Some({
-        "fromBlock": 201,
-        "toBlock": None,
-        "retry": 0,
-      }),
-      ~message="Continue normally inside of the reorg threshold",
-    )
+      Assert.deepEqual(
+        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        Some({
+          "fromBlock": 201,
+          "toBlock": None,
+          "retry": 0,
+        }),
+        ~message="Continue normally inside of the reorg threshold",
+      )
 
-    Assert.deepEqual(
-      await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "1", labels: Js.Dict.empty()}],
-    )
-  })
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "1", labels: Js.Dict.empty()}],
+      )
+    },
+  )
 
   Async.it("Rollback of a single chain indexer", async () => {
     let sourceMock = Mock.Source.make(
@@ -408,7 +411,7 @@ describe("E2E rollback tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -429,7 +432,7 @@ describe("E2E rollback tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock.source],
+            sourceConfig: Config.CustomSources([sourceMock.source]),
           },
         ],
       )
@@ -466,7 +469,7 @@ describe("E2E rollback tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -550,11 +553,11 @@ describe("E2E rollback tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock1.source],
+            sourceConfig: Config.CustomSources([sourceMock1.source]),
           },
           {
             chain: #100,
-            sources: [sourceMock2.source],
+            sourceConfig: Config.CustomSources([sourceMock2.source]),
           },
         ],
       )
@@ -582,7 +585,7 @@ describe("E2E rollback tests", () => {
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -838,11 +841,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock1337.source],
+          sourceConfig: Config.CustomSources([sourceMock1337.source]),
         },
         {
           chain: #100,
-          sources: [sourceMock100.source],
+          sourceConfig: Config.CustomSources([sourceMock100.source]),
         },
       ],
     )
@@ -1233,11 +1236,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock1337.source],
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
           },
           {
             chain: #100,
-            sources: [sourceMock100.source],
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
           },
         ],
       )
@@ -1634,11 +1637,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~chains=[
           {
             chain: #1337,
-            sources: [sourceMock1337.source],
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
           },
           {
             chain: #100,
-            sources: [sourceMock100.source],
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
           },
         ],
         ~multichain=Ordered,
@@ -2035,7 +2038,7 @@ Sorted by timestamp and chain id`,
       ~chains=[
         {
           chain: #1337,
-          sources: [sourceMock.source],
+          sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
     )
@@ -2138,4 +2141,40 @@ Sorted by timestamp and chain id`,
       ~message="Should have all entities rolled back",
     )
   })
+
+  Async.it(
+    "Should NOT be in reorg threshold on restart when DB is only initialized (sourceBlockNumber=0, progressBlockNumber=-1)",
+    async () => {
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "0", labels: Js.Dict.empty()}],
+        ~message="Should NOT be in reorg threshold when we just created the indexer",
+      )
+
+      // Restart immediately without writing any batches
+      // At this point: progressBlockNumber=-1, sourceBlockNumber=0 in DB
+      let indexerMock = await indexerMock.restart()
+      await Utils.delay(0)
+
+      Assert.deepEqual(
+        await indexerMock.metric("envio_reorg_threshold"),
+        [{value: "0", labels: Js.Dict.empty()}],
+        ~message="Should NOT be in reorg threshold when sourceBlockNumber is 0 and DB just initialized",
+      )
+    },
+  )
 })
