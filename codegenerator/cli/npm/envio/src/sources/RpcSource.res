@@ -3,21 +3,15 @@ open Source
 
 exception QueryTimout(string)
 
-let getKnownBlock = (provider, blockNumber) =>
-  provider
-  ->Ethers.JsonRpcProvider.getBlock(blockNumber)
-  ->Promise.then(blockNullable =>
-    switch blockNullable->Js.Nullable.toOption {
-    | Some(block) => Promise.resolve(block)
-    | None =>
-      Promise.reject(
-        Js.Exn.raiseError(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`),
-      )
-    }
-  )
+let getKnownBlock = async (~client, ~blockNumber) =>
+  switch await Rpc.getBlock(~client, ~blockNumber) {
+  | Some(block) => block
+  | None =>
+    Js.Exn.raiseError(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`)
+  }
 
 let getKnownBlockWithBackoff = async (
-  ~provider,
+  ~client,
   ~sourceName,
   ~chain,
   ~blockNumber,
@@ -29,7 +23,7 @@ let getKnownBlockWithBackoff = async (
 
   while result.contents->Option.isNone {
     Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId)
-    switch await getKnownBlock(provider, blockNumber) {
+    switch await getKnownBlock(~client, ~blockNumber) {
     | exception err =>
       Logging.warn({
         "err": err->Utils.prettifyExn,
@@ -41,12 +35,6 @@ let getKnownBlockWithBackoff = async (
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
       currentBackoff := currentBackoff.contents * 2
     | block =>
-      // NOTE: this is wasteful if these fields are not selected in the users config.
-      //       There might be a better way to do this based on the block schema.
-      //       However this is not extremely expensive and good enough for now (only on rpc sync also).
-      // Mutation would be cheaper,
-      // BUT "block" is an Ethers.js Block object,
-      // which has the fields as readonly.
       result :=
         Some({
           ...block,
@@ -112,20 +100,9 @@ let getSuggestedBlockIntervalFromExn = {
   // - Optimism: "backend response too large" or "Block range is too large"
   // - Arbitrum: "logs matched by query exceeds limit of 10000"
 
-  (exn): option<(
-    // The suggested block range
-    int,
-    // Whether it's the max range that the provider allows
-    bool,
-  )> =>
-    switch exn {
-    | Js.Exn.Error(error) =>
-      try {
-        let message: string = (error->Obj.magic)["error"]["message"]
-        message->S.assertOrThrow(S.string)
-
-        // Helper to extract block range from regex match
-        let extractBlockRange = (execResult, ~isMaxRange) =>
+  let parseMessageForBlockRange = (message: string) => {
+    // Helper to extract block range from regex match
+    let extractBlockRange = (execResult, ~isMaxRange) =>
           switch execResult->Js.Re.captures {
           | [_, Js.Nullable.Value(blockRangeLimit)] =>
             switch blockRangeLimit->Int.fromString {
@@ -199,6 +176,21 @@ let getSuggestedBlockIntervalFromExn = {
             }
           }
         }
+  }
+
+  (exn): option<(
+    // The suggested block range
+    int,
+    // Whether it's the max range that the provider allows
+    bool,
+  )> =>
+    switch exn {
+    | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
+    | Js.Exn.Error(error) =>
+      try {
+        let message: string = (error->Obj.magic)["error"]["message"]
+        message->S.assertOrThrow(S.string)
+        parseMessageForBlockRange(message)
       } catch {
       | _ => None
       }
@@ -207,8 +199,8 @@ let getSuggestedBlockIntervalFromExn = {
 }
 
 type eventBatchQuery = {
-  logs: array<Ethers.log>,
-  latestFetchedBlock: Ethers.JsonRpcProvider.block,
+  logs: array<Rpc.GetLogs.log>,
+  latestFetchedBlock: Rpc.GetBlockByNumber.block,
 }
 
 let maxSuggestedBlockIntervalKey = "max"
@@ -220,7 +212,7 @@ let getNextPage = (
   ~topicQuery,
   ~loadBlock,
   ~syncConfig as sc: Config.sourceSync,
-  ~provider,
+  ~client,
   ~mutSuggestedBlockIntervals,
   ~partitionId,
   ~sourceName,
@@ -239,14 +231,14 @@ let getNextPage = (
   let latestFetchedBlockPromise = loadBlock(toBlock)
   Prometheus.SourceRequestCount.increment(~sourceName, ~chainId)
   let logsPromise =
-    provider
-    ->Ethers.JsonRpcProvider.getLogs(
-      ~filter={
+    Rpc.getLogs(
+      ~client,
+      ~param={
         address: ?addresses,
         topics: topicQuery,
         fromBlock,
         toBlock,
-      }->Ethers.CombinedFilter.toFilter,
+      },
     )
     ->Promise.then(async logs => {
       {
@@ -389,7 +381,7 @@ let memoGetSelectionConfig = (~chain) => {
 }
 
 let makeThrowingGetEventBlock = (~getBlock) => {
-  async (log: Ethers.log) => {
+  async (log: Rpc.GetLogs.log) => {
     await getBlock(log.blockNumber)
   }
 }
@@ -429,7 +421,7 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
           | [{location: "hash"}]
           | [{location: "hash"}, {location: "transactionIndex"}]
           | [{location: "transactionIndex"}, {location: "hash"}] =>
-            (log: Ethers.log) =>
+            (log: Rpc.GetLogs.log) =>
               {
                 "hash": log.transactionHash,
                 "transactionIndex": log.transactionIndex,
@@ -448,6 +440,45 @@ let makeThrowingGetEventTransaction = (~getTransactionFields) => {
       }
     )(log)
   }
+}
+
+let makeGetTransactionFields = (~getTransactionByHash, ~lowercaseAddresses: bool) => async (
+  log: Rpc.GetLogs.log,
+): Internal.evmTransactionFields => {
+  let transaction: Internal.evmTransactionFields = await getTransactionByHash(log.transactionHash)
+  // Mutating should be fine, since the transaction isn't used anywhere else outside the function
+  let fields: {..} = transaction->Obj.magic
+
+  // RPC may return null for transactionIndex on pending transactions
+  fields["transactionIndex"] = log.transactionIndex
+
+  open Js.Nullable
+  switch fields["from"] {
+  | Value(from) =>
+    fields["from"] = lowercaseAddresses
+      ? from->Js.String2.toLowerCase->Address.unsafeFromString
+      : from->Address.Evm.fromStringOrThrow
+  | Undefined => ()
+  | Null => ()
+  }
+  switch fields["to"] {
+  | Value(to) =>
+    fields["to"] = lowercaseAddresses
+      ? to->Js.String2.toLowerCase->Address.unsafeFromString
+      : to->Address.Evm.fromStringOrThrow
+  | Undefined => ()
+  | Null => ()
+  }
+  switch fields["contractAddress"] {
+  | Value(contractAddress) =>
+    fields["contractAddress"] = lowercaseAddresses
+      ? contractAddress->Js.String2.toLowerCase->Address.unsafeFromString
+      : contractAddress->Address.Evm.fromStringOrThrow
+  | Undefined => ()
+  | Null => ()
+  }
+
+  fields->Obj.magic
 }
 
 type options = {
@@ -473,8 +504,6 @@ let make = (
   | Some(host) => host
   }
   let name = `RPC (${urlHost})`
-
-  let provider = Ethers.JsonRpcProvider.make(~rpcUrl=url, ~chainId=chain->ChainMap.Chain.toChainId)
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
@@ -509,7 +538,7 @@ let make = (
     LazyLoader.make(
       ~loaderFn=blockNumber =>
         getKnownBlockWithBackoff(
-          ~provider,
+          ~client,
           ~sourceName=name,
           ~chain,
           ~backoffMsOnFailure=1000,
@@ -540,7 +569,7 @@ let make = (
     blockLoader.contents->LazyLoader.get(blockNumber)
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
-    ~getTransactionFields=Ethers.JsonRpcProvider.makeGetTransactionFields(
+    ~getTransactionFields=makeGetTransactionFields(
       ~getTransactionByHash=async transactionHash => {
         switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
         | Some(tx) => tx
@@ -551,9 +580,9 @@ let make = (
     ),
   )
 
-  let convertEthersLogToHyperSyncEvent = (log: Ethers.log): HyperSyncClient.ResponseTypes.event => {
+  let convertLogToHyperSyncEvent = (log: Rpc.GetLogs.log): HyperSyncClient.ResponseTypes.event => {
     let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
-      removed: log.removed->Option.getWithDefault(false),
+      removed: log.removed,
       index: log.logIndex,
       transactionIndex: log.transactionIndex,
       transactionHash: log.transactionHash,
@@ -561,7 +590,7 @@ let make = (
       blockNumber: log.blockNumber,
       address: log.address,
       data: log.data,
-      topics: log.topics->Array.map(topic => Js.Nullable.return(topic)),
+      topics: log.topics->(Utils.magic: array<string> => array<Js.Nullable.t<EvmTypes.Hex.t>>),
     }
     {log: hyperSyncLog}
   }
@@ -625,7 +654,7 @@ let make = (
       ~topicQuery,
       ~loadBlock=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
       ~syncConfig,
-      ~provider,
+      ~client,
       ~mutSuggestedBlockIntervals,
       ~partitionId,
       ~sourceName=name,
@@ -652,8 +681,8 @@ let make = (
       )
     }
 
-    // Convert Ethers logs to HyperSync events
-    let hyperSyncEvents = logs->Belt.Array.map(convertEthersLogToHyperSyncEvent)
+    // Convert RPC logs to HyperSync events
+    let hyperSyncEvents = logs->Belt.Array.map(convertLogToHyperSyncEvent)
 
     // Decode using HyperSyncClient decoder
     let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
@@ -675,10 +704,10 @@ let make = (
       await logs
       ->Array.zip(parsedEvents)
       ->Array.keepMap(((
-        log: Ethers.log,
+        log: Rpc.GetLogs.log,
         maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
       )) => {
-        let topic0 = log.topics[0]->Option.getWithDefault("0x0"->EvmTypes.Hex.fromStringUnsafe)
+        let topic0 = log.topics[0]->Option.getWithDefault("0x0")
         let routedAddress = if lowercaseAddresses {
           log.address->Address.Evm.fromAddressLowercaseOrThrow
         } else {
@@ -687,7 +716,7 @@ let make = (
 
         switch eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0->EvmTypes.Hex.toString,
+            ~sighash=topic0,
             ~topicCount=log.topics->Array.length,
           ),
           ~indexingContracts,
@@ -731,7 +760,7 @@ let make = (
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
                       transaction,
                       block: block->(
-                        Utils.magic: Ethers.JsonRpcProvider.block => Internal.eventBlock
+                        Utils.magic: Rpc.GetBlockByNumber.block => Internal.eventBlock
                       ),
                       srcAddress: routedAddress,
                       logIndex: log.logIndex,

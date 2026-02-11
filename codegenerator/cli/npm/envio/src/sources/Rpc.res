@@ -1,3 +1,6 @@
+type rpcError = {code: int, message: string}
+exception JsonRpcError(rpcError)
+
 let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
   let idSchema = S.literal(1)
   let versionSchema = S.literal("2.0")
@@ -18,6 +21,36 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
       },
     ],
   })
+}
+
+let call = async (
+  ~client: Rest.client,
+  ~method: string,
+  ~params: unknown,
+  ~resultSchema: S.t<'a>,
+): 'a => {
+  let response = await client.fetcher({
+    body: Some(
+      {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+      ->Js.Json.stringifyAny
+      ->Belt.Option.getExn
+      ->Obj.magic,
+    ),
+    headers: Some({"content-type": "application/json"}->Obj.magic),
+    method: "POST",
+    path: client.baseUrl,
+  })
+  let data: {..} = response.data->Obj.magic
+  switch data["error"]->Js.Nullable.toOption {
+  | Some(error) =>
+    raise(
+      JsonRpcError({
+        code: error["code"],
+        message: error["message"],
+      }),
+    )
+  | None => data["result"]->S.parseOrThrow(resultSchema)
+  }
 }
 
 type hex = string
@@ -77,7 +110,7 @@ module GetLogs = {
   type param = {
     fromBlock: int,
     toBlock: int,
-    address: array<Address.t>,
+    address?: array<Address.t>,
     topics: topicQuery,
     // blockHash?: string,
   }
@@ -85,10 +118,12 @@ module GetLogs = {
   let paramsSchema = S.object((s): param => {
     fromBlock: s.field("fromBlock", hexIntSchema),
     toBlock: s.field("toBlock", hexIntSchema),
-    address: s.field("address", S.array(Address.schema)),
+    address: ?s.field("address", S.option(S.array(Address.schema))),
     topics: s.field("topics", topicQuerySchema),
     // blockHash: ?s.field("blockHash", S.option(S.string)),
   })
+
+  let fullParamsSchema = S.tuple1(paramsSchema)
 
   type log = {
     address: Address.t,
@@ -114,7 +149,9 @@ module GetLogs = {
     removed: s.field("removed", S.bool),
   })
 
-  let route = makeRpcRoute("eth_getLogs", S.tuple1(paramsSchema), S.array(logSchema))
+  let resultSchema = S.array(logSchema)
+
+  let route = makeRpcRoute("eth_getLogs", fullParamsSchema, resultSchema)
 }
 
 module GetBlockByNumber = {
@@ -164,15 +201,19 @@ module GetBlockByNumber = {
     uncles: s.field("uncles", S.null(S.array(S.string))),
   })
 
+  let paramsSchema = S.tuple(s =>
+    {
+      "blockNumber": s.item(0, hexIntSchema),
+      "includeTransactions": s.item(1, S.bool),
+    }
+  )
+
+  let resultSchema = S.null(blockSchema)
+
   let route = makeRpcRoute(
     "eth_getBlockByNumber",
-    S.tuple(s =>
-      {
-        "blockNumber": s.item(0, hexIntSchema),
-        "includeTransactions": s.item(1, S.bool),
-      }
-    ),
-    S.null(blockSchema),
+    paramsSchema,
+    resultSchema,
   )
 }
 
@@ -220,5 +261,29 @@ module GetTransactionByHash = {
     "eth_getTransactionByHash",
     S.tuple1(S.string),
     S.null(transactionSchema),
+  )
+}
+
+let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {
+  let serializedParams: unknown =
+    param->S.reverseConvertOrThrow(GetLogs.fullParamsSchema)->Obj.magic
+  await call(
+    ~client,
+    ~method="eth_getLogs",
+    ~params=serializedParams,
+    ~resultSchema=GetLogs.resultSchema,
+  )
+}
+
+let getBlock = async (~client: Rest.client, ~blockNumber: int) => {
+  let serializedParams: unknown =
+    {"blockNumber": blockNumber, "includeTransactions": false}
+    ->S.reverseConvertOrThrow(GetBlockByNumber.paramsSchema)
+    ->Obj.magic
+  await call(
+    ~client,
+    ~method="eth_getBlockByNumber",
+    ~params=serializedParams,
+    ~resultSchema=GetBlockByNumber.resultSchema,
   )
 }
