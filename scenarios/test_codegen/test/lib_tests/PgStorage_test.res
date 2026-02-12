@@ -37,6 +37,96 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
+  describe("makeCreateCompositeIndexQuery", () => {
+    Async.it(
+      "Should create composite index SQL with ASC direction (default, omitted in SQL)",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Asc},
+            {fieldName: "field2", direction: Table.Asc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1", "field2");`,
+          ~message="Should generate correct composite index SQL with ASC (default) direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create composite index SQL with DESC direction",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Desc},
+            {fieldName: "field2", direction: Table.Asc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2" ON "test_schema"."test_table"("field1" DESC, "field2");`,
+          ~message="Should generate correct composite index SQL with DESC direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should create composite index SQL with all DESC",
+      async () => {
+        let query = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="test_table",
+          ~indexFields=[
+            {fieldName: "field1", direction: Table.Desc},
+            {fieldName: "field2", direction: Table.Desc},
+            {fieldName: "field3", direction: Table.Desc},
+          ],
+          ~pgSchema="test_schema",
+        )
+
+        Assert.equal(
+          query,
+          `CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2_desc_field3_desc" ON "test_schema"."test_table"("field1" DESC, "field2" DESC, "field3" DESC);`,
+          ~message="Should generate correct composite index SQL with all DESC direction",
+        )
+      },
+    )
+
+    Async.it(
+      "Should encode direction in index name to avoid collisions",
+      async () => {
+        let queryAsc = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="t",
+          ~indexFields=[
+            {fieldName: "a", direction: Table.Asc},
+            {fieldName: "b", direction: Table.Asc},
+          ],
+          ~pgSchema="s",
+        )
+        let queryDesc = PgStorage.makeCreateCompositeIndexQuery(
+          ~tableName="t",
+          ~indexFields=[
+            {fieldName: "a", direction: Table.Desc},
+            {fieldName: "b", direction: Table.Desc},
+          ],
+          ~pgSchema="s",
+        )
+
+        // Index names must differ so CREATE INDEX IF NOT EXISTS doesn't skip the second
+        Assert.notEqual(queryAsc, queryDesc, ~message="Same fields with different directions must produce different index names")
+        Assert.ok(queryAsc->Js.String2.includes("\"t_a_b\""), ~message="ASC index name has no suffix")
+        Assert.ok(queryDesc->Js.String2.includes("\"t_a_desc_b_desc\""), ~message="DESC index name encodes direction")
+      },
+    )
+  })
+
   describe("makeCreateTableIndicesQuery", () => {
     Async.it(
       "Should create indices for A entity table",

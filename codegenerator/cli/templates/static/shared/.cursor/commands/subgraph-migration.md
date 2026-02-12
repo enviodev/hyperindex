@@ -402,7 +402,7 @@ if (entity) {
 transaction.mints.push(mint);
 
 // Envio (query via indexed field):
-const mints = await context.Mint.getWhere.transaction_id.eq(transactionId);
+const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId } });
 ```
 
 ---

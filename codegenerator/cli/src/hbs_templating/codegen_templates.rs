@@ -9,7 +9,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     config_parsing::{
         chain_helpers::Network,
-        entity_parsing::{Entity, Field, GraphQLEnum},
+        entity_parsing::{Entity, Field, GraphQLEnum, IndexField, IndexFieldDirection},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
         field_types,
         human_config::{evm::For, HumanConfig},
@@ -100,6 +100,9 @@ struct InternalRpcConfig {
     url: String,
     #[serde(rename = "for")]
     source_for: &'static str,
+    // Optional WebSocket URL for real-time block tracking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ws: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -240,12 +243,31 @@ pub struct DerivedFieldTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct CompositeIndexFieldTemplate {
+    pub field_name: String,
+    pub direction: String,
+}
+
+impl CompositeIndexFieldTemplate {
+    fn from_index_field(index_field: &IndexField) -> Self {
+        Self {
+            field_name: index_field.name.clone(),
+            direction: match index_field.direction {
+                IndexFieldDirection::Asc => "Asc".to_string(),
+                IndexFieldDirection::Desc => "Desc".to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub type_code: String,
     pub schema_code: String,
+    pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
-    pub composite_indices: Vec<Vec<String>>,
+    pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
 }
@@ -303,13 +325,46 @@ impl EntityRecordTypeTemplate {
             .filter_map(|gql_field| gql_field.get_derived_from_field())
             .collect();
 
-        let composite_indices = entity.get_composite_indices();
+        let composite_indices = entity
+            .get_composite_indices()
+            .into_iter()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .map(CompositeIndexFieldTemplate::from_index_field)
+                    .collect()
+            })
+            .collect();
+
+        // Generate getWhereFilter type code for ReScript (all non-derived fields)
+        // Non-indexed fields will throw a user-friendly error at runtime
+        // Entity fields use original name (e.g. "owner") with @as("owner_id") to avoid
+        // name collision with entity record type t which uses "owner_id" as field name
+        let get_where_filter_fields: Vec<String> = params
+            .iter()
+            .filter(|p| !p.is_derived_field)
+            .map(|p| {
+                let field_name =
+                    RecordField::to_valid_rescript_name(&p.field_name.uncapitalized);
+                let as_name = if p.is_entity_field {
+                    format!("{}_id", p.field_name.original)
+                } else {
+                    p.field_name.original.clone()
+                };
+                format!(
+                    "@as(\"{}\") {}?: Envio.whereOperator<{}>",
+                    as_name, field_name, p.field_type
+                )
+            })
+            .collect();
+        let get_where_filter_code = format!("{{{}}}", get_where_filter_fields.join(", "));
 
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
             type_code,
             schema_code,
+            get_where_filter_code,
             derived_fields,
             composite_indices,
             params,
@@ -1410,7 +1465,17 @@ type testIndexerProcessConfig = {{
   chains: testIndexerProcessConfigChains,
 }}
 
-let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)"#,
+/** Test indexer type with process method and chain info. */
+type testIndexer = {{
+  /** Process blocks for the specified chains and return progress with changes. */
+  process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+}}
+
+let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
             test_indexer_chains_fields
         );
 
@@ -1459,42 +1524,20 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                                 .map(|rpc| InternalRpcConfig {
                                     url: rpc.url.clone(),
                                     source_for: match rpc.source_for {
-                                        For::Sync => "sync",
-                                        For::Fallback => "fallback",
-                                        For::Live => "live",
+                                        Some(For::Sync) => "sync",
+                                        Some(For::Fallback) => "fallback",
+                                        Some(For::Live) => "live",
+                                        None => unreachable!("source_for should be resolved by from_evm_network_config"),
                                     },
-                                    initial_block_interval: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.initial_block_interval),
-                                    backoff_multiplicative: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.backoff_multiplicative),
-                                    acceleration_additive: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.acceleration_additive),
-                                    interval_ceiling: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.interval_ceiling),
-                                    backoff_millis: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.backoff_millis),
-                                    fallback_stall_timeout: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.fallback_stall_timeout),
-                                    query_timeout_millis: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.query_timeout_millis),
-                                    polling_interval: rpc
-                                        .sync_config
-                                        .as_ref()
-                                        .and_then(|c| c.polling_interval),
+                                    ws: rpc.ws.clone(),
+                                    initial_block_interval: rpc.initial_block_interval,
+                                    backoff_multiplicative: rpc.backoff_multiplicative,
+                                    acceleration_additive: rpc.acceleration_additive,
+                                    interval_ceiling: rpc.interval_ceiling,
+                                    backoff_millis: rpc.backoff_millis,
+                                    fallback_stall_timeout: rpc.fallback_stall_timeout,
+                                    query_timeout_millis: rpc.query_timeout_millis,
+                                    polling_interval: rpc.polling_interval,
                                 })
                                 .collect();
                             (hypersync_url, rpc_configs, None)
@@ -2425,5 +2468,11 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
         // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
         let project_template = get_project_template_helper("config2.yaml");
         insta::assert_snapshot!(project_template.indexer_code);
+    }
+
+    #[test]
+    fn internal_config_json_code_with_lowercase_contract_name() {
+        let project_template = get_project_template_helper("lowercase-contract-name.yaml");
+        insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 }

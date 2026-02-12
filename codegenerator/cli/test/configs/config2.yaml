@@ -3,8 +3,9 @@ name: config2
 description: Gravatar for Ethereum
 chains:
   - id: 1
-    rpc_config:
+    rpc:
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
+      for: sync
       initial_block_interval: 10000
       backoff_multiplicative: 0.8
       acceleration_additive: 2000
@@ -21,16 +22,23 @@ chains:
           - event: "NewGravatar"
           - event: "UpdatedGravatar"
   - id: 2
-    rpc_config:
-      url:
-        - https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
-        - https://eth.com/fallback # Fallback RPC URL
-      initial_block_interval: 10000
-      backoff_multiplicative: 0.8
-      acceleration_additive: 2000
-      interval_ceiling: 10000
-      backoff_millis: 5000
-      query_timeout_millis: 20000
+    rpc:
+      - url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
+        for: sync
+        initial_block_interval: 10000
+        backoff_multiplicative: 0.8
+        acceleration_additive: 2000
+        interval_ceiling: 10000
+        backoff_millis: 5000
+        query_timeout_millis: 20000
+      - url: https://eth.com/fallback # Fallback RPC URL
+        for: sync
+        initial_block_interval: 10000
+        backoff_multiplicative: 0.8
+        acceleration_additive: 2000
+        interval_ceiling: 10000
+        backoff_millis: 5000
+        query_timeout_millis: 20000
     start_block: 0
     contracts:
       - name: Contract2

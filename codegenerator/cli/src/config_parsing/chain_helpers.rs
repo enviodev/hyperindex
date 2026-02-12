@@ -59,7 +59,6 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     AuroraTestnet = 1313161555,
 
-    #[subenum(HypersyncNetwork)]
     AuroraTurbo = 1313161567,
 
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -126,6 +125,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork)]
     Chiliz = 88888,
+
+    #[subenum(HypersyncNetwork)]
+    Citrea = 4114,
 
     CitreaDevnet = 62298,
 
@@ -197,10 +199,16 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Hoodi = 560048,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Hyperliquid = 999,
 
     IncoGentryTestnet = 9090,
+
+    #[subenum(HypersyncNetwork)]
+    Injective = 1776,
 
     #[subenum(HypersyncNetwork)]
     Ink = 57073,
@@ -232,6 +240,9 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     MantleTestnet = 5001,
 
+    #[subenum(HypersyncNetwork)]
+    Megaeth = 4326,
+
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     MegaethTestnet = 6342,
 
@@ -247,7 +258,6 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Metis = 1088,
 
-    #[subenum(HypersyncNetwork)]
     MevCommit = 17864,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -262,11 +272,7 @@ pub enum Network {
     #[subenum(NetworkWithExplorer, HypersyncNetwork)]
     MonadTestnet = 10143,
 
-    #[subenum(
-        HypersyncNetwork,
-        NetworkWithExplorer,
-        GraphNetwork(serde(rename = "mbase"))
-    )]
+    #[subenum(NetworkWithExplorer, GraphNetwork(serde(rename = "mbase")))]
     MoonbaseAlpha = 1287,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -303,7 +309,7 @@ pub enum Network {
 
     PharosDevnet = 50002,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Plasma = 9745,
 
     #[subenum(HypersyncNetwork)]
@@ -343,6 +349,12 @@ pub enum Network {
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Sei = 1329,
+
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    SeiTestnet = 1328,
+
     #[subenum(HypersyncNetwork)]
     Sentient = 6767,
 
@@ -361,7 +373,7 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Sonic = 146,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     SonicTestnet = 14601,
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
@@ -369,6 +381,9 @@ pub enum Network {
 
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     SophonTestnet = 531050104,
+
+    #[subenum(HypersyncNetwork)]
+    StatusSepolia = 1660990954,
 
     #[subenum(HypersyncNetwork)]
     Superseed = 5330,
@@ -529,6 +544,7 @@ impl Network {
             | Network::Rsk
             | Network::Scroll
             | Network::ScrollSepolia
+            | Network::Sei
             | Network::Sepolia
             | Network::SentientTestnet
             | Network::ShimmerEvm
@@ -578,7 +594,13 @@ impl Network {
             | Network::SonicTestnet
             | Network::Sentient
             | Network::Swell
-            | Network::Taraxa => None,
+            | Network::Taraxa
+            | Network::Citrea
+            | Network::Hoodi
+            | Network::Injective
+            | Network::Megaeth
+            | Network::SeiTestnet
+            | Network::StatusSepolia => None,
         }
     }
 }
@@ -623,21 +645,23 @@ impl HypersyncNetwork {
         use ChainTier::*;
         use HypersyncNetwork::*;
         match self {
-            EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Base => Gold,
+            EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Sei | Base => Gold,
 
-            Xdc | Polygon | ArbitrumOne | MegaethTestnet | MegaethTestnet2 | Sonic => Silver,
+            Xdc | Polygon | ArbitrumOne | MegaethTestnet | MegaethTestnet2 | Sonic | Megaeth => {
+                Silver
+            }
 
             Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
-            | Taraxa | Plasma => Bronze,
+            | Taraxa | Plasma | Lukso | CitreaTestnet | Injective | Citrea => Bronze,
 
-            Curtis | PolygonZkevm | Lukso | Abstract | Zora | Unichain | Aurora | Zeta | Manta
-            | Kroma | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet
-            | CitreaTestnet | BscTestnet | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet
-            | BlastSepolia | Holesky | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal
-            | Soneium | BaseSepolia | MevCommit | Merlin | Mode | MoonbaseAlpha | XdcTestnet
-            | Morph | Harmony | Saakuru | Cyber | Superseed | Worldchain | Sophon | Fantom
-            | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid | Swell | Moonbeam | Plume | Scroll
-            | AuroraTurbo | SentientTestnet | Ab | ArcTestnet | Sentient | SonicTestnet => Stone,
+            Curtis | PolygonZkevm | Abstract | Zora | Unichain | Aurora | Zeta | Manta | Kroma
+            | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | BscTestnet
+            | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky
+            | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
+            | Merlin | Mode | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
+            | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid
+            | Swell | Moonbeam | Plume | Scroll | SentientTestnet | Ab | ArcTestnet | Sentient
+            | SonicTestnet | SeiTestnet | Hoodi | StatusSepolia => Stone,
         }
     }
 
