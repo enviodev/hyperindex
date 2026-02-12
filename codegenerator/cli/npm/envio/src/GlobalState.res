@@ -161,7 +161,6 @@ let updateChainMetadataTable = (
         firstEventBlockNumber: cf.firstEventBlockNumber->Js.Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
-        blockHeight: cf.fetchState.knownHeight,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
         numBatchesFetched: cf.numBatchesFetched,
       },
