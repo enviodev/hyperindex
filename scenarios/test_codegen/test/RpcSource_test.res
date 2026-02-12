@@ -2,21 +2,17 @@ open RescriptMocha
 
 let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
 
-let mockEthersLog = (
+let mockLog = (
   ~transactionHash="0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-): Ethers.log => {
+): Rpc.GetLogs.log => {
   blockNumber: 123456,
   blockHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-  removed: Some(false),
+  removed: false,
   address: Address.Evm.fromStringOrThrow("0x1234567890abcdef1234567890abcdef12345678"),
   data: "0xdeadbeefdeadbeefdeadbeefdeadbeef",
   topics: [
-    EvmTypes.Hex.fromStringUnsafe(
-      "0xd78ad95fa46c994b6551d0da85fc275fe613dbe680204dd5837f03aa2f863b9b",
-    ),
-    EvmTypes.Hex.fromStringUnsafe(
-      "0x0000000000000000000000000000000000000000000000000000000000000000",
-    ),
+    "0xd78ad95fa46c994b6551d0da85fc275fe613dbe680204dd5837f03aa2f863b9b",
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
   ],
   transactionHash,
   transactionIndex: 1,
@@ -62,7 +58,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     Assert.throws(
       () => {
         RpcSource.makeThrowingGetEventTransaction(~getTransactionFields=neverGetTransactionFields)(
-          mockEthersLog(),
+          mockLog(),
           ~transactionSchema=S.string,
         )
       },
@@ -79,7 +75,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~getTransactionFields=neverGetTransactionFields,
       )
       Assert.deepEqual(
-        await mockEthersLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
+        await mockLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
         %raw(`{}`),
       )
     },
@@ -90,7 +86,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -109,7 +105,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -128,7 +124,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -148,7 +144,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       ~getTransactionFields=neverGetTransactionFields,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -164,12 +160,12 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
   })
 
-  Async.it("Queries transaction with a non-log field (with real Ethers.provider)", async () => {
+  Async.it("Queries transaction with a non-log field (with real RPC)", async () => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
     let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
     let client = Rest.client(rpcUrl)
-    let getTransactionFields = Ethers.JsonRpcProvider.makeGetTransactionFields(
+    let getTransactionFields = RpcSource.makeGetTransactionFields(
       ~getTransactionByHash=async transactionHash =>
         switch await Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client) {
         | Some(tx) => tx
@@ -182,7 +178,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       ~getTransactionFields,
     )
     Assert.deepEqual(
-      await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
+      await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -320,7 +316,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     Assert.throws(
       () => {
-        mockEthersLog()->getEventTransactionOrThrow(
+        mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
               {
@@ -630,5 +626,21 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
     )
 
     Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((500, true)))
+  })
+
+  it("Should handle Rpc.JsonRpcError with block range limit", () => {
+    let error = Rpc.JsonRpcError({
+      code: -32000,
+      message: "eth_getLogs is limited to a 1000 blocks range",
+    })
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
+  })
+
+  it("Should handle Rpc.JsonRpcError with suggested range", () => {
+    let error = Rpc.JsonRpcError({
+      code: -32602,
+      message: "query exceeds max results 20000, retry with the range 6000000-6000509",
+    })
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((510, false)))
   })
 })
