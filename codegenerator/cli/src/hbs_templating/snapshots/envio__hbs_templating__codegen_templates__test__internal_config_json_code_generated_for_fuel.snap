@@ -28,8 +28,7 @@ expression: project_template.internal_config_json_code
       "properties": [
         {
           "name": "id",
-          "type": "string",
-          "isPrimaryKey": true
+          "type": "string"
         },
         {
           "name": "emptyField",

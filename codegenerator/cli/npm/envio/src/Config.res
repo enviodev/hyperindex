@@ -251,7 +251,6 @@ let propertySchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "type": s.matches(S.string),
-    "isPrimaryKey": s.matches(S.option(S.bool)),
     "isNullable": s.matches(S.option(S.bool)),
     "isArray": s.matches(S.option(S.bool)),
     "isIndex": s.matches(S.option(S.bool)),
@@ -277,7 +276,6 @@ let getFieldTypeAndSchema = (
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
 ) => {
   let typ = prop["type"]
-  let isPrimaryKey = prop["isPrimaryKey"]->Option.getWithDefault(false)
   let isNullable = prop["isNullable"]->Option.getWithDefault(false)
   let isArray = prop["isArray"]->Option.getWithDefault(false)
   let isIndex = prop["isIndex"]->Option.getWithDefault(false)
@@ -320,7 +318,7 @@ let getFieldTypeAndSchema = (
     baseSchema
   }
 
-  (fieldType, fieldSchema, isPrimaryKey, isNullable, isArray, isIndex)
+  (fieldType, fieldSchema, isNullable, isArray, isIndex)
 }
 
 let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfig<Table.enum>> => {
@@ -340,13 +338,13 @@ let parseEntitiesFromJson = (
 
     let fields: array<Table.fieldOrDerived> =
       entityJson["properties"]->Array.map(prop => {
-        let (fieldType, fieldSchema, isPrimaryKey, isNullable, isArray, isIndex) =
+        let (fieldType, fieldSchema, isNullable, isArray, isIndex) =
           getFieldTypeAndSchema(prop, ~enumConfigsByName)
         Table.mkField(
           prop["name"],
           fieldType,
           ~fieldSchema,
-          ~isPrimaryKey,
+          ~isPrimaryKey=prop["name"] === "id",
           ~isNullable,
           ~isArray,
           ~isIndex,

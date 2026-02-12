@@ -104,8 +104,6 @@ struct InternalPropertyJson {
     #[serde(rename = "type")]
     field_type: String,
     #[serde(skip_serializing_if = "is_false")]
-    is_primary_key: bool,
-    #[serde(skip_serializing_if = "is_false")]
     is_nullable: bool,
     #[serde(skip_serializing_if = "is_false")]
     is_array: bool,
@@ -1777,7 +1775,6 @@ type testIndexerProcessConfig = {{
                             InternalPropertyJson {
                                 name: f.field_name.clone(),
                                 field_type,
-                                is_primary_key: f.is_primary_key,
                                 is_nullable: f.is_nullable,
                                 is_array: f.is_array,
                                 is_index: f.is_index,
