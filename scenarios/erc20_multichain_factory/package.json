@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "envio": "file:../../codegenerator/cli/npm/envio",
-    "ethers": "6.8.0",
     "tsx": "4.21.0",
     "helpers": "../helpers",
     "mocha": "10.2.0",
