@@ -181,9 +181,11 @@ module App = {
             numBatchesFetched,
             eventsProcessed: numEventsProcessed,
             chainId: cf.chainConfig.id->Int.toString,
-            progressBlock: cf.committedProgressBlockNumber === -1
-              ? None
-              : Some(cf.committedProgressBlockNumber),
+            progressBlock: switch cf.committedProgressBlockNumber {
+            | -1 if cf.fetchState.knownHeight > 0 => Some(cf.fetchState.startBlock)
+            | -1 => None
+            | progressBlock => Some(progressBlock)
+            },
             bufferBlock: Some(latestFetchedBlockNumber),
             sourceBlock: Some(cf.fetchState.knownHeight),
             firstEventBlockNumber: cf.firstEventBlockNumber,
