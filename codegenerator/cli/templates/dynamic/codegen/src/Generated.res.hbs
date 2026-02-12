@@ -34,7 +34,6 @@ let makeGeneratedConfig = () => {
   Config.fromPublic(
     %raw(`internalConfigJson`),
     ~codegenChains,
-    ~userEntities=Indexer.Entities.userEntities,
   )
 }
 
@@ -69,9 +68,9 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
                 secret: Env.Hasura.secret,
               },
               ~pgSchema=storagePgSchema,
-              ~userEntities=Indexer.Entities.userEntities,
+              ~userEntities=configWithoutRegistrations.userEntities,
               ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(Indexer.Entities.allEntities->Belt.Array.map(e => e.table)),
+              ~schema=Schema.make(configWithoutRegistrations.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(
@@ -114,7 +113,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
 }
 
 let codegenPersistence = Persistence.make(
-  ~userEntities=Indexer.Entities.userEntities,
-  ~allEnums=Indexer.Enums.allEnums,
+  ~userEntities=configWithoutRegistrations.userEntities,
+  ~allEnums=configWithoutRegistrations.allEnums,
   ~storage=makeStorage(~sql=initialSql),
 )

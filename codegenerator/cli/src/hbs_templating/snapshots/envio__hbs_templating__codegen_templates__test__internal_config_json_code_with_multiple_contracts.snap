@@ -78,5 +78,22 @@ expression: project_template.internal_config_json_code
       }
     },
     "addressFormat": "checksum"
-  }
+  },
+  "enums": {},
+  "entities": [
+    {
+      "name": "EmptyEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "emptyField",
+          "type": "string"
+        }
+      ]
+    }
+  ]
 }

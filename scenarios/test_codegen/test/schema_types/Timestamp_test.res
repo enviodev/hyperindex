@@ -19,14 +19,15 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       id: "testEntity",
       timestamp: Js.Date.fromString("1970-01-01T00:02:03.456Z"),
     }
+    let entityConfig = Mock.entityConfig("EntityWithTimestamp")
     await sql->PgStorage.setOrThrow(
-      ~items=[testEntity->Indexer.Entities.EntityWithTimestamp.castToInternal],
-      ~table=Indexer.Entities.EntityWithTimestamp.table,
-      ~itemSchema=Indexer.Entities.EntityWithTimestamp.schema,
+      ~items=[testEntity->(Utils.magic: Indexer.Entities.EntityWithTimestamp.t => Internal.entity)],
+      ~table=entityConfig.table,
+      ~itemSchema=entityConfig.schema,
       ~pgSchema=Generated.storagePgSchema,
     )
 
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Mock.config.allEntities)
     let loadManager = LoadManager.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem

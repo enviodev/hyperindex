@@ -152,7 +152,7 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+      await indexerMock.query(Mock.entityConfig("SimpleEntity")),
       [{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}],
     )
     Assert.deepEqual(
@@ -244,7 +244,7 @@ describe("E2E tests", () => {
     Assert.deepEqual(
       await Promise.all2((
         indexerMock.queryCheckpoints(),
-        indexerMock.queryHistory(module(Indexer.Entities.SimpleEntity)),
+        indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
       )),
       (
         [

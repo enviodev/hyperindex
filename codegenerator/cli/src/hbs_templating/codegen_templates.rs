@@ -82,6 +82,61 @@ struct InternalConfigJson<'a> {
     fuel: Option<InternalFuelConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     svm: Option<InternalSvmConfig>,
+    enums: std::collections::BTreeMap<String, Vec<String>>,
+    entities: Vec<InternalEntityJson>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalEntityJson {
+    name: String,
+    properties: Vec<InternalPropertyJson>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    derived_fields: Vec<InternalDerivedFieldJson>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    composite_indices: Vec<Vec<InternalCompositeIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalPropertyJson {
+    name: String,
+    #[serde(rename = "type")]
+    field_type: String,
+    #[serde(skip_serializing_if = "is_false")]
+    is_primary_key: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    is_nullable: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    is_array: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    is_index: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    linked_entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "enum")]
+    enum_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scale: Option<u32>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalDerivedFieldJson {
+    field_name: String,
+    derived_from_entity: String,
+    derived_from_field: String,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalCompositeIndexJson {
+    field_name: String,
+    direction: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -216,33 +271,8 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
         for param in &gql_enum.params {
             writeln!(code, "    | @as(\"{}\") {}", param.original, param.capitalized).unwrap();
         }
-        writeln!(code).unwrap();
-        writeln!(
-            code,
-            "  let name = \"{}\"",
-            gql_enum.name.original
-        )
-        .unwrap();
-        write!(code, "  let variants = [\n").unwrap();
-        for param in &gql_enum.params {
-            writeln!(code, "    {},", param.capitalized).unwrap();
-        }
-        writeln!(code, "  ]").unwrap();
-        writeln!(code, "  let config = Table.makeEnumConfig(~name, ~variants)").unwrap();
         writeln!(code, "}}").unwrap();
     }
-
-    writeln!(code).unwrap();
-    write!(code, "let allEnums: array<Table.enumConfig<Table.enum>> = ([\n").unwrap();
-    for gql_enum in gql_enums {
-        writeln!(
-            code,
-            "  {}.config->Table.fromGenericEnumConfig,",
-            gql_enum.name.capitalized
-        )
-        .unwrap();
-    }
-    writeln!(code, "])").unwrap();
 
     code
 }
@@ -250,71 +280,13 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
 fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
     let mut code = String::new();
 
-    // Header
-    writeln!(code, "open Table").unwrap();
     writeln!(code, "type id = string").unwrap();
-    writeln!(code).unwrap();
-    writeln!(code, "type internalEntity = Internal.entity").unwrap();
-    writeln!(code, "module type Entity = {{").unwrap();
-    writeln!(code, "  type t").unwrap();
-    writeln!(code, "  let index: int").unwrap();
-    writeln!(code, "  let name: string").unwrap();
-    writeln!(code, "  let schema: S.t<t>").unwrap();
-    writeln!(code, "  let rowsSchema: S.t<array<t>>").unwrap();
-    writeln!(code, "  let table: Table.table").unwrap();
-    writeln!(code, "}}").unwrap();
-    writeln!(
-        code,
-        "external entityModToInternal: module(Entity with type t = 'a) => Internal.entityConfig = \"%identity\""
-    )
-    .unwrap();
-    writeln!(
-        code,
-        "external entityModsToInternal: array<module(Entity)> => array<Internal.entityConfig> = \"%identity\""
-    )
-    .unwrap();
-    writeln!(
-        code,
-        "external entitiesToInternal: array<'a> => array<Internal.entity> = \"%identity\""
-    )
-    .unwrap();
-    writeln!(code).unwrap();
-    writeln!(code, "@get").unwrap();
-    writeln!(
-        code,
-        "external getEntityId: internalEntity => string = \"id\""
-    )
-    .unwrap();
-    writeln!(code).unwrap();
-    writeln!(
-        code,
-        "// Use InMemoryTable.Entity.getEntityIdUnsafe instead of duplicating the logic"
-    )
-    .unwrap();
-    writeln!(
-        code,
-        "let getEntityIdUnsafe = InMemoryTable.Entity.getEntityIdUnsafe"
-    )
-    .unwrap();
-    writeln!(code).unwrap();
-    writeln!(code, "//shorthand for punning").unwrap();
-    writeln!(code, "let isPrimaryKey = true").unwrap();
-    writeln!(code, "let isNullable = true").unwrap();
-    writeln!(code, "let isArray = true").unwrap();
-    writeln!(code, "let isIndex = true").unwrap();
 
-    // Entity modules
-    for (index, entity) in entities.iter().enumerate() {
+    for entity in entities {
         writeln!(code).unwrap();
         writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
-        writeln!(code, "  let name = \"{}\"", entity.name.capitalized).unwrap();
-        writeln!(code, "  let index = {}", index).unwrap();
         writeln!(code, "  @genType").unwrap();
         writeln!(code, "  type t = {}", entity.type_code).unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "  let schema = {}", entity.schema_code).unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "  let rowsSchema = S.array(schema)").unwrap();
         writeln!(code).unwrap();
         writeln!(
             code,
@@ -322,97 +294,8 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
             entity.get_where_filter_code
         )
         .unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "  let table = mkTable(").unwrap();
-        writeln!(code, "    name,").unwrap();
-        writeln!(code, "    ~fields=[").unwrap();
-
-        // Postgres fields
-        for pg_field in &entity.postgres_fields {
-            write!(
-                code,
-                "      mkField(\n      \"{}\",\n      {},\n      ~fieldSchema={},\n",
-                pg_field.field_name, pg_field.field_type, pg_field.res_schema_code
-            )
-            .unwrap();
-            if pg_field.is_primary_key {
-                writeln!(code, "      ~isPrimaryKey,").unwrap();
-            }
-            if pg_field.is_nullable {
-                writeln!(code, "      ~isNullable,").unwrap();
-            }
-            if pg_field.is_array {
-                writeln!(code, "      ~isArray,").unwrap();
-            }
-            if pg_field.is_index {
-                writeln!(code, "      ~isIndex,").unwrap();
-            }
-            if let Some(ref linked_entity) = pg_field.linked_entity {
-                writeln!(code, "      ~linkedEntity=\"{}\",", linked_entity).unwrap();
-            }
-            writeln!(code, "      ),").unwrap();
-        }
-
-        // Derived fields
-        for derived_field in &entity.derived_fields {
-            write!(
-                code,
-                "      mkDerivedFromField(\n      \"{}\",\n      ~derivedFromEntity=\"{}\",\n      ~derivedFromField=\"{}\",\n      ),\n",
-                derived_field.field_name,
-                derived_field.derived_from_entity,
-                derived_field.derived_from_field
-            )
-            .unwrap();
-        }
-
-        writeln!(code, "    ],").unwrap();
-
-        // Composite indices
-        if !entity.composite_indices.is_empty() {
-            writeln!(code, "    ~compositeIndices=[").unwrap();
-            for composite_index in &entity.composite_indices {
-                writeln!(code, "      [").unwrap();
-                for idx_field in composite_index {
-                    writeln!(
-                        code,
-                        "      {{fieldName: \"{}\", direction: {}}},",
-                        idx_field.field_name, idx_field.direction
-                    )
-                    .unwrap();
-                }
-                writeln!(code, "      ],").unwrap();
-            }
-            writeln!(code, "    ],").unwrap();
-        }
-
-        writeln!(code, "  )").unwrap();
-        writeln!(code).unwrap();
-        writeln!(
-            code,
-            "  external castToInternal: t => Internal.entity = \"%identity\""
-        )
-        .unwrap();
         writeln!(code, "}}").unwrap();
     }
-
-    // userEntities
-    writeln!(code).unwrap();
-    writeln!(code, "let userEntities = [").unwrap();
-    for entity in entities {
-        writeln!(code, "  module({}),", entity.name.capitalized).unwrap();
-    }
-    writeln!(code, "]->entityModsToInternal").unwrap();
-    writeln!(code).unwrap();
-
-    // allEntities
-    writeln!(code, "let allEntities =").unwrap();
-    writeln!(code, "  userEntities->Js.Array2.concat(").unwrap();
-    writeln!(
-        code,
-        "    [module(InternalTable.DynamicContractRegistry)]->entityModsToInternal,"
-    )
-    .unwrap();
-    writeln!(code, "  )").unwrap();
 
     code
 }
@@ -1845,6 +1728,100 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                 crate::config_parsing::human_config::evm::Multichain::Unordered => None,
             };
 
+            let enums_json: std::collections::BTreeMap<String, Vec<String>> = gql_enums
+                .iter()
+                .map(|e| {
+                    (
+                        e.name.original.clone(),
+                        e.params.iter().map(|p| p.original.clone()).collect(),
+                    )
+                })
+                .collect();
+
+            let entities_json: Vec<InternalEntityJson> = entities
+                .iter()
+                .map(|entity| {
+                    let properties = entity
+                        .postgres_fields
+                        .iter()
+                        .map(|f| {
+                            use field_types::Primitive;
+                            let (field_type, enum_name, entity_name, precision, scale) =
+                                match &f.field_type {
+                                    Primitive::Boolean => {
+                                        ("boolean".into(), None, None, None, None)
+                                    }
+                                    Primitive::String => ("string".into(), None, None, None, None),
+                                    Primitive::Int32 => ("int".into(), None, None, None, None),
+                                    Primitive::BigInt { precision } => {
+                                        ("bigint".into(), None, None, *precision, None)
+                                    }
+                                    Primitive::BigDecimal(config) => {
+                                        let (p, s) = match config {
+                                            Some((p, s)) => (Some(*p), Some(*s)),
+                                            None => (None, None),
+                                        };
+                                        ("bigdecimal".into(), None, None, p, s)
+                                    }
+                                    Primitive::Number => ("float".into(), None, None, None, None),
+                                    Primitive::Serial => ("serial".into(), None, None, None, None),
+                                    Primitive::Json => ("json".into(), None, None, None, None),
+                                    Primitive::Date => ("date".into(), None, None, None, None),
+                                    Primitive::Enum(name) => {
+                                        ("enum".into(), Some(name.clone()), None, None, None)
+                                    }
+                                    Primitive::Entity(name) => {
+                                        ("entity".into(), None, Some(name.clone()), None, None)
+                                    }
+                                };
+                            InternalPropertyJson {
+                                name: f.field_name.clone(),
+                                field_type,
+                                is_primary_key: f.is_primary_key,
+                                is_nullable: f.is_nullable,
+                                is_array: f.is_array,
+                                is_index: f.is_index,
+                                linked_entity: f.linked_entity.clone(),
+                                enum_name,
+                                entity: entity_name,
+                                precision,
+                                scale,
+                            }
+                        })
+                        .collect();
+
+                    let derived_fields = entity
+                        .derived_fields
+                        .iter()
+                        .map(|df| InternalDerivedFieldJson {
+                            field_name: df.field_name.clone(),
+                            derived_from_entity: df.derived_from_entity.clone(),
+                            derived_from_field: df.derived_from_field.clone(),
+                        })
+                        .collect();
+
+                    let composite_indices = entity
+                        .composite_indices
+                        .iter()
+                        .map(|ci| {
+                            ci.iter()
+                                .map(|f| InternalCompositeIndexJson {
+                                    field_name: f.field_name.clone(),
+                                    direction: f.direction.clone(),
+                                })
+                                .collect()
+                        })
+                        .collect();
+
+                    InternalEntityJson {
+                        name: entity.name.capitalized.clone(),
+                        properties,
+                        derived_fields,
+                        composite_indices,
+                    }
+                })
+                .collect();
+
             let config = InternalConfigJson {
                 version: CURRENT_CRATE_VERSION,
                 name: &cfg.name,
@@ -1858,6 +1835,8 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
                 evm,
                 fuel,
                 svm,
+                enums: enums_json,
+                entities: entities_json,
             };
 
             serde_json::to_string_pretty(&config)? + "\n"

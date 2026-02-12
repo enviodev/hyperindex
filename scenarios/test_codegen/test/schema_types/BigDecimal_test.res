@@ -24,17 +24,18 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       bigDecimal: BigDecimal.fromFloat(654.321),
     }
 
+    let entityConfig = Mock.entityConfig("EntityWithBigDecimal")
     await sql->PgStorage.setOrThrow(
       ~items=[
-        testEntity1->Indexer.Entities.EntityWithBigDecimal.castToInternal,
-        testEntity2->Indexer.Entities.EntityWithBigDecimal.castToInternal,
+        testEntity1->(Utils.magic: Indexer.Entities.EntityWithBigDecimal.t => Internal.entity),
+        testEntity2->(Utils.magic: Indexer.Entities.EntityWithBigDecimal.t => Internal.entity),
       ],
-      ~table=Indexer.Entities.EntityWithBigDecimal.table,
-      ~itemSchema=Indexer.Entities.EntityWithBigDecimal.schema,
+      ~table=entityConfig.table,
+      ~itemSchema=entityConfig.schema,
       ~pgSchema=Generated.storagePgSchema,
     )
 
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Mock.config.allEntities)
     let loadManager = LoadManager.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem

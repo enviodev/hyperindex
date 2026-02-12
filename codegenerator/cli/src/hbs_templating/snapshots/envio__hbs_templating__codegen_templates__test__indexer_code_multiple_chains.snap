@@ -4,79 +4,17 @@ expression: project_template.indexer_code
 ---
 module Enums = {
 
-  let allEnums: array<Table.enumConfig<Table.enum>> = ([
-  ])
 }
 
 module Entities = {
-  open Table
   type id = string
 
-  type internalEntity = Internal.entity
-  module type Entity = {
-    type t
-    let index: int
-    let name: string
-    let schema: S.t<t>
-    let rowsSchema: S.t<array<t>>
-    let table: Table.table
-  }
-  external entityModToInternal: module(Entity with type t = 'a) => Internal.entityConfig = "%identity"
-  external entityModsToInternal: array<module(Entity)> => array<Internal.entityConfig> = "%identity"
-  external entitiesToInternal: array<'a> => array<Internal.entity> = "%identity"
-
-  @get
-  external getEntityId: internalEntity => string = "id"
-
-  // Use InMemoryTable.Entity.getEntityIdUnsafe instead of duplicating the logic
-  let getEntityIdUnsafe = InMemoryTable.Entity.getEntityIdUnsafe
-
-  //shorthand for punning
-  let isPrimaryKey = true
-  let isNullable = true
-  let isArray = true
-  let isIndex = true
-
   module EmptyEntity = {
-    let name = "EmptyEntity"
-    let index = 0
     @genType
     type t = {id: id, emptyField: id}
 
-    let schema = S.object((s): t => {id: s.field("id", S.string), emptyField: s.field("emptyField", S.string)})
-
-    let rowsSchema = S.array(schema)
-
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
-
-    let table = mkTable(
-      name,
-      ~fields=[
-        mkField(
-        "id",
-        String,
-        ~fieldSchema=S.string,
-        ~isPrimaryKey,
-        ),
-        mkField(
-        "emptyField",
-        String,
-        ~fieldSchema=S.string,
-        ),
-      ],
-    )
-
-    external castToInternal: t => Internal.entity = "%identity"
   }
-
-  let userEntities = [
-    module(EmptyEntity),
-  ]->entityModsToInternal
-
-  let allEntities =
-    userEntities->Js.Array2.concat(
-      [module(InternalTable.DynamicContractRegistry)]->entityModsToInternal,
-    )
 }
 
 @genType

@@ -40,5 +40,76 @@ expression: project_template.internal_config_json_code
       }
     },
     "addressFormat": "checksum"
-  }
+  },
+  "enums": {
+    "Status": [
+      "ACTIVE",
+      "INACTIVE"
+    ]
+  },
+  "entities": [
+    {
+      "name": "EmptyEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "emptyField",
+          "type": "string"
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "enum": "Status"
+        },
+        {
+          "name": "optionalStatus",
+          "type": "enum",
+          "isNullable": true,
+          "enum": "Status"
+        },
+        {
+          "name": "related",
+          "type": "entity",
+          "linkedEntity": "RelatedEntity",
+          "entity": "RelatedEntity"
+        },
+        {
+          "name": "optionalRelated",
+          "type": "entity",
+          "isNullable": true,
+          "linkedEntity": "RelatedEntity",
+          "entity": "RelatedEntity"
+        },
+        {
+          "name": "tags",
+          "type": "string",
+          "isArray": true
+        },
+        {
+          "name": "optionalTags",
+          "type": "string",
+          "isNullable": true,
+          "isArray": true
+        }
+      ]
+    },
+    {
+      "name": "RelatedEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    }
+  ]
 }

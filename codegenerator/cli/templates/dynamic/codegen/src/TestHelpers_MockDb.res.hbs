@@ -288,7 +288,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
           ~inMemoryStore,
           ~makeMockDb=makeWithInMemoryStore,
           ~getStore=db => db->InMemoryStore.getInMemTable(
-            ~entityConfig=module(Indexer.Entities.{{entity.name.capitalized}})->Indexer.Entities.entityModToInternal,
+            ~entityConfig=config.userEntitiesByName->Js.Dict.unsafeGet("{{entity.name.capitalized}}"),
           )->(
             Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
               Indexer.Entities.{{entity.name.capitalized}}.t,
@@ -402,7 +402,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let mockDbClone = mockDb->cloneMockDb
 
     //Construct a new instance of an in memory store to run for the given event
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
     let loadManager = LoadManager.make()
     let persistence = {
       ...ctx.persistence,
@@ -650,4 +650,4 @@ new state so you can compare states before and after.
 @genType
 let //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
 
-createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=Indexer.Entities.allEntities))
+createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=config.allEntities))

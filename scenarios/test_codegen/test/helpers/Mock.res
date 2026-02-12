@@ -2,30 +2,35 @@ open Belt
 
 type chainId = Indexer.chainId
 
+let config = Generated.configWithoutRegistrations
+
+let entityConfig = (name: string): Internal.entityConfig =>
+  config.userEntitiesByName
+  ->Js.Dict.get(name)
+  ->Option.getExn
+
 module InMemoryStore = {
-  let setEntity = (inMemoryStore, ~entityMod, entity) => {
+  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable =
-      inMemoryStore->InMemoryStore.getInMemTable(
-        ~entityConfig=entityMod->Indexer.Entities.entityModToInternal,
-      )
-    let entity = entity->(Utils.magic: 'a => Indexer.Entities.internalEntity)
+      inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+    let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
       Set({
-        entityId: entity->Indexer.Entities.getEntityId,
+        entityId: (entity: Internal.entity).id,
         checkpointId: 0.,
         entity,
       }),
-      ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
+      ~shouldSaveHistory=config->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
     )
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Entities.allEntities)
-    entities->Js.Array2.forEach(((entityMod, items)) => {
+    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
+    entities->Js.Array2.forEach(((entityConfig, items)) => {
       items->Js.Array2.forEach(entity => {
-        inMemoryStore->setEntity(~entityMod, entity)
+        inMemoryStore->setEntity(~entityConfig, entity)
       })
     })
     inMemoryStore
@@ -235,10 +240,8 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
-    query: 'entity. module(Indexer.Entities.Entity with type t = 'entity) => promise<array<'entity>>,
-    queryHistory: 'entity. module(Indexer.Entities.Entity with type t = 'entity) => promise<
-      array<Change.t<'entity>>,
-    >,
+    query: 'entity. Internal.entityConfig => promise<array<'entity>>,
+    queryHistory: 'entity. Internal.entityConfig => promise<array<Change.t<'entity>>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
@@ -372,8 +375,7 @@ module Indexer = {
           resolve()
         })
       },
-      query: (type entity, entityMod) => {
-        let entityConfig = entityMod->Indexer.Entities.entityModToInternal
+      query: (type entity, entityConfig: Internal.entityConfig) => {
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
@@ -383,8 +385,7 @@ module Indexer = {
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
-      queryHistory: (type entity, entityMod) => {
-        let entityConfig = entityMod->Indexer.Entities.entityModToInternal
+      queryHistory: (type entity, entityConfig: Internal.entityConfig) => {
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(

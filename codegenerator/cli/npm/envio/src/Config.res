@@ -94,6 +94,9 @@ type t = {
   lowercaseAddresses: bool,
   addContractNameToContractNameMapping: dict<string>,
   userEntitiesByName: dict<Internal.entityConfig>,
+  userEntities: array<Internal.entityConfig>,
+  allEntities: array<Internal.entityConfig>,
+  allEnums: array<Table.enumConfig<Table.enum>>,
 }
 
 // Types for parsing source config from internal.config.json
@@ -165,6 +168,175 @@ let publicConfigEvmSchema = S.schema(s =>
 
 let multichainSchema = S.enum([Ordered, Unordered])
 
+let compositeIndexFieldSchema = S.schema(s =>
+  {
+    "fieldName": s.matches(S.string),
+    "direction": s.matches(S.string),
+  }
+)
+
+let derivedFieldSchema = S.schema(s =>
+  {
+    "fieldName": s.matches(S.string),
+    "derivedFromEntity": s.matches(S.string),
+    "derivedFromField": s.matches(S.string),
+  }
+)
+
+let propertySchema = S.schema(s =>
+  {
+    "name": s.matches(S.string),
+    "type": s.matches(S.string),
+    "isPrimaryKey": s.matches(S.option(S.bool)),
+    "isNullable": s.matches(S.option(S.bool)),
+    "isArray": s.matches(S.option(S.bool)),
+    "isIndex": s.matches(S.option(S.bool)),
+    "linkedEntity": s.matches(S.option(S.string)),
+    "enum": s.matches(S.option(S.string)),
+    "entity": s.matches(S.option(S.string)),
+    "precision": s.matches(S.option(S.int)),
+    "scale": s.matches(S.option(S.int)),
+  }
+)
+
+let entityJsonSchema = S.schema(s =>
+  {
+    "name": s.matches(S.string),
+    "properties": s.matches(S.array(propertySchema)),
+    "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
+    "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
+  }
+)
+
+let getFieldTypeAndSchema = (
+  prop,
+  ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
+) => {
+  let typ = prop["type"]
+  let isPrimaryKey = prop["isPrimaryKey"]->Option.getWithDefault(false)
+  let isNullable = prop["isNullable"]->Option.getWithDefault(false)
+  let isArray = prop["isArray"]->Option.getWithDefault(false)
+  let isIndex = prop["isIndex"]->Option.getWithDefault(false)
+
+  let (fieldType, baseSchema) = switch typ {
+  | "string" => (Table.String, S.string->S.toUnknown)
+  | "boolean" => (Table.Boolean, S.bool->S.toUnknown)
+  | "int" => (Table.Int32, S.int->S.toUnknown)
+  | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), BigInt.schema->S.toUnknown)
+  | "bigdecimal" => (
+      Table.BigDecimal({
+        config: ?prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getWithDefault(0))),
+      }),
+      BigDecimal.schema->S.toUnknown,
+    )
+  | "float" => (Table.Number, S.float->S.toUnknown)
+  | "serial" => (Table.Serial, S.int->S.toUnknown)
+  | "json" => (Table.Json, S.json(~validate=false)->S.toUnknown)
+  | "date" => (Table.Date, Js.Date.schema->S.toUnknown)
+  | "enum" => {
+      let enumName = prop["enum"]->Option.getExn
+      let enumConfig =
+        enumConfigsByName
+        ->Js.Dict.get(enumName)
+        ->Option.getExn
+      (Table.Enum({config: enumConfig}), enumConfig.schema->S.toUnknown)
+    }
+  | "entity" => {
+      let entityName = prop["entity"]->Option.getExn
+      (Table.Entity({name: entityName}), S.string->S.toUnknown)
+    }
+  | other => Js.Exn.raiseError("Unknown field type in entity config: " ++ other)
+  }
+
+  let fieldSchema = if isArray {
+    S.array(baseSchema)->S.toUnknown
+  } else if isNullable {
+    S.null(baseSchema)->S.toUnknown
+  } else {
+    baseSchema
+  }
+
+  (fieldType, fieldSchema, isPrimaryKey, isNullable, isArray, isIndex)
+}
+
+let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfig<Table.enum>> => {
+  enumsJson
+  ->Js.Dict.entries
+  ->Array.map(((name, variants)) =>
+    Table.makeEnumConfig(~name, ~variants)->Table.fromGenericEnumConfig
+  )
+}
+
+let parseEntitiesFromJson = (
+  entitiesJson: array<'entityJson>,
+  ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
+): array<Internal.entityConfig> => {
+  entitiesJson->Array.mapWithIndex((index, entityJson) => {
+    let entityName = entityJson["name"]
+
+    let fields: array<Table.fieldOrDerived> =
+      entityJson["properties"]->Array.map(prop => {
+        let (fieldType, fieldSchema, isPrimaryKey, isNullable, isArray, isIndex) =
+          getFieldTypeAndSchema(prop, ~enumConfigsByName)
+        Table.mkField(
+          prop["name"],
+          fieldType,
+          ~fieldSchema,
+          ~isPrimaryKey,
+          ~isNullable,
+          ~isArray,
+          ~isIndex,
+          ~linkedEntity=?prop["linkedEntity"],
+        )
+      })
+
+    let derivedFields: array<Table.fieldOrDerived> =
+      entityJson["derivedFields"]
+      ->Option.getWithDefault([])
+      ->Array.map(df =>
+        Table.mkDerivedFromField(
+          df["fieldName"],
+          ~derivedFromEntity=df["derivedFromEntity"],
+          ~derivedFromField=df["derivedFromField"],
+        )
+      )
+
+    let compositeIndices =
+      entityJson["compositeIndices"]
+      ->Option.getWithDefault([])
+      ->Array.map(ci =>
+        ci->Array.map(f => {
+          Table.fieldName: f["fieldName"],
+          direction: f["direction"] == "Asc" ? Table.Asc : Table.Desc,
+        })
+      )
+
+    let table = Table.mkTable(
+      entityName,
+      ~fields=Array.concat(fields, derivedFields),
+      ~compositeIndices,
+    )
+
+    // Build schema dynamically from properties
+    let schema = S.schema(s => {
+      let dict = Js.Dict.empty()
+      entityJson["properties"]->Array.forEach(prop => {
+        let (_, fieldSchema, _, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
+        dict->Js.Dict.set(prop["name"], s.matches(fieldSchema))
+      })
+      dict
+    })
+
+    {
+      Internal.name: entityName,
+      index,
+      schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
+      rowsSchema: S.array(schema)->(Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>),
+      table,
+    }->Internal.fromGenericEntityConfig
+  })
+}
+
 let publicConfigSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
@@ -178,6 +350,8 @@ let publicConfigSchema = S.schema(s =>
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
+    "enums": s.matches(S.option(S.dict(S.array(S.string)))),
+    "entities": s.matches(S.option(S.array(entityJsonSchema))),
   }
 )
 
@@ -185,7 +359,6 @@ let fromPublic = (
   publicConfigJson: Js.Json.t,
   ~codegenChains: array<codegenChain>=[],
   ~maxAddrInPartition=5000,
-  ~userEntities: array<Internal.entityConfig>=[],
 ) => {
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
@@ -415,6 +588,25 @@ let fromPublic = (
   | Ecosystem.Svm => Svm.ecosystem
   }
 
+  // Parse enums and entities from JSON config
+  let allEnums =
+    publicConfig["enums"]
+    ->Option.getWithDefault(Js.Dict.empty())
+    ->parseEnumsFromJson
+
+  let enumConfigsByName =
+    allEnums
+    ->Js.Array2.map(enumConfig => (enumConfig.name, enumConfig))
+    ->Js.Dict.fromArray
+
+  let userEntities =
+    publicConfig["entities"]
+    ->Option.getWithDefault([])
+    ->parseEntitiesFromJson(~enumConfigsByName)
+
+  let allEntities =
+    userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
+
   let userEntitiesByName =
     userEntities
     ->Js.Array2.map(entityConfig => {
@@ -453,6 +645,9 @@ let fromPublic = (
     lowercaseAddresses,
     addContractNameToContractNameMapping,
     userEntitiesByName,
+    userEntities,
+    allEntities,
+    allEnums,
   }
 }
 
