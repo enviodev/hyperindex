@@ -23,23 +23,8 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
   })
 }
 
-let call = async (
-  ~client: Rest.client,
-  ~method: string,
-  ~params: unknown,
-  ~resultSchema: S.t<'a>,
-): 'a => {
-  let response = await client.fetcher({
-    body: Some(
-      {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-      ->Js.Json.stringifyAny
-      ->Belt.Option.getExn
-      ->Obj.magic,
-    ),
-    headers: Some({"content-type": "application/json"}->Obj.magic),
-    method: "POST",
-    path: client.baseUrl,
-  })
+let jsonRpcFetcher: Rest.ApiFetcher.t = async args => {
+  let response = await Rest.ApiFetcher.default(args)
   let data: {..} = response.data->Obj.magic
   switch data["error"]->Js.Nullable.toOption {
   | Some(error) =>
@@ -49,9 +34,11 @@ let call = async (
         message: error["message"],
       }),
     )
-  | None => data["result"]->S.parseOrThrow(resultSchema)
+  | None => response
   }
 }
+
+let makeClient = url => Rest.client(url, ~fetcher=jsonRpcFetcher)
 
 type hex = string
 let makeHexSchema = fromStr =>
@@ -162,7 +149,7 @@ module GetBlockByNumber = {
     gasUsed: bigint,
     hash: hex,
     logsBloom: hex,
-    miner: Address.t,
+    mutable miner: Address.t,
     mixHash: option<hex>,
     nonce: option<bigint>,
     number: int,
@@ -265,25 +252,12 @@ module GetTransactionByHash = {
 }
 
 let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {
-  let serializedParams: unknown =
-    param->S.reverseConvertOrThrow(GetLogs.fullParamsSchema)->Obj.magic
-  await call(
-    ~client,
-    ~method="eth_getLogs",
-    ~params=serializedParams,
-    ~resultSchema=GetLogs.resultSchema,
-  )
+  await GetLogs.route->Rest.fetch(param, ~client)
 }
 
 let getBlock = async (~client: Rest.client, ~blockNumber: int) => {
-  let serializedParams: unknown =
-    {"blockNumber": blockNumber, "includeTransactions": false}
-    ->S.reverseConvertOrThrow(GetBlockByNumber.paramsSchema)
-    ->Obj.magic
-  await call(
+  await GetBlockByNumber.route->Rest.fetch(
+    {"blockNumber": blockNumber, "includeTransactions": false},
     ~client,
-    ~method="eth_getBlockByNumber",
-    ~params=serializedParams,
-    ~resultSchema=GetBlockByNumber.resultSchema,
   )
 }

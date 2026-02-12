@@ -35,15 +35,12 @@ let getKnownBlockWithBackoff = async (
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
       currentBackoff := currentBackoff.contents * 2
     | block =>
-      result :=
-        Some({
-          ...block,
-          miner: if lowercaseAddresses {
-            block.miner->Address.Evm.fromAddressLowercaseOrThrow
-          } else {
-            block.miner->Address.Evm.fromAddressOrThrow
-          },
-        })
+      block.miner = if lowercaseAddresses {
+        block.miner->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        block.miner->Address.Evm.fromAddressOrThrow
+      }
+      result := Some(block)
     }
   }
   result.contents->Option.getExn
@@ -509,7 +506,7 @@ let make = (
 
   let mutSuggestedBlockIntervals = Js.Dict.empty()
 
-  let client = Rest.client(url)
+  let client = Rpc.makeClient(url)
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
