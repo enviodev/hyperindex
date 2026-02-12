@@ -1255,7 +1255,6 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    entities_enums_code: String,
     generated_indexer_bindings: String,
     internal_config_json_code: String,
     envio_dts_code: String,
@@ -1422,7 +1421,7 @@ type chainId = [{}]"#,
         let on_block_code = format!(
             r#"@genType /** Register a Block Handler. It'll be called for every block by default. */
 let onBlock: (
-Envio.onBlockOptions<chainId>,
+Envio.onBlockOptions<Indexer.chainId>,
 {},
 ) => unit = (
 EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
@@ -1536,19 +1535,16 @@ switch chainId {{
             get_chain_by_id_cases
         );
 
-        // Generate Enums and Entities modules - placed in Types.res to avoid cycle
+        // Generate Enums and Entities modules
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
         let entities_module_code = indent(&generate_entities_code(&entities));
-        let entities_enums_code = format!(
-            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}",
-            enums_module_code, entities_module_code
-        );
 
         // Combine all parts into indexer_code
-        // Enums and Entities are re-exported from Types to avoid Indexer <-> Types cycle
+        // Contract modules and onBlock are in Generated.res to avoid Indexer <-> Types cycle
         let indexer_code = format!(
-            "module Enums = Types.Enums\n\nmodule Entities = Types.Entities\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
-            contract_modules,
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            enums_module_code,
+            entities_module_code,
             chain_id_type,
             indexer_contract_type,
             indexer_chain_type,
@@ -1556,9 +1552,6 @@ switch chainId {{
             indexer_type,
             get_chain_by_id,
         );
-
-        // Add onBlock at the end
-        let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
 
         // Generate testIndexer types and createTestIndexer
         let test_indexer_chains_fields = chain_configs
@@ -1583,10 +1576,14 @@ type testIndexerProcessConfig = {{
 
         let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
 
-        // Bindings that reference Generated - placed in Generated.res to avoid cycle
-        let generated_indexer_bindings = r#"let indexer: Indexer.indexer = Main.getGlobalIndexer(~config=configWithoutRegistrations)
-
-let createTestIndexer: unit => TestIndexer.t<Indexer.testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=codegenPersistence.allEntities)"#.to_string();
+        // Bindings that reference Types or Generated - placed in Generated.res to avoid cycle
+        let generated_indexer_bindings = format!(
+            "{}\n\n{}\n\n{}\n\n{}",
+            contract_modules,
+            on_block_code,
+            r#"let indexer: Indexer.indexer = Main.getGlobalIndexer(~config=configWithoutRegistrations)"#,
+            r#"let createTestIndexer: unit => TestIndexer.t<Indexer.testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=codegenPersistence.allEntities)"#,
+        );
 
         // Helper function to convert kebab-case to camelCase
         let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
@@ -2043,7 +2040,6 @@ let createTestIndexer: unit => TestIndexer.t<Indexer.testIndexerProcessConfig> =
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            entities_enums_code,
             generated_indexer_bindings,
             internal_config_json_code,
             envio_dts_code,

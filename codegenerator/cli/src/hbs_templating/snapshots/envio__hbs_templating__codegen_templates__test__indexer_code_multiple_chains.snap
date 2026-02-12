@@ -2,20 +2,19 @@
 source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
-module Enums = Types.Enums
+module Enums = {
 
-module Entities = Types.Entities
-
-@genType
-module Contract1 = {
-  module NewGravatar = Types.MakeRegister(Types.Contract1.NewGravatar)
-  module UpdatedGravatar = Types.MakeRegister(Types.Contract1.UpdatedGravatar)
 }
 
-@genType
-module Contract2 = {
-  module NewGravatar = Types.MakeRegister(Types.Contract2.NewGravatar)
-  module UpdatedGravatar = Types.MakeRegister(Types.Contract2.UpdatedGravatar)
+module Entities = {
+  type id = string
+
+  module EmptyEntity = {
+    @genType
+    type t = {id: id, emptyField: id}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
+  }
 }
 
 @genType.import(("./Types.ts", "EvmChainId"))
@@ -73,14 +72,6 @@ switch chainId {
   | #2 => indexer.chains.chain2
 }
 }
-
-@genType /** Register a Block Handler. It'll be called for every block by default. */
-let onBlock: (
-Envio.onBlockOptions<chainId>,
-Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>,
-) => unit = (
-EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
-)->Utils.magic
 
 type testIndexerProcessConfigChains = {
   @as("1") chain1?: TestIndexer.chainConfig,
