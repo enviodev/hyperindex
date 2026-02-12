@@ -2897,11 +2897,11 @@ describe("FetchState.sortForUnorderedBatch", () => {
   }
 
   it("Sorts by progress percentage. Chains further behind have higher priority", () => {
-    // Low progress: bufferBlock=3, knownHeight=10 → 30% progress
+    // Low progress: first item at block 1, knownHeight=10 → 10% progress
     let fsLow = makeFsWith(~latestBlock=3, ~queueBlocks=[1])
-    // Mid progress: bufferBlock=7, knownHeight=10 → 70% progress
+    // Mid progress: first item at block 5, knownHeight=10 → 50% progress
     let fsMid = makeFsWith(~latestBlock=7, ~queueBlocks=[5])
-    // High progress: bufferBlock=10, knownHeight=10 → 100% progress
+    // High progress: first item at block 8, knownHeight=10 → 80% progress
     let fsHigh = makeFsWith(~latestBlock=10, ~queueBlocks=[8])
 
     let prepared = FetchState.sortForUnorderedBatch(

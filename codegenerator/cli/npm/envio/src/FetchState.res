@@ -1785,7 +1785,10 @@ let sortForUnorderedBatch = {
     if totalRange <= 0 {
       0.
     } else {
-      let progress = fetchState->bufferBlockNumber - fetchState.startBlock
+      let progress = switch fetchState.buffer->Belt.Array.get(0) {
+      | Some(item) => item->Internal.getItemBlockNumber - fetchState.startBlock
+      | None => fetchState->bufferBlockNumber - fetchState.startBlock
+      }
       progress->Int.toFloat /. totalRange->Int.toFloat
     }
   }
