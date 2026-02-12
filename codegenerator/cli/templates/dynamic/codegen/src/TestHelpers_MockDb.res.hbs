@@ -42,7 +42,7 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     }
   `)
 
-let config = Generated.configWithoutRegistrations
+let config = Indexer.Generated.configWithoutRegistrations
 
 /**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
@@ -58,7 +58,7 @@ type rec t = {
   entities: entities,
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, InternalTable.RawEvents.t>,
   dynamicContractRegistry: entityStoreOperations<InternalTable.DynamicContractRegistry.t>,
-  processEvents: array<Types.eventLog<unknown>> => promise<t>,
+  processEvents: array<Indexer.eventLog<unknown>> => promise<t>,
 }
 
 // Each user defined entity will be in this record with all the store or "mockdb" operators
@@ -90,8 +90,8 @@ let makeStoreOperatorEntity = (
   ~inMemoryStore: InMemoryStore.t,
   ~makeMockDb,
   ~getStore: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
-  ~getKey: 'entity => Types.id,
-): storeOperations<Types.id, 'entity> => {
+  ~getKey: 'entity => Indexer.id,
+): storeOperations<Indexer.id, 'entity> => {
   let {getUnsafe, values, set} = module(InMemoryTable.Entity)
 
   let get = id => {
@@ -311,7 +311,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
   mockDb
 }
 and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
-  events: array<Types.eventLog<unknown>>,
+  events: array<Indexer.eventLog<unknown>>,
 ) => {
   if events->Utils.Array.isEmpty {
     mockDb
@@ -324,11 +324,11 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       await HandlerLoader.registerAllHandlers(~config)
     }
 
-    let config = Generated.makeGeneratedConfig()
+    let config = Indexer.Generated.makeGeneratedConfig()
     let ctx: Ctx.t = {
       registrations,
       config,
-      persistence: Generated.codegenPersistence,
+      persistence: Indexer.Generated.codegenPersistence,
     }
 
     let processingChainId = ref(chainId)
@@ -402,7 +402,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let mockDbClone = mockDb->cloneMockDb
 
     //Construct a new instance of an in memory store to run for the given event
-    let inMemoryStore = InMemoryStore.make(~entities=Generated.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
     let loadManager = LoadManager.make()
     let persistence = {
       ...ctx.persistence,
@@ -636,7 +636,7 @@ writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     },
   )
 
-  Generated.codegenPersistence.allEntities->Array.forEach(entityConfig => {
+  Indexer.Generated.codegenPersistence.allEntities->Array.forEach(entityConfig => {
     mockDb->executeRowsEntity(~inMemoryStore, ~entityConfig)
   })
 }
@@ -650,4 +650,4 @@ new state so you can compare states before and after.
 @genType
 let //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
 
-createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=Generated.allEntities))
+createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=Indexer.Generated.allEntities))

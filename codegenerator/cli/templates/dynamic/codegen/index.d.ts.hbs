@@ -1,10 +1,10 @@
-export { onBlock } from "./src/Indexer.gen";
 export {
+  onBlock,
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},
 {{/each}}
-} from "./src/Generated.gen";
-export type * from "./src/Types.gen";
+} from "./src/Indexer.gen";
+export type * from "./src/Indexer.gen";
 export type * from "./src/Types.ts";
 
 import type { Indexer, TestIndexer } from "./src/Types.ts";

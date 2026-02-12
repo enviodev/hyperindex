@@ -605,7 +605,7 @@ dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard),
 
         let types_code =
           r#"@genType
-type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
@@ -1253,7 +1253,8 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    generated_indexer_bindings: String,
+    generated_contract_modules: String,
+    generated_top_level_bindings: String,
     internal_config_json_code: String,
     envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
@@ -1375,7 +1376,7 @@ impl ProjectTemplate {
                     .iter()
                     .map(|event| {
                         format!(
-                            "  module {} = Types.MakeRegister(Types.{}.{})",
+                            "  module {} = MakeRegister({}.{})",
                             event.name, contract.name.capitalized, event.name
                         )
                     })
@@ -1537,8 +1538,7 @@ switch chainId {{
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
         let entities_module_code = indent(&generate_entities_code(&entities));
 
-        // Generate handlerContext types - defined in Indexer so onBlock/contract modules
-        // can reference them without creating a cycle with Types
+        // Generate handlerContext types
         let handler_context_entity_fields = entities
             .iter()
             .map(|entity| {
@@ -1576,7 +1576,6 @@ type handlerContext = {{
         );
 
         // Combine all parts into indexer_code
-        // Contract modules reference Types.MakeRegister so they stay in Generated.res
         let indexer_code = format!(
             "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             enums_module_code,
@@ -1614,13 +1613,12 @@ type testIndexerProcessConfig = {{
 
         let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
 
-        // Contract modules reference Types, and values reference Generated config -
-        // both placed in Generated.res to avoid Indexer <-> Types cycle
-        let generated_indexer_bindings = format!(
-            "{}\n\n{}\n\n{}",
-            contract_modules,
-            r#"let indexer: Indexer.indexer = Main.getGlobalIndexer(~config=configWithoutRegistrations)"#,
-            r#"let createTestIndexer: unit => TestIndexer.t<Indexer.testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=codegenPersistence.allEntities)"#,
+        let generated_contract_modules = contract_modules;
+
+        let generated_top_level_bindings = format!(
+            "{}\n\n{}",
+            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
+            r#"let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)"#,
         );
 
         // Helper function to convert kebab-case to camelCase
@@ -2077,7 +2075,8 @@ type testIndexerProcessConfig = {{
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            generated_indexer_bindings,
+            generated_contract_modules,
+            generated_top_level_bindings,
             internal_config_json_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated
@@ -2392,7 +2391,7 @@ block: block,
 }}
 
 @genType
-type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
@@ -2480,7 +2479,7 @@ block: block,
 }
 
 @genType
-type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
@@ -2574,7 +2573,7 @@ block: block,
 }
 
 @genType
-type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
