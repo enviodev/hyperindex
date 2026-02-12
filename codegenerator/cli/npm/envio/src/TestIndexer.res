@@ -488,7 +488,7 @@ let makeCreateTestIndexer = (
     // Build the result object with process + entity operations + chain info
     let result: Js.Dict.t<unknown> = Js.Dict.empty()
     result->Js.Dict.set("chainIds", chainIds->(Utils.magic: array<int> => unknown))
-    result->Js.Dict.set("chains", chains->Utils.magic)
+    result->Js.Dict.set("chains", chains->(Utils.magic: {..} => unknown))
     entityOpsDict
     ->Js.Dict.entries
     ->Array.forEach(((name, ops)) => {
