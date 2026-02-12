@@ -666,7 +666,7 @@ describe("E2E rollback tests", () => {
       (since they might add new events with lower log index)`,
     )
     Assert.deepEqual(
-      await indexerMock.query(InternalTable.DynamicContractRegistry.config),
+      await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig),
       [],
       ~message="Shouldn't store dynamic contracts at this point",
     )
@@ -697,7 +697,7 @@ describe("E2E rollback tests", () => {
       ~message=`Should process the block 102 after all dynamic contracts finished fetching it`,
     )
     Assert.deepEqual(
-      await indexerMock.query(InternalTable.DynamicContractRegistry.config),
+      await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig),
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
@@ -718,7 +718,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=103)
     await indexerMock.getBatchWritePromise()
     Assert.deepEqual(
-      (await indexerMock.query(InternalTable.DynamicContractRegistry.config))->Array.length,
+      (await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig))->Array.length,
       2,
       ~message="Should add the processed dynamic contracts to the db",
     )
@@ -765,7 +765,7 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     Assert.deepEqual(
-      (await indexerMock.query(InternalTable.DynamicContractRegistry.config))->Array.length,
+      (await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig))->Array.length,
       2,
       ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
 This might be wrong after we start exposing a block hash for progress block.`,
@@ -785,7 +785,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(InternalTable.DynamicContractRegistry.config),
+      await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig),
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,

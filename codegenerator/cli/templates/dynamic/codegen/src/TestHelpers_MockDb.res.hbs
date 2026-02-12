@@ -268,7 +268,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db =>
       db
       ->InMemoryStore.getInMemTable(
-        ~entityConfig=InternalTable.DynamicContractRegistry.config,
+        ~entityConfig=InternalTable.DynamicContractRegistry.entityConfig,
       )
       ->(
         Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<

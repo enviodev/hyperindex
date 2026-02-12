@@ -39,7 +39,7 @@ let makeGeneratedConfig = () => {
 
 // Config without handler registration - used by tests, migrations, etc.
 let configWithoutRegistrations = makeGeneratedConfig()
-let allEntities = configWithoutRegistrations.userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
+let allEntities = configWithoutRegistrations.allEntities
 
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema
