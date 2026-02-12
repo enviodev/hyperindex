@@ -642,20 +642,30 @@ impl EventTemplate {
         let mut code = String::from("(decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {");
 
         for (index, param) in indexed_params.into_iter().enumerate() {
+            let array_access = if index == 0 {
+                "Utils.Array.firstUnsafe".to_string()
+            } else {
+                format!("Js.Array2.unsafe_get({})", index)
+            };
             code.push_str(&format!(
-                "{}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                "{}: decodedEvent.indexed->{}->HyperSyncClient.Decoder.\
                toUnderlying->Utils.magic, ",
                 RecordField::to_valid_rescript_name(&param.name),
-                index
+                array_access
             ));
         }
 
         for (index, param) in body_params.into_iter().enumerate() {
+            let array_access = if index == 0 {
+                "Utils.Array.firstUnsafe".to_string()
+            } else {
+                format!("Js.Array2.unsafe_get({})", index)
+            };
             code.push_str(&format!(
-                "{}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                "{}: decodedEvent.body->{}->HyperSyncClient.Decoder.\
                toUnderlying->Utils.magic, ",
                 RecordField::to_valid_rescript_name(&param.name),
-                index
+                array_access
             ));
         }
 
@@ -1546,9 +1556,7 @@ let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~
                         system_config::DataSource::Fuel {
                             hypersync_endpoint_url,
                         } => (Some(hypersync_endpoint_url.clone()), vec![], None),
-                        system_config::DataSource::Svm { rpc } => {
-                            (None, vec![], Some(rpc.clone()))
-                        }
+                        system_config::DataSource::Svm { rpc } => (None, vec![], Some(rpc.clone())),
                     };
 
                     (
@@ -1906,9 +1914,9 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![contract1],
-      };
+            network_config: network1,
+            codegen_contracts: vec![contract1],
+        };
 
         let expected_chain_configs = vec![chain_config_1];
 
@@ -1949,9 +1957,9 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![contract1],
-      };
+            network_config: network1,
+            codegen_contracts: vec![contract1],
+        };
 
         let expected_chain_configs = vec![chain_config_1];
 
@@ -2014,13 +2022,13 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![contract1_on_chain1, contract2_on_chain1],
-      };
+            network_config: network1,
+            codegen_contracts: vec![contract1_on_chain1, contract2_on_chain1],
+        };
         let chain_config_2 = super::NetworkConfigTemplate {
-          network_config: network2,
-          codegen_contracts: vec![contract1_on_chain2, contract2_on_chain2],
-      };
+            network_config: network2,
+            codegen_contracts: vec![contract1_on_chain2, contract2_on_chain2],
+        };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
 
@@ -2048,9 +2056,9 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![contract1],
-      };
+            network_config: network1,
+            codegen_contracts: vec![contract1],
+        };
 
         let expected_chain_configs = vec![chain_config_1];
 
@@ -2072,14 +2080,14 @@ mod test {
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
-          network_config: network1,
-          codegen_contracts: vec![],
-      };
+            network_config: network1,
+            codegen_contracts: vec![],
+        };
 
         let chain_config_2 = super::NetworkConfigTemplate {
-          network_config: network2,
-          codegen_contracts: vec![],
-      };
+            network_config: network2,
+            codegen_contracts: vec![],
+        };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
         let project_template = get_project_template_helper("config4.yaml");
@@ -2182,7 +2190,7 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFilte
   dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard) || filterByAddresses,
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
-  convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
+  convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
   id,
 name,
 contractName,

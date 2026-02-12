@@ -1153,9 +1153,9 @@ impl UserDefinedFieldType {
                 TypeIdent::Option(Box::new(gql_scalar.to_rescript_type(schema)?))
             }
             //If we match this case it missed the non null path entirely and should be optional
-            Self::ListType(field_type) => TypeIdent::Option(Box::new(
-                TypeIdent::Array(Box::new(field_type.to_rescript_type(schema)?)),
-            )),
+            Self::ListType(field_type) => TypeIdent::Option(Box::new(TypeIdent::Array(Box::new(
+                field_type.to_rescript_type(schema)?,
+            )))),
         };
         Ok(composed_type_name)
     }
@@ -1210,9 +1210,9 @@ impl UserDefinedFieldType {
             DynSolType::Uint(_) | DynSolType::Int(_) => Ok(Self::NonNullType(Box::new(
                 Self::Single(GqlScalar::BigInt(None)),
             ))),
-            DynSolType::Bool => {
-                Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Boolean))))
-            }
+            DynSolType::Bool => Ok(Self::NonNullType(Box::new(Self::Single(
+                GqlScalar::Boolean,
+            )))),
             DynSolType::Address
             | DynSolType::Bytes
             | DynSolType::String
@@ -1554,8 +1554,8 @@ impl GqlScalar {
 #[cfg(test)]
 mod tests {
     use super::{
-        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, IndexField, IndexFieldDirection,
-        Schema, UserDefinedFieldType,
+        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, IndexFieldDirection, Schema,
+        UserDefinedFieldType,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};

@@ -5,7 +5,7 @@
   "scripts": {
     "build": "rescript",
     "watch": "rescript -w",
-    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit 'test/**/*.{ts,res.mjs}' --ignore 'test/fixtures/**'",
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --reporter-option maxDiffSize=65536 --exit 'test/**/*.{ts,res.mjs}' --ignore 'test/fixtures/**'",
     "test": "rescript && tsc --noEmit && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",

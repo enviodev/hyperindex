@@ -202,29 +202,29 @@ let make = (
   let sources = switch chainConfig.sourceConfig {
   | Config.EvmSourceConfig({hypersync, rpcs}) =>
     // Build Internal.evmContractConfig from contracts for EvmChain.makeSources
-    let evmContracts: array<Internal.evmContractConfig> =
-      chainConfig.contracts->Array.map((contract): Internal.evmContractConfig => {
-        name: contract.name,
-        abi: contract.abi,
-        events: contract.events->(
-          Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
-        ),
-      })
+    let evmContracts: array<Internal.evmContractConfig> = chainConfig.contracts->Array.map((
+      contract
+    ): Internal.evmContractConfig => {
+      name: contract.name,
+      abi: contract.abi,
+      events: contract.events->(
+        Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
+      ),
+    })
     // Collect all event signatures from contracts
     let allEventSignatures =
       chainConfig.contracts->Array.flatMap(contract => contract.eventSignatures)
     // Convert rpcs to EvmChain.rpc format
-    let evmRpcs: array<EvmChain.rpc> =
-      rpcs->Array.map((rpc): EvmChain.rpc => {
-        let syncConfig = rpc.syncConfig
-        let ws = rpc.ws
-        {
-          url: rpc.url,
-          sourceFor: rpc.sourceFor,
-          ?syncConfig,
-          ?ws,
-        }
-      })
+    let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
+      let syncConfig = rpc.syncConfig
+      let ws = rpc.ws
+      {
+        url: rpc.url,
+        sourceFor: rpc.sourceFor,
+        ?syncConfig,
+        ?ws,
+      }
+    })
     EvmChain.makeSources(
       ~chain,
       ~contracts=evmContracts,
@@ -266,7 +266,13 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~targetBufferSize) => {
+let makeFromConfig = (
+  chainConfig: Config.chain,
+  ~config,
+  ~registrations,
+  ~targetBufferSize,
+  ~knownHeight,
+) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
   make(
@@ -286,6 +292,7 @@ let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~targe
     ~logger,
     ~dynamicContracts=[],
     ~isInReorgThreshold=false,
+    ~knownHeight,
   )
 }
 
@@ -448,12 +455,12 @@ let handleQueryResult = (
   | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
   }
 
-  fs
-  ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-  ->Result.map(fs => {
+  {
     ...chainFetcher,
-    fetchState: fs->FetchState.updateKnownHeight(~knownHeight),
-  })
+    fetchState: fs
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.updateKnownHeight(~knownHeight),
+  }
 }
 
 /**
