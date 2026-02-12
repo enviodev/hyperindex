@@ -90,64 +90,88 @@ describe("E2E: Indexer with GraphQL", () => {
     }).catch(() => {});
   });
 
-  it("should have chain_metadata populated", async () => {
-    const result = await graphql.poll({
-      query: `
-        {
-          chain_metadata {
-            chain_id
-            start_block
-            block_height
-            is_hyper_sync
-            num_batches_fetched
-          }
-        }
-      `,
-      validate: (data: { chain_metadata: Array<{ chain_id: number }> }) => {
-        return data.chain_metadata && data.chain_metadata.length > 0;
-      },
-      maxAttempts: config.retry.maxPollAttempts,
-      timeoutMs: config.timeouts.test,
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.data?.chain_metadata).toBeDefined();
-    expect(result.data?.chain_metadata.length).toBeGreaterThan(0);
-  });
-
-  it("should have _meta with indexed block info", async () => {
+  it("should have _meta populated", async () => {
     interface MetaResponse {
-      _meta: {
-        block: {
-          number: number;
-          timestamp: number;
-        };
-      };
+      _meta: Array<{
+        chainId: number;
+        progressBlock: number;
+        eventsProcessed: number;
+        isReady: boolean;
+        startBlock: number;
+      }>;
     }
 
     const result = await graphql.poll<MetaResponse>({
       query: `
         {
           _meta {
-            block {
-              number
-              timestamp
-            }
+            chainId
+            progressBlock
+            eventsProcessed
+            bufferBlock
+            firstEventBlock
+            sourceBlock
+            readyAt
+            isReady
+            startBlock
+            endBlock
           }
         }
       `,
       validate: (data) => {
-        return (
-          data._meta?.block?.number !== undefined &&
-          data._meta?.block?.number >= 0
-        );
+        return data._meta && data._meta.length > 0;
       },
       maxAttempts: config.retry.maxPollAttempts,
       timeoutMs: config.timeouts.test,
     });
 
     expect(result.success).toBe(true);
-    expect(result.data?._meta?.block?.number).toBeGreaterThanOrEqual(0);
+    expect(result.data?._meta).toBeDefined();
+    expect(result.data?._meta.length).toBeGreaterThan(0);
+    expect(result.data?._meta[0].chainId).toBe(1);
+  });
+
+  it("should have Transfer entities indexed", async () => {
+    interface TransferResponse {
+      Transfer: Array<{
+        id: string;
+        from: string;
+        to: string;
+        value: string;
+        blockNumber: number;
+        transactionHash: string;
+      }>;
+    }
+
+    const result = await graphql.poll<TransferResponse>({
+      query: `
+        {
+          Transfer(limit: 10) {
+            id
+            from
+            to
+            value
+            blockNumber
+            transactionHash
+          }
+        }
+      `,
+      validate: (data) => {
+        return data.Transfer && data.Transfer.length > 0;
+      },
+      maxAttempts: config.retry.maxPollAttempts,
+      timeoutMs: config.timeouts.test,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.Transfer).toBeDefined();
+    expect(result.data?.Transfer.length).toBeGreaterThan(0);
+    // Verify Transfer entity structure
+    const transfer = result.data?.Transfer[0];
+    expect(transfer?.id).toBeDefined();
+    expect(transfer?.from).toBeDefined();
+    expect(transfer?.to).toBeDefined();
+    expect(transfer?.blockNumber).toBeGreaterThanOrEqual(0);
   });
 
   it("should be able to query GraphQL schema", async () => {
