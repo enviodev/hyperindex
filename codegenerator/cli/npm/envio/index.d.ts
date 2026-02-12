@@ -613,7 +613,9 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
     /** Changes happened during the processing. */
     readonly changes: readonly EntityChange<Config>[];
   }>;
-} & {
+} & (EcosystemCount<Config> extends 1
+  ? SingleEcosystemChains<Config>
+  : MultiEcosystemChains<Config>) & {
   /** Entity operations for direct manipulation outside of handlers. */
   readonly [K in keyof ConfigEntities<Config>]: EntityOps<
     ConfigEntities<Config>[K]
