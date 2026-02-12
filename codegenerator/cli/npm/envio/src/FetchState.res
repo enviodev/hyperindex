@@ -34,7 +34,7 @@ type partition = {
   latestFetchedBlock: blockNumberAndTimestamp,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
-  endBlock: option<int>,
+  mergeBlock: option<int>,
   // When set, partition indexes a single dynamic contract type.
   // The addressesByContractName must contain only addresses for this contract.
   dynamicContract: option<string>,
@@ -87,14 +87,14 @@ module OptimizedPartitions = {
     }
   }
 
-  // Merges two partitions at a given mergeBlock.
+  // Merges two partitions at a given potentialMergeBlock.
   // Returns array<partition> where the last element is the continuing partition
-  // and all preceding elements are completed (have endBlock set).
+  // and all preceding elements are completed (have mergeBlock set).
   // Handles address overflow splitting inline.
   let mergePartitionsAtBlock = (
     ~p1: partition,
     ~p2: partition,
-    ~mergeBlock: int,
+    ~potentialMergeBlock: int,
     ~contractName: string,
     ~maxAddrInPartition: int,
     ~nextPartitionIndexRef: ref<int>,
@@ -104,31 +104,31 @@ module OptimizedPartitions = {
       ->Js.Dict.unsafeGet(contractName)
       ->Js.Array2.concat(p2.addressesByContractName->Js.Dict.unsafeGet(contractName))
 
-    let p1Below = p1.latestFetchedBlock.blockNumber < mergeBlock
-    let p2Below = p2.latestFetchedBlock.blockNumber < mergeBlock
+    let p1Below = p1.latestFetchedBlock.blockNumber < potentialMergeBlock
+    let p2Below = p2.latestFetchedBlock.blockNumber < potentialMergeBlock
 
-    // Build the continuing partition (at mergeBlock with combined addresses),
-    // collecting completed partitions (with endBlock) along the way
+    // Build the continuing partition (at potentialMergeBlock with combined addresses),
+    // collecting completed partitions (with mergeBlock) along the way
     let completed = []
     let continuingBase = switch (p1Below, p2Below) {
     | (false, false) => p1
     | (false, true) =>
-      completed->Js.Array2.push({...p2, endBlock: Some(mergeBlock)})->ignore
+      completed->Js.Array2.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
       p1
     | (true, false) =>
-      completed->Js.Array2.push({...p1, endBlock: Some(mergeBlock)})->ignore
+      completed->Js.Array2.push({...p1, mergeBlock: Some(potentialMergeBlock)})->ignore
       p2
     | (true, true) =>
-      completed->Js.Array2.push({...p1, endBlock: Some(mergeBlock)})->ignore
-      completed->Js.Array2.push({...p2, endBlock: Some(mergeBlock)})->ignore
+      completed->Js.Array2.push({...p1, mergeBlock: Some(potentialMergeBlock)})->ignore
+      completed->Js.Array2.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
       let newId = nextPartitionIndexRef.contents->Js.Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
       {
         id: newId,
         dynamicContract: Some(contractName),
         selection: p1.selection,
-        latestFetchedBlock: {blockNumber: mergeBlock, blockTimestamp: 0},
-        endBlock: None,
+        latestFetchedBlock: {blockNumber: potentialMergeBlock, blockTimestamp: 0},
+        mergeBlock: None,
         addressesByContractName: Js.Dict.empty(), // set below
         mutPendingQueries: [],
         prevQueryRange: 0,
@@ -198,35 +198,35 @@ module OptimizedPartitions = {
       | {dynamicContract: None}
       | // Wildcard doesn't need merging
       {selection: {dependsOnAddresses: false}}
-      | // For now don't merge partitions with endBlock,
+      | // For now don't merge partitions with mergeBlock,
       // assuming they are already merged,
-      // TODO: Although there might be cases with too far away endBlock,
+      // TODO: Although there might be cases with too far away mergeBlock,
       // which is worth merging
-      {endBlock: Some(_)} =>
+      {mergeBlock: Some(_)} =>
         newPartitions->Js.Array2.push(p)->ignore
       | {dynamicContract: Some(contractName)} =>
         let pAddressesCount =
           p.addressesByContractName->Js.Dict.unsafeGet(contractName)->Js.Array2.length
         // Compute merge block: last pending query's toBlock, or lfb if idle
-        let mergeBlock = switch p.mutPendingQueries->Utils.Array.last {
+        let potentialMergeBlock = switch p.mutPendingQueries->Utils.Array.last {
         | Some({isChunk: true, toBlock: Some(toBlock)}) => Some(toBlock)
         | Some(_) => None // unbounded query -- can't merge
         | None => Some(p.latestFetchedBlock.blockNumber)
         }
-        switch mergeBlock {
+        switch potentialMergeBlock {
         | None => newPartitions->Js.Array2.push(p)->ignore
-        | Some(mergeBlock) =>
+        | Some(potentialMergeBlock) =>
           if pAddressesCount >= maxAddrInPartition {
             newPartitions->Js.Array2.push(p)->ignore
           } else {
             let partitionsByMergeBlock =
               mergingPartitions->Utils.Dict.getOrInsertEmptyDict(contractName)
-            switch partitionsByMergeBlock->Utils.Dict.dangerouslyGetByIntNonOption(mergeBlock) {
+            switch partitionsByMergeBlock->Utils.Dict.dangerouslyGetByIntNonOption(potentialMergeBlock) {
             | Some(existingPartition) =>
               let result = mergePartitionsAtBlock(
                 ~p1=existingPartition,
                 ~p2=p,
-                ~mergeBlock,
+                ~potentialMergeBlock,
                 ~contractName,
                 ~maxAddrInPartition,
                 ~nextPartitionIndexRef,
@@ -235,10 +235,10 @@ module OptimizedPartitions = {
                 newPartitions->Js.Array2.push(result->Js.Array2.unsafe_get(i))->ignore
               }
               partitionsByMergeBlock->Utils.Dict.setByInt(
-                mergeBlock,
+                potentialMergeBlock,
                 result->Utils.Array.lastUnsafe,
               )
-            | None => partitionsByMergeBlock->Utils.Dict.setByInt(mergeBlock, p)
+            | None => partitionsByMergeBlock->Utils.Dict.setByInt(potentialMergeBlock, p)
             }
           }
         }
@@ -281,7 +281,7 @@ module OptimizedPartitions = {
           let result = mergePartitionsAtBlock(
             ~p1=nextP,
             ~p2=currentP,
-            ~mergeBlock=nextPMergeBlock,
+            ~potentialMergeBlock=nextPMergeBlock,
             ~contractName,
             ~maxAddrInPartition,
             ~nextPartitionIndexRef,
@@ -399,13 +399,13 @@ module OptimizedPartitions = {
       ~initialLatestFetchedBlock=p.latestFetchedBlock,
     )
 
-    // Check if partition reached its endBlock and should be removed
-    let partitionReachedEndBlock = switch p.endBlock {
-    | Some(endBlock) => updatedLatestFetchedBlock.blockNumber >= endBlock
+    // Check if partition reached its mergeBlock and should be removed
+    let partitionReachedMergeBlock = switch p.mergeBlock {
+    | Some(mergeBlock) => updatedLatestFetchedBlock.blockNumber >= mergeBlock
     | None => false
     }
 
-    if partitionReachedEndBlock {
+    if partitionReachedMergeBlock {
       mutEntities->Utils.Dict.deleteInPlace(p.id)
     } else {
       let updatedMainPartition = {
@@ -784,7 +784,7 @@ OptimizedPartitions.t => {
             selection: normalSelection,
             dynamicContract: isDynamic ? Some(contractName) : None,
             addressesByContractName,
-            endBlock: None,
+            mergeBlock: None,
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
@@ -850,11 +850,11 @@ OptimizedPartitions.t => {
         let isTooFar = currentPBlock + OptimizedPartitions.tooFarBlockRange < nextPBlock
 
         if isTooFar || hasFilterByAddresses {
-          // Too far or address-filtered: endBlock on current, merge addresses into next
+          // Too far or address-filtered: mergeBlock on current, merge addresses into next
           mergedNonDynamic
           ->Js.Array2.push({
             ...currentP,
-            endBlock: currentPBlock < nextPBlock ? Some(nextPBlock) : None,
+            mergeBlock: currentPBlock < nextPBlock ? Some(nextPBlock) : None,
           })
           ->ignore
           currentPRef := {
@@ -1018,7 +1018,7 @@ let registerDynamicContracts = (
             | None => () // Skip partitions which don't have our contract
             | Some(addresses) =>
               // Also filter out partitions which are 100% not mergable
-              if p.selection.dependsOnAddresses && p.endBlock === None {
+              if p.selection.dependsOnAddresses && p.mergeBlock === None {
                 let allPartitionContractNames = p.addressesByContractName->Js.Dict.keys
                 switch allPartitionContractNames {
                 | [_] =>
@@ -1063,7 +1063,7 @@ let registerDynamicContracts = (
                         selection: fetchState.normalSelection,
                         dynamicContract: Some(contractName),
                         addressesByContractName,
-                        endBlock: None,
+                        mergeBlock: None,
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
@@ -1292,7 +1292,7 @@ let getNextQuery = (
       }
 
       // Compute queryEndBlock for this partition
-      let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.endBlock)
+      let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.mergeBlock)
       let queryEndBlock = switch blockLag {
       | 0 => queryEndBlock
       | _ =>
@@ -1476,7 +1476,7 @@ let make = (
         eventConfigs: notDependingOnAddresses,
       },
       addressesByContractName: Js.Dict.empty(),
-      endBlock: None,
+      mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
       prevQueryRange: 0,
@@ -1587,7 +1587,7 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
 Rolls back fetch state to the given valid block.
 Always recreates optimized partitions to avoid duplicate addresses:
 - Wildcard: only rollback latestFetchedBlock
-- Non-wildcard with lfb <= target: keep, adjust pending queries and endBlock
+- Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock
 - Non-wildcard with lfb > target: delete, track addresses for recreation
 */
 let rollback = (fetchState: t, ~targetBlockNumber) => {
@@ -1650,11 +1650,11 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
         })
       })
 
-    // Non-wildcard with lfb <= target: keep, adjust pending queries and endBlock
+    // Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock
     | {addressesByContractName} => {
-        // Cap endBlock at target
-        let endBlock = switch p.endBlock {
-        | Some(endBlock) if endBlock > targetBlockNumber => Some(targetBlockNumber)
+        // Cap mergeBlock at target
+        let mergeBlock = switch p.mergeBlock {
+        | Some(mergeBlock) if mergeBlock > targetBlockNumber => Some(targetBlockNumber)
         | other => other
         }
 
@@ -1677,7 +1677,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
             id,
             addressesByContractName: rollbackedAddressesByContractName,
             mutPendingQueries: rollbackPendingQueries(p.mutPendingQueries, ~targetBlockNumber),
-            endBlock,
+            mergeBlock,
           })
           ->ignore
         }

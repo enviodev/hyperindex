@@ -140,7 +140,7 @@ describe("SourceManager fetchNext", () => {
       },
       selection: normalSelection,
       addressesByContractName,
-      endBlock: None,
+      mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
       prevQueryRange: 0,
@@ -345,7 +345,7 @@ describe("SourceManager fetchNext", () => {
   )
 
   Async.it(
-    "Skips full partitions at the chain last block and the ones at the endBlock",
+    "Skips full partitions at the chain last block and the ones at the mergeBlock",
     async () => {
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
@@ -723,7 +723,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise = sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState(
         [
-          // Finished fetching to endBlock
+          // Finished fetching to mergeBlock
           mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=11),
           // Waiting for new block
           mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=10),

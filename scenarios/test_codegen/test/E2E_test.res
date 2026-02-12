@@ -1435,7 +1435,7 @@ describe("E2E tests", () => {
     // Step 5: Resolve DC1 at lfb=7000 → merge triggers
     // DC1 mergeBlock=7000 (idle), DC2 mergeBlock=26980 (last chunk toBlock)
     // 7000 + 20000 = 27000 > 26980 → within range → MERGE
-    // Both lfb < mergeBlock → (true,true): both get endBlock=26980, new partition "4"
+    // Both lfb < mergeBlock → (true,true): both get mergeBlock=26980, new partition "4"
     // Buffer empty → no batch write
     let dc1Call =
       sourceMock.getItemsOrThrowCalls
@@ -1447,8 +1447,8 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     // After merge:
-    // DC1("2"): endBlock=26980, query 7001→26980
-    // DC2("3"): endBlock=26980, chunks still pending
+    // DC1("2"): mergeBlock=26980, query 7001→26980
+    // DC2("3"): mergeBlock=26980, chunks still pending
     // P0("0"): still pending 25101→99800
     // New("4"): lfb=26980, both addresses, query 26981→99800
     Assert.deepEqual(
@@ -1462,7 +1462,7 @@ describe("E2E tests", () => {
         ("3", 26441, Some(26980)),
         ("4", 26981, Some(99800)),
       ],
-      ~message="After merge: DC1 queries to endBlock, DC2 chunks pending, new partition '4'",
+      ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     )
 
     // Verify merged partition "4" has both DC addresses
