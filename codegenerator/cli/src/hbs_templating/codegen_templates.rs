@@ -36,6 +36,19 @@ use serde::Serialize;
 
 // ============== Internal Config JSON Types ==============
 
+fn indent(code: &str) -> String {
+    code.lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", line)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn is_true(v: &bool) -> bool {
     *v
 }
@@ -1642,13 +1655,13 @@ switch chainId {{
         );
 
         // Generate Enums and Entities modules
-        let enums_module_code = generate_enums_code(&gql_enums);
-        let entities_module_code = generate_entities_code(&entities);
+        let enums_module_code = indent(&generate_enums_code(&gql_enums));
+        let entities_module_code = indent(&generate_entities_code(&entities));
 
         // Combine all parts into indexer_code
         // Enums must come before Entities since Entities references Enums
         let indexer_code = format!(
-            "module Enums = {{\n{}}}\n\nmodule Entities = {{\n{}}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             enums_module_code,
             entities_module_code,
             contract_modules,
