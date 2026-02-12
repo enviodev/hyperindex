@@ -605,7 +605,7 @@ dependsOnAddresses: !(handlerRegister->EventRegister.isWildcard),
 
         let types_code =
           r#"@genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
@@ -1392,12 +1392,12 @@ impl ProjectTemplate {
         // Generate onBlock function with ecosystem-specific types
         let on_block_handler_type = match cfg.get_ecosystem() {
             Ecosystem::Evm => {
-                "Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>"
+                "Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>"
             }
             Ecosystem::Fuel => {
-                "Envio.onBlockArgs<Envio.fuelBlockEvent, Types.handlerContext> => promise<unit>"
+                "Envio.onBlockArgs<Envio.fuelBlockEvent, handlerContext> => promise<unit>"
             }
-            Ecosystem::Svm => "Envio.svmOnBlockArgs<Types.handlerContext> => promise<unit>",
+            Ecosystem::Svm => "Envio.svmOnBlockArgs<handlerContext> => promise<unit>",
         };
 
         // Generate chainId type with ecosystem-specific import from Types.ts
@@ -1419,7 +1419,7 @@ type chainId = [{}]"#,
         let on_block_code = format!(
             r#"@genType /** Register a Block Handler. It'll be called for every block by default. */
 let onBlock: (
-Envio.onBlockOptions<Indexer.chainId>,
+Envio.onBlockOptions<chainId>,
 {},
 ) => unit = (
 EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
@@ -1537,18 +1537,58 @@ switch chainId {{
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
         let entities_module_code = indent(&generate_entities_code(&entities));
 
+        // Generate handlerContext types - defined in Indexer so onBlock/contract modules
+        // can reference them without creating a cycle with Types
+        let handler_context_entity_fields = entities
+            .iter()
+            .map(|entity| {
+                format!(
+                    "  @as(\"{}\") {}: entityHandlerContext<Entities.{}.t, Entities.{}.getWhereFilter>,",
+                    entity.name.original,
+                    entity.name.uncapitalized,
+                    entity.name.capitalized,
+                    entity.name.capitalized,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let handler_context_code = format!(
+            r#"@genType
+type entityHandlerContext<'entity, 'getWhereFilter> = {{
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}}
+
+@genType.import(("./Types.ts", "HandlerContext"))
+type handlerContext = {{
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
+  chain: Internal.chainInfo,
+{}
+}}"#,
+            handler_context_entity_fields
+        );
+
         // Combine all parts into indexer_code
-        // Contract modules and onBlock are in Generated.res to avoid Indexer <-> Types cycle
+        // Contract modules reference Types.MakeRegister so they stay in Generated.res
         let indexer_code = format!(
-            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             enums_module_code,
             entities_module_code,
+            handler_context_code,
             chain_id_type,
             indexer_contract_type,
             indexer_chain_type,
             indexer_chains_type,
             indexer_type,
             get_chain_by_id,
+            on_block_code,
         );
 
         // Generate testIndexer types and createTestIndexer
@@ -1574,11 +1614,11 @@ type testIndexerProcessConfig = {{
 
         let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
 
-        // Bindings that reference Types or Generated - placed in Generated.res to avoid cycle
+        // Contract modules reference Types, and values reference Generated config -
+        // both placed in Generated.res to avoid Indexer <-> Types cycle
         let generated_indexer_bindings = format!(
-            "{}\n\n{}\n\n{}\n\n{}",
+            "{}\n\n{}\n\n{}",
             contract_modules,
-            on_block_code,
             r#"let indexer: Indexer.indexer = Main.getGlobalIndexer(~config=configWithoutRegistrations)"#,
             r#"let createTestIndexer: unit => TestIndexer.t<Indexer.testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=codegenPersistence.allEntities)"#,
         );
@@ -2352,7 +2392,7 @@ block: block,
 }}
 
 @genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
@@ -2440,7 +2480,7 @@ block: block,
 }
 
 @genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType
@@ -2534,7 +2574,7 @@ block: block,
 }
 
 @genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+type handlerArgs = Internal.genericHandlerArgs<event, Indexer.handlerContext>
 @genType
 type handler = Internal.genericHandler<handlerArgs>
 @genType

@@ -383,7 +383,7 @@ let parseEntitiesFromJson = (
     let schema = S.schema(s => {
       let dict = Js.Dict.empty()
       entityJson["properties"]->Array.forEach(prop => {
-        let (_, fieldSchema, _, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
+        let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
         dict->Js.Dict.set(prop["name"], s.matches(fieldSchema))
       })
       dict

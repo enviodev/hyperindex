@@ -1,8 +1,8 @@
+export { onBlock } from "./src/Indexer.gen";
 export {
 {{#each codegen_contracts as |contract|}}
   {{contract.name.capitalized}},
 {{/each}}
-  onBlock
 } from "./src/Generated.gen";
 export type * from "./src/Types.gen";
 export type * from "./src/Types.ts";

@@ -29,6 +29,26 @@ module Entities = {
   }
 }
 
+@genType
+type entityHandlerContext<'entity, 'getWhereFilter> = {
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}
+
+@genType.import(("./Types.ts", "HandlerContext"))
+type handlerContext = {
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
+  chain: Internal.chainInfo,
+  @as("EmptyEntity") emptyEntity: entityHandlerContext<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
+  @as("RelatedEntity") relatedEntity: entityHandlerContext<Entities.RelatedEntity.t, Entities.RelatedEntity.getWhereFilter>,
+}
+
 @genType.import(("./Types.ts", "EvmChainId"))
 type chainId = [#1]
 
@@ -81,6 +101,14 @@ switch chainId {
   | #1 => indexer.chains.chain1
 }
 }
+
+@genType /** Register a Block Handler. It'll be called for every block by default. */
+let onBlock: (
+Envio.onBlockOptions<chainId>,
+Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
+) => unit = (
+EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
+)->Utils.magic
 
 type testIndexerProcessConfigChains = {
   @as("1") chain1?: TestIndexer.chainConfig,

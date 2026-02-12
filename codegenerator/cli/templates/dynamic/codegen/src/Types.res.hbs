@@ -13,27 +13,6 @@ type contractRegistrations = {
   {{/each}}
 }
 
-@genType
-type entityHandlerContext<'entity, 'getWhereFilter> = {
-  get: id => promise<option<'entity>>,
-  getOrThrow: (id, ~message: string=?) => promise<'entity>,
-  getWhere: 'getWhereFilter => promise<array<'entity>>,
-  getOrCreate: ('entity) => promise<'entity>,
-  set: 'entity => unit,
-  deleteUnsafe: id => unit,
-}
-
-@genType.import(("./Types.ts", "HandlerContext"))
-type handlerContext = {
-  log: Envio.logger,
-  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
-  isPreload: bool,
-  chain: Internal.chainInfo,
-  {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Indexer.Entities.{{entity.name.capitalized}}.t, Indexer.Entities.{{entity.name.capitalized}}.getWhereFilter>,
-  {{/each}}
-}
-
 //*************
 //**CONTRACTS**
 //*************
@@ -154,13 +133,13 @@ module MakeRegister = (Event: Event) => {
     )
 
   let handler: fnWithEventConfig<
-    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext>>,
+    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, Indexer.handlerContext>>,
     HandlerTypes.eventConfig<Event.eventFilters>,
   > = (handler, ~eventConfig=?) => {
     Event.handlerRegister->EventRegister.setHandler(
       handler->(
         Utils.magic: Internal.genericHandler<
-          Internal.genericHandlerArgs<Event.event, handlerContext>,
+          Internal.genericHandlerArgs<Event.event, Indexer.handlerContext>,
         > => Internal.genericHandler<
           Internal.genericHandlerArgs<Event.event, Internal.handlerContext>,
         >
