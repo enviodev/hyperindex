@@ -296,7 +296,7 @@ let getFieldTypeAndSchema = (
   | "float" => (Table.Number, S.float->S.toUnknown)
   | "serial" => (Table.Serial, S.int->S.toUnknown)
   | "json" => (Table.Json, S.json(~validate=false)->S.toUnknown)
-  | "date" => (Table.Date, Js.Date.schema->S.toUnknown)
+  | "date" => (Table.Date, Utils.Schema.dbDate->S.toUnknown)
   | "enum" => {
       let enumName = prop["enum"]->Option.getExn
       let enumConfig =
