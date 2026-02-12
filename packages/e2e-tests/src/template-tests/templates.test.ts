@@ -110,4 +110,17 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
     }
     expect(result.exitCode).toBe(0);
   });
+
+  it("runs tests successfully", async () => {
+    const result = await runCommand("pnpm", ["test"], {
+      cwd: projectDir,
+      timeout: config.timeouts.test,
+    });
+
+    if (result.exitCode !== 0) {
+      console.error(`[${name}] test failed:`, result.stderr);
+      console.error(`[${name}] stdout:`, result.stdout);
+    }
+    expect(result.exitCode).toBe(0);
+  });
 });

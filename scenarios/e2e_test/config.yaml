@@ -3,7 +3,6 @@ name: e2e_test
 description: E2E test indexer
 contracts:
   - name: ERC20
-    handler: src/EventHandlers.ts
     events:
       - event: "Transfer(address indexed from, address indexed to, uint256 value)"
 chains:
