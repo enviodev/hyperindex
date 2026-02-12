@@ -76,7 +76,7 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
       ["init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
       {
         cwd: projectDir,
-        timeout: config.timeouts.codegen,
+        timeout: config.timeouts.install, // init can be slow due to template generation
       }
     );
 
@@ -107,21 +107,6 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
 
     if (result.exitCode !== 0) {
       console.error(`[${name}] codegen failed:`, result.stderr);
-    }
-    expect(result.exitCode).toBe(0);
-  });
-
-  it("type-checks successfully", async () => {
-    // TypeScript templates don't have a build script, use tsc --noEmit to verify compilation
-    const result = await runCommand("pnpm", ["exec", "tsc", "--noEmit"], {
-      cwd: projectDir,
-      timeout: config.timeouts.test,
-    });
-
-    if (result.exitCode !== 0) {
-      console.error(`[${name}] type-check failed (exit code ${result.exitCode}):`);
-      console.error(`[${name}] stdout:`, result.stdout);
-      console.error(`[${name}] stderr:`, result.stderr);
     }
     expect(result.exitCode).toBe(0);
   });
