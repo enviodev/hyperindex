@@ -2,20 +2,9 @@
 source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
-module Enums = {
+module Enums = Types.Enums
 
-}
-
-module Entities = {
-  type id = string
-
-  module EmptyEntity = {
-    @genType
-    type t = {id: id, emptyField: id}
-
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
-  }
-}
+module Entities = Types.Entities
 
 @genType
 module Contract1 = {
@@ -77,8 +66,6 @@ type indexer = {
   chains: indexerChains,
 }
 
-let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)
-
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
 switch chainId {
@@ -103,5 +90,3 @@ type testIndexerProcessConfigChains = {
 type testIndexerProcessConfig = {
   chains: testIndexerProcessConfigChains,
 }
-
-let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)

@@ -1255,6 +1255,8 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
+    entities_enums_code: String,
+    generated_indexer_bindings: String,
     internal_config_json_code: String,
     envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
@@ -1512,9 +1514,6 @@ type indexer = {
   chains: indexerChains,
 }"#;
 
-        // Generate indexer value using Main.getGlobalIndexer
-        let indexer_value = r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#;
-
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
             .iter()
@@ -1537,23 +1536,24 @@ switch chainId {{
             get_chain_by_id_cases
         );
 
-        // Generate Enums and Entities modules
+        // Generate Enums and Entities modules - placed in Types.res to avoid cycle
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
         let entities_module_code = indent(&generate_entities_code(&entities));
+        let entities_enums_code = format!(
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}",
+            enums_module_code, entities_module_code
+        );
 
         // Combine all parts into indexer_code
-        // Enums must come before Entities since Entities references Enums
+        // Enums and Entities are re-exported from Types to avoid Indexer <-> Types cycle
         let indexer_code = format!(
-            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
-            enums_module_code,
-            entities_module_code,
+            "module Enums = Types.Enums\n\nmodule Entities = Types.Entities\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             contract_modules,
             chain_id_type,
             indexer_contract_type,
             indexer_chain_type,
             indexer_chains_type,
             indexer_type,
-            indexer_value,
             get_chain_by_id,
         );
 
@@ -1570,20 +1570,23 @@ switch chainId {{
             .collect::<Vec<_>>()
             .join("\n");
 
-        let test_indexer_code = format!(
+        let test_indexer_types = format!(
             r#"type testIndexerProcessConfigChains = {{
 {}
 }}
 
 type testIndexerProcessConfig = {{
   chains: testIndexerProcessConfigChains,
-}}
-
-let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)"#,
+}}"#,
             test_indexer_chains_fields
         );
 
-        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_code);
+        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
+
+        // Bindings that reference Generated - placed in Generated.res to avoid cycle
+        let generated_indexer_bindings = r#"let indexer: Indexer.indexer = Main.getGlobalIndexer(~config=configWithoutRegistrations)
+
+let createTestIndexer: unit => TestIndexer.t<Indexer.testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=codegenPersistence.allEntities)"#.to_string();
 
         // Helper function to convert kebab-case to camelCase
         let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
@@ -2040,6 +2043,8 @@ let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestInd
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
+            entities_enums_code,
+            generated_indexer_bindings,
             internal_config_json_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated
