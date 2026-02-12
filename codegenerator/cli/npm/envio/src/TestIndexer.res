@@ -434,9 +434,35 @@ let makeCreateTestIndexer = (
         contractObj
         ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
         ->Utils.Object.definePropertyWithValue("abi", {enumerable: true, value: contract.abi})
-        ->Utils.Object.definePropertyWithValue(
+        ->Utils.Object.defineProperty(
           "addresses",
-          {enumerable: true, value: contract.addresses},
+          {
+            enumerable: true,
+            get: () => {
+              if state.processInProgress {
+                Js.Exn.raiseError(
+                  `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++
+                  "Wait for process() to complete before reading contract addresses.",
+                )
+              }
+              // Start with static config addresses
+              let addresses = contract.addresses->Array.copy
+              // Add accumulated dynamic contract addresses
+              switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+              | Some(dcDict) =>
+                dcDict
+                ->Js.Dict.values
+                ->Array.forEach(entity => {
+                  let dc = entity->castFromDcRegistry
+                  if dc.contractName === contract.name && dc.chainId === chainConfig.id {
+                    addresses->Array.push(dc.contractAddress)->ignore
+                  }
+                })
+              | None => ()
+              }
+              addresses
+            },
+          },
         )
         ->ignore
 

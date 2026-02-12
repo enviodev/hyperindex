@@ -662,6 +662,22 @@ describe("Use Envio test framework to test event handlers", () => {
     ]);
   });
 
+  it("TestIndexer contract addresses throws during processing", () => {
+    const testIndexer = createTestIndexer();
+
+    // Start processing (don't await)
+    testIndexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    assert.throws(() => testIndexer.chains[1].Noop.addresses, {
+      message:
+        "Cannot access Noop.addresses while indexer.process() is running. Wait for process() to complete before reading contract addresses.",
+    });
+  });
+
   it("createTestIndexer works", async () => {
     const indexer = createTestIndexer();
 
