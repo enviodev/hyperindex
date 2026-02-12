@@ -35,7 +35,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       ~pgSchema=Generated.storagePgSchema,
     )
 
-    let inMemoryStore = InMemoryStore.make(~entities=Mock.config.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Generated.allEntities)
     let loadManager = LoadManager.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem

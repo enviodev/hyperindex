@@ -39,6 +39,7 @@ let makeGeneratedConfig = () => {
 
 // Config without handler registration - used by tests, migrations, etc.
 let configWithoutRegistrations = makeGeneratedConfig()
+let allEntities = configWithoutRegistrations.userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
 
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema
@@ -70,7 +71,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
               ~pgSchema=storagePgSchema,
               ~userEntities=configWithoutRegistrations.userEntities,
               ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(configWithoutRegistrations.allEntities->Belt.Array.map(e => e.table)),
+              ~schema=Schema.make(allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(

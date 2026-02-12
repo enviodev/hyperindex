@@ -95,7 +95,6 @@ type t = {
   addContractNameToContractNameMapping: dict<string>,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
-  allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
 }
 
@@ -604,9 +603,6 @@ let fromPublic = (
     ->Option.getWithDefault([])
     ->parseEntitiesFromJson(~enumConfigsByName)
 
-  let allEntities =
-    userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.config])
-
   let userEntitiesByName =
     userEntities
     ->Js.Array2.map(entityConfig => {
@@ -646,7 +642,6 @@ let fromPublic = (
     addContractNameToContractNameMapping,
     userEntitiesByName,
     userEntities,
-    allEntities,
     allEnums,
   }
 }

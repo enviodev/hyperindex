@@ -27,7 +27,7 @@ module InMemoryStore = {
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Generated.allEntities)
     entities->Js.Array2.forEach(((entityConfig, items)) => {
       items->Js.Array2.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)

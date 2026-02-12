@@ -402,7 +402,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let mockDbClone = mockDb->cloneMockDb
 
     //Construct a new instance of an in memory store to run for the given event
-    let inMemoryStore = InMemoryStore.make(~entities=config.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Generated.allEntities)
     let loadManager = LoadManager.make()
     let persistence = {
       ...ctx.persistence,
@@ -650,4 +650,4 @@ new state so you can compare states before and after.
 @genType
 let //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
 
-createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=config.allEntities))
+createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=Generated.allEntities))

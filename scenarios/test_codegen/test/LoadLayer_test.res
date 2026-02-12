@@ -3,7 +3,7 @@ open RescriptMocha
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async () => {
     let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
-    let inMemoryStore = InMemoryStore.make(~entities=Mock.config.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Generated.allEntities)
     let loadManager = LoadManager.make()
 
     let getUser = entityId =>
@@ -36,7 +36,7 @@ describe("LoadLayer", () => {
     async () => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = InMemoryStore.make(~entities=Mock.config.allEntities)
+      let inMemoryStore = InMemoryStore.make(~entities=Generated.allEntities)
 
       let getUser = entityId =>
         LoadLayer.loadById(
@@ -75,7 +75,7 @@ describe("LoadLayer", () => {
     async () => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
-      let inMemoryStore = InMemoryStore.make(~entities=Mock.config.allEntities)
+      let inMemoryStore = InMemoryStore.make(~entities=Generated.allEntities)
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
