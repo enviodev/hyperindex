@@ -4,8 +4,7 @@ description: >-
   Migrate a TheGraph subgraph to Envio HyperIndex using TDD. Covers schema
   conversion (remove @entity, Bytes->String, @derivedFrom), handler translation
   (save->set, store.get->context.get, templates->contractRegister), and
-  verification against subgraph data. Invoke with /subgraph-migration.
-disable-model-invocation: true
+  verification against subgraph data.
 ---
 
 # TheGraph to Envio HyperIndex Migration
@@ -39,6 +38,12 @@ The subgraph GraphQL is the **source of truth** — use it to verify HyperIndex 
 | Direct array access | `@derivedFrom` (virtual, query via `getWhere`) |
 | `.bind()` for RPC | Effect API with `context.effect()` |
 
+## Runtime Testing Mandate
+
+**After EVERY code change, run `pnpm test`.** TypeScript compilation only catches syntax errors — runtime errors (database issues, missing entities, logic errors) only appear when running the indexer.
+
+See [references/step-by-step.md](references/step-by-step.md) for the full runtime testing checklist.
+
 ## TDD Migration Flow
 
 1. **Query subgraph** for expected entity state at specific blocks
@@ -69,221 +74,72 @@ Run tests: `pnpm test`
 
 ---
 
-## Step 1: Setup & Query Subgraph
+## Migration Steps Overview
 
-Query subgraph for sample data at specific blocks:
+**After each step, run:** `pnpm codegen && pnpm tsc --noEmit && pnpm test`
 
-```graphql
-{
-  pairs(first: 10, block: { number: 10000000 }) {
-    id
-    token0 { id symbol decimals }
-    token1 { id symbol decimals }
-    reserve0
-    reserve1
-  }
-}
-```
+Full step-by-step details with quality checks: [references/step-by-step.md](references/step-by-step.md)
 
-Write test with expected data:
+### Step 1: Clear Boilerplate
 
-```ts
-describe("Pair entity migration", () => {
-  it("Should create Pair entities matching subgraph", async () => {
-    const indexer = createTestIndexer();
+Clear generated event handlers and replace with empty TODO handlers.
 
-    const result = await indexer.process({
-      chains: {
-        1: { startBlock: 10_008_355, endBlock: 10_008_355 },
-      },
-    });
+### Step 2: Migrate Schema
 
-    expect(result.changes).toContainEqual(
-      expect.objectContaining({
-        Pair: {
-          sets: expect.arrayContaining([
-            expect.objectContaining({
-              id: "1-0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
-              token0_id: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-              token1_id: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-            }),
-          ]),
-        },
-      })
-    );
-  });
-});
-```
-
-## Step 2: Migrate Schema
-
-```graphql
-# TheGraph:
-type Entity @entity(immutable: true) {
-  id: Bytes!
-  field: Bytes!
-  value: BigInt!
-}
-
-# Envio:
-type Entity {
-  id: ID!
-  field: String!
-  value: BigInt!
-}
-```
-
-Key changes:
 - Remove `@entity` decorators
 - `Bytes!` → `String!`
 - Keep `BigInt!`, `BigDecimal!`, `ID!`
-
-Entity arrays MUST have `@derivedFrom`:
+- ALL entity arrays MUST have `@derivedFrom` (causes "EE211" error without it)
+- `@derivedFrom` arrays are virtual — cannot access in handlers, only API queries
 
 ```graphql
 # WRONG — causes "EE211: Arrays of entities is unsupported"
-type Transaction {
-  mints: [Mint!]!
-}
+type Transaction { mints: [Mint!]! }
 
 # CORRECT
-type Transaction {
-  mints: [Mint!]! @derivedFrom(field: "transaction")
-}
+type Transaction { mints: [Mint!]! @derivedFrom(field: "transaction") }
 ```
-
-`@derivedFrom` arrays are virtual — cannot access in handlers, only in API queries.
 
 Run: `pnpm codegen` (required after schema changes)
 
-## Step 3: Refactor File Structure
+### Step 3: Refactor File Structure
 
-Mirror subgraph file structure:
+Mirror subgraph file structure with exact filenames. Update `config.yaml` with global contract definitions and chain-specific addresses only.
 
-```
-src/
-├── utils/
-│   ├── pricing.ts
-│   └── helpers.ts
-├── handlers/
-│   ├── factory.ts
-│   └── pair.ts
-test/
-├── factory.test.ts
-└── pair.test.ts
-```
+### Step 4: Register Dynamic Contracts
 
-Update `config.yaml`:
-
-```yaml
-contracts:
-  - name: Factory
-    events:
-      - event: PairCreated(...)
-
-chains:
-  - id: 1
-    contracts:
-      - name: Factory
-        address:
-          - 0xFactoryAddress
-```
-
-Run: `pnpm codegen` (required after config changes)
-
-## Step 4: Register Dynamic Contracts
-
-For contracts created by factories (templates in subgraph):
+For factory-created contracts: add `contractRegister` BEFORE handler, remove `address` from dynamic contracts in config.
 
 ```ts
-// Register BEFORE handler
 Factory.PairCreated.contractRegister(({ event, context }) => {
   context.addPair(event.params.pair);
 });
-
-Factory.PairCreated.handler(async ({ event, context }) => {
-  // Handler logic
-});
 ```
 
-Remove `address` field from dynamic contracts in `config.yaml`.
+### Step 5: Implement Handlers (TDD)
 
-Write test first:
+**Implementation order is critical.** See [references/step-by-step.md](references/step-by-step.md) for full 5a/5b/5c/5d breakdown.
 
-```ts
-it("Should register dynamic Pair contracts", async () => {
-  const indexer = createTestIndexer();
+1. **5a: Helper functions** with no entity dependencies — implement COMPLETE logic, not placeholders
+2. **5b: Simple handlers** — direct parameter mapping
+3. **5c: Moderate handlers** — calls helpers, multiple entity updates
+4. **5d: Complex handlers** — one at a time, with RPC calls and multiple dependencies
 
-  const result = await indexer.process({
-    chains: {
-      1: { startBlock: 10_000_835, endBlock: 10_000_835 },
-    },
-  });
+**External calls MUST use Effect API** — see [references/migration-patterns.md](references/migration-patterns.md) for Effect API and contract state fetching patterns.
 
-  expect(result.changes[0].Pair?.sets).toHaveLength(1);
-});
-```
+### Step 6: Final Verification
 
-## Step 5: Implement Handlers (TDD)
+Systematic review of every handler and helper function against subgraph. Multiple passes — first pass always misses things. See [references/step-by-step.md](references/step-by-step.md) for full verification checklist.
 
-For each handler:
+### Step 7: Environment Variables
 
-1. **Query subgraph** for expected state at test block
-2. **Write failing test** with expected data
-3. **Implement handler** until test passes
-4. **Snapshot the result** for regression testing
-
-Order of implementation:
-1. Helper functions (no entity dependencies)
-2. Simple handlers (direct parameter mapping)
-3. Moderate handlers (calls helpers)
-4. Complex handlers (multiple entities, RPC calls)
-
-Example TDD cycle:
-
-```ts
-// 1. Query subgraph at block 10861674 for Token entities
-// 2. Write test:
-it("Should create Token on first Transfer", async () => {
-  const indexer = createTestIndexer();
-
-  expect(
-    await indexer.process({
-      chains: {
-        1: { startBlock: 10_861_674, endBlock: 10_861_674 },
-      },
-    })
-  ).toMatchInlineSnapshot(`...`);
-});
-
-// 3. Implement handler until test passes
-// 4. Run: pnpm test
-```
-
-## Step 6: Final Verification
-
-Compare full block range against subgraph:
-
-```ts
-it("Should match subgraph for full block range", async () => {
-  const indexer = createTestIndexer();
-
-  const result = await indexer.process({
-    chains: {
-      1: { startBlock: 10_000_000, endBlock: 10_100_000 },
-    },
-  });
-
-  // Query subgraph for same range and compare key metrics
-  // - Total entity counts
-  // - Specific entity values
-  // - Aggregate calculations
-});
-```
+Search for all `process.env` references and update `.env.example`.
 
 ---
 
 ## Code Patterns
+
+Full patterns with examples: [references/migration-patterns.md](references/migration-patterns.md)
 
 ### Entity Creation
 
@@ -303,73 +159,63 @@ const entity: Entity = {
 context.Entity.set(entity);
 ```
 
-`transaction.hash` requires `field_selection` in config:
-
-```yaml
-- event: Transfer(...)
-  field_selection:
-    transaction_fields:
-      - hash
-```
-
-### Entity Updates
+### Entity Updates (spread required — entities are read-only)
 
 ```ts
-// TheGraph:
-let entity = store.get("Entity", id);
-entity.field = newValue;
-entity.save();
-
-// Envio:
 let entity = await context.Entity.get(id);
 if (entity) {
-  context.Entity.set({
-    ...entity,
-    field: newValue,
-  });
+  context.Entity.set({ ...entity, field: newValue });
 }
 ```
 
-### Related Entity Queries
+### Related Entity Queries (@derivedFrom → getWhere)
 
 ```ts
-// TheGraph (direct array access):
-transaction.mints.push(mint);
-
-// Envio (query via indexed field):
+// TheGraph: transaction.mints.push(mint);
+// Envio:
 const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId } });
 ```
 
-### BigDecimal
+### BigDecimal Precision
 
 ```ts
-// Import from generated
 import { BigDecimal } from "generated";
-
 // NOT: import { BigDecimal } from "bignumber.js";
+
+export const ZERO_BD = new BigDecimal(0);
+export const ONE_BD = new BigDecimal(1);
+export const ZERO_BI = BigInt(0);
+export const ONE_BI = BigInt(1);
 ```
+
+### Contract State Fetching (.bind() → Effect API)
+
+TheGraph uses `.bind()` for RPC. Envio requires Effect API with viem. Full pattern: [references/migration-patterns.md](references/migration-patterns.md#contract-state-fetching-bind--effect-api)
 
 ---
 
 ## Common Issues & Fixes
 
-### Field Names
+Full quality check guide with 12 common fixes: [references/quality-checks.md](references/quality-checks.md)
+
+### Field Names — use `_id` suffix
 ```ts
-// WRONG:
-const pair = { token0: token0.id };
-// CORRECT:
-const pair = { token0_id: token0.id };
+// WRONG:  { token0: token0.id }
+// CORRECT: { token0_id: token0.id }
 ```
 
 ### Missing async/await
 ```ts
-// WRONG:
-const entity = context.Entity.get(id); // Returns {}
-// CORRECT:
-const entity = await context.Entity.get(id);
+// WRONG:  const entity = context.Entity.get(id);  // Returns {}
+// CORRECT: const entity = await context.Entity.get(id);
 ```
-
 Note: `context.Entity.set()` is synchronous — no await needed.
+
+### Entity Type Imports
+```ts
+// WRONG:  import { Pair, Token } from "generated";
+// CORRECT: import { Pair_t, Token_t } from "generated/src/db/Entities.gen";
+```
 
 ### Schema Type Mapping
 
@@ -386,6 +232,9 @@ Prefix all entity IDs: `${event.chainId}-${originalId}`
 
 ---
 
-## Quality Checklist
+## Reference Files
 
-See [references/migration-checklist.md](references/migration-checklist.md) for the full 17-point quality checklist.
+- [Step-by-step guide](references/step-by-step.md) — Full procedural walkthrough with quality checks after each step
+- [Migration patterns](references/migration-patterns.md) — Entity CRUD, Effect API, contract state fetching, BigDecimal precision
+- [Quality checks](references/quality-checks.md) — 12 common fixes, type mismatches, async/await, field selection
+- [Migration checklist](references/migration-checklist.md) — 17-point final verification checklist
