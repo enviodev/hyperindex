@@ -73,17 +73,6 @@
         "$ref": "#/$defs/Chain"
       }
     },
-    "multichain": {
-      "description": "Multichain mode: 'ordered' processes events across chains in order, 'unordered' processes chain events in order, but non-deterministically relatively to other chains (default: unordered)",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Multichain"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "rollback_on_reorg": {
       "description": "A flag to indicate if the indexer should rollback to the last known valid block on a reorg. This currently incurs a performance hit on historical sync and is recommended to turn this off while developing (default: true)",
       "type": [
@@ -595,13 +584,6 @@
             ]
           }
         }
-      ]
-    },
-    "Multichain": {
-      "type": "string",
-      "enum": [
-        "ordered",
-        "unordered"
       ]
     },
     "AddressFormat": {

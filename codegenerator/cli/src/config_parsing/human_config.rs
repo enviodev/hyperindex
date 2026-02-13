@@ -196,13 +196,6 @@ pub mod evm {
         pub chains: Vec<Chain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Multichain mode: 'ordered' processes events across chains in order, \
-                           'unordered' processes chain events in order, but non-deterministically \
-                           relatively to other chains (default: unordered)"
-        )]
-        pub multichain: Option<Multichain>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
             description = "A flag to indicate if the indexer should rollback to the last known \
                            valid block on a reorg. This currently incurs a performance hit on \
                            historical sync and is recommended to turn this off while developing \

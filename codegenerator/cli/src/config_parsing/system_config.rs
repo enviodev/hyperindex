@@ -707,10 +707,7 @@ impl SystemConfig {
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     contracts,
-                    multichain: evm_config
-                        .multichain
-                        .clone()
-                        .unwrap_or(human_config::evm::Multichain::Unordered),
+                    multichain: human_config::evm::Multichain::Unordered,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
                     schema,
@@ -2152,7 +2149,6 @@ mod test {
                 max_reorg_depth: None,
                 contracts: None,
             }],
-            multichain: None,
             rollback_on_reorg: None,
             save_full_history: None,
             field_selection: None,
@@ -2200,7 +2196,6 @@ mod test {
                 max_reorg_depth: None,
                 contracts: None,
             }],
-            multichain: None,
             rollback_on_reorg: None,
             save_full_history: None,
             field_selection: None,

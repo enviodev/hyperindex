@@ -1,5 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2424
 expression: project_template.internal_config_json_code
 ---
 {
@@ -7,7 +8,6 @@ expression: project_template.internal_config_json_code
   "name": "test-all-options",
   "description": "Test config with all options set",
   "handlers": "custom/handlers",
-  "multichain": "ordered",
   "fullBatchSize": 1000,
   "rollbackOnReorg": false,
   "saveFullHistory": true,

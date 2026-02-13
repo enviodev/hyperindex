@@ -1,7 +1,5 @@
-use super::{
-    chain_helpers,
-    human_config::{self, evm::HumanConfig},
-};
+// use super::chain_helpers;
+use super::human_config::{self, evm::HumanConfig};
 use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
@@ -130,32 +128,32 @@ pub fn validate_names_valid_rescript(
 impl human_config::evm::Chain {
     pub fn validate_finite_endblock_networks(
         &self,
-        human_config: &human_config::evm::HumanConfig,
+        _human_config: &human_config::evm::HumanConfig,
     ) -> anyhow::Result<()> {
-        let is_ordered_multichain_mode =
-            matches!(human_config.multichain, Some(human_config::evm::Multichain::Ordered));
-        let is_multichain_indexer = human_config.chains.len() > 1;
-        if is_ordered_multichain_mode && is_multichain_indexer {
-            let make_err = |finite_end_block: u64| {
-                Err(anyhow!(
-                    "Chain {} has a finite end block of {}. Please set an end_block that is \
-                     less than or equal to the finite end block in your config or set \
-                     \"multichain\" to \"unordered\". Your multichain indexer will \
-                     otherwise be stuck when it reaches the end of this chain.",
-                    self.id,
-                    finite_end_block
-                ))
-            };
-            if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
-                match (self.end_block, network.get_finite_end_block()) {
-                    (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
-                        return make_err(finite_end_block)
-                    }
-                    (None, Some(finite_end_block)) => return make_err(finite_end_block),
-                    _ => (),
-                }
-            }
-        }
+        // let is_ordered_multichain_mode =
+        //     matches!(human_config.multichain, Some(human_config::evm::Multichain::Ordered));
+        // let is_multichain_indexer = human_config.chains.len() > 1;
+        // if is_ordered_multichain_mode && is_multichain_indexer {
+        //     let make_err = |finite_end_block: u64| {
+        //         Err(anyhow!(
+        //             "Chain {} has a finite end block of {}. Please set an end_block that is \
+        //              less than or equal to the finite end block in your config or set \
+        //              \"multichain\" to \"unordered\". Your multichain indexer will \
+        //              otherwise be stuck when it reaches the end of this chain.",
+        //             self.id,
+        //             finite_end_block
+        //         ))
+        //     };
+        //     if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
+        //         match (self.end_block, network.get_finite_end_block()) {
+        //             (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
+        //                 return make_err(finite_end_block)
+        //             }
+        //             (None, Some(finite_end_block)) => return make_err(finite_end_block),
+        //             _ => (),
+        //         }
+        //     }
+        // }
         Ok(())
     }
 
