@@ -310,13 +310,8 @@ let getFieldTypeAndSchema = (
   | other => Js.Exn.raiseError("Unknown field type in entity config: " ++ other)
   }
 
-  let fieldSchema = if isArray {
-    S.array(baseSchema)->S.toUnknown
-  } else if isNullable {
-    S.null(baseSchema)->S.toUnknown
-  } else {
-    baseSchema
-  }
+  let fieldSchema = if isArray {S.array(baseSchema)->S.toUnknown} else {baseSchema}
+  let fieldSchema = if isNullable {S.null(fieldSchema)->S.toUnknown} else {fieldSchema}
 
   (fieldType, fieldSchema, isNullable, isArray, isIndex)
 }
