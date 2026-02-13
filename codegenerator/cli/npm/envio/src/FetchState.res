@@ -43,6 +43,10 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
+  // Tracks the latestFetchedBlock.blockNumber of the most recent response
+  // that updated prevQueryRange. Prevents degradation of the chunking heuristic
+  // when parallel query responses arrive out of order.
+  latestBlockRangeUpdateBlock: int,
 }
 
 type query = {
@@ -133,6 +137,7 @@ module OptimizedPartitions = {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
       }
     }
 
@@ -377,19 +382,25 @@ module OptimizedPartitions = {
     pendingQuery.fetchedBlock = Some(latestFetchedBlock)
 
     let blockRange = latestFetchedBlock.blockNumber - query.fromBlock + 1
-    let shouldUpdateBlockRange = switch query.toBlock {
-    | None => latestFetchedBlock.blockNumber < knownHeight - 10 // Don't update block range when very close to the head
-    | Some(queryToBlock) =>
-      // Update on partial response (direct capacity evidence),
-      // or when the query's intended range covers at least the partition's
-      // current chunk range — meaning it was a capacity-based split chunk,
-      // not a small gap-fill whose toBlock is an artificial boundary.
-      latestFetchedBlock.blockNumber < queryToBlock ||
-        switch getMinHistoryRange(p) {
-        | None => false // Chunking not active yet, don't update
-        | Some(minHistoryRange) => queryToBlock - query.fromBlock + 1 >= minHistoryRange
-        }
-    }
+    // Skip updating block range if a later response already updated it.
+    // Prevents degradation of the chunking heuristic when parallel query
+    // responses arrive out of order (e.g. earlier query with smaller range
+    // arriving after a later query with bigger range).
+    let shouldUpdateBlockRange =
+      latestFetchedBlock.blockNumber > p.latestBlockRangeUpdateBlock &&
+      switch query.toBlock {
+      | None => latestFetchedBlock.blockNumber < knownHeight - 10 // Don't update block range when very close to the head
+      | Some(queryToBlock) =>
+        // Update on partial response (direct capacity evidence),
+        // or when the query's intended range covers at least the partition's
+        // current chunk range — meaning it was a capacity-based split chunk,
+        // not a small gap-fill whose toBlock is an artificial boundary.
+        latestFetchedBlock.blockNumber < queryToBlock ||
+          switch getMinHistoryRange(p) {
+          | None => false // Chunking not active yet, don't update
+          | Some(minHistoryRange) => queryToBlock - query.fromBlock + 1 >= minHistoryRange
+          }
+      }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
 
@@ -413,6 +424,9 @@ module OptimizedPartitions = {
         latestFetchedBlock: updatedLatestFetchedBlock,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
+        latestBlockRangeUpdateBlock: shouldUpdateBlockRange
+          ? latestFetchedBlock.blockNumber
+          : p.latestBlockRangeUpdateBlock,
       }
 
       mutEntities->Js.Dict.set(p.id, updatedMainPartition)
@@ -788,6 +802,7 @@ OptimizedPartitions.t => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
         }
@@ -1067,6 +1082,7 @@ let registerDynamicContracts = (
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
+                        latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
                       })
                     }
                   }
@@ -1481,6 +1497,7 @@ let make = (
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
+      latestBlockRangeUpdateBlock: 0,
     })
   }
 
