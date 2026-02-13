@@ -261,6 +261,13 @@ module GetTransactionByHash = {
     S.tuple1(S.string),
     S.null(transactionSchema),
   )
+
+  // Raw route returns unparsed JSON for on-demand field parsing
+  let rawRoute = makeRpcRoute(
+    "eth_getTransactionByHash",
+    S.tuple1(S.string),
+    S.null(S.json(~validate=false)),
+  )
 }
 
 module GetTransactionReceipt = {
@@ -285,6 +292,13 @@ module GetTransactionReceipt = {
     "eth_getTransactionReceipt",
     S.tuple1(S.string),
     S.null(receiptSchema),
+  )
+
+  // Raw route returns unparsed JSON for on-demand field parsing
+  let rawRoute = makeRpcRoute(
+    "eth_getTransactionReceipt",
+    S.tuple1(S.string),
+    S.null(S.json(~validate=false)),
   )
 }
 

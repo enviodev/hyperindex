@@ -364,18 +364,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
 }
 
-let memoGetSelectionConfig = (~chain) => {
-  let cache = Utils.WeakMap.make()
-  selection =>
-    switch cache->Utils.WeakMap.get(selection) {
-    | Some(c) => c
-    | None => {
-        let c = selection->getSelectionConfig(~chain)
-        let _ = cache->Utils.WeakMap.set(selection, c)
-        c
-      }
-    }
-}
+let memoGetSelectionConfig = (~chain) =>
+  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
 
 let makeThrowingGetEventBlock = (~getBlock) => {
   async (log: Rpc.GetLogs.log) => {
@@ -383,35 +373,73 @@ let makeThrowingGetEventBlock = (~getBlock) => {
   }
 }
 
-// Fields that only exist in eth_getTransactionReceipt, not in eth_getTransactionByHash
-let receiptFieldLocations = Utils.Set.fromArray([
-  "gasUsed",
-  "cumulativeGasUsed",
-  "effectiveGasPrice",
-  "logsBloom",
-  "contractAddress",
-  "root",
-  "status",
-  "l1Fee",
-  "l1GasPrice",
-  "l1GasUsed",
-  "l1FeeScalar",
-  "gasUsedForL1",
+// Field source classification for RPC calls
+type fieldSource = TransactionOnly | ReceiptOnly | Both
+
+type fieldDef = {
+  jsonKey: string,
+  schema: S.t<Js.Json.t>, // Type-erased schema for the inner value (not nullable)
+  source: fieldSource,
+  isAddress: bool,
+}
+
+// Get a property from raw JSON object
+let unsafeJsonGet: (Js.Json.t, string) => Js.Nullable.t<Js.Json.t> = %raw(`(obj, key) => obj[key]`)
+// Set a property on a mutable JS object
+let unsafeSet: ({..}, string, Js.Json.t) => unit = %raw(`(obj, key, val) => { obj[key] = val }`)
+
+// Type-erase a schema for storage in the field registry
+external toFieldSchema: S.t<'a> => S.t<Js.Json.t> = "%identity"
+
+// Field registry: maps field location (= JS property name) to parsing info.
+// Only includes fields that require an RPC call. Log-derived fields (hash, transactionIndex) are special-cased.
+let fieldRegistry: Js.Dict.t<fieldDef> = Js.Dict.fromArray([
+  // TransactionOnly fields (only in eth_getTransactionByHash)
+  ("gas", {jsonKey: "gas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("gasPrice", {jsonKey: "gasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("input", {jsonKey: "input", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("nonce", {jsonKey: "nonce", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("value", {jsonKey: "value", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("v", {jsonKey: "v", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("r", {jsonKey: "r", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("s", {jsonKey: "s", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("yParity", {jsonKey: "yParity", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("maxPriorityFeePerGas", {jsonKey: "maxPriorityFeePerGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("maxFeePerGas", {jsonKey: "maxFeePerGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("maxFeePerBlobGas", {jsonKey: "maxFeePerBlobGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  ("blobVersionedHashes", {jsonKey: "blobVersionedHashes", schema: S.array(S.string)->toFieldSchema, source: TransactionOnly, isAddress: false}),
+  // ReceiptOnly fields (only in eth_getTransactionReceipt)
+  ("gasUsed", {jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("cumulativeGasUsed", {jsonKey: "cumulativeGasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("effectiveGasPrice", {jsonKey: "effectiveGasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("contractAddress", {jsonKey: "contractAddress", schema: S.string->toFieldSchema, source: ReceiptOnly, isAddress: true}),
+  ("logsBloom", {jsonKey: "logsBloom", schema: S.string->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("root", {jsonKey: "root", schema: S.string->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("status", {jsonKey: "status", schema: Rpc.hexIntSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("l1Fee", {jsonKey: "l1Fee", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("l1GasPrice", {jsonKey: "l1GasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("l1GasUsed", {jsonKey: "l1GasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("l1FeeScalar", {jsonKey: "l1FeeScalar", schema: Rpc.decimalFloatSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  ("gasUsedForL1", {jsonKey: "gasUsedForL1", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
+  // Both fields (available in both eth_getTransactionByHash and eth_getTransactionReceipt)
+  ("from", {jsonKey: "from", schema: S.string->toFieldSchema, source: Both, isAddress: true}),
+  ("to", {jsonKey: "to", schema: S.string->toFieldSchema, source: Both, isAddress: true}),
+  ("type", {jsonKey: "type", schema: Rpc.hexIntSchema->toFieldSchema, source: Both, isAddress: false}),
 ])
 
-// Merges receipt fields into transaction fields. Receipt keys override transaction keys.
-let mergeTransactionAndReceipt: (
-  Internal.evmTransactionFields,
-  Internal.evmTransactionFields,
-) => Internal.evmTransactionFields = %raw(`(tx, receipt) => ({...tx, ...receipt})`)
+type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndReceipt
 
-let makeThrowingGetEventTransaction = (~getTransactionFields, ~getReceiptFields) => {
+let makeThrowingGetEventTransaction = (
+  ~getTransactionJson: string => promise<Js.Json.t>,
+  ~getReceiptJson: string => promise<Js.Json.t>,
+  ~lowercaseAddresses: bool,
+) => {
   let fnsCache = Utils.WeakMap.make()
   (log, ~transactionSchema) => {
     (
       switch fnsCache->Utils.WeakMap.get(transactionSchema) {
       | Some(fn) => fn
-      // This is not super expensive, but don't want to do it on every event
+      // Build per-field parser on first call, then cache in WeakMap
       | None => {
           let transactionSchema = transactionSchema->S.removeTypeValidation
 
@@ -420,57 +448,164 @@ let makeThrowingGetEventTransaction = (~getTransactionFields, ~getReceiptFields)
           | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
           }
 
-          let parseOrThrowReadableError = data => {
-            try data->S.parseOrThrow(transactionSchema) catch {
-            | S.Raised(error) =>
-              Js.Exn.raiseError(
-                `Invalid transaction field "${error.path
-                  ->S.Path.toArray
-                  ->Js.Array2.joinWith(
-                    ".",
-                  )}" found in the RPC response. Error: ${error->S.Error.reason}`,
-              ) // There should always be only one field, but just in case split them with a dot
+          // Classify fields: log-derived vs RPC fields
+          // For each RPC field, look up source and determine which JSON to extract from
+          let hasTransactionOnly = ref(false)
+          let hasReceiptOnly = ref(false)
+          let hasShared = ref(false)
+          let logFields: array<S.item> = []
+          let rpcFields: array<(S.item, fieldDef)> = []
+
+          transactionFieldItems->Array.forEach(item => {
+            switch item.location {
+            | "transactionIndex" | "hash" => logFields->Js.Array2.push(item)->ignore
+            | _ =>
+              switch fieldRegistry->Js.Dict.get(item.location) {
+              | Some(def) => {
+                  rpcFields->Js.Array2.push((item, def))->ignore
+                  switch def.source {
+                  | TransactionOnly => hasTransactionOnly := true
+                  | ReceiptOnly => hasReceiptOnly := true
+                  | Both => hasShared := true
+                  }
+                }
+              | None => () // Unknown field — skip silently
+              }
             }
+          })
+
+          // Determine fetch strategy
+          let strategy = switch (
+            hasTransactionOnly.contents,
+            hasReceiptOnly.contents,
+            hasShared.contents,
+          ) {
+          | (false, false, false) if logFields->Array.length > 0 => NoRpc
+          | (false, false, false) => NoRpc
+          | (true, true, _) => TransactionAndReceipt
+          | (true, false, _) => TransactionOnly
+          | (false, true, _) | (false, false, true) => ReceiptOnly
           }
 
-          let requestedLocations = transactionFieldItems->Array.map(item => item.location)->Utils.Set.fromArray
-          let needsReceipt = receiptFieldLocations->Utils.Set.intersection(requestedLocations)->Utils.Set.size > 0
-
-          let fn = switch transactionFieldItems {
-          | [] => _ => %raw(`{}`)->Promise.resolve
-          | [{location: "transactionIndex"}] =>
-            log => log->parseOrThrowReadableError->Promise.resolve
-          | [{location: "hash"}]
-          | [{location: "hash"}, {location: "transactionIndex"}]
-          | [{location: "transactionIndex"}, {location: "hash"}] =>
-            (log: Rpc.GetLogs.log) =>
-              {
-                "hash": log.transactionHash,
-                "transactionIndex": log.transactionIndex,
+          // Assign each Both field to an actual JSON source
+          // Use whichever source is already being fetched; default to receipt
+          let assignedSource = (def: fieldDef) =>
+            switch def.source {
+            | TransactionOnly => #transaction
+            | ReceiptOnly => #receipt
+            | Both =>
+              switch strategy {
+              | TransactionOnly => #transaction
+              | _ => #receipt
               }
-              ->parseOrThrowReadableError
-              ->Promise.resolve
-          | _ if needsReceipt =>
-            switch getReceiptFields {
-            | Some(getReceiptFields) =>
-              log =>
-                Promise.all2((
-                  log->getTransactionFields,
-                  log->getReceiptFields,
-                ))->Promise.thenResolve(((tx, receipt)) =>
-                  mergeTransactionAndReceipt(tx, receipt)->parseOrThrowReadableError
-                )
-            | None =>
-              log =>
-                log
-                ->getTransactionFields
-                ->Promise.thenResolve(parseOrThrowReadableError)
             }
-          | _ =>
-            log =>
-              log
-              ->getTransactionFields
-              ->Promise.thenResolve(parseOrThrowReadableError)
+
+          let fn = switch (transactionFieldItems, strategy) {
+          | ([], _) => _ => %raw(`{}`)->Promise.resolve
+          | (_, NoRpc) =>
+            // All fields are log-derived
+            (log: Rpc.GetLogs.log) => {
+              let result: {..} = %raw(`{}`)
+              logFields->Array.forEach(item => {
+                switch item.location {
+                | "transactionIndex" =>
+                  unsafeSet(
+                    result,
+                    "transactionIndex",
+                    log.transactionIndex->(Utils.magic: int => Js.Json.t),
+                  )
+                | "hash" =>
+                  unsafeSet(
+                    result,
+                    "hash",
+                    log.transactionHash->(Utils.magic: string => Js.Json.t),
+                  )
+                | _ => ()
+                }
+              })
+              (result->(Utils.magic: {..} => 'a))->Promise.resolve
+            }
+          | (_, _) =>
+            (log: Rpc.GetLogs.log) => {
+              // Fetch needed JSON(s)
+              let txJsonPromise = switch strategy {
+              | TransactionOnly | TransactionAndReceipt =>
+                getTransactionJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
+              | _ => Promise.resolve(None)
+              }
+              let receiptJsonPromise = switch strategy {
+              | ReceiptOnly | TransactionAndReceipt =>
+                getReceiptJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
+              | _ => Promise.resolve(None)
+              }
+
+              Promise.all2((txJsonPromise, receiptJsonPromise))->Promise.thenResolve(((
+                txJson,
+                receiptJson,
+              )) => {
+                let result: {..} = %raw(`{}`)
+
+                // Set log-derived fields
+                logFields->Array.forEach(item => {
+                  switch item.location {
+                  | "transactionIndex" =>
+                    unsafeSet(
+                      result,
+                      "transactionIndex",
+                      log.transactionIndex->(Utils.magic: int => Js.Json.t),
+                    )
+                  | "hash" =>
+                    unsafeSet(
+                      result,
+                      "hash",
+                      log.transactionHash->(Utils.magic: string => Js.Json.t),
+                    )
+                  | _ => ()
+                  }
+                })
+
+                // Parse RPC fields from raw JSON
+                rpcFields->Array.forEach(((item, def)) => {
+                  let json = switch assignedSource(def) {
+                  | #transaction => txJson
+                  | #receipt => receiptJson
+                  }
+                  switch json {
+                  | None => ()
+                  | Some(json) =>
+                    switch unsafeJsonGet(json, def.jsonKey)->Js.Nullable.toOption {
+                    | None => ()
+                    | Some(raw) =>
+                      if def.isAddress {
+                        let str: string = raw->(Utils.magic: Js.Json.t => string)
+                        let addr = if lowercaseAddresses {
+                          str->Js.String2.toLowerCase->Address.unsafeFromString
+                        } else {
+                          str->Address.Evm.fromStringOrThrow
+                        }
+                        unsafeSet(
+                          result,
+                          item.location,
+                          addr->(Utils.magic: Address.t => Js.Json.t),
+                        )
+                      } else {
+                        try {
+                          let parsed = raw->S.parseOrThrow(def.schema)
+                          unsafeSet(result, item.location, parsed)
+                        } catch {
+                        | S.Raised(error) =>
+                          Js.Exn.raiseError(
+                            `Invalid transaction field "${item.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
+                          )
+                        }
+                      }
+                    }
+                  }
+                })
+
+                result->(Utils.magic: {..} => 'a)
+              })
+            }
           }
           let _ = fnsCache->Utils.WeakMap.set(transactionSchema, fn)
           fn
@@ -478,64 +613,6 @@ let makeThrowingGetEventTransaction = (~getTransactionFields, ~getReceiptFields)
       }
     )(log)
   }
-}
-
-let makeGetReceiptFields = (~getTransactionReceipt, ~lowercaseAddresses: bool) => async (
-  log: Rpc.GetLogs.log,
-): Internal.evmTransactionFields => {
-  let receipt: Internal.evmTransactionFields = await getTransactionReceipt(log.transactionHash)
-  let fields: {..} = receipt->Obj.magic
-
-  open Js.Nullable
-  switch fields["contractAddress"] {
-  | Value(contractAddress) =>
-    fields["contractAddress"] = lowercaseAddresses
-      ? contractAddress->Js.String2.toLowerCase->Address.unsafeFromString
-      : contractAddress->Address.Evm.fromStringOrThrow
-  | Undefined => ()
-  | Null => ()
-  }
-
-  fields->Obj.magic
-}
-
-let makeGetTransactionFields = (~getTransactionByHash, ~lowercaseAddresses: bool) => async (
-  log: Rpc.GetLogs.log,
-): Internal.evmTransactionFields => {
-  let transaction: Internal.evmTransactionFields = await getTransactionByHash(log.transactionHash)
-  // Mutating should be fine, since the transaction isn't used anywhere else outside the function
-  let fields: {..} = transaction->Obj.magic
-
-  // RPC may return null for transactionIndex on pending transactions
-  fields["transactionIndex"] = log.transactionIndex
-
-  open Js.Nullable
-  switch fields["from"] {
-  | Value(from) =>
-    fields["from"] = lowercaseAddresses
-      ? from->Js.String2.toLowerCase->Address.unsafeFromString
-      : from->Address.Evm.fromStringOrThrow
-  | Undefined => ()
-  | Null => ()
-  }
-  switch fields["to"] {
-  | Value(to) =>
-    fields["to"] = lowercaseAddresses
-      ? to->Js.String2.toLowerCase->Address.unsafeFromString
-      : to->Address.Evm.fromStringOrThrow
-  | Undefined => ()
-  | Null => ()
-  }
-  switch fields["contractAddress"] {
-  | Value(contractAddress) =>
-    fields["contractAddress"] = lowercaseAddresses
-      ? contractAddress->Js.String2.toLowerCase->Address.unsafeFromString
-      : contractAddress->Address.Evm.fromStringOrThrow
-  | Undefined => ()
-  | Null => ()
-  }
-
-  fields->Obj.magic
 }
 
 type options = {
@@ -572,7 +649,7 @@ let make = (
     LazyLoader.make(
       ~loaderFn=transactionHash => {
         Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
-        Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client)
+        Rpc.GetTransactionByHash.rawRoute->Rest.fetch(transactionHash, ~client)
       },
       ~onError=(am, ~exn) => {
         Logging.error({
@@ -623,7 +700,7 @@ let make = (
     LazyLoader.make(
       ~loaderFn=transactionHash => {
         Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
-        Rpc.GetTransactionReceipt.route->Rest.fetch(transactionHash, ~client)
+        Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(transactionHash, ~client)
       },
       ~onError=(am, ~exn) => {
         Logging.error({
@@ -650,24 +727,19 @@ let make = (
     blockLoader.contents->LazyLoader.get(blockNumber)
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
-    ~getTransactionFields=makeGetTransactionFields(
-      ~getTransactionByHash=async transactionHash => {
-        switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
-        | Some(tx) => tx
-        | None => Js.Exn.raiseError(`Transaction not found for hash: ${transactionHash}`)
-        }
-      },
-      ~lowercaseAddresses,
-    ),
-    ~getReceiptFields=Some(makeGetReceiptFields(
-      ~getTransactionReceipt=async transactionHash => {
-        switch await receiptLoader.contents->LazyLoader.get(transactionHash) {
-        | Some(receipt) => receipt
-        | None => Js.Exn.raiseError(`Transaction receipt not found for hash: ${transactionHash}`)
-        }
-      },
-      ~lowercaseAddresses,
-    )),
+    ~getTransactionJson=async transactionHash => {
+      switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
+      | Some(json) => json
+      | None => Js.Exn.raiseError(`Transaction not found for hash: ${transactionHash}`)
+      }
+    },
+    ~getReceiptJson=async transactionHash => {
+      switch await receiptLoader.contents->LazyLoader.get(transactionHash) {
+      | Some(json) => json
+      | None => Js.Exn.raiseError(`Transaction receipt not found for hash: ${transactionHash}`)
+      }
+    },
+    ~lowercaseAddresses,
   )
 
   let convertLogToHyperSyncEvent = (log: Rpc.GetLogs.log): HyperSyncClient.ResponseTypes.event => {

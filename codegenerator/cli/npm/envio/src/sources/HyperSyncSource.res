@@ -131,18 +131,8 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
 }
 
-let memoGetSelectionConfig = (~chain) => {
-  let cache = Utils.WeakMap.make()
-  selection =>
-    switch cache->Utils.WeakMap.get(selection) {
-    | Some(c) => c
-    | None => {
-        let c = selection->getSelectionConfig(~chain)
-        let _ = cache->Utils.WeakMap.set(selection, c)
-        c
-      }
-    }
-}
+let memoGetSelectionConfig = (~chain) =>
+  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
 
 type options = {
   chain: ChainMap.Chain.t,
