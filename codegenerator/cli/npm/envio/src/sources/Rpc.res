@@ -55,6 +55,18 @@ let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)
 external number: string => int = "Number"
 let hexIntSchema: S.schema<int> = makeHexSchema(v => v->number->Some)
 
+external parseFloat: string => float = "Number"
+let decimalFloatSchema: S.schema<float> = S.string->S.transform(s => {
+  parser: str => {
+    let v = parseFloat(str)
+    if Js.Float.isNaN(v) {
+      s.fail("The string is not a valid decimal number")
+    } else {
+      v
+    }
+  },
+})
+
 module GetLogs = {
   @unboxed
   type topicFilter = Single(hex) | Multiple(array<hex>) | @as(null) Null
@@ -265,7 +277,7 @@ module GetTransactionReceipt = {
     l1Fee: ?s.field("l1Fee", S.nullable(hexBigintSchema)),
     l1GasPrice: ?s.field("l1GasPrice", S.nullable(hexBigintSchema)),
     l1GasUsed: ?s.field("l1GasUsed", S.nullable(hexBigintSchema)),
-    l1FeeScalar: ?s.field("l1FeeScalar", S.nullable(hexIntSchema)),
+    l1FeeScalar: ?s.field("l1FeeScalar", S.nullable(decimalFloatSchema)),
     gasUsedForL1: ?s.field("gasUsedForL1", S.nullable(hexBigintSchema)),
   })
 
