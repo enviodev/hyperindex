@@ -142,7 +142,17 @@ let getProgressedChainsById = {
         fetchState.chainId->Int.toString,
       ) {
       | Some(progressBlockNumber) => progressBlockNumber
-      | None => chainBeforeBatch.progressBlockNumber
+      | None =>
+        // If the chain has buffered items, we know there are no events before the first item,
+        // so we can advance progress to firstItemBlockNumber - 1
+        switch fetchState.buffer->Belt.Array.get(0) {
+        | Some(item) =>
+          Pervasives.max(
+            chainBeforeBatch.progressBlockNumber,
+            item->Internal.getItemBlockNumber - 1,
+          )
+        | None => chainBeforeBatch.progressBlockNumber
+        }
       }
 
       switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
