@@ -25,11 +25,16 @@ Ensure the following are installed and used:
 - Node.js v22+ (v24 recommended)
 - pnpm as the package manager
 - docker installed
+- `ENVIO_API_TOKEN` environment variable set (required for HyperSync)
 
 Prompt the user to whitelist the following commands:
 
 - `pnpm codegen`
 - `pnpm tsc --noEmit`
+
+## ESM Project
+
+This is an ESM project (`"type": "module"` in package.json). Top-level `await` is available. Use `import`/`export` syntax, not `require`.
 
 ## Indexer Modification Rules
 
@@ -133,11 +138,14 @@ You can also use `!context.isPreload` check, to prevent some logic to run during
 - When matching addresses in configuration objects, ensure case consistency
 - Use lowercase keys in config objects to match `address.toLowerCase()` lookups
 - Example: `"0x6b175474e89094c44da98b954eedeac495271d0f"` not `"0x6B175474E89094C44Da98b954EedeAC495271d0F"`
+- Address type is `` `0x${string}` ``, not plain `string`
 
 **Type Safety**:
 
 - Use `string | undefined` for optional string fields, not `string | null`
 - Generated types are strict about null vs undefined
+- Entity array fields are `readonly` — spread into a new array to modify
+- Only capitalized entity types are exported (e.g., `Token`, not `token`)
 
 **Decimal Normalization**:
 
@@ -154,22 +162,63 @@ You can also use `!context.isPreload` check, to prevent some logic to run during
 - **NEVER use arrays of entities** (e.g., `[Enter!]!` or `[User!]!`) - Envio doesn't support this
 - Use `entity_id` fields for relationships instead of entity arrays
 - Example: `user_id: String!` instead of `user: User!` or `users: [User!]!`
+- DESC indices are supported: `@index(fields: ["poolId", ["date", "DESC"]])`
 
 ## Config Rules
 
+- Uses `chains` (not `networks`) and `max_reorg_depth` (not `confirmed_block_threshold`)
+- Handler field is optional — handlers auto-register from `src/handlers/`
+- Global contracts are auto-configured per chain (no need to repeat contract definition in each chain)
+- RPC config uses `rpc` with `for: sync | live | fallback`; WebSocket via `ws:` field
+- `full_batch_size` controls batch size; `multichain: ordered | unordered` (default: `unordered`)
+- Removed/deprecated options: `loaders`, `preload_handlers`, `preRegisterDynamicContracts`, `event_decoder`, `rpc_config`, `unordered_multichain_mode`
 - If using event.transaction.hash or other transaction-level data, explicitly define it under field_selection in config.yaml
 
 ```yaml
 - name: SablierLockup
   address:
     - 0x467D5Bf8Cfa1a5f99328fBdCb9C751c78934b725
-  handler: src/EventHandlers.ts
   events:
     - event: CreateLockupLinearStream(...)
       field_selection:
         transaction_fields:
           - hash
 ```
+
+## Handler Rules
+
+- `context.chain.id` and `context.chain.isLive` are available in handlers
+- Use `indexer` from `generated` (replaces `getGeneratedByChainId`)
+- Address type is `` `0x${string}` ``, not `string`
+- Use `transaction.type` (not `transaction.kind`)
+- Entity array fields are `readonly`
+- Only capitalized entity types are exported from `generated`
+- Conditional `eventFilters` can return a boolean to enable/disable filtering
+
+## Testing
+
+Uses Vitest with `createTestIndexer()`:
+
+```ts
+import { describe, it, expect } from "vitest";
+import { createTestIndexer } from "generated";
+
+describe("Handler tests", () => {
+  it("processes events correctly", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1: { startBlock: 10_000_000, endBlock: 10_000_100 },
+      },
+    });
+
+    expect(result.changes).toMatchInlineSnapshot(`...`);
+  });
+});
+```
+
+Run tests: `pnpm test`
 
 ## YAML Validation
 
