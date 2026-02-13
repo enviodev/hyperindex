@@ -142,17 +142,7 @@ let getProgressedChainsById = {
         fetchState.chainId->Int.toString,
       ) {
       | Some(progressBlockNumber) => progressBlockNumber
-      | None =>
-        // If the chain has buffered items, we know there are no events before the first item,
-        // so we can advance progress to firstItemBlockNumber - 1
-        switch fetchState.buffer->Belt.Array.get(0) {
-        | Some(item) =>
-          Pervasives.max(
-            chainBeforeBatch.progressBlockNumber,
-            item->Internal.getItemBlockNumber - 1,
-          )
-        | None => chainBeforeBatch.progressBlockNumber
-        }
+      | None => chainBeforeBatch.progressBlockNumber
       }
 
       switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
@@ -356,6 +346,41 @@ let prepareOrderedBatch = (
     }
   }
 
+  // Advance progress for non-selected chains that have buffered items.
+  // We know there are no events before the first item, so progress can
+  // safely advance to firstItemBlockNumber - 1.
+  chainsBeforeBatch
+  ->ChainMap.values
+  ->Array.forEachU(chainBeforeBatch => {
+    let fetchState = chainBeforeBatch.fetchState
+    if mutProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(fetchState.chainId)->Option.isNone {
+      switch fetchState.buffer->Belt.Array.get(0) {
+      | Some(item) =>
+        let firstItemBlock = item->Internal.getItemBlockNumber
+        if firstItemBlock - 1 > chainBeforeBatch.progressBlockNumber {
+          prevCheckpointId :=
+            addReorgCheckpoints(
+              ~chainId=fetchState.chainId,
+              ~reorgDetection=chainBeforeBatch.reorgDetection,
+              ~prevCheckpointId=prevCheckpointId.contents,
+              ~fromBlockExclusive=chainBeforeBatch.progressBlockNumber,
+              ~toBlockExclusive=firstItemBlock,
+              ~mutCheckpointIds=checkpointIds,
+              ~mutCheckpointChainIds=checkpointChainIds,
+              ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
+              ~mutCheckpointBlockHashes=checkpointBlockHashes,
+              ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
+            )
+          mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+            fetchState.chainId,
+            firstItemBlock - 1,
+          )
+        }
+      | None => ()
+      }
+    }
+  })
+
   {
     totalBatchSize: totalBatchSize.contents,
     items,
@@ -488,6 +513,39 @@ let prepareUnorderedBatch = (
 
     chainIdx := chainIdx.contents + 1
   }
+
+  // Advance progress for non-selected chains that have buffered items.
+  chainsBeforeBatch
+  ->ChainMap.values
+  ->Array.forEachU(chainBeforeBatch => {
+    let fetchState = chainBeforeBatch.fetchState
+    if mutProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(fetchState.chainId)->Option.isNone {
+      switch fetchState.buffer->Belt.Array.get(0) {
+      | Some(item) =>
+        let firstItemBlock = item->Internal.getItemBlockNumber
+        if firstItemBlock - 1 > chainBeforeBatch.progressBlockNumber {
+          prevCheckpointId :=
+            addReorgCheckpoints(
+              ~chainId=fetchState.chainId,
+              ~reorgDetection=chainBeforeBatch.reorgDetection,
+              ~prevCheckpointId=prevCheckpointId.contents,
+              ~fromBlockExclusive=chainBeforeBatch.progressBlockNumber,
+              ~toBlockExclusive=firstItemBlock,
+              ~mutCheckpointIds=checkpointIds,
+              ~mutCheckpointChainIds=checkpointChainIds,
+              ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
+              ~mutCheckpointBlockHashes=checkpointBlockHashes,
+              ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
+            )
+          mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+            fetchState.chainId,
+            firstItemBlock - 1,
+          )
+        }
+      | None => ()
+      }
+    }
+  })
 
   {
     totalBatchSize: totalBatchSize.contents,
