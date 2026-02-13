@@ -55,6 +55,18 @@ let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)
 external number: string => int = "Number"
 let hexIntSchema: S.schema<int> = makeHexSchema(v => v->number->Some)
 
+external parseFloat: string => float = "Number"
+let decimalFloatSchema: S.schema<float> = S.string->S.transform(s => {
+  parser: str => {
+    let v = parseFloat(str)
+    if Js.Float.isNaN(v) {
+      s.fail("The string is not a valid decimal number")
+    } else {
+      v
+    }
+  },
+})
+
 module GetLogs = {
   @unboxed
   type topicFilter = Single(hex) | Multiple(array<hex>) | @as(null) Null
@@ -248,6 +260,45 @@ module GetTransactionByHash = {
     "eth_getTransactionByHash",
     S.tuple1(S.string),
     S.null(transactionSchema),
+  )
+
+  // Raw route returns unparsed JSON for on-demand field parsing
+  let rawRoute = makeRpcRoute(
+    "eth_getTransactionByHash",
+    S.tuple1(S.string),
+    S.null(S.json(~validate=false)),
+  )
+}
+
+module GetTransactionReceipt = {
+  // Parses receipt-only fields into evmTransactionFields.
+  // Only receipt-specific fields are included; other fields in the receipt JSON are ignored.
+  let receiptSchema = S.object((s): Internal.evmTransactionFields => {
+    gasUsed: ?s.field("gasUsed", S.nullable(hexBigintSchema)),
+    cumulativeGasUsed: ?s.field("cumulativeGasUsed", S.nullable(hexBigintSchema)),
+    effectiveGasPrice: ?s.field("effectiveGasPrice", S.nullable(hexBigintSchema)),
+    contractAddress: ?s.field("contractAddress", S.nullable(S.string)),
+    logsBloom: ?s.field("logsBloom", S.nullable(S.string)),
+    root: ?s.field("root", S.nullable(S.string)),
+    status: ?s.field("status", S.nullable(hexIntSchema)),
+    l1Fee: ?s.field("l1Fee", S.nullable(hexBigintSchema)),
+    l1GasPrice: ?s.field("l1GasPrice", S.nullable(hexBigintSchema)),
+    l1GasUsed: ?s.field("l1GasUsed", S.nullable(hexBigintSchema)),
+    l1FeeScalar: ?s.field("l1FeeScalar", S.nullable(decimalFloatSchema)),
+    gasUsedForL1: ?s.field("gasUsedForL1", S.nullable(hexBigintSchema)),
+  })
+
+  let route = makeRpcRoute(
+    "eth_getTransactionReceipt",
+    S.tuple1(S.string),
+    S.null(receiptSchema),
+  )
+
+  // Raw route returns unparsed JSON for on-demand field parsing
+  let rawRoute = makeRpcRoute(
+    "eth_getTransactionReceipt",
+    S.tuple1(S.string),
+    S.null(S.json(~validate=false)),
   )
 }
 
