@@ -1596,6 +1596,16 @@ type handlerContext = {{
 
 type testIndexerProcessConfig = {{
   chains: testIndexerProcessConfigChains,
+}}
+
+/** Test indexer type with process method and chain info. */
+type testIndexer = {{
+  /** Process blocks for the specified chains and return progress with changes. */
+  process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
 }}"#,
             test_indexer_chains_fields
         );
@@ -1605,7 +1615,7 @@ type testIndexerProcessConfig = {{
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
             r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
-            r#"let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)"#,
+            r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
         );
 
         // Helper function to convert kebab-case to camelCase

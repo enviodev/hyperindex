@@ -404,8 +404,91 @@ let makeCreateTestIndexer = (
       }
     })
 
-    // Build the result object with process + entity operations
+    // Build chain info from config (similar to Main.getGlobalIndexer but static)
+    let chainIds = []
+    let chains = Utils.Object.createNullObject()
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainIdStr = chainConfig.id->Int.toString
+      chainIds->Js.Array2.push(chainConfig.id)->ignore
+
+      let chainObj = Utils.Object.createNullObject()
+      chainObj
+      ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
+      ->Utils.Object.definePropertyWithValue(
+        "startBlock",
+        {enumerable: true, value: chainConfig.startBlock},
+      )
+      ->Utils.Object.definePropertyWithValue(
+        "endBlock",
+        {enumerable: true, value: chainConfig.endBlock},
+      )
+      ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
+      ->Utils.Object.definePropertyWithValue("isLive", {enumerable: true, value: false})
+      ->ignore
+
+      // Add contracts to chain object
+      chainConfig.contracts->Array.forEach(contract => {
+        let contractObj = Utils.Object.createNullObject()
+        contractObj
+        ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
+        ->Utils.Object.definePropertyWithValue("abi", {enumerable: true, value: contract.abi})
+        ->Utils.Object.defineProperty(
+          "addresses",
+          {
+            enumerable: true,
+            get: () => {
+              if state.processInProgress {
+                Js.Exn.raiseError(
+                  `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++
+                  "Wait for process() to complete before reading contract addresses.",
+                )
+              }
+              // Start with static config addresses
+              let addresses = contract.addresses->Array.copy
+              // Add accumulated dynamic contract addresses
+              switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+              | Some(dcDict) =>
+                dcDict
+                ->Js.Dict.values
+                ->Array.forEach(entity => {
+                  let dc = entity->castFromDcRegistry
+                  if dc.contractName === contract.name && dc.chainId === chainConfig.id {
+                    addresses->Array.push(dc.contractAddress)->ignore
+                  }
+                })
+              | None => ()
+              }
+              addresses
+            },
+          },
+        )
+        ->ignore
+
+        chainObj
+        ->Utils.Object.definePropertyWithValue(contract.name, {enumerable: true, value: contractObj})
+        ->ignore
+      })
+
+      chains
+      ->Utils.Object.definePropertyWithValue(chainIdStr, {enumerable: true, value: chainObj})
+      ->ignore
+
+      if chainConfig.name !== chainIdStr {
+        chains
+        ->Utils.Object.definePropertyWithValue(
+          chainConfig.name,
+          {enumerable: false, value: chainObj},
+        )
+        ->ignore
+      }
+    })
+
+    // Build the result object with process + entity operations + chain info
     let result: Js.Dict.t<unknown> = Js.Dict.empty()
+    result->Js.Dict.set("chainIds", chainIds->(Utils.magic: array<int> => unknown))
+    result->Js.Dict.set("chains", chains->(Utils.magic: {..} => unknown))
     entityOpsDict
     ->Js.Dict.entries
     ->Array.forEach(((name, ops)) => {
