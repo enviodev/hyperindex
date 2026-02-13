@@ -271,7 +271,6 @@ pub async fn generate_config_from_subgraph_id(
         ecosystem: None,
         contracts: None,
         chains: vec![],
-        multichain: None,
         rollback_on_reorg: None,
         save_full_history: None,
         field_selection: None,
