@@ -187,7 +187,7 @@ describe("EventRouter", () => {
   )
 
   it("fromEvmEventModsOrThrow works", () => {
-    let item = Types.Gravatar.NewGravatar.register()
+    let item = Indexer.Gravatar.NewGravatar.register()
     let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
 
     Assert.deepEqual(

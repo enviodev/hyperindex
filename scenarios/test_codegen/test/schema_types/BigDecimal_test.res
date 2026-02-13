@@ -15,26 +15,27 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
 
     let sql = PgStorage.makeClient()
     /// Setup DB
-    let testEntity1: Entities.EntityWithBigDecimal.t = {
+    let testEntity1: Indexer.Entities.EntityWithBigDecimal.t = {
       id: "testEntity",
       bigDecimal: BigDecimal.fromFloat(123.456),
     }
-    let testEntity2: Entities.EntityWithBigDecimal.t = {
+    let testEntity2: Indexer.Entities.EntityWithBigDecimal.t = {
       id: "testEntity2",
       bigDecimal: BigDecimal.fromFloat(654.321),
     }
 
+    let entityConfig = Mock.entityConfig(EntityWithBigDecimal)
     await sql->PgStorage.setOrThrow(
       ~items=[
-        testEntity1->Entities.EntityWithBigDecimal.castToInternal,
-        testEntity2->Entities.EntityWithBigDecimal.castToInternal,
+        testEntity1->(Utils.magic: Indexer.Entities.EntityWithBigDecimal.t => Internal.entity),
+        testEntity2->(Utils.magic: Indexer.Entities.EntityWithBigDecimal.t => Internal.entity),
       ],
-      ~table=Entities.EntityWithBigDecimal.table,
-      ~itemSchema=Entities.EntityWithBigDecimal.schema,
-      ~pgSchema=Generated.storagePgSchema,
+      ~table=entityConfig.table,
+      ~itemSchema=entityConfig.schema,
+      ~pgSchema=Indexer.Generated.storagePgSchema,
     )
 
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
     let loadManager = LoadManager.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -45,15 +46,15 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let handlerContext = UserContext.getHandlerContext({
       item,
       loadManager,
-      persistence: Generated.codegenPersistence,
+      persistence: Indexer.Generated.codegenPersistence,
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,
       checkpointId: 0.,
       chains,
       isResolved: false,
-      config: Generated.configWithoutRegistrations,
-    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
+      config: Indexer.Generated.configWithoutRegistrations,
+    })->(Utils.magic: Internal.handlerContext => Indexer.handlerContext)
 
     let _ = handlerContext.entityWithBigDecimal.get(testEntity1.id)
     let _ = handlerContext.entityWithBigDecimal.get(testEntity2.id)

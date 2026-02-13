@@ -8,7 +8,7 @@ describe("Test Persistence layer init", () => {
 
     Assert.deepEqual(
       persistence.allEntities,
-      [InternalTable.DynamicContractRegistry.config],
+      [InternalTable.DynamicContractRegistry.entityConfig],
       ~message=`All entities should automatically include the indexer core ones`,
     )
     Assert.deepEqual(

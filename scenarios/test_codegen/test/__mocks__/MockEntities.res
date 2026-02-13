@@ -1,4 +1,4 @@
-let gravatarEntity1: Entities.Gravatar.t = {
+let gravatarEntity1: Indexer.Entities.Gravatar.t = {
   id: "1001",
   owner_id: "0x123",
   displayName: "gravatar1",
@@ -7,7 +7,7 @@ let gravatarEntity1: Entities.Gravatar.t = {
   size: LARGE,
 }
 
-let gravatarEntity2: Entities.Gravatar.t = {
+let gravatarEntity2: Indexer.Entities.Gravatar.t = {
   id: "1002",
   owner_id: "0x678",
   displayName: "gravatar2",

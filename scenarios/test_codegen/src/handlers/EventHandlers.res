@@ -24,8 +24,8 @@ let noopEffect = Envio.createEffect(
 Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let () = await context.effect(noopEffect, ())
 
-  let gravatarSize: Enums.GravatarSize.t = SMALL
-  let gravatarObject: Entities.Gravatar.t = {
+  let gravatarSize: Indexer.Enums.GravatarSize.t = SMALL
+  let gravatarObject: Indexer.Entities.Gravatar.t = {
     id: event.params.id->BigInt.toString,
     owner_id: event.params.owner->Address.toString,
     displayName: event.params.displayName,
@@ -91,11 +91,11 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
 
   let updatesCount =
     maybeGravatar->Belt.Option.mapWithDefault(BigInt.fromInt(1), gravatar =>
-      gravatar.Entities.Gravatar.updatesCount->BigInt.add(BigInt.fromInt(1))
+      gravatar.Indexer.Entities.Gravatar.updatesCount->BigInt.add(BigInt.fromInt(1))
     )
 
-  let gravatarSize: Enums.GravatarSize.t = MEDIUM
-  let gravatar: Entities.Gravatar.t = {
+  let gravatarSize: Indexer.Enums.GravatarSize.t = MEDIUM
+  let gravatar: Indexer.Entities.Gravatar.t = {
     id: event.params.id->BigInt.toString,
     owner_id: event.params.owner->Address.toString,
     displayName: event.params.displayName,
@@ -116,7 +116,7 @@ let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
 Indexer.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
-  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
+  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>
       let optB = await context.b.get(a.b_id)

@@ -20,5 +20,21 @@ expression: project_template.internal_config_json_code
       }
     },
     "addressFormat": "checksum"
-  }
+  },
+  "enums": {},
+  "entities": [
+    {
+      "name": "EmptyEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "emptyField",
+          "type": "string"
+        }
+      ]
+    }
+  ]
 }

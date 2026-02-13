@@ -39,7 +39,7 @@ describe("Chains State", () => {
       async () => {
         // This test verifies that the chain field is accessible
         // The actual integration test is in EventHandlers.res with the EmptyEvent handler
-        let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+        let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
         let loadManager = LoadManager.make()
 
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -50,14 +50,14 @@ describe("Chains State", () => {
         let handlerContext = UserContext.getHandlerContext({
           item,
           loadManager,
-          persistence: Generated.codegenPersistence,
+          persistence: Indexer.Generated.codegenPersistence,
           inMemoryStore,
           shouldSaveHistory: false,
           isPreload: false,
           checkpointId: 0.,
           chains,
           isResolved: false,
-          config: Generated.configWithoutRegistrations,
+          config: Indexer.Generated.configWithoutRegistrations,
         })
 
         // Verify we can access current event's chain info

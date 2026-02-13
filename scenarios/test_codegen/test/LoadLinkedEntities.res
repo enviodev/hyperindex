@@ -42,9 +42,9 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //     {id: "TODO_TURN_THIS_INTO_NONE", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
   //   ]
   //
-  //   await Entities.batchSet(sql, aEntities, ~entityMod=module(Entities.A))
-  //   await Entities.batchSet(sql, bEntities, ~entityMod=module(Entities.B))
-  //   await Entities.batchSet(sql, cEntities, ~entityMod=module(Entities.C))
+  //   await Indexer.Entities.batchSet(sql, aEntities, ~entityMod=module(Indexer.Entities.A))
+  //   await Indexer.Entities.batchSet(sql, bEntities, ~entityMod=module(Indexer.Entities.B))
+  //   await Indexer.Entities.batchSet(sql, cEntities, ~entityMod=module(Indexer.Entities.C))
   //
   //   let inMemoryStore = IO.InMemoryStore.make()
   //
@@ -164,25 +164,25 @@ describe("Async linked entity loaders", () => {
     // Initializing values for mock db
     let messageFromC = "Hi there I was in C originally"
     // mockDbInitial->Testhelpers.MockDb.
-    let c: Entities.C.t = {
+    let c: Indexer.Entities.C.t = {
       id: "hasStringToCopy",
       stringThatIsMirroredToA: messageFromC,
       a_id: "",
     }
-    let b: Entities.B.t = {
+    let b: Indexer.Entities.B.t = {
       id: "hasC",
       c_id: Some(c.id),
     }
-    let a: Entities.A.t = {
+    let a: Indexer.Entities.A.t = {
       id: EventHandlers.aIdWithGrandChildC,
       b_id: b.id,
       optionalStringToTestLinkedEntities: None,
     }
-    let bNoC: Entities.B.t = {
+    let bNoC: Indexer.Entities.B.t = {
       id: "noC",
       c_id: None,
     }
-    let aNoGrandchild: Entities.A.t = {
+    let aNoGrandchild: Indexer.Entities.A.t = {
       id: EventHandlers.aIdWithNoGrandChildC,
       b_id: bNoC.id,
       optionalStringToTestLinkedEntities: None,

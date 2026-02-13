@@ -2,10 +2,55 @@
 source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
+module Enums = {
+  module Status = {
+    @genType
+    type t =
+      | @as("ACTIVE") ACTIVE
+      | @as("INACTIVE") INACTIVE
+  }
+}
+
+module Entities = {
+  type id = string
+
+  module EmptyEntity = {
+    @genType
+    type t = {id: id, emptyField: id, status: Enums.Status.t, optionalStatus: option<Enums.Status.t>, related_id: id, optionalRelated_id: option<id>, tags: array<string>, optionalTags: option<array<string>>}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>, @as("status") status?: Envio.whereOperator<Enums.Status.t>, @as("optionalStatus") optionalStatus?: Envio.whereOperator<option<Enums.Status.t>>, @as("related_id") related?: Envio.whereOperator<id>, @as("optionalRelated_id") optionalRelated?: Envio.whereOperator<option<id>>, @as("tags") tags?: Envio.whereOperator<array<string>>, @as("optionalTags") optionalTags?: Envio.whereOperator<option<array<string>>>}
+  }
+
+  module RelatedEntity = {
+    @genType
+    type t = {id: id, name: string}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("name") name?: Envio.whereOperator<string>}
+  }
+
+  type rec name<'entity> =
+    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t>
+    | @as("RelatedEntity") RelatedEntity: name<RelatedEntity.t>
+}
+
 @genType
-module Contract1 = {
-  module NewGravatar = Types.MakeRegister(Types.Contract1.NewGravatar)
-  module UpdatedGravatar = Types.MakeRegister(Types.Contract1.UpdatedGravatar)
+type entityHandlerContext<'entity, 'getWhereFilter> = {
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}
+
+@genType.import(("./Types.ts", "HandlerContext"))
+type handlerContext = {
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
+  chain: Internal.chainInfo,
+  @as("EmptyEntity") emptyEntity: entityHandlerContext<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
+  @as("RelatedEntity") relatedEntity: entityHandlerContext<Entities.RelatedEntity.t, Entities.RelatedEntity.getWhereFilter>,
 }
 
 @genType.import(("./Types.ts", "EvmChainId"))
@@ -54,8 +99,6 @@ type indexer = {
   chains: indexerChains,
 }
 
-let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)
-
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
 switch chainId {
@@ -66,7 +109,7 @@ switch chainId {
 @genType /** Register a Block Handler. It'll be called for every block by default. */
 let onBlock: (
 Envio.onBlockOptions<chainId>,
-Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>,
+Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
 ) => unit = (
 EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
@@ -88,5 +131,3 @@ type testIndexer = {
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
 }
-
-let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))

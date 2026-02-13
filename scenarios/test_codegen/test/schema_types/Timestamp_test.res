@@ -15,18 +15,19 @@ describe("Load and save an entity with a Timestamp from DB", () => {
 
     let sql = PgStorage.makeClient()
     /// Setup DB
-    let testEntity: Entities.EntityWithTimestamp.t = {
+    let testEntity: Indexer.Entities.EntityWithTimestamp.t = {
       id: "testEntity",
       timestamp: Js.Date.fromString("1970-01-01T00:02:03.456Z"),
     }
+    let entityConfig = Mock.entityConfig(EntityWithTimestamp)
     await sql->PgStorage.setOrThrow(
-      ~items=[testEntity->Entities.EntityWithTimestamp.castToInternal],
-      ~table=Entities.EntityWithTimestamp.table,
-      ~itemSchema=Entities.EntityWithTimestamp.schema,
-      ~pgSchema=Generated.storagePgSchema,
+      ~items=[testEntity->(Utils.magic: Indexer.Entities.EntityWithTimestamp.t => Internal.entity)],
+      ~table=entityConfig.table,
+      ~itemSchema=entityConfig.schema,
+      ~pgSchema=Indexer.Generated.storagePgSchema,
     )
 
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
     let loadManager = LoadManager.make()
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -37,15 +38,15 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     let handlerContext = UserContext.getHandlerContext({
       item,
       loadManager,
-      persistence: Generated.codegenPersistence,
+      persistence: Indexer.Generated.codegenPersistence,
       inMemoryStore,
       shouldSaveHistory: false,
       isPreload: false,
       checkpointId: 0.,
       chains,
       isResolved: false,
-      config: Generated.configWithoutRegistrations,
-    })->(Utils.magic: Internal.handlerContext => Types.handlerContext)
+      config: Indexer.Generated.configWithoutRegistrations,
+    })->(Utils.magic: Internal.handlerContext => Indexer.handlerContext)
 
     let _ = handlerContext.entityWithTimestamp.get(testEntity.id)
 

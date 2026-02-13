@@ -6,17 +6,17 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let contracts = [
     {
       Config.name: "NftFactory",
-      abi: Types.NftFactory.abi,
+      abi: Indexer.NftFactory.abi,
       addresses: [nftFactoryContractAddress],
-      events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
+      events: [(Indexer.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
       startBlock: None,
       eventSignatures: [],
     },
     {
       name: "SimpleNft",
-      abi: Types.SimpleNft.abi,
+      abi: Indexer.SimpleNft.abi,
       addresses: [],
-      events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
+      events: [(Indexer.SimpleNft.Transfer.register() :> Internal.eventConfig)],
       startBlock: None,
       eventSignatures: [],
     },

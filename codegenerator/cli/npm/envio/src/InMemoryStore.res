@@ -100,7 +100,7 @@ let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpoint
 
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
-    inMemoryStore->getInMemTable(~entityConfig=InternalTable.DynamicContractRegistry.config)
+    inMemoryStore->getInMemTable(~entityConfig=InternalTable.DynamicContractRegistry.entityConfig)
 
   let itemIdx = ref(0)
 
