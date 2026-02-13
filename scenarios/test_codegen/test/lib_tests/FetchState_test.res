@@ -167,6 +167,7 @@ describe("FetchState.make", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
             },
           ],
           ~nextPartitionIndex=1,
@@ -245,6 +246,7 @@ describe("FetchState.make", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
             ],
             ~nextPartitionIndex=1,
@@ -305,6 +307,7 @@ describe("FetchState.make", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
               {
                 id: "1",
@@ -319,6 +322,7 @@ describe("FetchState.make", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
             ],
             ~nextPartitionIndex=2,
@@ -391,6 +395,7 @@ describe("FetchState.make", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
               {
                 id: "1",
@@ -405,6 +410,7 @@ describe("FetchState.make", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
               {
                 id: "2",
@@ -419,6 +425,7 @@ describe("FetchState.make", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
               {
                 id: "3",
@@ -433,6 +440,7 @@ describe("FetchState.make", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
             ],
             ~nextPartitionIndex=4,
@@ -931,6 +939,7 @@ describe("FetchState.registerDynamicContracts", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
         {
           id: "2",
@@ -945,6 +954,7 @@ describe("FetchState.registerDynamicContracts", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
       ],
       ~message=`Should add 2 new partitions + optimize the original partition to merge without blocking`,
@@ -991,6 +1001,7 @@ describe("FetchState.registerDynamicContracts", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
         {
           id: "2",
@@ -1007,6 +1018,7 @@ describe("FetchState.registerDynamicContracts", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
       ],
       ~message=`Should add 2 new partitions
@@ -1113,6 +1125,7 @@ describe("FetchState.registerDynamicContracts", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
           },
           {
             id: "2",
@@ -1129,6 +1142,7 @@ describe("FetchState.registerDynamicContracts", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
           },
           {
             id: "3",
@@ -1145,6 +1159,7 @@ describe("FetchState.registerDynamicContracts", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
           },
           {
             id: "4",
@@ -1159,6 +1174,7 @@ describe("FetchState.registerDynamicContracts", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
           },
         ],
         ~message=`All dcs without filterByAddresses should use the original logic and be grouped into a single partition,
@@ -1210,6 +1226,7 @@ describe("FetchState.registerDynamicContracts", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
       ],
       ~message="Adds dc and optimizes partitions",
@@ -1262,6 +1279,7 @@ describe("FetchState.registerDynamicContracts", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
         {
           id: "2",
@@ -1277,6 +1295,7 @@ describe("FetchState.registerDynamicContracts", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
       ],
     )
@@ -1355,6 +1374,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
               {
                 id: "1",
@@ -1374,6 +1394,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 mutPendingQueries: [],
                 prevQueryRange: 0,
                 prevPrevQueryRange: 0,
+                latestBlockRangeUpdateBlock: 0,
               },
             ],
             ~nextPartitionIndex=2,
@@ -1419,6 +1440,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
             mergeBlock: None,
@@ -1468,6 +1490,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.fromArray([
               ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
@@ -1484,6 +1507,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
             mergeBlock: None,
@@ -1736,6 +1760,7 @@ describe("FetchState.getNextQuery & integration", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
         // Creates a new partition for this without merging, since 0 is full and 1 has mergeBlock
         {
@@ -1751,6 +1776,7 @@ describe("FetchState.getNextQuery & integration", () => {
           mutPendingQueries: [],
           prevQueryRange: 0,
           prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
         },
       ],
       ~message="Assert internal representation of the fetch state",
@@ -2009,6 +2035,7 @@ describe("FetchState.getNextQuery & integration", () => {
               ],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
               latestFetchedBlock: {
                 blockNumber: 10,
                 blockTimestamp: 10,
@@ -2120,6 +2147,7 @@ describe("FetchState.getNextQuery & integration", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
               mergeBlock: None,
@@ -2134,6 +2162,7 @@ describe("FetchState.getNextQuery & integration", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([
                 ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
@@ -2169,6 +2198,7 @@ describe("FetchState.getNextQuery & integration", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
               selection: fetchState.normalSelection,
               // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
               addressesByContractName: Js.Dict.fromArray([
@@ -2208,6 +2238,7 @@ describe("FetchState.getNextQuery & integration", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
               selection: fetchState.normalSelection,
               addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
               mergeBlock: None,
@@ -2294,6 +2325,7 @@ describe("FetchState.getNextQuery & integration", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
               selection: {
                 dependsOnAddresses: false,
                 eventConfigs: wildcardEventConfigs,
@@ -2331,6 +2363,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
             mergeBlock: None,
@@ -2345,6 +2378,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
             mergeBlock: None,
@@ -2655,6 +2689,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
             mergeBlock: None,
@@ -2666,6 +2701,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Js.Dict.empty(),
             mergeBlock: None,
@@ -3477,6 +3513,150 @@ describe("FetchState with onBlockConfig only (no events)", () => {
         nextQuery2,
         NothingToQuery,
         ~message="Should return NothingToQuery when there are no partitions to query",
+      )
+    },
+  )
+})
+
+describe("Stale query response should not overwrite block range", () => {
+  // The default configuration with ability to overwrite some values
+  let getNextQuery = (
+    fs,
+    ~knownHeight=100000,
+    ~concurrencyLimit=10,
+  ) =>
+    fs
+    ->FetchState.updateKnownHeight(~knownHeight)
+    ->FetchState.getNextQuery(~concurrencyLimit)
+
+  it(
+    "Out-of-order parallel query responses should not degrade chunking heuristic",
+    () => {
+      let fetchState = makeInitial(~knownHeight=100000)
+
+      // -- Query 1: uncapped query from block 0 --
+      let q1 = switch fetchState->getNextQuery {
+      | Ready([q]) => q
+      | _ => Assert.fail("Expected a single query")
+      }
+      fetchState->FetchState.startFetchingQueries(~queries=[q1])
+
+      // Response arrives at block 500 (range = 501)
+      // shouldUpdateBlockRange: None toBlock => 500 < 100000 - 10 = true
+      let fs1 =
+        fetchState
+        ->FetchState.updateKnownHeight(~knownHeight=100000)
+        ->FetchState.handleQueryResult(
+          ~query=q1,
+          ~latestFetchedBlock={blockNumber: 500, blockTimestamp: 500 * 15},
+          ~newItems=[],
+        )
+
+      let p1 = fs1.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+      Assert.equal(p1.prevQueryRange, 501, ~message="First query should set prevQueryRange=501")
+      Assert.equal(
+        p1.prevPrevQueryRange,
+        0,
+        ~message="First query prevPrevQueryRange should still be 0",
+      )
+      Assert.equal(
+        p1.latestBlockRangeUpdateBlock,
+        500,
+        ~message="latestBlockRangeUpdateBlock should be 500 after first query",
+      )
+
+      // -- Query 2: uncapped query from block 501 --
+      let q2 = switch fs1->getNextQuery {
+      | Ready([q]) => q
+      | _ => Assert.fail("Expected a single query for second round")
+      }
+      fs1->FetchState.startFetchingQueries(~queries=[q2])
+
+      // Response arrives at block 1000 (range = 500)
+      // shouldUpdateBlockRange: None toBlock => 1000 < 99990 = true
+      let fs2 = fs1->FetchState.handleQueryResult(
+        ~query=q2,
+        ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000 * 15},
+        ~newItems=[],
+      )
+
+      let p2 = fs2.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+      Assert.equal(p2.prevQueryRange, 500, ~message="Second query should set prevQueryRange=500")
+      Assert.equal(
+        p2.prevPrevQueryRange,
+        501,
+        ~message="Second query should shift prevPrevQueryRange=501",
+      )
+      Assert.equal(p2.latestBlockRangeUpdateBlock, 1000)
+
+      // Now chunking is active: getMinHistoryRange = Some(min(500, 501)) = Some(500)
+      // chunkSize = ceil(500 * 1.8) = 900
+      // Chunks: [1001..1900] and [1901..2800]
+
+      // -- Query 3: get two chunk queries in parallel --
+      let (chunkA, chunkB) = switch fs2->getNextQuery(~concurrencyLimit=2) {
+      | Ready([a, b]) => (a, b)
+      | _ => Assert.fail("Expected two chunk queries")
+      }
+
+      Assert.equal(chunkA.fromBlock, 1001, ~message="Chunk A should start at 1001")
+      Assert.equal(chunkB.fromBlock, 1901, ~message="Chunk B should start at 1901")
+
+      fs2->FetchState.startFetchingQueries(~queries=[chunkA, chunkB])
+
+      // -- Respond to the LATER chunk (B) first --
+      // Partial response: latestFetchedBlock=2500 < toBlock=2800
+      // shouldUpdateBlockRange: 2500 > 1000 (latestBlockRangeUpdateBlock) = true,
+      //   then 2500 < 2800 = true (partial response)
+      // blockRange = 2500 - 1901 + 1 = 600
+      let fs3 = fs2->FetchState.handleQueryResult(
+        ~query=chunkB,
+        ~latestFetchedBlock={blockNumber: 2500, blockTimestamp: 2500 * 15},
+        ~newItems=[],
+      )
+
+      let p3 = fs3.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+      Assert.equal(
+        p3.prevQueryRange,
+        600,
+        ~message="Chunk B response should update prevQueryRange to 600",
+      )
+      Assert.equal(
+        p3.prevPrevQueryRange,
+        500,
+        ~message="Chunk B response should shift prevPrevQueryRange to 500",
+      )
+      Assert.equal(
+        p3.latestBlockRangeUpdateBlock,
+        2500,
+        ~message="latestBlockRangeUpdateBlock should update to 2500",
+      )
+
+      // -- Now respond to the EARLIER chunk (A) --
+      // Partial response: latestFetchedBlock=1400 < toBlock=1900
+      // shouldUpdateBlockRange: 1400 > 2500 (latestBlockRangeUpdateBlock) = FALSE
+      // So prevQueryRange should NOT change
+      let fs4 = fs3->FetchState.handleQueryResult(
+        ~query=chunkA,
+        ~latestFetchedBlock={blockNumber: 1400, blockTimestamp: 1400 * 15},
+        ~newItems=[],
+      )
+
+      let p4 = fs4.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+      Assert.equal(
+        p4.prevQueryRange,
+        600,
+        ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 600)",
+      )
+      Assert.equal(
+        p4.prevPrevQueryRange,
+        500,
+        ~message="Earlier chunk A response should NOT overwrite prevPrevQueryRange (still 500)",
+      )
+      Assert.equal(
+        p4.latestBlockRangeUpdateBlock,
+        2500,
+        ~message="latestBlockRangeUpdateBlock should remain 2500 after stale response",
       )
     },
   )

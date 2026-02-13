@@ -145,6 +145,7 @@ describe("SourceManager fetchNext", () => {
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
+      latestBlockRangeUpdateBlock: 0,
     }
   }
 
