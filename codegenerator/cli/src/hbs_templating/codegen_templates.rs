@@ -295,6 +295,19 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
         writeln!(code, "}}").unwrap();
     }
 
+    if !entities.is_empty() {
+        writeln!(code).unwrap();
+        writeln!(code, "type rec name<'entity> =").unwrap();
+        for entity in entities {
+            writeln!(
+                code,
+                "  | @as(\"{0}\") {0}: name<{0}.t>",
+                entity.name.capitalized
+            )
+            .unwrap();
+        }
+    }
+
     code
 }
 
@@ -1253,7 +1266,6 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    generated_contract_modules: String,
     generated_top_level_bindings: String,
     internal_config_json_code: String,
     envio_dts_code: String,
@@ -1366,29 +1378,6 @@ impl ProjectTemplate {
                 .map(|chain| chain.id.to_string())
                 .collect::<Vec<_>>(),
         };
-
-        // Generate contract modules with event registration
-        let contract_modules = codegen_contracts
-            .iter()
-            .map(|contract| {
-                let event_modules = contract
-                    .codegen_events
-                    .iter()
-                    .map(|event| {
-                        format!(
-                            "  module {} = MakeRegister({}.{})",
-                            event.name, contract.name.capitalized, event.name
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!(
-                    "@genType\nmodule {} = {{\n{}\n}}",
-                    contract.name.capitalized, event_modules
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
 
         // Generate onBlock function with ecosystem-specific types
         let on_block_handler_type = match cfg.get_ecosystem() {
@@ -1612,8 +1601,6 @@ type testIndexerProcessConfig = {{
         );
 
         let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
-
-        let generated_contract_modules = contract_modules;
 
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
@@ -2075,7 +2062,6 @@ type testIndexerProcessConfig = {{
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            generated_contract_modules,
             generated_top_level_bindings,
             internal_config_json_code,
             envio_dts_code,

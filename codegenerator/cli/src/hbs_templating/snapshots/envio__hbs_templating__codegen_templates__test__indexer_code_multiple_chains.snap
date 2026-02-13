@@ -15,6 +15,9 @@ module Entities = {
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
   }
+
+  type rec name<'entity> =
+    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t>
 }
 
 @genType

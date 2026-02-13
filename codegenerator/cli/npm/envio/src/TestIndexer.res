@@ -574,8 +574,7 @@ type workerData = {
 }
 
 let initTestWorker = (
-  ~makeGeneratedConfig,
-  ~makePersistence: (~storage: Persistence.storage) => Persistence.t,
+  ~makeGeneratedConfig: unit => Config.t,
 ) => {
   if NodeJs.WorkerThreads.isMainThread {
     Js.Exn.raiseError("initTestWorker must be called from a worker thread")
@@ -592,7 +591,12 @@ let initTestWorker = (
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
-    let persistence = makePersistence(~storage)
+    let config = makeGeneratedConfig()
+    let persistence = Persistence.make(
+      ~userEntities=config.userEntities,
+      ~allEnums=config.allEnums,
+      ~storage,
+    )
 
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {

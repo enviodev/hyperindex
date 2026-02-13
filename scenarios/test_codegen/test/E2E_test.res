@@ -152,7 +152,7 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(Mock.entityConfig("SimpleEntity")),
+      await indexerMock.query(SimpleEntity),
       [{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}],
     )
     Assert.deepEqual(
@@ -206,7 +206,7 @@ describe("E2E tests", () => {
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
       context.simpleEntity.set({
         id: "1",
@@ -244,7 +244,7 @@ describe("E2E tests", () => {
     Assert.deepEqual(
       await Promise.all2((
         indexerMock.queryCheckpoints(),
-        indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [

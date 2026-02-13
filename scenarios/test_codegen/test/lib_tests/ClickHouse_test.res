@@ -2,7 +2,7 @@ open RescriptMocha
 
 describe("Test makeClickHouseEntitySchema", () => {
   Async.it("Should serialize Date fields using getTime() instead of ISO string", async () => {
-    let entityConfig = Mock.entityConfig("EntityWithAllTypes")
+    let entityConfig = Mock.entityConfig(EntityWithAllTypes)
 
     // Create a schema using makeClickHouseEntitySchema
     let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
@@ -101,7 +101,7 @@ ORDER BY (id)`
     Async.it(
       "Should create SQL for A entity history table",
       async () => {
-        let entityConfig = Mock.entityConfig("EntityWithAllTypes")
+        let entityConfig = Mock.entityConfig(EntityWithAllTypes)
         let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` (
@@ -148,7 +148,7 @@ ORDER BY (id, envio_checkpoint_id)`
     Async.it(
       "Should create SQL for A entity view",
       async () => {
-        let entity = Mock.entityConfig("EntityWithAllTypes")
+        let entity = Mock.entityConfig(EntityWithAllTypes)
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
         let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` AS

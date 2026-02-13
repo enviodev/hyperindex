@@ -116,7 +116,7 @@ let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
 Indexer.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
-  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
+  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>
       let optB = await context.b.get(a.b_id)

@@ -98,11 +98,11 @@ describe("Write/read tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(Mock.entityConfig("EntityWithAllTypes")),
+      await indexerMock.query(EntityWithAllTypes),
       [entityWithAllTypes],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(Mock.entityConfig("EntityWithAllTypes")),
+      await indexerMock.queryHistory(EntityWithAllTypes),
       [
         Set({
           checkpointId: 1.,
@@ -112,11 +112,11 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.query(Mock.entityConfig("EntityWithAllNonArrayTypes")),
+      await indexerMock.query(EntityWithAllNonArrayTypes),
       [entityWithAllNonArrayTypes],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(Mock.entityConfig("EntityWithAllNonArrayTypes")),
+      await indexerMock.queryHistory(EntityWithAllNonArrayTypes),
       [
         Set({
           checkpointId: 1.,
@@ -127,9 +127,7 @@ describe("Write/read tests", () => {
     )
 
     Assert.deepEqual(
-      await indexerMock.query(
-        Mock.entityConfig("EntityWith63LenghtName______________________________________one"),
-      ),
+      await indexerMock.query(EntityWith63LenghtName______________________________________one),
       [
         {
           id: "1",
@@ -137,9 +135,7 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(
-        Mock.entityConfig("EntityWith63LenghtName______________________________________one"),
-      ),
+      await indexerMock.queryHistory(EntityWith63LenghtName______________________________________one),
       [
         Set({
           checkpointId: 1.,
@@ -151,9 +147,7 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.query(
-        Mock.entityConfig("EntityWith63LenghtName______________________________________two"),
-      ),
+      await indexerMock.query(EntityWith63LenghtName______________________________________two),
       [
         {
           id: "2",
@@ -161,9 +155,7 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(
-        Mock.entityConfig("EntityWith63LenghtName______________________________________two"),
-      ),
+      await indexerMock.queryHistory(EntityWith63LenghtName______________________________________two),
       [
         Set({
           checkpointId: 1.,

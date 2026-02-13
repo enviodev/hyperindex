@@ -154,13 +154,18 @@ module MakeRegister = (Event: Event) => {
 }
 
 {{#each codegen_contracts as | contract |}}
+@genType
 module {{contract.name.capitalized}} = {
 {{contract.module_code}}
 let contractName = "{{contract.name.capitalized}}"
 {{#each contract.codegen_events as | event |}}
 
-module {{event.name}} = {
+module {{event.name}}Event = {
 {{event.module_code}}
+}
+module {{event.name}} = {
+  include {{event.name}}Event
+  include MakeRegister({{event.name}}Event)
 }
 {{/each}}
 }
@@ -287,7 +292,6 @@ let codegenPersistence = Persistence.make(
   ~storage=makeStorage(~sql=initialSql),
 )
 
-{{{generated_contract_modules}}}
 }
 
 {{{generated_top_level_bindings}}}

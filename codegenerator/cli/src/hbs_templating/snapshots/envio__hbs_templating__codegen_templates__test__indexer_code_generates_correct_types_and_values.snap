@@ -27,6 +27,10 @@ module Entities = {
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("name") name?: Envio.whereOperator<string>}
   }
+
+  type rec name<'entity> =
+    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t>
+    | @as("RelatedEntity") RelatedEntity: name<RelatedEntity.t>
 }
 
 @genType

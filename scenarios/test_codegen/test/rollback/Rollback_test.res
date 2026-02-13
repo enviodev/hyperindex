@@ -97,8 +97,8 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(Mock.entityConfig("SimpleEntity")),
-        indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -251,8 +251,8 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(Mock.entityConfig("SimpleEntity")),
-        indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -595,7 +595,7 @@ describe("E2E rollback tests", () => {
 
     let calls = []
     let handler = async (
-      {event}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      {event}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
       calls->Array.push(event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString)
     }
@@ -666,7 +666,7 @@ describe("E2E rollback tests", () => {
       (since they might add new events with lower log index)`,
     )
     Assert.deepEqual(
-      await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig),
+      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
       [],
       ~message="Shouldn't store dynamic contracts at this point",
     )
@@ -697,7 +697,7 @@ describe("E2E rollback tests", () => {
       ~message=`Should process the block 102 after all dynamic contracts finished fetching it`,
     )
     Assert.deepEqual(
-      await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig),
+      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
@@ -718,7 +718,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=103)
     await indexerMock.getBatchWritePromise()
     Assert.deepEqual(
-      (await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig))->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
       2,
       ~message="Should add the processed dynamic contracts to the db",
     )
@@ -765,7 +765,7 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     Assert.deepEqual(
-      (await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig))->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
       2,
       ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
 This might be wrong after we start exposing a block hash for progress block.`,
@@ -785,7 +785,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(InternalTable.DynamicContractRegistry.entityConfig),
+      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
@@ -866,7 +866,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
       context.simpleEntity.set({
         id: "1",
@@ -925,8 +925,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(Mock.entityConfig("SimpleEntity")),
-        indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -1154,8 +1154,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(Mock.entityConfig("SimpleEntity")),
-        indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -1261,7 +1261,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
       ) => {
         context.simpleEntity.set({
           id: "1",
@@ -1330,8 +1330,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(Mock.entityConfig("SimpleEntity")),
-          indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -1433,8 +1433,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(Mock.entityConfig("EntityWithBigDecimal")),
-          indexerMock.queryHistory(Mock.entityConfig("EntityWithBigDecimal")),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -1530,8 +1530,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(Mock.entityConfig("SimpleEntity")),
-          indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -1596,8 +1596,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(Mock.entityConfig("EntityWithBigDecimal")),
-          indexerMock.queryHistory(Mock.entityConfig("EntityWithBigDecimal")),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -1663,7 +1663,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
       ) => {
         context.simpleEntity.set({
           id: "1",
@@ -1714,8 +1714,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(Mock.entityConfig("SimpleEntity")),
-          indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -1800,8 +1800,8 @@ Sorted by timestamp and chain id`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(Mock.entityConfig("EntityWithBigDecimal")),
-          indexerMock.queryHistory(Mock.entityConfig("EntityWithBigDecimal")),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -1932,8 +1932,8 @@ Sorted by timestamp and chain id`,
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(Mock.entityConfig("SimpleEntity")),
-          indexerMock.queryHistory(Mock.entityConfig("SimpleEntity")),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -2003,8 +2003,8 @@ Sorted by timestamp and chain id`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(Mock.entityConfig("EntityWithBigDecimal")),
-          indexerMock.queryHistory(Mock.entityConfig("EntityWithBigDecimal")),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -2136,7 +2136,7 @@ Sorted by timestamp and chain id`,
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(Mock.entityConfig("SimpleEntity")),
+      await indexerMock.query(SimpleEntity),
       [],
       ~message="Should have all entities rolled back",
     )
