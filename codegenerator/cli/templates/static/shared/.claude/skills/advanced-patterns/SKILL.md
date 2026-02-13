@@ -104,9 +104,9 @@ Factory.PairCreated.handler(async ({ event, context }) => {
 
 ## Wildcard Indexing
 
-Index all instances of a contract across all addresses (e.g., all ERC-20 transfers):
+Index all instances of a contract across all addresses (e.g., all ERC-20 transfers).
 
-### Config
+### Config (no address = wildcard)
 
 ```yaml
 contracts:
@@ -121,61 +121,112 @@ chains:
         # No address = wildcard (indexes ALL matching events on the chain)
 ```
 
-### Handler
+### Handler with `wildcard: true` option
 
-Use `event.srcAddress` to identify which contract emitted the event:
+Use `event.srcAddress` to identify which contract emitted the event. Pass `wildcard: true` as the handler's 2nd argument:
 
 ```ts
-ERC20.Transfer.handler(async ({ event, context }) => {
-  const tokenAddress = event.srcAddress; // The actual contract address
-  const id = `${event.chainId}-${event.transaction.hash}-${event.logIndex}`;
+ERC20.Transfer.handler(
+  async ({ event, context }) => {
+    const tokenAddress = event.srcAddress; // The actual contract address
+    const id = `${event.chainId}-${event.transaction.hash}-${event.logIndex}`;
 
-  context.Transfer.set({
-    id,
-    token_id: `${event.chainId}-${tokenAddress}`,
-    from: event.params.from,
-    to: event.params.to,
-    value: event.params.value,
-  });
-});
+    context.Transfer.set({
+      id,
+      token_id: `${event.chainId}-${tokenAddress}`,
+      from: event.params.from,
+      to: event.params.to,
+      value: event.params.value,
+    });
+  },
+  { wildcard: true }
+);
 ```
+
+### Event Filters
+
+The `eventFilters` handler option filters wildcard events by indexed parameters. Three forms:
+
+**Array form** — static filter objects:
+
+```ts
+ERC20.Transfer.handler(
+  async ({ event, context }) => { /* ... */ },
+  {
+    wildcard: true,
+    eventFilters: [{ from: ZERO_ADDRESS }, { to: ZERO_ADDRESS }],
+  }
+);
+```
+
+**Function form** — dynamic per-chain filters (return `false` to skip chain, `[]` to skip all events):
+
+```ts
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const WHITELISTED = {
+  137: ["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as const],
+  100: ["0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const],
+};
+
+ERC20.Transfer.handler(
+  async ({ event, context }) => { /* ... */ },
+  {
+    wildcard: true,
+    eventFilters: ({ chainId }) => {
+      if (chainId !== 100 && chainId !== 137) return false;
+      return [
+        { from: ZERO_ADDRESS, to: WHITELISTED[chainId] },
+        { from: WHITELISTED[chainId], to: ZERO_ADDRESS },
+      ];
+    },
+  }
+);
+```
+
+**Function with `addresses`** — filter using the contract's registered addresses:
+
+```ts
+ERC20.Transfer.handler(
+  async ({ event, context }) => { /* ... */ },
+  {
+    wildcard: true,
+    eventFilters: ({ chainId, addresses }) => {
+      if (chainId !== 100 && chainId !== 137) return false;
+      return [
+        { from: ZERO_ADDRESS, to: addresses },
+        { from: addresses, to: ZERO_ADDRESS },
+      ];
+    },
+  }
+);
+```
+
+Filter fields correspond to the event's indexed parameters. Each filter object is OR'd together; within a filter, fields are AND'd. Arrays in a field position match any value in the array.
 
 ## Block Handlers
 
-Process every block (not just event-producing blocks). Useful for time-series data or periodic snapshots.
-
-### Config
-
-```yaml
-contracts:
-  - name: BlockTracker
-    events: []  # No events — block handler only
-
-chains:
-  - id: 1
-    contracts:
-      - name: BlockTracker
-        address:
-          - 0x0000000000000000000000000000000000000000  # Placeholder
-        block_handler:
-          every: 100  # Process every 100th block
-```
+Process every block (or every Nth block). No contract address needed — uses `onBlock` from `generated`.
 
 ### Handler
 
 ```ts
-import { BlockTracker } from "generated";
+import { onBlock } from "generated";
 
-BlockTracker.blockHandler(async ({ block, context }) => {
-  const id = `${block.chainId}-${block.number}`;
-
-  context.BlockSnapshot.set({
-    id,
-    blockNumber: BigInt(block.number),
-    timestamp: BigInt(block.timestamp),
-  });
-});
+onBlock(
+  { name: "BlockTracker", chain: 1, interval: 100 },
+  async ({ block, context }) => {
+    context.BlockSnapshot.set({
+      id: `${block.number}`,
+      blockNumber: BigInt(block.number),
+      timestamp: BigInt(block.timestamp),
+    });
+  }
+);
 ```
+
+Options: `name` (required), `chain` (chain ID), `interval` (process every Nth block, default 1), `startBlock`, `endBlock`.
+
+No config.yaml entry needed — `onBlock` self-registers. No events or address required.
 
 ## Database Indexes
 

@@ -70,7 +70,7 @@ type Pool {
 - Uses `chains` (not `networks`) and `max_reorg_depth` (not `confirmed_block_threshold`)
 - Handler field is optional — handlers auto-register from `src/handlers/`
 - Global contracts are auto-configured per chain (no need to repeat contract definition in each chain)
-- RPC config uses `rpc` with `for: sync | live | fallback`; WebSocket via `ws:` field
+- RPC config uses `rpc` with `for: sync | live | fallback`; WebSocket via `ws:` field for lower-latency live block detection
 - `full_batch_size` controls batch size
 - Validate with: `# yaml-language-server: $schema=./node_modules/envio/evm.schema.json`
 - **Deprecated options** (do NOT use): `loaders`, `preload_handlers`, `preRegisterDynamicContracts`, `event_decoder`, `rpc_config`, `unordered_multichain_mode`
@@ -90,15 +90,60 @@ If using `event.transaction.hash` or other transaction-level data, define it exp
           - hash
 ```
 
+### WebSocket for Live Indexing
+
+Add `ws:` to an RPC entry for lower-latency new block detection via `eth_subscribe("newHeads")`:
+
+```yaml
+chains:
+  - id: 1
+    rpc:
+      - url: ${ENVIO_RPC_ENDPOINT}
+        ws: ${ENVIO_WS_ENDPOINT}
+        for: live
+```
+
 ## Handler Rules
 
 - `context.chain.id` and `context.chain.isLive` are available in handlers
-- Use `indexer` from `generated` (replaces `getGeneratedByChainId`)
 - Address type is `` `0x${string}` ``, not plain `string`
 - Use `transaction.type` (not `transaction.kind`)
 - Entity array fields are `readonly` — spread into a new array to modify
 - Only capitalized entity types are exported from `generated` (e.g., `Token`, not `token`)
-- Conditional `eventFilters` can return a boolean to enable/disable filtering
+
+### Handler Options (2nd argument)
+
+Handlers accept an optional 2nd argument with `wildcard` and `eventFilters`:
+
+```ts
+Contract.Event.handler(
+  async ({ event, context }) => { /* ... */ },
+  {
+    wildcard: true,
+    eventFilters: [{ from: ZERO_ADDRESS }],
+  }
+);
+```
+
+See `advanced-patterns` skill for full `eventFilters` docs (array, function, and `addresses` forms).
+
+### `indexer` API
+
+Import `indexer` from `generated` to access config at runtime:
+
+```ts
+import { indexer } from "generated";
+
+indexer.name;                        // "my-indexer"
+indexer.chainIds;                    // [1, 137]
+indexer.chains[1].id;                // 1
+indexer.chains[1].name;              // "ethereum"
+indexer.chains[1].startBlock;        // 0
+indexer.chains[1].isLive;            // false (true when processing live blocks)
+indexer.chains[1].MyContract.name;   // "MyContract"
+indexer.chains[1].MyContract.addresses; // ["0x..."]
+indexer.chains[1].MyContract.abi;    // [...] (contract ABI)
+```
 
 ## Common Pitfalls
 

@@ -52,8 +52,10 @@ const result = await indexer.process({
 ```ts
 [
   {
-    block: 10000050,
+    block: 12369739,
+    blockHash: "0xe8228e3e736a42c7357d2ce6882a1662c588ce608897dd53c3053bcbefb4309a",
     chainId: 1,
+    eventsProcessed: 1,
     Token: {
       sets: [
         { id: "1-0x...", symbol: "UNI", decimals: 18n },
@@ -68,7 +70,7 @@ const result = await indexer.process({
 ]
 ```
 
-Each block entry contains entity names as keys, with `sets` arrays showing entities that were created or updated.
+Each block entry includes `block`, `blockHash`, `chainId`, `eventsProcessed`, plus entity names as keys with `sets` arrays showing entities that were created or updated. Dynamic contract registrations appear under `addresses.sets`.
 
 ## Assertion Patterns
 
