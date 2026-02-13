@@ -2896,23 +2896,22 @@ describe("FetchState.sortForUnorderedBatch", () => {
     )
   }
 
-  it("Sorts by earliest timestamp. Chains without eligible items should go last", () => {
-    // Included: last queue item at block 1, latestFullyFetchedBlock = 10
-    let fsEarly = makeFsWith(~latestBlock=10, ~queueBlocks=[2, 1])
-    // Included: last queue item at block 5, latestFullyFetchedBlock = 10
-    let fsLate = makeFsWith(~latestBlock=10, ~queueBlocks=[5])
-    // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
-    // UPD: Starting from 2.30.1+ it should go last instead of filtered
-    let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
+  it("Sorts by progress percentage. Chains further behind have higher priority", () => {
+    // Low progress: first item at block 1, knownHeight=10 → 10% progress
+    let fsLow = makeFsWith(~latestBlock=3, ~queueBlocks=[1])
+    // Mid progress: first item at block 5, knownHeight=10 → 50% progress
+    let fsMid = makeFsWith(~latestBlock=7, ~queueBlocks=[5])
+    // High progress: first item at block 8, knownHeight=10 → 80% progress
+    let fsHigh = makeFsWith(~latestBlock=10, ~queueBlocks=[8])
 
     let prepared = FetchState.sortForUnorderedBatch(
-      [fsLate, fsExcluded, fsEarly],
+      [fsHigh, fsLow, fsMid],
       ~batchSizeTarget=3,
     )
 
     Assert.deepEqual(
       prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
-      [1, 5, 11],
+      [1, 5, 8],
     )
   })
 
@@ -2950,6 +2949,112 @@ describe("FetchState.sortForUnorderedBatch", () => {
       [2, 1],
     )
   })
+})
+
+describe("Batch progress update for non-selected chains", () => {
+  let makeFsWithChain = (~chainId, ~startBlock=0, ~knownHeight=1000, ~latestBlock, ~queueBlocks) => {
+    let fs0 = FetchState.make(
+      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~contracts=[
+        {
+          Internal.address: mockAddress0,
+          contractName: "Gravatar",
+          startBlock,
+          registrationBlock: None,
+        },
+      ],
+      ~startBlock,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~targetBufferSize,
+      ~chainId,
+      ~knownHeight,
+    )
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fs0.normalSelection,
+      addressesByContractName: Js.Dict.empty(),
+      fromBlock: startBlock,
+      indexingContracts: fs0.indexingContracts,
+    }
+    fs0->FetchState.startFetchingQueries(~queries=[query])
+    fs0->FetchState.handleQueryResult(
+      ~query,
+      ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+      ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b, ~chainId)),
+    )
+  }
+
+  let mockReorgDetection = ReorgDetection.make(
+    ~chainReorgCheckpoints=[],
+    ~maxReorgDepth=200,
+    ~shouldRollbackOnReorg=false,
+  )
+
+  it(
+    "Advances progress for non-selected chain when it has buffered events and progress is behind",
+    () => {
+      // Chain 0: has event at block 1 with timestamp 15 (selected first in ordered mode)
+      let fsChain0 = makeFsWithChain(~chainId=0, ~latestBlock=500, ~queueBlocks=[1])
+      // Chain 1: has event at block 100 with timestamp 1500, progress starts at -1
+      // Since chain 0's event (block 1, ts 15) is earlier, chain 1 won't be selected
+      let fsChain1 = makeFsWithChain(~chainId=1, ~latestBlock=500, ~queueBlocks=[100])
+
+      let chainsBeforeBatch = ChainMap.fromArrayUnsafe([
+        (
+          ChainMap.Chain.makeUnsafe(~chainId=0),
+          (
+            {
+              fetchState: fsChain0,
+              reorgDetection: mockReorgDetection,
+              progressBlockNumber: -1,
+              sourceBlockNumber: 1000,
+              totalEventsProcessed: 0,
+            }: Batch.chainBeforeBatch
+          ),
+        ),
+        (
+          ChainMap.Chain.makeUnsafe(~chainId=1),
+          (
+            {
+              fetchState: fsChain1,
+              reorgDetection: mockReorgDetection,
+              progressBlockNumber: -1,
+              sourceBlockNumber: 1000,
+              totalEventsProcessed: 0,
+            }: Batch.chainBeforeBatch
+          ),
+        ),
+      ])
+
+      let batch = Batch.make(
+        ~checkpointIdBeforeBatch=0.,
+        ~chainsBeforeBatch,
+        ~multichain=Ordered,
+        ~batchSizeTarget=10,
+      )
+
+      // Chain 1 was not selected (chain 0's event is earlier)
+      // But chain 1 has first event at block 100, so progress should advance to 99
+      let chain1After = batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(1)
+      switch chain1After {
+      | Some(chainAfterBatch) =>
+        Assert.equal(
+          chainAfterBatch.progressBlockNumber,
+          99,
+          ~message="Non-selected chain with first event at block 100 should have progress at 99",
+        )
+        Assert.equal(
+          chainAfterBatch.batchSize,
+          0,
+          ~message="Non-selected chain should have batchSize 0",
+        )
+      | None => Assert.fail("Chain 1 should be in progressedChainsById since its progress advanced")
+      }
+    },
+  )
 })
 
 describe("FetchState.isReadyToEnterReorgThreshold", () => {
