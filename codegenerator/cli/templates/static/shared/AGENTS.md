@@ -46,6 +46,10 @@ pnpm test             # Run tests (Vitest)
 Full LLM-optimized reference (schema, config, handlers, Effect API, testing):
 https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
 
+## Skills
+
+Detailed guides available in `.claude/skills/` and `.cursor/skills/` — loaded on demand by supporting tools.
+
 ## Example Repos
 
 - [Uniswap v4 Indexer](https://github.com/enviodev/uniswap-v4-indexer)

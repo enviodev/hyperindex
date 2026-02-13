@@ -12,6 +12,10 @@ See `AGENTS.md` for full project context, commands, and workflow.
 - Use pnpm, not npm
 - Run `TUI_OFF=true pnpm dev` for AI-friendly indexer output
 
+## Skills
+
+Skills in `.claude/skills/` are auto-discovered — descriptions load at startup, full content on demand.
+
 ## Deep Docs
 
 https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
