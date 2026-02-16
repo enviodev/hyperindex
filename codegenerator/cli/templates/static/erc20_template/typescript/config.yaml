@@ -17,6 +17,3 @@ chains:
     contracts:
       - name: ERC20
         address: 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74 #UNI
-# Address format for Ethereum addresses: 'checksum' or 'lowercase'
-# using lowercase addresses is slightly faster
-address_format: lowercase
