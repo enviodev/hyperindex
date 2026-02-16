@@ -421,9 +421,9 @@ let makeFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<fieldDef> =>
     ("gasUsed", {jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
     ("cumulativeGasUsed", {jsonKey: "cumulativeGasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
     ("effectiveGasPrice", {jsonKey: "effectiveGasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
-    ("contractAddress", {jsonKey: "contractAddress", schema: addressSchema, source: ReceiptOnly}),
+    ("contractAddress", {jsonKey: "contractAddress", schema: S.nullable(addressSchema)->toFieldSchema, source: ReceiptOnly}),
     ("logsBloom", {jsonKey: "logsBloom", schema: S.string->toFieldSchema, source: ReceiptOnly}),
-    ("root", {jsonKey: "root", schema: S.string->toFieldSchema, source: ReceiptOnly}),
+    ("root", {jsonKey: "root", schema: S.nullable(S.string)->toFieldSchema, source: ReceiptOnly}),
     ("status", {jsonKey: "status", schema: Rpc.hexIntSchema->toFieldSchema, source: ReceiptOnly}),
     ("l1Fee", {jsonKey: "l1Fee", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
     ("l1GasPrice", {jsonKey: "l1GasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
@@ -432,7 +432,7 @@ let makeFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<fieldDef> =>
     ("gasUsedForL1", {jsonKey: "gasUsedForL1", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
     // Both fields (available in both eth_getTransactionByHash and eth_getTransactionReceipt)
     ("from", {jsonKey: "from", schema: addressSchema, source: Both}),
-    ("to", {jsonKey: "to", schema: addressSchema, source: Both}),
+    ("to", {jsonKey: "to", schema: S.nullable(addressSchema)->toFieldSchema, source: Both}),
     ("type", {jsonKey: "type", schema: Rpc.hexIntSchema->toFieldSchema, source: Both}),
   ])
 
@@ -441,7 +441,8 @@ let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
 
 type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndReceipt
 
-// Parse fields from a raw JSON object into a result dict
+// Parse fields from a raw JSON object into a result dict.
+// Absent fields (undefined) are skipped. Nullable fields use S.nullable in their schema.
 let parseFieldsFromJson = (
   result: Js.Dict.t<Js.Json.t>,
   fields: array<(S.item, fieldDef)>,
@@ -452,39 +453,18 @@ let parseFieldsFromJson = (
     switch jsonDict->Js.Dict.get(def.jsonKey) {
     | None => ()
     | Some(raw) =>
-      switch raw->Js.Json.classify {
-      | JSONNull => ()
-      | _ =>
-        try {
-          let parsed = raw->S.parseOrThrow(def.schema)
-          result->Js.Dict.set(item.location, parsed)
-        } catch {
-        | S.Raised(error) =>
-          Js.Exn.raiseError(
-            `Invalid transaction field "${item.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
-          )
-        }
+      try {
+        let parsed = raw->S.parseOrThrow(def.schema)
+        result->Js.Dict.set(item.location, parsed)
+      } catch {
+      | S.Raised(error) =>
+        Js.Exn.raiseError(
+          `Invalid transaction field "${item.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
+        )
       }
     }
   })
 }
-
-let setLogFields = (result: Js.Dict.t<Js.Json.t>, logFields: array<S.item>, log: Rpc.GetLogs.log) =>
-  logFields->Array.forEach(item => {
-    switch item.location {
-    | "transactionIndex" =>
-      result->Js.Dict.set(
-        "transactionIndex",
-        log.transactionIndex->(Utils.magic: int => Js.Json.t),
-      )
-    | "hash" =>
-      result->Js.Dict.set(
-        "hash",
-        log.transactionHash->(Utils.magic: string => Js.Json.t),
-      )
-    | _ => ()
-    }
-  })
 
 let makeThrowingGetEventTransaction = (
   ~getTransactionJson: string => promise<Js.Json.t>,
@@ -509,28 +489,22 @@ let makeThrowingGetEventTransaction = (
           }
 
           // Classify fields: log-derived vs RPC fields
-          let hasTransactionOnly = ref(false)
-          let hasReceiptOnly = ref(false)
-          let logFields: array<S.item> = []
+          let hasTransactionIndex = ref(false)
+          let hasHash = ref(false)
           let txFields: array<(S.item, fieldDef)> = []
           let receiptFields: array<(S.item, fieldDef)> = []
           let bothFields: array<(S.item, fieldDef)> = []
 
           transactionFieldItems->Array.forEach(item => {
             switch item.location {
-            | "transactionIndex" | "hash" => logFields->Js.Array2.push(item)->ignore
+            | "transactionIndex" => hasTransactionIndex := true
+            | "hash" => hasHash := true
             | _ =>
               switch fieldRegistry->Js.Dict.get(item.location) {
               | Some(def) =>
                 switch def.source {
-                | TransactionOnly => {
-                    hasTransactionOnly := true
-                    txFields->Js.Array2.push((item, def))->ignore
-                  }
-                | ReceiptOnly => {
-                    hasReceiptOnly := true
-                    receiptFields->Js.Array2.push((item, def))->ignore
-                  }
+                | TransactionOnly => txFields->Js.Array2.push((item, def))->ignore
+                | ReceiptOnly => receiptFields->Js.Array2.push((item, def))->ignore
                 | Both => bothFields->Js.Array2.push((item, def))->ignore
                 }
               | None => () // Unknown field — skip silently
@@ -539,7 +513,7 @@ let makeThrowingGetEventTransaction = (
           })
 
           // Determine fetch strategy
-          let strategy = switch (hasTransactionOnly.contents, hasReceiptOnly.contents) {
+          let strategy = switch (txFields->Array.length > 0, receiptFields->Array.length > 0) {
           | (true, true) => TransactionAndReceipt
           | (true, false) => TransactionOnly
           | (false, true) => ReceiptOnly
@@ -551,12 +525,28 @@ let makeThrowingGetEventTransaction = (
           let targetForBoth = strategy == TransactionOnly ? txFields : receiptFields
           bothFields->Array.forEach(f => targetForBoth->Js.Array2.push(f)->ignore)
 
+          // Set log-derived fields on result dict
+          let setLogFields = (result: Js.Dict.t<Js.Json.t>, log: Rpc.GetLogs.log) => {
+            if hasTransactionIndex.contents {
+              result->Js.Dict.set(
+                "transactionIndex",
+                log.transactionIndex->(Utils.magic: int => Js.Json.t),
+              )
+            }
+            if hasHash.contents {
+              result->Js.Dict.set(
+                "hash",
+                log.transactionHash->(Utils.magic: string => Js.Json.t),
+              )
+            }
+          }
+
           let fn = switch (transactionFieldItems, strategy) {
           | ([], _) => _ => %raw(`{}`)->Promise.resolve
           | (_, NoRpc) =>
             (log: Rpc.GetLogs.log) => {
               let result = Js.Dict.empty()
-              setLogFields(result, logFields, log)
+              setLogFields(result, log)
               (result->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a))->Promise.resolve
             }
           | (_, _) =>
@@ -577,7 +567,7 @@ let makeThrowingGetEventTransaction = (
                 receiptJson,
               )) => {
                 let result = Js.Dict.empty()
-                setLogFields(result, logFields, log)
+                setLogFields(result, log)
 
                 switch txJson {
                 | Some(json) => parseFieldsFromJson(result, txFields, json)
