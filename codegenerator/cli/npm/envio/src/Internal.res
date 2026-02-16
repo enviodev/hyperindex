@@ -168,6 +168,7 @@ type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
+@genType.opaque
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,

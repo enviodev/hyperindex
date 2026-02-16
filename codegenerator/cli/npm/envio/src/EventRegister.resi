@@ -7,6 +7,7 @@ let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Config.multichain)
 let isPendingRegistration: unit => bool
 let finishRegistration: unit => registrations
 
+@genType
 type t
 let make: (~contractName: string, ~eventName: string) => t
 let setHandler: (
