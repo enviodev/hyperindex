@@ -241,58 +241,82 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       let testTransactionHash = "0x245134326b7fecdcb7e0ed0a6cf090fc8881a63420ecd329ef645686b85647ed"
 
       let client = Rest.client("https://api.testnet.abs.xyz")
-      let transaction =
-        await Rpc.GetTransactionByHash.route->Rest.fetch(testTransactionHash, ~client)
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=async txHash =>
+          switch await Rpc.GetTransactionByHash.rawRoute->Rest.fetch(txHash, ~client) {
+          | Some(json) => json
+          | None => Js.Exn.raiseError(`Transaction not found for hash: ${txHash}`)
+          },
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=true,
+      )
 
-      // Transaction should be fetched successfully
-      Assert.ok(transaction->Belt.Option.isSome, ~message="Transaction should be fetched")
-      let tx = transaction->Belt.Option.getUnsafe
-
-      tx->Utils.Dict.unsafeDeleteUndefinedFieldsInPlace
-
-      // Verify all transaction fields using a single comparison
-      // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity)
+      // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity).
+      // Per-field parsing handles this — absent fields are simply not included.
       Assert.deepEqual(
-        tx,
+        await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "hash": s.matches(S.string),
+                "from": s.matches(Address.schema),
+                "to": s.matches(Address.schema),
+                "gas": s.matches(BigInt.nativeSchema),
+                "gasPrice": s.matches(BigInt.nativeSchema),
+                "nonce": s.matches(BigInt.nativeSchema),
+                "value": s.matches(BigInt.nativeSchema),
+                "type": s.matches(S.int),
+                "maxFeePerGas": s.matches(BigInt.nativeSchema),
+                "maxPriorityFeePerGas": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
         {
-          hash: testTransactionHash,
-          from: "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
-          to: "0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"->Address.unsafeFromString,
-          gas: 1189904n,
-          gasPrice: 25000000n,
-          input: "0xfe939afc000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000061",
-          nonce: 662n,
-          transactionIndex: 0,
-          value: 0n,
-          type_: 113, // 0x71 = ZKSync EIP-712
-          maxFeePerGas: 25000000n,
-          maxPriorityFeePerGas: 0n,
+          "hash": testTransactionHash,
+          "from": "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
+          "to": "0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"->Address.unsafeFromString,
+          "gas": 1189904n,
+          "gasPrice": 25000000n,
+          "nonce": 662n,
+          "value": 0n,
+          "type": 113, // 0x71 = ZKSync EIP-712
+          "maxFeePerGas": 25000000n,
+          "maxPriorityFeePerGas": 0n,
         },
       )
     },
   )
 
-  // Issue #931: Transaction `to` field is null for contract creation transactions
-  // Fixed by using S.null instead of S.option in the schema
+  // Issue #931: Contract creation transactions have null `to` field.
+  // Per-field parsing handles this — null fields are simply not included in the result.
   Async.it(
     "Contract creation transaction with null `to` field should parse successfully",
     async () => {
-      // This is the USDT contract deployment transaction where `to` is null
-      let contractCreationTxHash = "0x2f1c5c2b44f771e942a8506148e256f94f1a464babc938ae0690c6e34cd79190"
+      // Mock a contract creation tx where `to` is null
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(
+            %raw(`{"from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5", "to": null, "gas": "0x5208"}`),
+          ),
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
+      )
 
-      let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
-      let client = Rest.client(rpcUrl)
-
-      let transaction =
-        await Rpc.GetTransactionByHash.route->Rest.fetch(contractCreationTxHash, ~client)
-
-      // If we get here, the parsing succeeded
-      Assert.ok(transaction->Belt.Option.isSome, ~message="Contract creation transaction should be fetched")
-      let tx = transaction->Belt.Option.getUnsafe
-
-      // Verify `to` is None (parsed from null) and `from` is present
-      Assert.equal(tx.to, None, ~message="Contract creation tx should have no `to` address")
-      Assert.ok(tx.from->Belt.Option.isSome, ~message="Transaction should have `from` address")
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "from": s.matches(Address.schema),
+                "gas": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {
+          "from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
+          "gas": 21000n,
+        },
+      )
     },
   )
 
@@ -464,25 +488,6 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ),
         {"gas": 21000n},
       )
-    },
-  )
-
-  // l1FeeScalar is returned by OP stack chains as a decimal string (e.g. "0.684"), not hex.
-  Async.it(
-    "Parses l1FeeScalar decimal string from receipt",
-    async () => {
-      let receiptJson = %raw(`{
-        "gasUsed": "0x5208",
-        "cumulativeGasUsed": "0x5208",
-        "effectiveGasPrice": "0x3b9aca00",
-        "status": "0x1",
-        "l1Fee": "0x1234",
-        "l1GasPrice": "0x5678",
-        "l1GasUsed": "0x9abc",
-        "l1FeeScalar": "0.684"
-      }`)
-      let parsed = receiptJson->S.parseOrThrow(Rpc.GetTransactionReceipt.receiptSchema)
-      Assert.deepEqual(parsed.l1FeeScalar, Some(0.684))
     },
   )
 

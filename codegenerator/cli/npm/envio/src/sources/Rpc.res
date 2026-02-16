@@ -221,48 +221,6 @@ module GetBlockHeight = {
 }
 
 module GetTransactionByHash = {
-  let transactionSchema = S.object((s): Internal.evmTransactionFields => {
-    // We already know the data so ignore the fields
-    // blockHash: ?s.field("blockHash", S.nullable(S.string)),
-    // blockNumber: ?s.field("blockNumber", S.nullable(hexIntSchema)),
-    // chainId: ?s.field("chainId", S.nullable(hexIntSchema)),
-    from: ?s.field("from", S.nullable(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
-    to: ?s.field("to", S.nullable(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
-    gas: ?s.field("gas", S.nullable(hexBigintSchema)),
-    gasPrice: ?s.field("gasPrice", S.nullable(hexBigintSchema)),
-    hash: ?s.field("hash", S.nullable(S.string)),
-    input: ?s.field("input", S.nullable(S.string)),
-    nonce: ?s.field("nonce", S.nullable(hexBigintSchema)),
-    transactionIndex: ?s.field("transactionIndex", S.nullable(hexIntSchema)),
-    value: ?s.field("value", S.nullable(hexBigintSchema)),
-    type_: ?s.field("type", S.nullable(hexIntSchema)),
-    // Signature fields - optional for ZKSync EIP-712 compatibility
-    v: ?s.field("v", S.nullable(S.string)),
-    r: ?s.field("r", S.nullable(S.string)),
-    s: ?s.field("s", S.nullable(S.string)),
-    yParity: ?s.field("yParity", S.nullable(S.string)),
-    // EIP-1559 fields
-    maxPriorityFeePerGas: ?s.field("maxPriorityFeePerGas", S.nullable(hexBigintSchema)),
-    maxFeePerGas: ?s.field("maxFeePerGas", S.nullable(hexBigintSchema)),
-    // EIP-4844 blob fields
-    maxFeePerBlobGas: ?s.field("maxFeePerBlobGas", S.nullable(hexBigintSchema)),
-    blobVersionedHashes: ?s.field("blobVersionedHashes", S.nullable(S.array(S.string))),
-    // TODO: Fields to add:
-    // pub access_list: Option<Vec<AccessList>>,
-    // pub authorization_list: Option<Vec<Authorization>>,
-    // // OP stack fields
-    // pub deposit_receipt_version: Option<Quantity>,
-    // pub mint: Option<Quantity>,
-    // pub source_hash: Option<Hash>,
-  })
-
-  let route = makeRpcRoute(
-    "eth_getTransactionByHash",
-    S.tuple1(S.string),
-    S.null(transactionSchema),
-  )
-
-  // Raw route returns unparsed JSON for on-demand field parsing
   let rawRoute = makeRpcRoute(
     "eth_getTransactionByHash",
     S.tuple1(S.string),
@@ -271,30 +229,6 @@ module GetTransactionByHash = {
 }
 
 module GetTransactionReceipt = {
-  // Parses receipt-only fields into evmTransactionFields.
-  // Only receipt-specific fields are included; other fields in the receipt JSON are ignored.
-  let receiptSchema = S.object((s): Internal.evmTransactionFields => {
-    gasUsed: ?s.field("gasUsed", S.nullable(hexBigintSchema)),
-    cumulativeGasUsed: ?s.field("cumulativeGasUsed", S.nullable(hexBigintSchema)),
-    effectiveGasPrice: ?s.field("effectiveGasPrice", S.nullable(hexBigintSchema)),
-    contractAddress: ?s.field("contractAddress", S.nullable(S.string)),
-    logsBloom: ?s.field("logsBloom", S.nullable(S.string)),
-    root: ?s.field("root", S.nullable(S.string)),
-    status: ?s.field("status", S.nullable(hexIntSchema)),
-    l1Fee: ?s.field("l1Fee", S.nullable(hexBigintSchema)),
-    l1GasPrice: ?s.field("l1GasPrice", S.nullable(hexBigintSchema)),
-    l1GasUsed: ?s.field("l1GasUsed", S.nullable(hexBigintSchema)),
-    l1FeeScalar: ?s.field("l1FeeScalar", S.nullable(decimalFloatSchema)),
-    gasUsedForL1: ?s.field("gasUsedForL1", S.nullable(hexBigintSchema)),
-  })
-
-  let route = makeRpcRoute(
-    "eth_getTransactionReceipt",
-    S.tuple1(S.string),
-    S.null(receiptSchema),
-  )
-
-  // Raw route returns unparsed JSON for on-demand field parsing
   let rawRoute = makeRpcRoute(
     "eth_getTransactionReceipt",
     S.tuple1(S.string),
