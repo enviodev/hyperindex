@@ -375,11 +375,17 @@ let parseEntitiesFromJson = (
     )
 
     // Build schema dynamically from properties
+    // Use db field names (with _id suffix for linked entities) as schema locations
+    // to match the database column names used in Table.toSqlParams
     let schema = S.schema(s => {
       let dict = Js.Dict.empty()
       entityJson["properties"]->Array.forEach(prop => {
         let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
-        dict->Js.Dict.set(prop["name"], s.matches(fieldSchema))
+        let dbFieldName = switch prop["linkedEntity"] {
+        | Some(_) => prop["name"] ++ "_id"
+        | None => prop["name"]
+        }
+        dict->Js.Dict.set(dbFieldName, s.matches(fieldSchema))
       })
       dict
     })
