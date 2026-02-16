@@ -45,6 +45,8 @@ export type genericHandlerWithLoader<loader,handler,eventFilters> = {
   readonly eventFilters?: eventFilters
 };
 
+export abstract class fuelEventConfig { protected opaque!: any }; /* simulate opaque types */
+
 export abstract class evmEventConfig { protected opaque!: any }; /* simulate opaque types */
 
 export type eventOptions<eventFilters> = { readonly wildcard?: boolean; readonly eventFilters?: eventFilters };

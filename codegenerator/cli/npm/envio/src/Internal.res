@@ -147,6 +147,7 @@ type fuelEventKind =
   | Burn
   | Transfer
   | Call
+@genType.opaque
 type fuelEventConfig = {
   ...eventConfig,
   kind: fuelEventKind,
