@@ -211,6 +211,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               "r": s.matches(S.string),
               "s": s.matches(S.string),
               "yParity": s.matches(S.string),
+              // Receipt fields
+              "gasUsed": s.matches(BigInt.nativeSchema),
+              "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+              "status": s.matches(S.int),
             },
         ),
       ),
@@ -230,6 +234,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         "s": "0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a",
         "v": "0x1",
         "yParity": "0x1",
+        // Receipt fields
+        "gasUsed": 21000n,
+        "effectiveGasPrice": 17699339493n,
+        "status": 1,
       },
     )
   })

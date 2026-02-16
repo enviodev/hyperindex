@@ -441,8 +441,6 @@ let makeThrowingGetEventTransaction = (
       | Some(fn) => fn
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
-          let transactionSchema = transactionSchema->S.removeTypeValidation
-
           let transactionFieldItems = switch transactionSchema->S.classify {
           | Object({items}) => items
           | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
@@ -452,7 +450,6 @@ let makeThrowingGetEventTransaction = (
           // For each RPC field, look up source and determine which JSON to extract from
           let hasTransactionOnly = ref(false)
           let hasReceiptOnly = ref(false)
-          let hasShared = ref(false)
           let logFields: array<S.item> = []
           let rpcFields: array<(S.item, fieldDef)> = []
 
@@ -466,7 +463,7 @@ let makeThrowingGetEventTransaction = (
                   switch def.source {
                   | TransactionOnly => hasTransactionOnly := true
                   | ReceiptOnly => hasReceiptOnly := true
-                  | Both => hasShared := true
+                  | Both => ()
                   }
                 }
               | None => () // Unknown field — skip silently
@@ -475,16 +472,11 @@ let makeThrowingGetEventTransaction = (
           })
 
           // Determine fetch strategy
-          let strategy = switch (
-            hasTransactionOnly.contents,
-            hasReceiptOnly.contents,
-            hasShared.contents,
-          ) {
-          | (false, false, false) if logFields->Array.length > 0 => NoRpc
-          | (false, false, false) => NoRpc
-          | (true, true, _) => TransactionAndReceipt
-          | (true, false, _) => TransactionOnly
-          | (false, true, _) | (false, false, true) => ReceiptOnly
+          let strategy = switch (hasTransactionOnly.contents, hasReceiptOnly.contents) {
+          | _ if rpcFields->Array.length == 0 => NoRpc
+          | (true, true) => TransactionAndReceipt
+          | (true, false) => TransactionOnly
+          | (false, _) => ReceiptOnly // Includes Both-only fields; default to receipt
           }
 
           // Assign each Both field to an actual JSON source
