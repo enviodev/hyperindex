@@ -2597,4 +2597,94 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       )
     },
   )
+
+  Async.it(
+    "Repro: infinite rollback loop when deep reorg reaches threshold boundary",
+    async () => {
+      // Setup: knownHeight=300, maxReorgDepth=200, threshold=100
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+      await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+      // dataByBlockNumber now has block 100 with hash "0x100"
+
+      // Index block 101, which also registers block 101 in dataByBlockNumber
+      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      await indexerMock.getBatchWritePromise()
+
+      // Trigger reorg at block 101 (above threshold — a valid reorg)
+      // via prevRangeLastBlock having a different hash for block 101
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101-reorged"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // getThresholdBlockNumbersBelowBlock(~blockNumber=101) returns [100]
+      // (blocks >= 100 AND < 101), so getBlockHashes IS called for block 100
+      Assert.deepEqual(
+        sourceMock.getBlockHashesCalls,
+        [[100]],
+        ~message="Should call getBlockHashes to find rollback depth",
+      )
+
+      // Deep reorg: block 100 (the threshold block) ALSO changed its hash.
+      // getLatestValidScannedBlock finds no match → returns None.
+      // Fallback: getHighestBlockBelowThreshold = 300 - 200 = 100.
+      // BUG: rollbackToValidBlockNumber(~blockNumber=100) keeps block 100
+      // with old hash "0x100" because it uses <= (inclusive).
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x100-deep-reorg", blockTimestamp: 100},
+      ])
+
+      await indexerMock.getRollbackReadyPromise()
+
+      // Verify re-fetch starts from 101
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        Some({
+          "fromBlock": 101,
+          "toBlock": None,
+          "retry": 0,
+          "p": "0",
+        }),
+        ~message="Should re-fetch from block 101",
+      )
+
+      // Re-fetch response: the source now provides the post-reorg hash for block 100
+      // via prevRangeLastBlock (parent hash of the first block in the range)
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=101,
+        ~prevRangeLastBlock={blockNumber: 100, blockHash: "0x100-deep-reorg"},
+      )
+
+      // BUG: This triggers a SECOND reorg detection at block 100 because
+      // dataByBlockNumber[100] still has "0x100" but prevRangeLastBlock has "0x100-deep-reorg".
+      // This creates an infinite loop: each rollback keeps block 100 with the old hash,
+      // and each re-fetch detects the mismatch again.
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await indexerMock.getRollbackReadyPromise()
+
+      // Verify: a second rollback happened, proving the infinite loop.
+      Assert.deepEqual(
+        await indexerMock.metric("envio_rollback_count"),
+        [{value: "2", labels: Js.Dict.empty()}],
+        ~message="BUG REPRO: Second reorg detected, proving the infinite rollback loop",
+      )
+    },
+  )
 })
