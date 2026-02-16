@@ -380,60 +380,122 @@ type fieldDef = {
   jsonKey: string,
   schema: S.t<Js.Json.t>, // Type-erased schema for the inner value (not nullable)
   source: fieldSource,
-  isAddress: bool,
 }
-
-// Get a property from raw JSON object
-let unsafeJsonGet: (Js.Json.t, string) => Js.Nullable.t<Js.Json.t> = %raw(`(obj, key) => obj[key]`)
-// Set a property on a mutable JS object
-let unsafeSet: ({..}, string, Js.Json.t) => unit = %raw(`(obj, key, val) => { obj[key] = val }`)
 
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<Js.Json.t> = "%identity"
 
+let lowercaseAddressSchema: S.t<Js.Json.t> =
+  S.string
+  ->S.transform(_ => {
+    parser: str => str->Js.String2.toLowerCase->Address.unsafeFromString,
+  })
+  ->toFieldSchema
+
+let checksumAddressSchema: S.t<Js.Json.t> =
+  S.string
+  ->S.transform(_ => {
+    parser: str => str->Address.Evm.fromStringOrThrow,
+  })
+  ->toFieldSchema
+
 // Field registry: maps field location (= JS property name) to parsing info.
 // Only includes fields that require an RPC call. Log-derived fields (hash, transactionIndex) are special-cased.
-let fieldRegistry: Js.Dict.t<fieldDef> = Js.Dict.fromArray([
-  // TransactionOnly fields (only in eth_getTransactionByHash)
-  ("gas", {jsonKey: "gas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("gasPrice", {jsonKey: "gasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("input", {jsonKey: "input", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("nonce", {jsonKey: "nonce", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("value", {jsonKey: "value", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("v", {jsonKey: "v", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("r", {jsonKey: "r", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("s", {jsonKey: "s", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("yParity", {jsonKey: "yParity", schema: S.string->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("maxPriorityFeePerGas", {jsonKey: "maxPriorityFeePerGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("maxFeePerGas", {jsonKey: "maxFeePerGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("maxFeePerBlobGas", {jsonKey: "maxFeePerBlobGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  ("blobVersionedHashes", {jsonKey: "blobVersionedHashes", schema: S.array(S.string)->toFieldSchema, source: TransactionOnly, isAddress: false}),
-  // ReceiptOnly fields (only in eth_getTransactionReceipt)
-  ("gasUsed", {jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("cumulativeGasUsed", {jsonKey: "cumulativeGasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("effectiveGasPrice", {jsonKey: "effectiveGasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("contractAddress", {jsonKey: "contractAddress", schema: S.string->toFieldSchema, source: ReceiptOnly, isAddress: true}),
-  ("logsBloom", {jsonKey: "logsBloom", schema: S.string->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("root", {jsonKey: "root", schema: S.string->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("status", {jsonKey: "status", schema: Rpc.hexIntSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("l1Fee", {jsonKey: "l1Fee", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("l1GasPrice", {jsonKey: "l1GasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("l1GasUsed", {jsonKey: "l1GasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("l1FeeScalar", {jsonKey: "l1FeeScalar", schema: Rpc.decimalFloatSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  ("gasUsedForL1", {jsonKey: "gasUsedForL1", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly, isAddress: false}),
-  // Both fields (available in both eth_getTransactionByHash and eth_getTransactionReceipt)
-  ("from", {jsonKey: "from", schema: S.string->toFieldSchema, source: Both, isAddress: true}),
-  ("to", {jsonKey: "to", schema: S.string->toFieldSchema, source: Both, isAddress: true}),
-  ("type", {jsonKey: "type", schema: Rpc.hexIntSchema->toFieldSchema, source: Both, isAddress: false}),
-])
+let makeFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<fieldDef> =>
+  Js.Dict.fromArray([
+    // TransactionOnly fields (only in eth_getTransactionByHash)
+    ("gas", {jsonKey: "gas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly}),
+    ("gasPrice", {jsonKey: "gasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly}),
+    ("input", {jsonKey: "input", schema: S.string->toFieldSchema, source: TransactionOnly}),
+    ("nonce", {jsonKey: "nonce", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly}),
+    ("value", {jsonKey: "value", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly}),
+    ("v", {jsonKey: "v", schema: S.string->toFieldSchema, source: TransactionOnly}),
+    ("r", {jsonKey: "r", schema: S.string->toFieldSchema, source: TransactionOnly}),
+    ("s", {jsonKey: "s", schema: S.string->toFieldSchema, source: TransactionOnly}),
+    ("yParity", {jsonKey: "yParity", schema: S.string->toFieldSchema, source: TransactionOnly}),
+    ("maxPriorityFeePerGas", {jsonKey: "maxPriorityFeePerGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly}),
+    ("maxFeePerGas", {jsonKey: "maxFeePerGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly}),
+    ("maxFeePerBlobGas", {jsonKey: "maxFeePerBlobGas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly}),
+    ("blobVersionedHashes", {jsonKey: "blobVersionedHashes", schema: S.array(S.string)->toFieldSchema, source: TransactionOnly}),
+    // ReceiptOnly fields (only in eth_getTransactionReceipt)
+    ("gasUsed", {jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
+    ("cumulativeGasUsed", {jsonKey: "cumulativeGasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
+    ("effectiveGasPrice", {jsonKey: "effectiveGasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
+    ("contractAddress", {jsonKey: "contractAddress", schema: addressSchema, source: ReceiptOnly}),
+    ("logsBloom", {jsonKey: "logsBloom", schema: S.string->toFieldSchema, source: ReceiptOnly}),
+    ("root", {jsonKey: "root", schema: S.string->toFieldSchema, source: ReceiptOnly}),
+    ("status", {jsonKey: "status", schema: Rpc.hexIntSchema->toFieldSchema, source: ReceiptOnly}),
+    ("l1Fee", {jsonKey: "l1Fee", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
+    ("l1GasPrice", {jsonKey: "l1GasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
+    ("l1GasUsed", {jsonKey: "l1GasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
+    ("l1FeeScalar", {jsonKey: "l1FeeScalar", schema: Rpc.decimalFloatSchema->toFieldSchema, source: ReceiptOnly}),
+    ("gasUsedForL1", {jsonKey: "gasUsedForL1", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly}),
+    // Both fields (available in both eth_getTransactionByHash and eth_getTransactionReceipt)
+    ("from", {jsonKey: "from", schema: addressSchema, source: Both}),
+    ("to", {jsonKey: "to", schema: addressSchema, source: Both}),
+    ("type", {jsonKey: "type", schema: Rpc.hexIntSchema->toFieldSchema, source: Both}),
+  ])
+
+let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
+let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
 
 type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndReceipt
+
+// Parse fields from a raw JSON object into a result dict
+let parseFieldsFromJson = (
+  result: Js.Dict.t<Js.Json.t>,
+  fields: array<(S.item, fieldDef)>,
+  json: Js.Json.t,
+) => {
+  let jsonDict = json->(Utils.magic: Js.Json.t => Js.Dict.t<Js.Json.t>)
+  fields->Array.forEach(((item, def)) => {
+    switch jsonDict->Js.Dict.get(def.jsonKey) {
+    | None => ()
+    | Some(raw) =>
+      switch raw->Js.Json.classify {
+      | JSONNull => ()
+      | _ =>
+        try {
+          let parsed = raw->S.parseOrThrow(def.schema)
+          result->Js.Dict.set(item.location, parsed)
+        } catch {
+        | S.Raised(error) =>
+          Js.Exn.raiseError(
+            `Invalid transaction field "${item.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
+          )
+        }
+      }
+    }
+  })
+}
+
+let setLogFields = (result: Js.Dict.t<Js.Json.t>, logFields: array<S.item>, log: Rpc.GetLogs.log) =>
+  logFields->Array.forEach(item => {
+    switch item.location {
+    | "transactionIndex" =>
+      result->Js.Dict.set(
+        "transactionIndex",
+        log.transactionIndex->(Utils.magic: int => Js.Json.t),
+      )
+    | "hash" =>
+      result->Js.Dict.set(
+        "hash",
+        log.transactionHash->(Utils.magic: string => Js.Json.t),
+      )
+    | _ => ()
+    }
+  })
 
 let makeThrowingGetEventTransaction = (
   ~getTransactionJson: string => promise<Js.Json.t>,
   ~getReceiptJson: string => promise<Js.Json.t>,
   ~lowercaseAddresses: bool,
 ) => {
+  let fieldRegistry = if lowercaseAddresses {
+    fieldRegistryLowercase
+  } else {
+    fieldRegistryChecksum
+  }
   let fnsCache = Utils.WeakMap.make()
   (log, ~transactionSchema) => {
     (
@@ -447,24 +509,29 @@ let makeThrowingGetEventTransaction = (
           }
 
           // Classify fields: log-derived vs RPC fields
-          // For each RPC field, look up source and determine which JSON to extract from
           let hasTransactionOnly = ref(false)
           let hasReceiptOnly = ref(false)
           let logFields: array<S.item> = []
-          let rpcFields: array<(S.item, fieldDef)> = []
+          let txFields: array<(S.item, fieldDef)> = []
+          let receiptFields: array<(S.item, fieldDef)> = []
+          let bothFields: array<(S.item, fieldDef)> = []
 
           transactionFieldItems->Array.forEach(item => {
             switch item.location {
             | "transactionIndex" | "hash" => logFields->Js.Array2.push(item)->ignore
             | _ =>
               switch fieldRegistry->Js.Dict.get(item.location) {
-              | Some(def) => {
-                  rpcFields->Js.Array2.push((item, def))->ignore
-                  switch def.source {
-                  | TransactionOnly => hasTransactionOnly := true
-                  | ReceiptOnly => hasReceiptOnly := true
-                  | Both => ()
+              | Some(def) =>
+                switch def.source {
+                | TransactionOnly => {
+                    hasTransactionOnly := true
+                    txFields->Js.Array2.push((item, def))->ignore
                   }
+                | ReceiptOnly => {
+                    hasReceiptOnly := true
+                    receiptFields->Js.Array2.push((item, def))->ignore
+                  }
+                | Both => bothFields->Js.Array2.push((item, def))->ignore
                 }
               | None => () // Unknown field — skip silently
               }
@@ -473,53 +540,27 @@ let makeThrowingGetEventTransaction = (
 
           // Determine fetch strategy
           let strategy = switch (hasTransactionOnly.contents, hasReceiptOnly.contents) {
-          | _ if rpcFields->Array.length == 0 => NoRpc
           | (true, true) => TransactionAndReceipt
           | (true, false) => TransactionOnly
-          | (false, _) => ReceiptOnly // Includes Both-only fields; default to receipt
+          | (false, true) => ReceiptOnly
+          | (false, false) if bothFields->Array.length > 0 => ReceiptOnly
+          | (false, false) => NoRpc
           }
 
-          // Assign each Both field to an actual JSON source
-          // Use whichever source is already being fetched; default to receipt
-          let assignedSource = (def: fieldDef) =>
-            switch def.source {
-            | TransactionOnly => #transaction
-            | ReceiptOnly => #receipt
-            | Both =>
-              switch strategy {
-              | TransactionOnly => #transaction
-              | _ => #receipt
-              }
-            }
+          // Assign Both fields to whichever source is already being fetched; default to receipt
+          let targetForBoth = strategy == TransactionOnly ? txFields : receiptFields
+          bothFields->Array.forEach(f => targetForBoth->Js.Array2.push(f)->ignore)
 
           let fn = switch (transactionFieldItems, strategy) {
           | ([], _) => _ => %raw(`{}`)->Promise.resolve
           | (_, NoRpc) =>
-            // All fields are log-derived
             (log: Rpc.GetLogs.log) => {
-              let result: {..} = %raw(`{}`)
-              logFields->Array.forEach(item => {
-                switch item.location {
-                | "transactionIndex" =>
-                  unsafeSet(
-                    result,
-                    "transactionIndex",
-                    log.transactionIndex->(Utils.magic: int => Js.Json.t),
-                  )
-                | "hash" =>
-                  unsafeSet(
-                    result,
-                    "hash",
-                    log.transactionHash->(Utils.magic: string => Js.Json.t),
-                  )
-                | _ => ()
-                }
-              })
-              (result->(Utils.magic: {..} => 'a))->Promise.resolve
+              let result = Js.Dict.empty()
+              setLogFields(result, logFields, log)
+              (result->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a))->Promise.resolve
             }
           | (_, _) =>
             (log: Rpc.GetLogs.log) => {
-              // Fetch needed JSON(s)
               let txJsonPromise = switch strategy {
               | TransactionOnly | TransactionAndReceipt =>
                 getTransactionJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
@@ -535,67 +576,19 @@ let makeThrowingGetEventTransaction = (
                 txJson,
                 receiptJson,
               )) => {
-                let result: {..} = %raw(`{}`)
+                let result = Js.Dict.empty()
+                setLogFields(result, logFields, log)
 
-                // Set log-derived fields
-                logFields->Array.forEach(item => {
-                  switch item.location {
-                  | "transactionIndex" =>
-                    unsafeSet(
-                      result,
-                      "transactionIndex",
-                      log.transactionIndex->(Utils.magic: int => Js.Json.t),
-                    )
-                  | "hash" =>
-                    unsafeSet(
-                      result,
-                      "hash",
-                      log.transactionHash->(Utils.magic: string => Js.Json.t),
-                    )
-                  | _ => ()
-                  }
-                })
+                switch txJson {
+                | Some(json) => parseFieldsFromJson(result, txFields, json)
+                | None => ()
+                }
+                switch receiptJson {
+                | Some(json) => parseFieldsFromJson(result, receiptFields, json)
+                | None => ()
+                }
 
-                // Parse RPC fields from raw JSON
-                rpcFields->Array.forEach(((item, def)) => {
-                  let json = switch assignedSource(def) {
-                  | #transaction => txJson
-                  | #receipt => receiptJson
-                  }
-                  switch json {
-                  | None => ()
-                  | Some(json) =>
-                    switch unsafeJsonGet(json, def.jsonKey)->Js.Nullable.toOption {
-                    | None => ()
-                    | Some(raw) =>
-                      if def.isAddress {
-                        let str: string = raw->(Utils.magic: Js.Json.t => string)
-                        let addr = if lowercaseAddresses {
-                          str->Js.String2.toLowerCase->Address.unsafeFromString
-                        } else {
-                          str->Address.Evm.fromStringOrThrow
-                        }
-                        unsafeSet(
-                          result,
-                          item.location,
-                          addr->(Utils.magic: Address.t => Js.Json.t),
-                        )
-                      } else {
-                        try {
-                          let parsed = raw->S.parseOrThrow(def.schema)
-                          unsafeSet(result, item.location, parsed)
-                        } catch {
-                        | S.Raised(error) =>
-                          Js.Exn.raiseError(
-                            `Invalid transaction field "${item.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
-                          )
-                        }
-                      }
-                    }
-                  }
-                })
-
-                result->(Utils.magic: {..} => 'a)
+                result->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
               })
             }
           }
