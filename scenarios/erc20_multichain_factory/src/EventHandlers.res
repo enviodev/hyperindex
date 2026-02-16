@@ -1,4 +1,4 @@
-open Entities
+open Indexer.Entities
 
 Indexer.ERC20Factory.TokenCreated.contractRegister(async ({event, context}) => {
   context.addERC20(event.params.token)
