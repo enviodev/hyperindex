@@ -80,7 +80,7 @@ https://raw.githubusercontent.com/DZakh/sury/refs/tags/v9.3.0/docs/js-usage.md
 
 Common schemas:
 - `S.string`, `S.number`, `S.boolean`
-- `S.object({ field: S.string })`
+- `S.schema({ field: S.string })`
 - `S.array(S.string)`
 - `S.union([S.string, null])`
 - `S.optional(S.string)`
@@ -105,7 +105,7 @@ export const getTokenMetadata = createEffect(
   {
     name: "getTokenMetadata",
     input: S.string,
-    output: S.object({
+    output: S.schema({
       name: S.string,
       symbol: S.string,
       decimals: S.number,

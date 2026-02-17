@@ -25,19 +25,6 @@ Never hardcode `chainId = 1` — always use `event.chainId`.
 
 Chain-specific singleton IDs (e.g., Bundle): `${event.chainId}-1`
 
-### Multichain Mode
-
-Configure in `config.yaml`:
-
-```yaml
-multichain: ordered    # Events ordered globally across chains (slower, deterministic)
-# or
-multichain: unordered  # Events processed per-chain independently (faster, default)
-```
-
-- **`unordered`** (default): Each chain processes independently. Faster but no cross-chain ordering guarantees.
-- **`ordered`**: Events from all chains are globally ordered by block timestamp. Slower but deterministic cross-chain behavior.
-
 ### Chain-Specific Logic
 
 ```ts
