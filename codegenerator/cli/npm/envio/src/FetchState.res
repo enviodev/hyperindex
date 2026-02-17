@@ -1796,26 +1796,36 @@ let sortForUnorderedBatch = {
     }
   }
 
+  // Lower progress percentage = further behind = higher priority
+  let getProgressPercentage = (fetchState: t) => {
+    let totalRange = fetchState.knownHeight - fetchState.startBlock
+    if totalRange <= 0 {
+      0.
+    } else {
+      let progress = switch fetchState.buffer->Belt.Array.get(0) {
+      | Some(item) => item->Internal.getItemBlockNumber - fetchState.startBlock
+      | None => fetchState->bufferBlockNumber - fetchState.startBlock
+      }
+      progress->Int.toFloat /. totalRange->Int.toFloat
+    }
+  }
+
   (fetchStates: array<t>, ~batchSizeTarget: int) => {
     fetchStates
     ->Array.copy
     ->Js.Array2.sortInPlaceWith((a: t, b: t) => {
       switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
       | (true, true)
-      | (false, false) =>
-        switch (a.buffer->Belt.Array.get(0), b.buffer->Belt.Array.get(0)) {
-        | (Some(Event({timestamp: aTimestamp})), Some(Event({timestamp: bTimestamp}))) =>
-          aTimestamp - bTimestamp
-        | (Some(Block(_)), _)
-        | (_, Some(Block(_))) =>
-          // Currently block items don't have a timestamp,
-          // so we sort chains with them in a random order
-          Js.Math.random_int(-1, 1)
-        // We don't care about the order of chains with no items
-        // Just keep them to increase the progress block number when relevant
-        | (Some(_), None) => -1
-        | (None, Some(_)) => 1
-        | (None, None) => 0
+      | (false, false) => {
+          let aProgress = a->getProgressPercentage
+          let bProgress = b->getProgressPercentage
+          if aProgress < bProgress {
+            -1
+          } else if aProgress > bProgress {
+            1
+          } else {
+            0
+          }
         }
       | (true, false) => -1
       | (false, true) => 1

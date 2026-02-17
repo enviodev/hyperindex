@@ -2932,23 +2932,22 @@ describe("FetchState.sortForUnorderedBatch", () => {
     )
   }
 
-  it("Sorts by earliest timestamp. Chains without eligible items should go last", () => {
-    // Included: last queue item at block 1, latestFullyFetchedBlock = 10
-    let fsEarly = makeFsWith(~latestBlock=10, ~queueBlocks=[2, 1])
-    // Included: last queue item at block 5, latestFullyFetchedBlock = 10
-    let fsLate = makeFsWith(~latestBlock=10, ~queueBlocks=[5])
-    // Excluded: last queue item at block 11 (> latestFullyFetchedBlock = 10)
-    // UPD: Starting from 2.30.1+ it should go last instead of filtered
-    let fsExcluded = makeFsWith(~latestBlock=10, ~queueBlocks=[11])
+  it("Sorts by progress percentage. Chains further behind have higher priority", () => {
+    // Low progress: first item at block 1, knownHeight=10 → 10% progress
+    let fsLow = makeFsWith(~latestBlock=3, ~queueBlocks=[1])
+    // Mid progress: first item at block 5, knownHeight=10 → 50% progress
+    let fsMid = makeFsWith(~latestBlock=7, ~queueBlocks=[5])
+    // High progress: first item at block 8, knownHeight=10 → 80% progress
+    let fsHigh = makeFsWith(~latestBlock=10, ~queueBlocks=[8])
 
     let prepared = FetchState.sortForUnorderedBatch(
-      [fsLate, fsExcluded, fsEarly],
+      [fsHigh, fsLow, fsMid],
       ~batchSizeTarget=3,
     )
 
     Assert.deepEqual(
       prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
-      [1, 5, 11],
+      [1, 5, 8],
     )
   })
 
