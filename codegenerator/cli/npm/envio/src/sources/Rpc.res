@@ -1,3 +1,6 @@
+type rpcError = {code: int, message: string}
+exception JsonRpcError(rpcError)
+
 let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
   let idSchema = S.literal(1)
   let versionSchema = S.literal("2.0")
@@ -19,6 +22,23 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
     ],
   })
 }
+
+let jsonRpcFetcher: Rest.ApiFetcher.t = async args => {
+  let response = await Rest.ApiFetcher.default(args)
+  let data: {..} = response.data->Obj.magic
+  switch data["error"]->Js.Nullable.toOption {
+  | Some(error) =>
+    raise(
+      JsonRpcError({
+        code: error["code"],
+        message: error["message"],
+      }),
+    )
+  | None => response
+  }
+}
+
+let makeClient = url => Rest.client(url, ~fetcher=jsonRpcFetcher)
 
 type hex = string
 let makeHexSchema = fromStr =>
@@ -77,7 +97,7 @@ module GetLogs = {
   type param = {
     fromBlock: int,
     toBlock: int,
-    address: array<Address.t>,
+    address?: array<Address.t>,
     topics: topicQuery,
     // blockHash?: string,
   }
@@ -85,10 +105,12 @@ module GetLogs = {
   let paramsSchema = S.object((s): param => {
     fromBlock: s.field("fromBlock", hexIntSchema),
     toBlock: s.field("toBlock", hexIntSchema),
-    address: s.field("address", S.array(Address.schema)),
+    address: ?s.field("address", S.option(S.array(Address.schema))),
     topics: s.field("topics", topicQuerySchema),
     // blockHash: ?s.field("blockHash", S.option(S.string)),
   })
+
+  let fullParamsSchema = S.tuple1(paramsSchema)
 
   type log = {
     address: Address.t,
@@ -114,7 +136,9 @@ module GetLogs = {
     removed: s.field("removed", S.bool),
   })
 
-  let route = makeRpcRoute("eth_getLogs", S.tuple1(paramsSchema), S.array(logSchema))
+  let resultSchema = S.array(logSchema)
+
+  let route = makeRpcRoute("eth_getLogs", fullParamsSchema, resultSchema)
 }
 
 module GetBlockByNumber = {
@@ -125,7 +149,7 @@ module GetBlockByNumber = {
     gasUsed: bigint,
     hash: hex,
     logsBloom: hex,
-    miner: Address.t,
+    mutable miner: Address.t,
     mixHash: option<hex>,
     nonce: option<bigint>,
     number: int,
@@ -164,15 +188,19 @@ module GetBlockByNumber = {
     uncles: s.field("uncles", S.null(S.array(S.string))),
   })
 
+  let paramsSchema = S.tuple(s =>
+    {
+      "blockNumber": s.item(0, hexIntSchema),
+      "includeTransactions": s.item(1, S.bool),
+    }
+  )
+
+  let resultSchema = S.null(blockSchema)
+
   let route = makeRpcRoute(
     "eth_getBlockByNumber",
-    S.tuple(s =>
-      {
-        "blockNumber": s.item(0, hexIntSchema),
-        "includeTransactions": s.item(1, S.bool),
-      }
-    ),
-    S.null(blockSchema),
+    paramsSchema,
+    resultSchema,
   )
 }
 
@@ -220,5 +248,16 @@ module GetTransactionByHash = {
     "eth_getTransactionByHash",
     S.tuple1(S.string),
     S.null(transactionSchema),
+  )
+}
+
+let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {
+  await GetLogs.route->Rest.fetch(param, ~client)
+}
+
+let getBlock = async (~client: Rest.client, ~blockNumber: int) => {
+  await GetBlockByNumber.route->Rest.fetch(
+    {"blockNumber": blockNumber, "includeTransactions": false},
+    ~client,
   )
 }
