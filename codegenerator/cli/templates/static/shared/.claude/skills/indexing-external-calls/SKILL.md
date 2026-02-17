@@ -1,13 +1,12 @@
 ---
-name: effect-api
+name: indexing-external-calls
 description: >-
-  Make external calls (RPC, fetch, APIs) from HyperIndex handlers using the
-  Effect API. Covers createEffect with S schema validation, context.effect()
-  consumption, preload optimization (handlers run twice), cache/rateLimit options,
-  and context.isPreload guard. Use when adding RPC calls, fetch, or async I/O.
+  Use when making RPC calls, fetch requests, or any external I/O from handlers.
+  Effect API with createEffect, S schema validation, context.effect(), preload
+  optimization (handlers run twice), cache and rateLimit options.
 ---
 
-# HyperIndex Effect API
+# External Calls (Effect API)
 
 ## Why Effects?
 
@@ -63,10 +62,8 @@ For non-effect side effects that should only run once:
 
 ```ts
 Contract.Event.handler(async ({ event, context }) => {
-  // Effect calls are safe — they handle preload automatically
   const data = await context.effect(myEffect, input);
 
-  // Non-effect logic that must NOT run during preload
   if (!context.isPreload) {
     console.log("Processing event", event.block.number);
   }
@@ -131,7 +128,7 @@ export const getTokenMetadata = createEffect(
 | `input` | `S.Schema` | Input validation schema |
 | `output` | `S.Schema` | Output validation schema |
 | `cache` | `boolean` | Cache results for identical inputs (default: `false`) |
-| `rateLimit` | `boolean \| number` | Rate limit calls (default: `false`) |
+| `rateLimit` | `boolean \| { calls, per }` | Rate limit calls (default: `false`) |
 
 ## Deep Documentation
 
