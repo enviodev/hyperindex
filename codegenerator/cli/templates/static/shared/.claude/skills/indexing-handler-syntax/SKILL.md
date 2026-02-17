@@ -2,8 +2,8 @@
 name: indexing-handler-syntax
 description: >-
   Use when writing or editing event handlers. Handler registration, context API
-  (entity CRUD, chain, log), spread updates, schema types, indexer runtime API,
-  config.yaml rules, and common pitfalls.
+  (entity CRUD, getWhere queries, chain, log), spread updates, indexer runtime
+  API, and common pitfalls.
 ---
 
 # Handler Syntax & Core API
@@ -46,14 +46,16 @@ const entity = await context.Entity.getOrThrow(id);       // throws if missing
 const entity = await context.Entity.getOrCreate({ id, ...defaults });
 
 // Query by indexed fields (@index in schema)
-const list = await context.Entity.getWhere.fieldName.eq(value);
-const list = await context.Entity.getWhere.fieldName.gt(value);
-const list = await context.Entity.getWhere.fieldName.lt(value);
+const list = await context.Entity.getWhere({ fieldName: { _eq: value } });
+const list = await context.Entity.getWhere({ fieldName: { _gt: value } });
+const list = await context.Entity.getWhere({ fieldName: { _lt: value } });
 
 // Write
 context.Entity.set(entity);          // create or update (sync — no await)
 context.Entity.deleteUnsafe(id);     // delete (sync — no await)
 ```
+
+`getWhere` operators: `_eq`, `_gt`, `_lt`. Only `@index` fields are queryable. See `indexing-schema` for @index syntax.
 
 ### Context Properties
 
@@ -92,41 +94,6 @@ indexer.chains[1].MyContract.addresses; // ["0x..."]
 indexer.chains[1].MyContract.abi;    // [...]
 ```
 
-## Schema Rules
-
-- **No `@entity` decorator** — unlike TheGraph, types have no decorators
-- **No entity arrays** without `@derivedFrom` — `[Mint!]!` causes `EE211` error
-- Use `entity_id` fields for relationships: `token_id: String!` not `token: Token!`
-- `@derivedFrom` arrays are virtual — cannot access in handlers, only in API queries
-
-```graphql
-type Pool {
-  id: ID!
-  token0_id: String!
-  token1_id: String!
-  reserve0: BigInt!
-  swaps: [Swap!]! @derivedFrom(field: "pool")
-}
-```
-
-## Config Rules
-
-- Uses `chains` (not `networks`) and `max_reorg_depth` (not `confirmed_block_threshold`)
-- Handler field is optional — handlers auto-register from `src/handlers/`
-- Global contracts auto-configured per chain
-- Validate with: `# yaml-language-server: $schema=./node_modules/envio/evm.schema.json`
-- **Deprecated** (do NOT use): `loaders`, `preload_handlers`, `preRegisterDynamicContracts`, `event_decoder`, `rpc_config`, `unordered_multichain_mode`
-
-## Schema Type Mapping
-
-| Schema | TypeScript |
-|--------|------------|
-| `Int!` | `number` |
-| `BigInt!` | `bigint` |
-| `BigDecimal!` | `BigDecimal` |
-| `String!` / `Bytes!` | `string` |
-| `Entity!` | `entity_id: string` |
-
 ## Common Pitfalls
 
 **Entity relationships** — use `_id` suffix:
@@ -142,6 +109,8 @@ type Pool {
 **Optionals** — `string | undefined`, not `string | null`
 
 **Decimal normalization** — ALWAYS normalize when adding tokens with different decimals.
+
+**Schema & config** — see `indexing-schema` and `indexing-config` skills for full reference.
 
 ## Deep Documentation
 

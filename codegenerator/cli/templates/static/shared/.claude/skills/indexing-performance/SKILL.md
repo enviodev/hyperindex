@@ -2,8 +2,8 @@
 name: indexing-performance
 description: >-
   Use when optimizing indexer speed or tuning sync performance. HyperSync vs
-  RPC, batch size, RPC tuning parameters, database indexes (@index with DESC),
-  WebSocket config, and preload optimization.
+  RPC, batch size, RPC tuning parameters, WebSocket config, and preload
+  optimization.
 ---
 
 # Performance Tuning
@@ -62,40 +62,11 @@ rpc:
 
 ## Database Indexes
 
-Add `@index` to schema fields for faster queries:
-
-```graphql
-type Transfer {
-  id: ID!
-  from: String! @index
-  to: String! @index
-  value: BigInt!
-  timestamp: BigInt! @index
-}
-```
-
-### Composite Index with DESC
-
-```graphql
-type Trade @index(fields: ["poolId", ["date", "DESC"]]) {
-  id: ID!
-  poolId: String!
-  date: BigInt!
-  volume: BigDecimal!
-}
-```
-
-- Fields default to ASC; use `["field", "DESC"]` for descending
-- IDs and `@derivedFrom` fields are automatically indexed
-- Index impact: 1M+ records go from 5+ seconds → ~5ms for queries
+Add `@index` to schema fields for faster queries — see `indexing-schema` for full syntax (single-field, composite, DESC direction).
 
 ## Development Mode
 
-Disable reorg rollback during development for faster historical sync:
-
-```yaml
-rollback_on_reorg: false  # Default: true. Turn off during development only.
-```
+Disable reorg rollback during development for faster historical sync — see `indexing-config` for `rollback_on_reorg` and other dev options.
 
 ## Deep Documentation
 
