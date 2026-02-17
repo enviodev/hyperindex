@@ -48,7 +48,7 @@ https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
 
 ## Skills
 
-Detailed guides available in `.claude/skills/` and `.cursor/skills/` — loaded on demand by supporting tools.
+Detailed guides available in `.claude/skills/` — auto-discovered by Cursor, Claude Code, and Codex.
 
 ## Example Repos
 
