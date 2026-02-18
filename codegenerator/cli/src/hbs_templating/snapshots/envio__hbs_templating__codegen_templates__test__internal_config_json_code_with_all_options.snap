@@ -1,5 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2424
 expression: project_template.internal_config_json_code
 ---
 {
@@ -7,7 +8,6 @@ expression: project_template.internal_config_json_code
   "name": "test-all-options",
   "description": "Test config with all options set",
   "handlers": "custom/handlers",
-  "multichain": "ordered",
   "fullBatchSize": 1000,
   "rollbackOnReorg": false,
   "saveFullHistory": true,
@@ -47,5 +47,74 @@ expression: project_template.internal_config_json_code
       }
     },
     "addressFormat": "checksum"
-  }
+  },
+  "enums": {
+    "Status": [
+      "ACTIVE",
+      "INACTIVE"
+    ]
+  },
+  "entities": [
+    {
+      "name": "EmptyEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "emptyField",
+          "type": "string"
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "enum": "Status"
+        },
+        {
+          "name": "optionalStatus",
+          "type": "enum",
+          "isNullable": true,
+          "enum": "Status"
+        },
+        {
+          "name": "related",
+          "type": "entity",
+          "linkedEntity": "RelatedEntity",
+          "entity": "RelatedEntity"
+        },
+        {
+          "name": "optionalRelated",
+          "type": "entity",
+          "isNullable": true,
+          "linkedEntity": "RelatedEntity",
+          "entity": "RelatedEntity"
+        },
+        {
+          "name": "tags",
+          "type": "string",
+          "isArray": true
+        },
+        {
+          "name": "optionalTags",
+          "type": "string",
+          "isNullable": true,
+          "isArray": true
+        }
+      ]
+    },
+    {
+      "name": "RelatedEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    }
+  ]
 }

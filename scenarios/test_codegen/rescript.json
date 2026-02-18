@@ -31,12 +31,9 @@
   "bs-dependencies": [
     "@rescript/react",
     "generated",
-    "rescript-nodejs",
     "rescript-schema",
     "helpers",
     "envio"
   ],
-  "bsc-flags": [
-    "-open RescriptSchema"
-  ]
+  "bsc-flags": ["-open RescriptSchema"]
 }

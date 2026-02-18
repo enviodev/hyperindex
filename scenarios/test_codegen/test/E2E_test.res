@@ -32,8 +32,8 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
-      [{"fromBlock": 100, "toBlock": Some(200), "retry": 0}],
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      [{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}],
       ~message="Should request items from start block to reorg threshold",
     )
   })
@@ -152,8 +152,8 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(module(Entities.SimpleEntity)),
-      [{Entities.SimpleEntity.id: "1", value: "value-2"}],
+      await indexerMock.query(SimpleEntity),
+      [{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}],
     )
     Assert.deepEqual(
       errors,
@@ -206,7 +206,7 @@ describe("E2E tests", () => {
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
       context.simpleEntity.set({
         id: "1",
@@ -244,7 +244,7 @@ describe("E2E tests", () => {
     Assert.deepEqual(
       await Promise.all2((
         indexerMock.queryCheckpoints(),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -289,7 +289,7 @@ describe("E2E tests", () => {
             checkpointId: 2.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
             },
           }),
@@ -297,7 +297,7 @@ describe("E2E tests", () => {
             checkpointId: 4.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-1",
             },
           }),
@@ -305,7 +305,7 @@ describe("E2E tests", () => {
             checkpointId: 5.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
             },
           }),
@@ -582,7 +582,10 @@ describe("E2E tests", () => {
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMockPrimary.source, sourceMockFallback.source]),
+            sourceConfig: Config.CustomSources([
+              sourceMockPrimary.source,
+              sourceMockFallback.source,
+            ]),
           },
         ],
       )
@@ -599,36 +602,34 @@ describe("E2E tests", () => {
       await Utils.delay(0)
 
       // Primary source should now attempt to fetch items
-      Assert.deepEqual(
-        sourceMockPrimary.getItemsOrThrowCalls->Array.length,
-        1,
-        ~message="should have called getItemsOrThrow on primary source",
-      )
-
-      // Simulate missing params error from HyperSync (converted to InvalidData by the source)
-      sourceMockPrimary.rejectGetItemsOrThrow(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: %raw(`null`),
-            attemptedToBlock: 100,
-            retry: ImpossibleForTheQuery({
-              message: "Source returned invalid data with missing required fields: log.address",
+      switch sourceMockPrimary.getItemsOrThrowCalls {
+      | [call] =>
+        // Simulate missing params error from HyperSync (converted to InvalidData by the source)
+        call.reject(
+          Source.GetItemsError(
+            FailedGettingItems({
+              exn: %raw(`null`),
+              attemptedToBlock: 100,
+              retry: ImpossibleForTheQuery({
+                message: "Source returned invalid data with missing required fields: log.address",
+              }),
             }),
-          }),
-        ),
-      )
+          ),
+        )
+      | _ => Assert.fail("should have called getItemsOrThrow on primary source")
+      }
+
       await Utils.delay(0)
       await Utils.delay(0)
 
       // The fallback source should now be called immediately
-      Assert.deepEqual(
-        sourceMockFallback.getItemsOrThrowCalls->Array.length,
-        1,
-        ~message="fallback source should be called after primary fails with invalid data",
-      )
+      switch sourceMockFallback.getItemsOrThrowCalls {
+      | [call] =>
+        // Resolve the fallback source successfully
+        call.resolve([], ~latestFetchedBlockNumber=100)
+      | _ => Assert.fail("fallback source should be called after primary fails with invalid data")
+      }
 
-      // Resolve the fallback source successfully
-      sourceMockFallback.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
@@ -636,7 +637,7 @@ describe("E2E tests", () => {
           sourceMockPrimary.getItemsOrThrowCalls->Array.length,
           sourceMockFallback.getItemsOrThrowCalls->Array.length,
         ),
-        (2, 1),
+        (1, 0),
         ~message="Shouldn't switch to fallback source for the next query",
       )
     },
@@ -1092,4 +1093,388 @@ describe("E2E tests", () => {
       )
     },
   )
+
+  Async.it("Partition queries adjust ranges depending on responses", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Step 1: Resolve height (blockLag=200 by default, headBlock=9800)
+    sourceMock.resolveGetHeightOrThrow(10_000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // Step 2: Query 1 — resolve at block 500 (range=501)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Step 2 should have initial query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
+    await indexerMock.getBatchWritePromise()
+
+    // Step 3: Query 2 — resolve at block 800 (range=300)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Step 3 should have follow-up query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
+    await indexerMock.getBatchWritePromise()
+
+    // Chunking activates: chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
+    // 4 chunks of size 540
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [
+        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+        {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
+        {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
+      ],
+      ~message="Should have 4 chunks of size 540",
+    )
+
+    // Phase A — chunks grow:
+    // Resolve chunk1 and chunk2 at full range.
+    // With the fix, full-range split chunks update block range (540 >= chunkRange 300).
+    switch sourceMock.getItemsOrThrowCalls {
+    | [chunk1, chunk2, _, _] =>
+      chunk1.resolve([], ~latestFetchedBlockNumber=1340)
+      chunk2.resolve([], ~latestFetchedBlockNumber=1880)
+    | _ => Assert.fail("Expected 4 chunks")
+    }
+    await indexerMock.getBatchWritePromise()
+
+    // After: prevQueryRange=540, prevPrevQueryRange=540
+    // chunkRange=min(540,540)=540, chunkSize=ceil(540*1.8)=972
+    // Assert: new tail chunks have size 972
+    let grownChunks =
+      sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
+        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(972),
+      )
+    Assert.ok(
+      grownChunks->Array.length >= 2,
+      ~message=`Chunks should have grown to size 972, found ${grownChunks
+        ->Array.length
+        ->Int.toString} such chunks`,
+    )
+
+    // Phase B — chunks shrink on partial response:
+    // Resolve the first pending chunk (at queue front) at partial range so the
+    // partition actually advances and a batch is written.
+    let firstPending = sourceMock.getItemsOrThrowCalls->Array.get(0)->Option.getExn
+    firstPending.resolve([], ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99)
+    await indexerMock.getBatchWritePromise()
+
+    // After: prevQueryRange=100, prevPrevQueryRange=540
+    // chunkRange=min(100,540)=100, chunkSize=ceil(100*1.8)=180
+    // Assert: new tail chunks have size 180
+    let shrunkChunks =
+      sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
+        c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(180),
+      )
+    Assert.ok(
+      shrunkChunks->Array.length >= 2,
+      ~message=`Chunks should have shrunk to size 180, found ${shrunkChunks
+        ->Array.length
+        ->Int.toString} such chunks`,
+    )
+  })
+
+  Async.it("Items from later chunk wait for earlier chunk to complete", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Setup: same preamble — get to 4 chunked queries
+    sourceMock.resolveGetHeightOrThrow(10_000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Should have initial query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
+    await indexerMock.getBatchWritePromise()
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      ~message="Should have follow-up query",
+    )
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
+    await indexerMock.getBatchWritePromise()
+
+    // 4 chunks: (801,1340), (1341,1880), (1881,2420), (2421,2960)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [
+        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+        {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
+        {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
+      ],
+      ~message="Should have 4 chunks of size 540",
+    )
+    switch sourceMock.getItemsOrThrowCalls {
+    | [chunk1, chunk2, _, _] =>
+      // Step 1: Resolve chunk2 FIRST (out of order) with item at block 1500
+      chunk2.resolve([
+        {
+          blockNumber: 1500,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.simpleEntity.set({id: "item-1500", value: "from-chunk2"})
+          },
+        },
+      ])
+      // Wait for chunk2's response to be processed
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Item at 1500 should NOT be in DB yet — chunk1 hasn't completed,
+      // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
+      Assert.deepEqual(
+        await indexerMock.query(SimpleEntity),
+        [],
+        ~message="Item at block 1500 should not be ready while chunk1 is pending",
+      )
+
+      // Step 2: Resolve chunk1 at HALF range (801-1070) with item at block 850.
+      // Only chunk1's first half is consumed; chunk2 still blocked.
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls
+        ->Js.Array2.map(c => c.payload)
+        ->Js.Array2.slice(~start=0, ~end_=3),
+        [
+          {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+          {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
+          {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
+        ],
+        ~message="After chunk2 resolved, chunk1/3/4 should remain pending",
+      )
+      chunk1.resolve(
+        [
+          {
+            blockNumber: 850,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "item-850", value: "from-chunk1"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=1070,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Only item-850 should be in DB — chunk1 didn't finish its full range,
+      // so chunk2's item at 1500 is still beyond the buffer.
+      Assert.deepEqual(
+        await indexerMock.query(SimpleEntity),
+        [{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}],
+        ~message="Only item-850 should be in DB after partial chunk1 resolve",
+      )
+
+      // Step 3: A finishing query for the remainder of chunk1 (1071-1340) should exist.
+      let finishingQuery =
+        sourceMock.getItemsOrThrowCalls->Js.Array2.find(c => c.payload["fromBlock"] === 1071)
+      Assert.deepEqual(
+        finishingQuery->Option.map(c => c.payload),
+        Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}),
+        ~message="Should have a finishing query for the rest of chunk1",
+      )
+
+      // Step 4: Resolve the finishing query — now chunk1's full range is consumed,
+      // then chunk2 is consumed too. bufferBlockNumber advances to 1880.
+      (finishingQuery->Option.getExn).resolve([], ~latestFetchedBlockNumber=1340)
+      await indexerMock.getBatchWritePromise()
+
+      // Both items should now be in DB
+      Assert.deepEqual(
+        await indexerMock.query(SimpleEntity),
+        [
+          {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
+          {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
+        ],
+        ~message="Both items should be in DB after chunk1 fully completes",
+      )
+    | _ => Assert.fail("Expected 4 chunks")
+    }
+  })
+
+  Async.it("Partition merging works for fetching partitions via mergeBlock", async () => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Step 1: Resolve height
+    sourceMock.resolveGetHeightOrThrow(100_000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [{"fromBlock": 1, "toBlock": Some(99800), "retry": 0, "p": "0"}],
+      ~message="Step 1: initial query for partition 0",
+    )
+
+    // Step 2: Register DC1 at block 5000, DC2 at block 25100
+    // Gap = 25099 - 4999 = 20100 > tooFarBlockRange(20000) → separate partitions
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 5000,
+          logIndex: 0,
+          contractRegister: async ({context}) => {
+            context.addGravatar(
+              "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
+            )
+          },
+        },
+        {
+          blockNumber: 25100,
+          logIndex: 0,
+          contractRegister: async ({context}) => {
+            context.addGravatar(
+              "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
+            )
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=25100,
+    )
+    // Batch writes because P0 advances and items at blocks 5000,25100 are processable
+    await indexerMock.getBatchWritePromise()
+
+    // DC1 = partition "2" at lfb=4999, DC2 = partition "3" at lfb=25099
+    // (partition "1" is created from splitting existing partition for the new dynamic contract)
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
+      [("2", 5000), ("3", 25100), ("0", 25101)],
+      ~message="Step 2: queries for DC1(5000), DC2(25100), P0(25101)",
+    )
+
+    // Step 3: Resolve DC2 at lfb=25600 (range=501, first chunk history entry)
+    // Buffer block stays 4999 (DC1 is earliest) → no batch write
+    let dc2Call1 =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "3")
+      ->Option.getExn
+    dc2Call1.resolve([], ~latestFetchedBlockNumber=25600)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
+      [("2", 5000), ("0", 25101), ("3", 25601)],
+      ~message="Step 3: DC2 new query from 25601",
+    )
+
+    // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates
+    // chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
+    // Chunks: (25901,26440),(26441,26980) — concurrency limited → chunk1 only
+    // Buffer block stays 4999 → no batch write
+    let dc2Call2 =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "3")
+      ->Option.getExn
+    dc2Call2.resolve([], ~latestFetchedBlockNumber=25900)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      [
+        ("2", 5000, Some(99800)),
+        ("0", 25101, Some(99800)),
+        ("3", 25901, Some(26440)),
+        ("3", 26441, Some(26980)),
+      ],
+      ~message="Step 4: DC2 has 2 chunks (25901-26440, 26441-26980)",
+    )
+
+    // Step 5: Resolve DC1 at lfb=7000 → merge triggers
+    // DC1 mergeBlock=7000 (idle), DC2 mergeBlock=26980 (last chunk toBlock)
+    // 7000 + 20000 = 27000 > 26980 → within range → MERGE
+    // Both lfb < mergeBlock → (true,true): both get mergeBlock=26980, new partition "4"
+    // Buffer empty → no batch write
+    let dc1Call =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "2")
+      ->Option.getExn
+    dc1Call.resolve([], ~latestFetchedBlockNumber=7000)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // After merge:
+    // DC1("2"): mergeBlock=26980, query 7001→26980
+    // DC2("3"): mergeBlock=26980, chunks still pending
+    // P0("0"): still pending 25101→99800
+    // New("4"): lfb=26980, both addresses, query 26981→99800
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
+      ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      [
+        ("2", 7001, Some(26980)),
+        ("0", 25101, Some(99800)),
+        ("3", 25901, Some(26440)),
+        ("3", 26441, Some(26980)),
+        ("4", 26981, Some(99800)),
+      ],
+      ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
+    )
+
+    // Verify merged partition "4" has both DC addresses
+    let partition4Call =
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.find(c => c.payload["p"] === "4")
+      ->Option.getExn
+    let addresses = partition4Call.payload->Mock.Source.CallPayload.addresses
+    Assert.deepEqual(
+      addresses->Js.Dict.unsafeGet("Gravatar")->Array.length,
+      2,
+      ~message="Merged partition should have addresses from both DCs",
+    )
+  })
 })

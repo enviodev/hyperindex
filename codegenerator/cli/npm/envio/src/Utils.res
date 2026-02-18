@@ -95,6 +95,17 @@ module Dict = {
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
+  let getOrInsertEmptyDict = (dict, key) => {
+    switch dict->dangerouslyGetNonOption(key) {
+    | Some(d) => d
+    | None => {
+        let d = Js.Dict.empty()
+        dict->Js.Dict.set(key, d)
+        d
+      }
+    }
+  }
+
   @get_index
   /**
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
@@ -216,7 +227,7 @@ module Dict = {
 module Math = {
   let minOptInt = (a, b) =>
     switch (a, b) {
-    | (Some(a), Some(b)) => Pervasives.min(a, b)->Some
+    | (Some(a), Some(b)) => Some(a < b ? a : b)
     | (Some(a), None) => Some(a)
     | (None, Some(b)) => Some(b)
     | (None, None) => None
@@ -347,8 +358,10 @@ Helper to check if a value exists in an array
   }
 
   let last = (arr: array<'a>): option<'a> => arr->Belt.Array.get(arr->Array.length - 1)
+  let first = (arr: array<'a>): option<'a> => arr->Belt.Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Belt.Array.getUnsafe(arr->Array.length - 1)
+  let firstUnsafe = (arr: array<'a>): 'a => arr->Js.Array2.unsafe_get(0)
 
   let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
     let rec loop = (index: int) => {
@@ -597,6 +610,10 @@ module Set = {
 
   @send
   external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
+
+  let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
+    return new Set([...set, value])
+  }`)
 
   /*
    * Iteration methods

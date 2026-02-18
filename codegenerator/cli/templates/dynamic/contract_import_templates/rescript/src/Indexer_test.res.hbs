@@ -25,7 +25,7 @@ describe("{{contract.name.capitalized}} contract {{event.name}} event tests", ()
       )->Option.getExn
 
     // Creating the expected entity
-    let expected{{contract.name.capitalized}}{{event.name}}: Types.{{contract.name.uncapitalized}}_{{event.name}} = {
+    let expected{{contract.name.capitalized}}{{event.name}}: Indexer.{{contract.name.uncapitalized}}_{{event.name}} = {
       id: {{event.entity_id_from_event_code}},
       {{#each event.params as |param|}}
       {{param.res_name}}: event.params.{{param.res_name}}{{#if param.is_eth_address}}->Address.toString{{/if}},

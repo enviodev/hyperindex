@@ -134,15 +134,18 @@ describe("SourceManager fetchNext", () => {
 
     {
       id: partitionIndex->Int.toString,
-      status: {
-        fetchingStateId: None,
-      },
       latestFetchedBlock: {
         blockNumber: latestFetchedBlockNumber,
         blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
       addressesByContractName,
+      mergeBlock: None,
+      dynamicContract: None,
+      mutPendingQueries: [],
+      prevQueryRange: 0,
+      prevPrevQueryRange: 0,
+      latestBlockRangeUpdateBlock: 0,
     }
   }
 
@@ -154,8 +157,8 @@ describe("SourceManager fetchNext", () => {
     ~knownHeight,
   ): FetchState.t => {
     let indexingContracts = Js.Dict.empty()
+    let latestFullyFetchedBlock = ref((partitions->Utils.Array.firstUnsafe).latestFetchedBlock)
 
-    let latestFullyFetchedBlock = ref((partitions->Js.Array2.unsafe_get(0)).latestFetchedBlock)
     partitions->Array.forEach(partition => {
       if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
         latestFullyFetchedBlock := partition.latestFetchedBlock
@@ -181,15 +184,19 @@ describe("SourceManager fetchNext", () => {
       )
     })
 
+    let optimizedPartitions = FetchState.OptimizedPartitions.make(
+      ~partitions,
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=partitions->Array.length,
+      ~dynamicContracts=Utils.Set.make(),
+    )
+
     {
-      partitions,
+      optimizedPartitions,
       startBlock: 0,
       endBlock,
-      nextPartitionIndex: partitions->Array.length,
-      maxAddrInPartition: 2,
       buffer,
       normalSelection,
-      latestFullyFetchedBlock: latestFullyFetchedBlock.contents,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       targetBufferSize,
       chainId: 0,
@@ -198,8 +205,7 @@ describe("SourceManager fetchNext", () => {
       blockLag: 0,
       onBlockConfigs: [],
       knownHeight,
-      // All the null values should be computed during updateInternal
-    }->FetchState.updateInternal
+    }
   }
 
   let neverWaitForNewBlock = async (~knownHeight as _) =>
@@ -239,9 +245,19 @@ describe("SourceManager fetchNext", () => {
         executeQueryMock.calls,
         [
           {
+            partitionId: "2",
+            fromBlock: 2,
+            toBlock: None,
+            isChunk: false,
+            selection: normalSelection,
+            addressesByContractName: partition2.addressesByContractName,
+            indexingContracts: fetchState.indexingContracts,
+          },
+          {
             partitionId: "0",
             fromBlock: 5,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition0.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -249,20 +265,14 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "1",
             fromBlock: 6,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition1.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
           },
-          {
-            partitionId: "2",
-            fromBlock: 2,
-            target: Head,
-            selection: normalSelection,
-            addressesByContractName: partition2.addressesByContractName,
-            indexingContracts: fetchState.indexingContracts,
-          },
         ],
+        ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
       )
 
       executeQueryMock.resolveAll()
@@ -305,7 +315,8 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "2",
             fromBlock: 2,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition2.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -313,7 +324,8 @@ describe("SourceManager fetchNext", () => {
           {
             partitionId: "0",
             fromBlock: 5,
-            target: Head,
+            toBlock: None,
+            isChunk: false,
             selection: normalSelection,
             addressesByContractName: partition0.addressesByContractName,
             indexingContracts: fetchState.indexingContracts,
@@ -334,7 +346,7 @@ describe("SourceManager fetchNext", () => {
   )
 
   Async.it(
-    "Skips full partitions at the chain last block and the ones at the endBlock",
+    "Skips full partitions at the chain last block and the ones at the mergeBlock",
     async () => {
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
@@ -529,7 +541,7 @@ describe("SourceManager fetchNext", () => {
       ~message=`Should add a new call after a rollback`,
     )
 
-    (waitForNewBlockMock.resolveFns->Js.Array2.unsafe_get(0))(7)
+    (waitForNewBlockMock.resolveFns->Utils.Array.firstUnsafe)(7)
     (waitForNewBlockMock.resolveFns->Js.Array2.unsafe_get(1))(6)
 
     await fetchNextPromise
@@ -592,14 +604,14 @@ describe("SourceManager fetchNext", () => {
     // can't do anything since we account
     // for running fetches from the prev state
     await sourceManager->SourceManager.fetchNext(
-      ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10),
+      ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10)->FetchState.resetPendingQueries,
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
       ~stateId=1,
     )
 
-    (executeQueryMock.resolveFns->Js.Array2.unsafe_get(0))()
+    (executeQueryMock.resolveFns->Utils.Array.firstUnsafe)()
     (executeQueryMock.resolveFns->Js.Array2.unsafe_get(1))()
 
     // After resolving one the call with prev stateId won't do anything
@@ -614,7 +626,10 @@ describe("SourceManager fetchNext", () => {
     // The same call with stateId=1 will trigger execution of two earliest queries
     let fetchNextPromise3 =
       sourceManager->SourceManager.fetchNext(
-        ~fetchState=mockFetchState([p0, p1, p2, p3], ~knownHeight=10),
+        ~fetchState=mockFetchState(
+          [p0, p1, p2, p3],
+          ~knownHeight=10,
+        )->FetchState.resetPendingQueries,
         ~executeQuery=executeQueryMock.fn,
         ~waitForNewBlock=neverWaitForNewBlock,
         ~onNewBlock=neverOnNewBlock,
@@ -675,11 +690,11 @@ describe("SourceManager fetchNext", () => {
             mockFullPartition(~partitionIndex=4, ~latestFetchedBlockNumber=3),
           ],
           ~buffer=[
-            FetchState_test.mockEvent(~blockNumber=1),
-            FetchState_test.mockEvent(~blockNumber=2),
-            FetchState_test.mockEvent(~blockNumber=3),
-            FetchState_test.mockEvent(~blockNumber=4),
-            FetchState_test.mockEvent(~blockNumber=5),
+            FetchState_onBlock_test.mockEvent(~blockNumber=1),
+            FetchState_onBlock_test.mockEvent(~blockNumber=2),
+            FetchState_onBlock_test.mockEvent(~blockNumber=3),
+            FetchState_onBlock_test.mockEvent(~blockNumber=4),
+            FetchState_onBlock_test.mockEvent(~blockNumber=5),
           ],
           ~targetBufferSize=4,
           ~knownHeight=10,
@@ -709,7 +724,7 @@ describe("SourceManager fetchNext", () => {
     let fetchNextPromise = sourceManager->SourceManager.fetchNext(
       ~fetchState=mockFetchState(
         [
-          // Finished fetching to endBlock
+          // Finished fetching to mergeBlock
           mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=11),
           // Waiting for new block
           mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=10),
@@ -1228,7 +1243,8 @@ describe("SourceManager.executeQuery", () => {
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
     fromBlock: 0,
-    target: Head,
+    toBlock: None,
+    isChunk: false,
     selection,
     addressesByContractName,
     indexingContracts: Js.Dict.empty(),
@@ -1240,32 +1256,33 @@ describe("SourceManager.executeQuery", () => {
     ])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
-    Assert.deepEqual(getItemsOrThrowCalls, [{"fromBlock": 0, "toBlock": None, "retry": 0}])
+    Assert.deepEqual(
+      getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      [{"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"}],
+    )
     resolveGetItemsOrThrow([])
     Assert.deepEqual((await p).parsedQueueItems, [])
   })
 
   Async.it("Rethrows unknown errors", async () => {
-    let {source, rejectGetItemsOrThrow} = Mock.Source.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
+    let sourceMock = Mock.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(
+      ~sources=[sourceMock.source],
+      ~maxPartitionConcurrency=10,
+    )
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
     let error = {
       "message": "Something went wrong",
     }
-    rejectGetItemsOrThrow(error)
+    sourceMock.getItemsOrThrowCalls->Js.Array2.forEach(call => call.reject(error))
     await Assert.rejects(() => p, ~error)
   })
 
   Async.it("Immediately retries with the suggested toBlock", async () => {
-    let {
-      source,
-      resolveGetItemsOrThrow,
-      getItemsOrThrowCalls,
-      rejectGetItemsOrThrow,
-    } = Mock.Source.make([#getItemsOrThrow])
+    let sourceMock = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
       ~sources=[
-        source,
+        sourceMock.source,
         // Added second source without mock to the test,
         // to verify that we don't switch to it
         Mock.Source.make([]).source,
@@ -1273,7 +1290,12 @@ describe("SourceManager.executeQuery", () => {
       ~maxPartitionConcurrency=10,
     )
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
-    rejectGetItemsOrThrow(
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Array.length,
+      1,
+      ~message="Should call getItemsOrThrow",
+    )
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
       Source.GetItemsError(
         FailedGettingItems({
           exn: %raw(`null`),
@@ -1283,38 +1305,41 @@ describe("SourceManager.executeQuery", () => {
       ),
     )
     Assert.deepEqual(
-      getItemsOrThrowCalls->Array.length,
-      1,
-      ~message="Only one call before the microtask",
+      sourceMock.getItemsOrThrowCalls->Array.length,
+      0,
+      ~message="No new calls before the microtask",
     )
     await Promise.resolve() // Wait for microtask, so the rejection is caught
-    Assert.deepEqual(
-      getItemsOrThrowCalls,
-      [
-        {"fromBlock": 0, "toBlock": None, "retry": 0},
-        {"fromBlock": 0, "toBlock": Some(10), "retry": 0},
-      ],
-      ~message="Should reset retry count on WithSuggestedToBlock error",
-    )
 
-    resolveGetItemsOrThrow([])
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => {
+        Assert.deepEqual(
+          call.payload,
+          {"fromBlock": 0, "toBlock": Some(10), "retry": 0, "p": "0"},
+          ~message=`Should reset retry count on WithSuggestedToBlock error`,
+        )
+        call.resolve([])
+      }
+    | _ => Assert.fail("Should have a new call after the microtask")
+    }
+
     Assert.deepEqual((await p).parsedQueueItems, [])
   })
 
   Async.it(
     "When there are multiple sync sources, it retries 2 times and then immediately switches to another source without waiting for backoff. After that it switches every second retry",
     async () => {
-      let mock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
-      let mock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
+      let sourceMock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let sourceMock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockFallbackStallTimeout = 0
       let sourceManager = SourceManager.make(
         ~newBlockFallbackStallTimeout,
         ~sources=[
-          mock0.source,
+          sourceMock0.source,
           // Should be skipped until the 10th retry,
           // but we won't test it here
           Mock.Source.make([], ~sourceFor=Fallback).source,
-          mock1.source,
+          sourceMock1.source,
         ],
         ~maxPartitionConcurrency=10,
       )
@@ -1324,27 +1349,41 @@ describe("SourceManager.executeQuery", () => {
         // to test that it's included to the rotation
         let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
         await Utils.delay(newBlockFallbackStallTimeout)
-        mock1.resolveGetHeightOrThrow(101)
+        sourceMock1.resolveGetHeightOrThrow(101)
         Assert.equal(await p, 101)
         Assert.equal(
           sourceManager->SourceManager.getActiveSource,
-          mock1.source,
+          sourceMock1.source,
           ~message="Should switch to the fallback source",
         )
       }
 
       let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
 
+      let handledGetItemsOrThrowCalls = []
+
       for idx in 0 to 2 {
-        mock1.rejectGetItemsOrThrow(
-          Source.GetItemsError(
-            FailedGettingItems({
-              exn: %raw(`null`),
-              attemptedToBlock: 100,
-              retry: WithBackoff({message: "test", backoffMillis: 0}),
-            }),
-          ),
-        )
+        switch sourceMock1.getItemsOrThrowCalls {
+        | [call] => {
+            handledGetItemsOrThrowCalls->Array.push({
+              "fromBlock": call.payload["fromBlock"],
+              "toBlock": call.payload["toBlock"],
+              "retry": call.payload["retry"],
+              "source": 1,
+            })
+            call.reject(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: 100,
+                  retry: WithBackoff({message: "test", backoffMillis: 0}),
+                }),
+              ),
+            )
+          }
+        | _ => Assert.fail("Should have one pending call to sourceMock1")
+        }
+
         // Wait for microtask, so the rejection is caught
         await Promise.resolve()
         if idx !== 2 {
@@ -1353,55 +1392,86 @@ describe("SourceManager.executeQuery", () => {
         }
       }
 
-      mock0.rejectGetItemsOrThrow(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: %raw(`null`),
-            attemptedToBlock: 100,
-            retry: WithBackoff({message: "test", backoffMillis: 0}),
-          }),
-        ),
-      )
+      switch sourceMock0.getItemsOrThrowCalls {
+      | [call] => {
+          handledGetItemsOrThrowCalls->Array.push({
+            "fromBlock": call.payload["fromBlock"],
+            "toBlock": call.payload["toBlock"],
+            "retry": call.payload["retry"],
+            "source": 0,
+          })
+          call.reject(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn: %raw(`null`),
+                attemptedToBlock: 100,
+                retry: WithBackoff({message: "test", backoffMillis: 0}),
+              }),
+            ),
+          )
+        }
+      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      }
+
       await Promise.resolve() // Wait for microtask, so the rejection is caught
       await Utils.delay(0)
 
-      mock0.rejectGetItemsOrThrow(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: %raw(`null`),
-            attemptedToBlock: 100,
-            retry: WithBackoff({message: "test", backoffMillis: 0}),
-          }),
-        ),
-      )
+      switch sourceMock0.getItemsOrThrowCalls {
+      | [call] => {
+          handledGetItemsOrThrowCalls->Array.push({
+            "fromBlock": call.payload["fromBlock"],
+            "toBlock": call.payload["toBlock"],
+            "retry": call.payload["retry"],
+            "source": 0,
+          })
+          call.reject(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn: %raw(`null`),
+                attemptedToBlock: 100,
+                retry: WithBackoff({message: "test", backoffMillis: 0}),
+              }),
+            ),
+          )
+        }
+      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      }
+
       await Promise.resolve()
       // Doesn't wait for backoff on switch
 
-      Assert.deepEqual(
-        (mock0.getItemsOrThrowCalls, mock1.getItemsOrThrowCalls),
-        (
-          [
-            {"fromBlock": 0, "toBlock": None, "retry": 3},
-            {"fromBlock": 0, "toBlock": None, "retry": 4},
-          ],
-          [
-            {"fromBlock": 0, "toBlock": None, "retry": 0},
-            {"fromBlock": 0, "toBlock": None, "retry": 1},
-            {"fromBlock": 0, "toBlock": None, "retry": 2},
-            {"fromBlock": 0, "toBlock": None, "retry": 5},
-          ],
-        ),
-        ~message=`Should start with the initial active source and perform 3 tries.
-        After that it switches to another sync source.
-        The fallback source is skipped.
-        Then sources start switching every second retry.
-        The fallback sources not included in the rotation until the 10th retry,
-        but we still attempt the fallback source if it was the initial active source.
+      switch sourceMock1.getItemsOrThrowCalls {
+      | [call] => {
+          handledGetItemsOrThrowCalls->Array.push({
+            "fromBlock": call.payload["fromBlock"],
+            "toBlock": call.payload["toBlock"],
+            "retry": call.payload["retry"],
+            "source": 1,
+          })
+          Assert.deepEqual(
+            handledGetItemsOrThrowCalls,
+            [
+              {"fromBlock": 0, "toBlock": None, "retry": 0, "source": 1},
+              {"fromBlock": 0, "toBlock": None, "retry": 1, "source": 1},
+              {"fromBlock": 0, "toBlock": None, "retry": 2, "source": 1},
+              {"fromBlock": 0, "toBlock": None, "retry": 3, "source": 0},
+              {"fromBlock": 0, "toBlock": None, "retry": 4, "source": 0},
+              {"fromBlock": 0, "toBlock": None, "retry": 5, "source": 1},
+            ],
+            ~message=`Should start with the initial active source and perform 3 tries.
+After that it switches to another sync source.
+The fallback source is skipped.
+Then sources start switching every second retry.
+The fallback sources not included in the rotation until the 10th retry,
+but we still attempt the fallback source if it was the initial active source.
         `,
-      )
+          )
 
-      mock1.resolveGetItemsOrThrow([])
-      Assert.deepEqual((await p).parsedQueueItems, [])
+          call.resolve([])
+          Assert.deepEqual((await p).parsedQueueItems, [])
+        }
+      | _ => Assert.fail("Should have one pending call to sourceMock1")
+      }
     },
   )
 })
@@ -1484,26 +1554,29 @@ describe("SourceManager height subscription", () => {
     },
   )
 
-  Async.it("Falls back to polling when createHeightSubscription is not available", async () => {
-    let pollingInterval = 1
-    let mock = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
-    let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
+  Async.it(
+    "[flaky] Falls back to polling when createHeightSubscription is not available",
+    async () => {
+      let pollingInterval = 1
+      let mock = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
+      let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
-    // Return same height - should trigger polling since no subscription available
-    mock.resolveGetHeightOrThrow(100)
-    await Utils.delay(pollingInterval + 1)
+      // Return same height - should trigger polling since no subscription available
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(pollingInterval + 1)
 
-    Assert.deepEqual(
-      mock.getHeightOrThrowCalls->Array.length,
-      2,
-      ~message="Should poll again since no subscription is available",
-    )
+      Assert.deepEqual(
+        mock.getHeightOrThrowCalls->Array.length,
+        2,
+        ~message="Should poll again since no subscription is available",
+      )
 
-    mock.resolveGetHeightOrThrow(101)
-    Assert.deepEqual(await p, 101)
-  })
+      mock.resolveGetHeightOrThrow(101)
+      Assert.deepEqual(await p, 101)
+    },
+  )
 
   Async.it("Ignores subscription heights lower than or equal to knownHeight", async () => {
     let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])

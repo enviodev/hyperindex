@@ -5,70 +5,7 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module DynamicContractRegistry = {
-  let name = "dynamic_contract_registry"
-  let index = -1
-
-  let makeId = (~chainId, ~contractAddress) => {
-    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
-  }
-
-  // @genType Used for Test DB
-  @genType
-  type t = {
-    id: string,
-    @as("chain_id") chainId: int,
-    @as("registering_event_block_number") registeringEventBlockNumber: int,
-    @as("registering_event_log_index") registeringEventLogIndex: int,
-    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
-    @as("contract_address") contractAddress: Address.t,
-    @as("contract_name") contractName: string,
-  }
-
-  let schema = S.schema(s => {
-    id: s.matches(S.string),
-    chainId: s.matches(S.int),
-    registeringEventBlockNumber: s.matches(S.int),
-    registeringEventLogIndex: s.matches(S.int),
-    registeringEventContractName: s.matches(S.string),
-    registeringEventName: s.matches(S.string),
-    registeringEventSrcAddress: s.matches(Address.schema),
-    registeringEventBlockTimestamp: s.matches(S.int),
-    contractAddress: s.matches(Address.schema),
-    contractName: s.matches(S.string),
-  })
-
-  let rowsSchema = S.array(schema)
-
-  let table = mkTable(
-    name,
-    ~fields=[
-      mkField("id", String, ~isPrimaryKey, ~fieldSchema=S.string),
-      mkField("chain_id", Int32, ~fieldSchema=S.int),
-      mkField("registering_event_block_number", Int32, ~fieldSchema=S.int),
-      mkField("registering_event_log_index", Int32, ~fieldSchema=S.int),
-      mkField("registering_event_block_timestamp", Int32, ~fieldSchema=S.int),
-      mkField("registering_event_contract_name", String, ~fieldSchema=S.string),
-      mkField("registering_event_name", String, ~fieldSchema=S.string),
-      mkField("registering_event_src_address", String, ~fieldSchema=Address.schema),
-      mkField("contract_address", String, ~fieldSchema=Address.schema),
-      mkField("contract_name", String, ~fieldSchema=S.string),
-    ],
-  )
-
-  external castToInternal: t => Internal.entity = "%identity"
-
-  let config = {
-    name,
-    index,
-    schema,
-    rowsSchema,
-    table,
-  }->Internal.fromGenericEntityConfig
-}
+module DynamicContractRegistry = Config.DynamicContractRegistry
 
 module Chains = {
   type progressFields = [
@@ -120,9 +57,9 @@ module Chains = {
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
+    @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: int,
-    @as("source_block") blockHeight: int,
     ...metaFields,
   }
 
