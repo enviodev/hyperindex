@@ -10,7 +10,6 @@ module ChainLine = {
     ~progressBlock,
     ~bufferBlock,
     ~sourceBlock,
-    ~firstEventBlock,
     ~startBlock,
     ~endBlock,
     ~poweredByHyperSync,
@@ -25,8 +24,6 @@ module ChainLine = {
       | Some(endBlock) => Pervasives.min(sourceBlock, endBlock)
       | None => sourceBlock
       }
-      let firstEventBlock = firstEventBlock->Option.getWithDefault(startBlock)
-
       let progressBlockStr = progressBlock->TuiData.formatLocaleString
       let toBlockStr = toBlock->TuiData.formatLocaleString
       let eventsStr = eventsProcessed->TuiData.formatLocaleString
@@ -48,9 +45,9 @@ module ChainLine = {
           </Box>
           <BufferedProgressBar
             barWidth={chainsWidth - headerWidth}
-            loaded={progressBlock - firstEventBlock}
-            buffered={bufferBlock - firstEventBlock}
-            outOf={toBlock - firstEventBlock}
+            loaded={progressBlock - startBlock}
+            buffered={bufferBlock - startBlock}
+            outOf={toBlock - startBlock}
             loadingColor={Secondary}
           />
         </Box>
@@ -181,8 +178,8 @@ module App = {
             numBatchesFetched,
             eventsProcessed: numEventsProcessed,
             chainId: cf.chainConfig.id->Int.toString,
-            progressBlock: cf.committedProgressBlockNumber === -1
-              ? None
+            progressBlock: cf.committedProgressBlockNumber < cf.fetchState.startBlock
+              ? Some(cf.fetchState.startBlock)
               : Some(cf.committedProgressBlockNumber),
             bufferBlock: Some(latestFetchedBlockNumber),
             sourceBlock: Some(cf.fetchState.knownHeight),
@@ -228,7 +225,6 @@ module App = {
           startBlock={chainData.startBlock}
           endBlock={chainData.endBlock}
           stdoutColumns={stdoutColumns}
-          firstEventBlock={chainData.firstEventBlockNumber}
           poweredByHyperSync={chainData.poweredByHyperSync}
           eventsProcessed={chainData.eventsProcessed}
         />

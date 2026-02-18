@@ -330,7 +330,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     }
   | ([], [dynamicEventFilter]) if selection.eventConfigs->Js.Array2.length === 1 =>
-    let eventConfig = selection.eventConfigs->Js.Array2.unsafe_get(0)
+    let eventConfig = selection.eventConfigs->Utils.Array.firstUnsafe
 
     (~addressesByContractName) => {
       let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
@@ -511,7 +511,10 @@ let make = (
   let makeTransactionLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+        Prometheus.SourceRequestCount.increment(
+          ~sourceName=name,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+        )
         Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client)
       },
       ~onError=(am, ~exn) => {
@@ -533,7 +536,7 @@ let make = (
 
   let makeBlockLoader = () =>
     LazyLoader.make(
-      ~loaderFn=blockNumber =>
+      ~loaderFn=blockNumber => {
         getKnownBlockWithBackoff(
           ~client,
           ~sourceName=name,
@@ -541,7 +544,8 @@ let make = (
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~lowercaseAddresses,
-        ),
+        )
+      },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
@@ -837,7 +841,10 @@ let make = (
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+      )
       Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
     },
     getItemsOrThrow,

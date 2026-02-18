@@ -65,27 +65,30 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         allEvents->Js.Array2.push(batchItem)->ignore
 
+        let query: FetchState.query = {
+          partitionId: "0",
+          fromBlock: 0,
+          toBlock: None,
+          isChunk: false,
+          selection: {
+            dependsOnAddresses: false,
+            eventConfigs,
+          },
+          addressesByContractName: Js.Dict.empty(),
+          indexingContracts: fetchState.contents.indexingContracts,
+        }
+
+        fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
+
         fetchState :=
-          fetchState.contents
-          ->FetchState.handleQueryResult(
-            ~query={
-              partitionId: "0",
-              fromBlock: 0,
-              target: Head,
-              selection: {
-                dependsOnAddresses: false,
-                eventConfigs,
-              },
-              addressesByContractName: Js.Dict.empty(),
-              indexingContracts: fetchState.contents.indexingContracts,
-            },
+          fetchState.contents->FetchState.handleQueryResult(
+            ~query,
             ~latestFetchedBlock={
               blockNumber: eventItem.blockNumber,
               blockTimestamp: eventItem.timestamp,
             },
             ~newItems=[batchItem],
           )
-          ->Result.getExn
 
         numberOfMockEventsCreated := numberOfMockEventsCreated.contents + 1
       }
