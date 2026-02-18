@@ -39,8 +39,6 @@ const result = await indexer.process({
   chains: {
     // Chain ID → block range
     1: { startBlock: 10_000_000, endBlock: 10_000_100 },
-    // Multiple chains supported
-    137: { startBlock: 50_000_000, endBlock: 50_000_050 },
   },
 });
 ```
@@ -103,6 +101,19 @@ expect(result.changes).toContainEqual(
 
 ```ts
 expect(result.changes[0].Pair?.sets).toHaveLength(1);
+```
+
+### Asserting Contract Addresses
+
+```ts
+expect(indexer.chains[1].MyContract.addresses).toContain("0x1234...");
+```
+
+### Reading Entities After Processing
+
+```ts
+const pool = await indexer.Pool.get(poolId);
+expect(pool?.token0_id).toBe("0xabc...");
 ```
 
 ## TDD Workflow

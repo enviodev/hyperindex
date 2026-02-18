@@ -89,8 +89,7 @@ ERC20.Transfer.handler(
 - Multiple fields in one object → AND (match all)
 - Array value in a field → match any value in the array
 - `return false` → disable handler for that chain
-- `return true` → process all events (no filtering)
-- `return []` → skip all events
+- `return true` → accept all events (no filtering)
 
 ## Deep Documentation
 

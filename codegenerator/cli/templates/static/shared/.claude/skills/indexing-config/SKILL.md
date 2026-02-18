@@ -3,8 +3,7 @@ name: indexing-config
 description: >-
   Use when writing or editing config.yaml. Chain/contract structure, addresses,
   start_block, event selection, field_selection, custom event names, env vars,
-  address_format, raw_events, rollback, schema/output paths, YAML validation,
-  and deprecated options.
+  address_format, schema/output paths, YAML validation, and deprecated options.
 ---
 
 # Config Reference (config.yaml)
@@ -85,26 +84,33 @@ events:
 
 ## field_selection
 
-Request additional transaction/block fields per event or globally:
+Request additional transaction/block fields globally or per event:
 
 ```yaml
-# Per-event
-events:
-  - event: Transfer(address indexed from, address indexed to, uint256 value)
-    requiredEntities:
-      - entity: Transfer
-        field_selection:
-          transaction_fields: [hash, from, to, gasPrice]
+# Global (root level — applies to all events)
+field_selection:
+  transaction_fields:
+    - hash
+    - from
+    - to
+  block_fields:
+    - number
+    - timestamp
 
-# Global (applies to all events in contract)
 contracts:
   - name: MyContract
-    field_selection:
-      transaction_fields: [hash, from, to, gasPrice, value]
-      block_fields: [number, timestamp, hash]
+    events:
+      # Per-event (overrides global for this event)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+        field_selection:
+          transaction_fields:
+            - hash
+            - from
+            - to
+            - gasPrice
 ```
 
-See `indexing-transactions` skill for full field lists.
+Global `field_selection` is at the root level (sibling to `contracts` and `chains`). Per-event `field_selection` is directly under the event entry. See `indexing-transactions` skill for full field lists.
 
 ## Environment Variables
 
@@ -115,14 +121,6 @@ rpc:
 ```
 
 Works in any string value in config. Set via `.env` file or shell environment.
-
-## Development/Debug Options
-
-```yaml
-rollback_on_reorg: false    # Default: true. Disable during dev for faster sync.
-raw_events: true            # Stores all events in raw_events table. Increases storage.
-save_full_history: false    # Default: false. Enable for debugging entity history.
-```
 
 ## YAML Validation
 

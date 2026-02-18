@@ -108,10 +108,6 @@ This is globally unique across chains and blocks. Use it as the default unless t
 // CORRECT: { token0_id: token0.id }
 ```
 
-**Timestamps** — always BigInt: `BigInt(event.block.timestamp)`
-
-**Address case** — use lowercase keys: `"0x6b17...1d0f"` not `"0x6B17...1d0F"`
-
 **Optionals** — `string | undefined`, not `string | null`
 
 **Decimal normalization** — ALWAYS normalize when adding tokens with different decimals.

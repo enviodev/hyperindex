@@ -213,8 +213,10 @@ Note: `context.Entity.set()` is synchronous — no await needed.
 
 ### Entity Type Imports
 ```ts
-// WRONG:  import { Pair, Token } from "generated";
-// CORRECT: import { Pair_t, Token_t } from "generated/src/db/Entities.gen";
+// WRONG:  import { Pair } from "generated";  // Pair is a contract handler, not a type
+// CORRECT (when name collides with contract):
+import type { Entities } from "generated";
+const p: Entities["Pair"] = { ... };
 ```
 
 ### Schema Type Mapping

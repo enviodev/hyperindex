@@ -64,10 +64,6 @@ rpc:
 
 Add `@index` to schema fields for faster queries — see `indexing-schema` for full syntax (single-field, composite, DESC direction).
 
-## Development Mode
-
-Disable reorg rollback during development for faster historical sync — see `indexing-config` for `rollback_on_reorg` and other dev options.
-
 ## Deep Documentation
 
 Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete

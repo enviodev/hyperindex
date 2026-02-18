@@ -18,16 +18,20 @@ pnpm test              # Run tests
 
 ### Issue 1: Entity Type Import Confusion
 
-**Problem:** Importing entity types from wrong location.
+**Problem:** Importing entity types from wrong location when there's a name collision with contract handlers.
 **Symptom:** "Pair refers to a value, but is being used as a type"
 
 ```typescript
-// WRONG — imports contract handlers, not entity types
+// WRONG — Pair is a contract handler, not a type
 import { Pair, Token } from "generated";
+const p: Pair = { ... };
 
-// CORRECT — imports entity types
-import { Pair_t, Token_t } from "generated/src/db/Entities.gen";
+// CORRECT — use Entities type map (only needed if name collides with a contract)
+import type { Entities } from "generated";
+const p: Entities["Pair"] = { ... };
 ```
+
+If there's no collision (entity name differs from contract name), you can import the type directly from `"generated"`.
 
 ### Issue 2: BigDecimal vs bigint Type Mismatches
 
@@ -49,17 +53,17 @@ export function fetchTokenTotalSupply(tokenAddress: string): bigint {
 ### Issue 3: Entity Field Name Mismatches
 
 **Problem:** Wrong field names that don't match generated types.
-**Symptom:** "Property 'token0' does not exist on type 'Pair_t'"
+**Symptom:** "Property 'token0' does not exist on type 'Entities["Pair"]'"
 
 ```typescript
 // WRONG
-const pair: Pair_t = {
+const pair: Entities["Pair"] = {
   token0: token0.id,    // Should be token0_id
   token1: token1.id,    // Should be token1_id
 };
 
 // CORRECT — use _id suffix for relationships
-const pair: Pair_t = {
+const pair: Entities["Pair"] = {
   token0_id: token0.id,
   token1_id: token1.id,
 };
@@ -175,11 +179,11 @@ const mints = await context.Mint.getWhere({ transaction_id: { _eq: transactionId
 
 ## 12 Common Fixes to Apply Automatically
 
-1. **Fix entity type imports** — Use `"generated/src/db/Entities.gen"` for entity types
+1. **Fix entity type imports** — Use `Entities["Name"]` from `"generated"` for entity types
 2. **Fix type mismatches** — Match entity field types exactly (BigDecimal vs bigint)
 3. **Fix field names** — Use exact field names from generated types (`_id` suffix)
 4. **Fix BigDecimal imports** — Import from `"generated"` not `"bignumber.js"`
-5. **Fix entity type annotations** — Use `Pair_t` not `Pair` for entity types
+5. **Fix entity type annotations** — Use `Entities["Pair"]` when name collides with contract handler
 6. **Fix transaction field access** — Add `field_selection` in config.yaml
 7. **Fix hardcoded values** — Use constants from original subgraph
 8. **Fix missing field selection** — Add for ALL events needing transaction data
@@ -201,10 +205,10 @@ const pair: Pair = {
 };
 
 // AFTER — all issues fixed
-import { Pair_t, Token_t } from "generated/src/db/Entities.gen";
+import type { Entities } from "generated";
 import { BigDecimal } from "generated";
 
-const pair: Pair_t = {
+const pair: Entities["Pair"] = {
   token0_id: token0.id,      // Correct field name
   totalSupply: ZERO_BI,      // Correct type (bigint)
 };
