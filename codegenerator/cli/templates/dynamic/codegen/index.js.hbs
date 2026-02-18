@@ -4,5 +4,5 @@
 
 export { default as BigDecimal } from "bignumber.js";
 
-export { indexer, createTestIndexer, onBlock{{#each codegen_contracts}}, {{name.capitalized}}{{/each}} } from "./src/Indexer.res.mjs";
+export { onBlock, indexer, createTestIndexer{{#each codegen_contracts}}, {{name.capitalized}}{{/each}} } from "./src/Indexer.res.mjs";
 export * as TestHelpers from "./src/TestHelpers.res.mjs";

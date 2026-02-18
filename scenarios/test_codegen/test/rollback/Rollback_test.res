@@ -12,11 +12,12 @@ describe("E2E rollback tests", () => {
     ~firstHistoryCheckpointId=2.,
   ) => {
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
       Some({
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
+        "p": "0",
       }),
       ~message="Should enter reorg threshold and request now to the latest block",
     )
@@ -97,8 +98,8 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -119,15 +120,15 @@ describe("E2E rollback tests", () => {
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "value-2",
           },
           {
-            Entities.SimpleEntity.id: "2",
+            Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
           },
           {
-            Entities.SimpleEntity.id: "3",
+            Indexer.Entities.SimpleEntity.id: "3",
             value: "value-1",
           },
         ],
@@ -136,7 +137,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "value-2",
             },
           }),
@@ -144,7 +145,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId,
             entityId: "2",
             entity: {
-              Entities.SimpleEntity.id: "2",
+              Indexer.Entities.SimpleEntity.id: "2",
               value: "value-2",
             },
           }),
@@ -152,7 +153,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId +. 1.,
             entityId: "3",
             entity: {
-              Entities.SimpleEntity.id: "3",
+              Indexer.Entities.SimpleEntity.id: "3",
               value: "value-1",
             },
           }),
@@ -160,7 +161,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId,
             entityId: "4",
             entity: {
-              Entities.SimpleEntity.id: "4",
+              Indexer.Entities.SimpleEntity.id: "4",
               value: "value-1",
             },
           }),
@@ -174,11 +175,12 @@ describe("E2E rollback tests", () => {
     )
 
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
       Some({
         "fromBlock": 103,
         "toBlock": None,
         "retry": 0,
+        "p": "0",
       }),
     )
 
@@ -219,11 +221,13 @@ describe("E2E rollback tests", () => {
     await indexerMock.getRollbackReadyPromise()
 
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls->Utils.Array.last,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
       Some({
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
+        // IDs reset on rollback, recreated partition starts at 0
+        "p": "0",
       }),
       ~message="Should rollback fetch state",
     )
@@ -251,8 +255,8 @@ describe("E2E rollback tests", () => {
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -266,11 +270,11 @@ describe("E2E rollback tests", () => {
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "value-1",
           },
           {
-            Entities.SimpleEntity.id: "2",
+            Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
           },
         ],
@@ -279,7 +283,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId +. 3.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "value-1",
             },
           }),
@@ -287,7 +291,7 @@ describe("E2E rollback tests", () => {
             checkpointId: firstHistoryCheckpointId +. 3.,
             entityId: "2",
             entity: {
-              Entities.SimpleEntity.id: "2",
+              Indexer.Entities.SimpleEntity.id: "2",
               value: "value-2",
             },
           }),
@@ -327,11 +331,12 @@ describe("E2E rollback tests", () => {
       ))
 
       Assert.deepEqual(
-        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
         Some({
           "fromBlock": 101,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         }),
         ~message="Should enter reorg threshold and request now to the latest block",
       )
@@ -346,9 +351,7 @@ describe("E2E rollback tests", () => {
       let indexerMock = await indexerMock.restart()
 
       sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
-      sourceMock1337.getItemsOrThrowCalls->Utils.Array.clearInPlace
       sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
-      sourceMock100.getItemsOrThrowCalls->Utils.Array.clearInPlace
 
       // Allow async operations to settle
       await Utils.delay(0)
@@ -372,11 +375,12 @@ describe("E2E rollback tests", () => {
 
       // Both chains are ready immediately, so chain 1337 should continue fetching
       Assert.deepEqual(
-        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
         Some({
           "fromBlock": 111,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         }),
         ~message="Should continue indexing from where we left off",
       )
@@ -386,11 +390,12 @@ describe("E2E rollback tests", () => {
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
-        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
         Some({
           "fromBlock": 201,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
         }),
         ~message="Continue normally inside of the reorg threshold",
       )
@@ -501,16 +506,16 @@ describe("E2E rollback tests", () => {
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
     ])
 
-    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
-
     await indexerMock.getRollbackReadyPromise()
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
         {
           "fromBlock": 101,
           "toBlock": None,
           "retry": 0,
+          // IDs reset on rollback, recreated partition starts at 0
+          "p": "0",
         },
       ],
       ~message="Should rollback fetch state and re-request items",
@@ -595,7 +600,7 @@ describe("E2E rollback tests", () => {
 
     let calls = []
     let handler = async (
-      {event}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      {event}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
       calls->Array.push(event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString)
     }
@@ -639,34 +644,35 @@ describe("E2E rollback tests", () => {
       ],
       ~latestFetchedBlockNumber=104,
     )
+
     await indexerMock.getBatchWritePromise()
 
-    let expectedGetItemsCallsAfterFirstBatch = [
-      {
-        "fromBlock": 0,
-        "toBlock": Some(100),
-        "retry": 0,
-      },
-      {
-        "fromBlock": 101,
-        "toBlock": None,
-        "retry": 0,
-      },
-      {
-        "fromBlock": 102,
-        "toBlock": Some(104),
-        "retry": 0,
-      },
-    ]
     Assert.deepEqual(
-      (calls, sourceMock.getItemsOrThrowCalls),
-      (["101-0"], expectedGetItemsCallsAfterFirstBatch),
-      ~message=`Should query newly registered contracts first,
-      before processing the blocks 102 and 104
-      (since they might add new events with lower log index)`,
+      (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
+      (
+        ["101-0"],
+        [
+          {
+            // New partition for DCs
+            "fromBlock": 102,
+            "toBlock": None,
+            "retry": 0,
+            "p": "2",
+          },
+          {
+            // Continue fetching original partition
+            // without blocking
+            "fromBlock": 105,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
+        ],
+      ),
+      ~message=`Creates a new partition for DCs and queries it in parallel with the original partition without blocking`,
     )
     Assert.deepEqual(
-      await indexerMock.query(module(InternalTable.DynamicContractRegistry)),
+      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
       [],
       ~message="Shouldn't store dynamic contracts at this point",
     )
@@ -679,25 +685,33 @@ describe("E2E rollback tests", () => {
           handler,
         },
       ],
+      ~resolveAt=#first,
       ~latestFetchedBlockNumber=102,
     )
     await indexerMock.getBatchWritePromise()
     Assert.deepEqual(
-      (calls, sourceMock.getItemsOrThrowCalls),
+      (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
       (
         ["101-0", "102-0", "102-1", "102-2"],
-        expectedGetItemsCallsAfterFirstBatch->Array.concat([
+        [
+          {
+            "fromBlock": 105,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
           {
             "fromBlock": 103,
-            "toBlock": Some(104),
+            "toBlock": None,
             "retry": 0,
+            "p": "2",
           },
-        ]),
+        ],
       ),
-      ~message=`Should process the block 102 after all dynamic contracts finished fetching it`,
+      ~message=`Should process the block 102 after DC partition finished fetching it`,
     )
     Assert.deepEqual(
-      await indexerMock.query(module(InternalTable.DynamicContractRegistry)),
+      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
@@ -715,10 +729,10 @@ describe("E2E rollback tests", () => {
       ~message="Added the processed dynamic contract to the db",
     )
 
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=103)
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
     await indexerMock.getBatchWritePromise()
     Assert.deepEqual(
-      (await indexerMock.query(module(InternalTable.DynamicContractRegistry)))->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
       2,
       ~message="Should add the processed dynamic contracts to the db",
     )
@@ -726,6 +740,7 @@ describe("E2E rollback tests", () => {
     // Should trigger rollback
     sourceMock.resolveGetItemsOrThrow(
       [],
+      ~resolveAt=#first,
       ~prevRangeLastBlock={
         blockNumber: 103,
         blockHash: "0x103-reorged",
@@ -746,26 +761,38 @@ describe("E2E rollback tests", () => {
       {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
     ])
 
-    sourceMock.getItemsOrThrowCalls->Utils.Array.clearInPlace
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
     await indexerMock.getRollbackReadyPromise()
+
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       [
+        // Normal partition (recreated fresh, no chunking)
         {
           "fromBlock": 103,
           "toBlock": None,
           "retry": 0,
+          "p": "0",
+        },
+        // DC partition (recreated fresh, no chunking since chunk history lost)
+        {
+          "fromBlock": 103,
+          "toBlock": None,
+          "retry": 0,
+          "p": "2",
         },
       ],
       ~message="Should rollback fetch state and re-request items",
     )
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=104)
+
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
     Assert.deepEqual(
-      (await indexerMock.query(module(InternalTable.DynamicContractRegistry)))->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
       2,
       ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
 This might be wrong after we start exposing a block hash for progress block.`,
@@ -779,13 +806,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           handler,
         },
       ],
+      ~resolveAt=#first,
       ~latestFetchedBlockNumber=104,
     )
 
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(module(InternalTable.DynamicContractRegistry)),
+      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
@@ -802,28 +830,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
       ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
     )
+    // After the db rollback, both partitions continue from block 105 (no chunk history yet)
+    let payloads = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
-      [
-        {
-          "fromBlock": 103,
-          "toBlock": None,
-          "retry": 0,
-        },
-        {
-          "fromBlock": 103,
-          // We rollback fetch state when we have two partitions.
-          // It should be possible to merge them during rollback,
-          // which we should ideally do.
-          "toBlock": Some(104),
-          "retry": 0,
-        },
-        {
-          "fromBlock": 105,
-          "toBlock": None,
-          "retry": 0,
-        },
-      ],
+      payloads->Js.Array2.map(p => (p["p"], p["fromBlock"], p["toBlock"])),
+      [("2", 105, None), ("0", 105, None)],
       ~message="Should correctly continue fetching from block 105 after rolling back the db",
     )
   })
@@ -866,7 +877,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+      {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
       context.simpleEntity.set({
         id: "1",
@@ -874,59 +885,76 @@ This might be wrong after we start exposing a block hash for progress block.`,
       })
     }
 
-    sourceMock1337.resolveGetItemsOrThrow([
-      {
-        blockNumber: 101,
-        logIndex: 1,
-        handler,
-      },
-      {
-        blockNumber: 101,
-        logIndex: 2,
-        handler,
-      },
-    ])
-    sourceMock100.resolveGetItemsOrThrow([
-      {
-        blockNumber: 101,
-        logIndex: 2,
-        handler,
-      },
-    ])
-    await indexerMock.getBatchWritePromise()
-    sourceMock1337.resolveGetItemsOrThrow([
-      {
-        blockNumber: 102,
-        logIndex: 2,
-        handler,
-      },
-    ])
-    await indexerMock.getBatchWritePromise()
-    sourceMock100.resolveGetItemsOrThrow([
-      {
-        blockNumber: 102,
-        logIndex: 2,
-        handler,
-      },
-    ])
-    await indexerMock.getBatchWritePromise()
     sourceMock1337.resolveGetItemsOrThrow(
       [
         {
           blockNumber: 103,
+          logIndex: 1,
+          handler,
+        },
+        {
+          blockNumber: 103,
+          logIndex: 2,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=103,
+      ~resolveAt=#first,
+    )
+    sourceMock100.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 103,
+          logIndex: 2,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=103,
+      ~resolveAt=#first,
+    )
+    await indexerMock.getBatchWritePromise()
+    sourceMock1337.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 106,
+          logIndex: 2,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=106,
+      ~resolveAt=#first,
+    )
+    await indexerMock.getBatchWritePromise()
+    sourceMock100.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 106,
+          logIndex: 2,
+          handler,
+        },
+      ],
+      ~latestFetchedBlockNumber=106,
+      ~resolveAt=#first,
+    )
+    await indexerMock.getBatchWritePromise()
+    sourceMock1337.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 107,
           logIndex: 4,
           handler,
         },
       ],
-      ~latestFetchedBlockNumber=105,
+      ~resolveAt=#first,
+      ~latestFetchedBlockNumber=109,
     )
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -934,50 +962,50 @@ This might be wrong after we start exposing a block hash for progress block.`,
             id: 3.,
             eventsProcessed: 1,
             chainId: 100,
-            blockNumber: 101,
-            blockHash: Js.Null.Value("0x101"),
+            blockNumber: 103,
+            blockHash: Js.Null.Value("0x103"),
           },
           {
             id: 4.,
             eventsProcessed: 2,
             chainId: 1337,
-            blockNumber: 101,
-            blockHash: Js.Null.Value("0x101"),
+            blockNumber: 103,
+            blockHash: Js.Null.Value("0x103"),
           },
           {
             id: 5.,
             eventsProcessed: 1,
             chainId: 1337,
-            blockNumber: 102,
-            blockHash: Js.Null.Value("0x102"),
+            blockNumber: 106,
+            blockHash: Js.Null.Value("0x106"),
           },
           {
             id: 6.,
             eventsProcessed: 1,
             chainId: 100,
-            blockNumber: 102,
-            blockHash: Js.Null.Value("0x102"),
+            blockNumber: 106,
+            blockHash: Js.Null.Value("0x106"),
           },
           {
             id: 7.,
             eventsProcessed: 1,
             chainId: 1337,
-            blockNumber: 103,
+            blockNumber: 107,
             blockHash: Js.Null.Null,
           },
-          // Block 104 is skipped, since we don't have
+          // Block 108 is skipped, since we don't have
           // ether events processed or block hash for it
           {
             id: 8.,
             eventsProcessed: 0,
             chainId: 1337,
-            blockNumber: 105,
-            blockHash: Js.Null.Value("0x105"),
+            blockNumber: 109,
+            blockHash: Js.Null.Value("0x109"),
           },
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "call-5",
           },
         ],
@@ -986,7 +1014,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 3.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
             },
           }),
@@ -994,7 +1022,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 4.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
             },
           }),
@@ -1002,7 +1030,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 5.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-3",
             },
           }),
@@ -1010,7 +1038,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 6.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
             },
           }),
@@ -1018,7 +1046,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 7.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-5",
             },
           }),
@@ -1028,7 +1056,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
     )
 
     Assert.deepEqual(
-      await indexerMock.metric("envio_progress_events_count"),
+      {
+        let metrics = await indexerMock.metric("envio_progress_events_count")
+        // For some reason the test returns the metrics in different order
+        metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+      },
       [
         {value: "2", labels: Js.Dict.fromArray([("chainId", "100")])},
         {value: "4", labels: Js.Dict.fromArray([("chainId", "1337")])},
@@ -1036,10 +1068,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~message="Events count before rollback",
     )
     Assert.deepEqual(
-      await indexerMock.metric("envio_progress_block_number"),
+      {
+        let metrics = await indexerMock.metric("envio_progress_block_number")
+        // For some reason the test returns the metrics in different order
+        metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+      },
       [
-        {value: "102", labels: Js.Dict.fromArray([("chainId", "100")])},
-        {value: "105", labels: Js.Dict.fromArray([("chainId", "1337")])},
+        {value: "106", labels: Js.Dict.fromArray([("chainId", "100")])},
+        {value: "109", labels: Js.Dict.fromArray([("chainId", "1337")])},
       ],
       ~message="Progress block number before rollback",
     )
@@ -1058,23 +1094,28 @@ This might be wrong after we start exposing a block hash for progress block.`,
     sourceMock1337.resolveGetItemsOrThrow(
       [],
       ~prevRangeLastBlock={
-        blockNumber: 102,
-        blockHash: "0x102-reorged",
+        blockNumber: 106,
+        blockHash: "0x106-reorged",
       },
+      ~resolveAt=#first,
     )
     await Utils.delay(0)
     await Utils.delay(0)
 
     Assert.deepEqual(
       sourceMock1337.getBlockHashesCalls,
-      [[100, 101]],
+      [[100, 103]],
       ~message="Should have called getBlockHashes to find rollback depth",
     )
     sourceMock1337.resolveGetBlockHashes([
-      // The block 101 is untouched so we can rollback to it
+      // The block 103 is untouched so we can rollback to it
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+      {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
     ])
+
+    // Clean up pending calls from before rollback
+    sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
+    sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
     await indexerMock.getRollbackReadyPromise()
 
@@ -1089,8 +1130,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     Assert.deepEqual(
       await indexerMock.metric("envio_progress_block_number"),
       [
-        {value: "101", labels: Js.Dict.fromArray([("chainId", "100")])},
-        {value: "101", labels: Js.Dict.fromArray([("chainId", "1337")])},
+        {value: "105", labels: Js.Dict.fromArray([("chainId", "100")])},
+        {value: "105", labels: Js.Dict.fromArray([("chainId", "1337")])},
       ],
       ~message="Progress block number after rollback",
     )
@@ -1107,55 +1148,72 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     Assert.deepEqual(
       (
-        sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-        sourceMock100.getItemsOrThrowCalls->Utils.Array.last,
+        sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+        sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       ),
       (
-        Some({
-          "fromBlock": 102,
-          "toBlock": None,
-          "retry": 0,
-        }),
-        Some({
-          "fromBlock": 102,
-          "toBlock": None,
-          "retry": 0,
-        }),
+        // Chain 100: partition KEPT (lfb <= target), chunk history preserved
+        [
+          {
+            "fromBlock": 106,
+            "toBlock": Some(111),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 112,
+            "toBlock": Some(117),
+            "retry": 0,
+            "p": "0",
+          },
+        ],
+        // Chain 1337: partition DELETED (lfb > target), recreated fresh
+        [
+          {
+            "fromBlock": 106,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
+        ],
       ),
       ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
     )
 
-    sourceMock100.resolveGetItemsOrThrow([
-      {
-        blockNumber: 102,
-        logIndex: 0,
-        handler: async ({context}) => {
-          context.simpleEntity.set({
-            id: "1",
-            value: `should-be-ignored-by-filter`,
-          })
+    sourceMock100.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 106,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.simpleEntity.set({
+              id: "1",
+              value: `should-be-ignored-by-filter`,
+            })
+          },
         },
-      },
-      {
-        blockNumber: 102,
-        logIndex: 2,
-        handler: async ({context}) => {
-          // Set the same value as before rollback
-          context.simpleEntity.set({
-            id: "1",
-            value: `call-4`,
-          })
+        {
+          blockNumber: 106,
+          logIndex: 2,
+          handler: async ({context}) => {
+            // Set the same value as before rollback
+            context.simpleEntity.set({
+              id: "1",
+              value: `call-4`,
+            })
+          },
         },
-      },
-    ])
+      ],
+      ~resolveAt=#first,
+    )
 
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(module(Entities.SimpleEntity)),
-        indexerMock.queryHistory(module(Entities.SimpleEntity)),
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
       )),
       (
         [
@@ -1163,15 +1221,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
             id: 3.,
             eventsProcessed: 1,
             chainId: 100,
-            blockNumber: 101,
-            blockHash: Js.Null.Value("0x101"),
+            blockNumber: 103,
+            blockHash: Js.Null.Value("0x103"),
           },
           {
             id: 4.,
             eventsProcessed: 2,
             chainId: 1337,
-            blockNumber: 101,
-            blockHash: Js.Null.Value("0x101"),
+            blockNumber: 103,
+            blockHash: Js.Null.Value("0x103"),
           },
           // Reorg checkpoint id was checkpoint id 5
           // for chain 1337. After rollback it was removed
@@ -1180,13 +1238,20 @@ This might be wrong after we start exposing a block hash for progress block.`,
             id: 10.,
             eventsProcessed: 2,
             chainId: 100,
-            blockNumber: 102,
-            blockHash: Js.Null.Value("0x102"),
+            blockNumber: 106,
+            blockHash: Js.Null.Value("0x106"),
+          },
+          {
+            id: 11.,
+            eventsProcessed: 0,
+            chainId: 100,
+            blockNumber: 111,
+            blockHash: Js.Null.Value("0x111"),
           },
         ],
         [
           {
-            Entities.SimpleEntity.id: "1",
+            Indexer.Entities.SimpleEntity.id: "1",
             value: "call-4",
           },
         ],
@@ -1195,7 +1260,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 3.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
             },
           }),
@@ -1203,7 +1268,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 4.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
             },
           }),
@@ -1211,7 +1276,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             checkpointId: 10.,
             entityId: "1",
             entity: {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
             },
           }),
@@ -1261,7 +1326,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
       ) => {
         context.simpleEntity.set({
           id: "1",
@@ -1269,69 +1334,86 @@ This might be wrong after we start exposing a block hash for progress block.`,
         })
       }
 
-      sourceMock1337.resolveGetItemsOrThrow([
-        {
-          blockNumber: 101,
-          logIndex: 1,
-          handler,
-        },
-        {
-          blockNumber: 101,
-          logIndex: 2,
-          handler,
-        },
-      ])
-      sourceMock100.resolveGetItemsOrThrow([
-        {
-          blockNumber: 101,
-          logIndex: 2,
-          handler,
-        },
-      ])
-      await indexerMock.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow([
-        {
-          blockNumber: 102,
-          logIndex: 2,
-          handler,
-        },
-      ])
-      await indexerMock.getBatchWritePromise()
-      sourceMock100.resolveGetItemsOrThrow([
-        {
-          blockNumber: 102,
-          logIndex: 2,
-          handler,
-        },
-        {
-          blockNumber: 102,
-          logIndex: 3,
-          handler: async ({context}) => {
-            context.entityWithBigDecimal.set({
-              id: "foo",
-              bigDecimal: BigDecimal.fromFloat(0.),
-            })
-          },
-        },
-      ])
-      await indexerMock.getBatchWritePromise()
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
             blockNumber: 103,
+            logIndex: 1,
+            handler,
+          },
+          {
+            blockNumber: 103,
+            logIndex: 2,
+            handler,
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 103,
+            logIndex: 2,
+            handler,
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+      sourceMock1337.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 106,
+            logIndex: 2,
+            handler,
+          },
+        ],
+        ~latestFetchedBlockNumber=106,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 106,
+            logIndex: 2,
+            handler,
+          },
+          {
+            blockNumber: 106,
+            logIndex: 3,
+            handler: async ({context}) => {
+              context.entityWithBigDecimal.set({
+                id: "foo",
+                bigDecimal: BigDecimal.fromFloat(0.),
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=106,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+      sourceMock1337.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 107,
             logIndex: 4,
             handler,
           },
         ],
-        ~latestFetchedBlockNumber=105,
+        ~resolveAt=#first,
+        ~latestFetchedBlockNumber=109,
       )
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -1339,50 +1421,50 @@ This might be wrong after we start exposing a block hash for progress block.`,
               id: 3.,
               eventsProcessed: 1,
               chainId: 100,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 103,
+              blockHash: Js.Null.Value("0x103"),
             },
             {
               id: 4.,
               eventsProcessed: 2,
               chainId: 1337,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 103,
+              blockHash: Js.Null.Value("0x103"),
             },
             {
               id: 5.,
               eventsProcessed: 1,
               chainId: 1337,
-              blockNumber: 102,
-              blockHash: Js.Null.Value("0x102"),
+              blockNumber: 106,
+              blockHash: Js.Null.Value("0x106"),
             },
             {
               id: 6.,
               eventsProcessed: 2,
               chainId: 100,
-              blockNumber: 102,
-              blockHash: Js.Null.Value("0x102"),
+              blockNumber: 106,
+              blockHash: Js.Null.Value("0x106"),
             },
             {
               id: 7.,
               eventsProcessed: 1,
               chainId: 1337,
-              blockNumber: 103,
+              blockNumber: 107,
               blockHash: Js.Null.Null,
             },
-            // Block 104 is skipped, since we don't have
+            // Block 108 is skipped, since we don't have
             // ether events processed or block hash for it
             {
               id: 8.,
               eventsProcessed: 0,
               chainId: 1337,
-              blockNumber: 105,
-              blockHash: Js.Null.Value("0x105"),
+              blockNumber: 109,
+              blockHash: Js.Null.Value("0x109"),
             },
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-5",
             },
           ],
@@ -1391,7 +1473,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 3.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1399,7 +1481,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-2",
               },
             }),
@@ -1407,7 +1489,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 5.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-3",
               },
             }),
@@ -1415,7 +1497,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 6.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-4",
               },
             }),
@@ -1423,7 +1505,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 7.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-5",
               },
             }),
@@ -1433,8 +1515,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -1448,7 +1530,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 6.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -1461,77 +1543,89 @@ This might be wrong after we start exposing a block hash for progress block.`,
       sourceMock1337.resolveGetItemsOrThrow(
         [],
         ~prevRangeLastBlock={
-          blockNumber: 102,
-          blockHash: "0x102-reorged",
+          blockNumber: 106,
+          blockHash: "0x106-reorged",
         },
+        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
 
       Assert.deepEqual(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 101]],
+        [[100, 103]],
         ~message="Should have called getBlockHashes to find rollback depth",
       )
       sourceMock1337.resolveGetBlockHashes([
-        // The block 101 is untouched so we can rollback to it
+        // The block 103 is untouched so we can rollback to it
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
       ])
+
+      // Clean up pending calls from before rollback
+      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
       await indexerMock.getRollbackReadyPromise()
 
       Assert.deepEqual(
         (
-          sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-          sourceMock100.getItemsOrThrowCalls->Utils.Array.last,
+          sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
+          sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
         (
+          // Chain 1337: partition DELETED, recreated fresh (no chunking)
           Some({
-            "fromBlock": 102,
+            "fromBlock": 106,
             "toBlock": None,
             "retry": 0,
+            "p": "0",
           }),
+          // Chain 100: partition KEPT, chunk history preserved
           Some({
-            "fromBlock": 102,
-            "toBlock": None,
+            "fromBlock": 106,
+            "toBlock": Some(111),
             "retry": 0,
+            "p": "0",
           }),
         ),
         ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
       )
 
       // Set the same value as before rollback
-      sourceMock100.resolveGetItemsOrThrow([
-        {
-          blockNumber: 102,
-          logIndex: 2,
-          handler: async ({context}) => {
-            context.simpleEntity.set({
-              id: "1",
-              value: `call-4`,
-            })
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 106,
+            logIndex: 2,
+            handler: async ({context}) => {
+              context.simpleEntity.set({
+                id: "1",
+                value: `call-4`,
+              })
+            },
           },
-        },
-        {
-          blockNumber: 102,
-          logIndex: 3,
-          handler: async ({context}) => {
-            context.entityWithBigDecimal.set({
-              id: "foo",
-              bigDecimal: BigDecimal.fromFloat(0.),
-            })
+          {
+            blockNumber: 106,
+            logIndex: 3,
+            handler: async ({context}) => {
+              context.entityWithBigDecimal.set({
+                id: "foo",
+                bigDecimal: BigDecimal.fromFloat(0.),
+              })
+            },
           },
-        },
-      ])
+        ],
+        ~resolveAt=#first,
+      )
 
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -1539,15 +1633,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
               id: 3.,
               eventsProcessed: 1,
               chainId: 100,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 103,
+              blockHash: Js.Null.Value("0x103"),
             },
             {
               id: 4.,
               eventsProcessed: 2,
               chainId: 1337,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 103,
+              blockHash: Js.Null.Value("0x103"),
             },
             // Reorg checkpoint id was checkpoint id 5
             // for chain 1337. After rollback it was removed
@@ -1556,13 +1650,20 @@ This might be wrong after we start exposing a block hash for progress block.`,
               id: 10.,
               eventsProcessed: 2,
               chainId: 100,
-              blockNumber: 102,
-              blockHash: Js.Null.Value("0x102"),
+              blockNumber: 106,
+              blockHash: Js.Null.Value("0x106"),
+            },
+            {
+              id: 11.,
+              eventsProcessed: 0,
+              chainId: 100,
+              blockNumber: 111,
+              blockHash: Js.Null.Value("0x111"),
             },
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
             },
           ],
@@ -1571,7 +1672,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 3.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1579,7 +1680,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-2",
               },
             }),
@@ -1587,7 +1688,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 10.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-4",
               },
             }),
@@ -1596,8 +1697,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -1611,7 +1712,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 10.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -1663,7 +1764,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
       ) => {
         context.simpleEntity.set({
           id: "1",
@@ -1671,26 +1772,34 @@ This might be wrong after we start exposing a block hash for progress block.`,
         })
       }
 
-      sourceMock1337.resolveGetItemsOrThrow([
-        {
-          blockNumber: 101,
-          logIndex: 2,
-          handler,
-        },
-      ])
-      sourceMock100.resolveGetItemsOrThrow([])
-      await indexerMock.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow([
-        {
-          blockNumber: 102,
-          logIndex: 2,
-          handler,
-        },
-      ])
-      sourceMock100.resolveGetItemsOrThrow(
+      sourceMock1337.resolveGetItemsOrThrow(
         [
           {
             blockNumber: 102,
+            logIndex: 2,
+            handler,
+          },
+        ],
+        ~latestFetchedBlockNumber=102,
+        ~resolveAt=#first,
+      )
+      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102, ~resolveAt=#first)
+      await indexerMock.getBatchWritePromise()
+      sourceMock1337.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 103,
+            logIndex: 2,
+            handler,
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 103,
             logIndex: 2,
             handler: async ({context}) => {
               context.entityWithBigDecimal.set({
@@ -1700,22 +1809,23 @@ This might be wrong after we start exposing a block hash for progress block.`,
             },
           },
           {
-            blockNumber: 103,
+            blockNumber: 104,
             logIndex: 2,
             handler,
           },
         ],
-        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+        ~latestFetchedBlockNumber=104,
       )
       await indexerMock.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow([])
+      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#first)
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -1723,8 +1833,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
               id: 2.,
               eventsProcessed: 0,
               chainId: 100,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 102,
+              blockHash: Js.Null.Value("0x102"),
             },
             {
               id: 3.,
@@ -1737,34 +1847,34 @@ This might be wrong after we start exposing a block hash for progress block.`,
               id: 4.,
               eventsProcessed: 1,
               chainId: 1337,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 102,
+              blockHash: Js.Null.Value("0x102"),
             },
             {
               id: 5.,
               eventsProcessed: 1,
               chainId: 100,
-              blockNumber: 102,
+              blockNumber: 103,
               blockHash: Js.Null.Null,
             },
             {
               id: 6.,
               eventsProcessed: 1,
               chainId: 1337,
-              blockNumber: 102,
-              blockHash: Js.Null.Value("0x102"),
+              blockNumber: 103,
+              blockHash: Js.Null.Value("0x103"),
             },
             {
               id: 7.,
               eventsProcessed: 1,
               chainId: 100,
-              blockNumber: 103,
-              blockHash: Js.Null.Value("0x103"),
+              blockNumber: 104,
+              blockHash: Js.Null.Value("0x104"),
             },
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
             },
           ],
@@ -1773,7 +1883,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1781,7 +1891,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 6.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-1",
               },
             }),
@@ -1789,7 +1899,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
               checkpointId: 7.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-2",
               },
             }),
@@ -1800,8 +1910,8 @@ Sorted by timestamp and chain id`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -1815,7 +1925,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 5.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -1835,8 +1945,8 @@ Sorted by timestamp and chain id`,
       Assert.deepEqual(
         await indexerMock.metric("envio_progress_block_number"),
         [
-          {value: "103", labels: Js.Dict.fromArray([("chainId", "100")])},
-          {value: "102", labels: Js.Dict.fromArray([("chainId", "1337")])},
+          {value: "104", labels: Js.Dict.fromArray([("chainId", "100")])},
+          {value: "103", labels: Js.Dict.fromArray([("chainId", "1337")])},
         ],
         ~message="Progress block number before rollback",
       )
@@ -1845,24 +1955,29 @@ Sorted by timestamp and chain id`,
       sourceMock1337.resolveGetItemsOrThrow(
         [],
         ~prevRangeLastBlock={
-          blockNumber: 103,
-          blockHash: "0x103-reorged",
+          blockNumber: 105,
+          blockHash: "0x105-reorged",
         },
+        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
 
       Assert.deepEqual(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 101, 102]],
+        [[100, 102, 103]],
         ~message="Should have called getBlockHashes to find rollback depth",
       )
       sourceMock1337.resolveGetBlockHashes([
-        // The block 101 is untouched so we can rollback to it
+        // The block 102 is untouched so we can rollback to it
         {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-        {blockNumber: 102, blockHash: "0x102-reorged", blockTimestamp: 102},
+        {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
+        {blockNumber: 103, blockHash: "0x103-reorged", blockTimestamp: 103},
       ])
+
+      // Clean up pending calls from before rollback
+      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
       await indexerMock.getRollbackReadyPromise()
 
@@ -1877,27 +1992,31 @@ Sorted by timestamp and chain id`,
       Assert.deepEqual(
         await indexerMock.metric("envio_progress_block_number"),
         [
-          {value: "101", labels: Js.Dict.fromArray([("chainId", "100")])},
-          {value: "101", labels: Js.Dict.fromArray([("chainId", "1337")])},
+          {value: "102", labels: Js.Dict.fromArray([("chainId", "100")])},
+          {value: "102", labels: Js.Dict.fromArray([("chainId", "1337")])},
         ],
         ~message="Progress block number after rollback",
       )
 
       Assert.deepEqual(
         (
-          sourceMock1337.getItemsOrThrowCalls->Utils.Array.last,
-          sourceMock100.getItemsOrThrowCalls->Utils.Array.last,
+          sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
+          sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
         (
+          // Chain 1337: partition DELETED (lfb > target), recreated fresh
           Some({
-            "fromBlock": 102,
+            "fromBlock": 103,
             "toBlock": None,
             "retry": 0,
+            "p": "0",
           }),
+          // Chain 100: partition KEPT (lfb <= target), chunk history preserved
           Some({
-            "fromBlock": 102,
-            "toBlock": None,
+            "fromBlock": 103,
+            "toBlock": Some(106),
             "retry": 0,
+            "p": "0",
           }),
         ),
         ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
@@ -1907,7 +2026,7 @@ Sorted by timestamp and chain id`,
       sourceMock100.resolveGetItemsOrThrow(
         [
           {
-            blockNumber: 102,
+            blockNumber: 103,
             logIndex: 2,
             handler: async ({context}) => {
               context.entityWithBigDecimal.set({
@@ -1918,22 +2037,23 @@ Sorted by timestamp and chain id`,
             },
           },
           {
-            blockNumber: 103,
+            blockNumber: 104,
             logIndex: 2,
             handler,
           },
         ],
-        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+        ~latestFetchedBlockNumber=104,
       )
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=103)
+      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
 
       await indexerMock.getBatchWritePromise()
 
       Assert.deepEqual(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(module(Entities.SimpleEntity)),
-          indexerMock.queryHistory(module(Entities.SimpleEntity)),
+          indexerMock.query(SimpleEntity),
+          indexerMock.queryHistory(SimpleEntity),
         )),
         (
           [
@@ -1941,8 +2061,8 @@ Sorted by timestamp and chain id`,
               id: 2.,
               eventsProcessed: 0,
               chainId: 100,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 102,
+              blockHash: Js.Null.Value("0x102"),
             },
             {
               id: 3.,
@@ -1955,29 +2075,29 @@ Sorted by timestamp and chain id`,
               id: 4.,
               eventsProcessed: 1,
               chainId: 1337,
-              blockNumber: 101,
-              blockHash: Js.Null.Value("0x101"),
+              blockNumber: 102,
+              blockHash: Js.Null.Value("0x102"),
             },
-            // Block 101 for chain 100 is skipped,
+            // Block 102 for chain 100 is skipped,
             // since it doesn't have events processed or block hash
             {
               id: 9.,
               eventsProcessed: 1,
               chainId: 100,
-              blockNumber: 102,
+              blockNumber: 103,
               blockHash: Js.Null.Null,
             },
             {
               id: 10.,
               eventsProcessed: 1,
               chainId: 100,
-              blockNumber: 103,
-              blockHash: Js.Null.Value("0x103"),
+              blockNumber: 104,
+              blockHash: Js.Null.Value("0x104"),
             },
           ],
           [
             {
-              Entities.SimpleEntity.id: "1",
+              Indexer.Entities.SimpleEntity.id: "1",
               value: "call-3",
             },
           ],
@@ -1986,7 +2106,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 4.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-0",
               },
             }),
@@ -1994,7 +2114,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 10.,
               entityId: "1",
               entity: {
-                Entities.SimpleEntity.id: "1",
+                Indexer.Entities.SimpleEntity.id: "1",
                 value: "call-3",
               },
             }),
@@ -2003,8 +2123,8 @@ Sorted by timestamp and chain id`,
       )
       Assert.deepEqual(
         await Promise.all2((
-          indexerMock.query(module(Entities.EntityWithBigDecimal)),
-          indexerMock.queryHistory(module(Entities.EntityWithBigDecimal)),
+          indexerMock.query(EntityWithBigDecimal),
+          indexerMock.queryHistory(EntityWithBigDecimal),
         )),
         (
           [
@@ -2018,7 +2138,7 @@ Sorted by timestamp and chain id`,
               checkpointId: 9.,
               entityId: "foo",
               entity: {
-                Entities.EntityWithBigDecimal.id: "foo",
+                Indexer.Entities.EntityWithBigDecimal.id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               },
             }),
@@ -2136,7 +2256,7 @@ Sorted by timestamp and chain id`,
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(module(Entities.SimpleEntity)),
+      await indexerMock.query(SimpleEntity),
       [],
       ~message="Should have all entities rolled back",
     )
@@ -2174,6 +2294,306 @@ Sorted by timestamp and chain id`,
         await indexerMock.metric("envio_reorg_threshold"),
         [{value: "0", labels: Js.Dict.empty()}],
         ~message="Should NOT be in reorg threshold when sourceBlockNumber is 0 and DB just initialized",
+      )
+    },
+  )
+
+  Async.it("Should NOT have duplicate queries after rollback with chunked partitions", async () => {
+    // 1. Setup mock source and indexer
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+    // 3. Process 2 queries to build chunk history (3+ block ranges each)
+    // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
+    | _ => Assert.fail("Step 3 should have a single pending call")
+    }
+    await indexerMock.getBatchWritePromise()
+
+    // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+    // After this, chunking will be enabled with chunkRange=min(3,3)=3
+    // A new query batch should be created with chunks
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
+    | _ => Assert.fail("Step 3 should have a single pending call")
+    }
+    await indexerMock.getBatchWritePromise()
+
+    // 4. Verify chunked queries are created (queries with toBlock set)
+    // chunkRange=3, chunkSize=ceil(5.4)=6 -> 2 chunks per fetchNextQuery call
+    // fetchNextQuery is called twice (on response handling and batch write), so 4 chunks total
+    switch sourceMock.getItemsOrThrowCalls {
+    | [chunk1, chunk2, chunk3, chunk4] =>
+      Assert.deepEqual(
+        (chunk1.payload, chunk2.payload, chunk3.payload, chunk4.payload),
+        (
+          {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
+          {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
+          {"fromBlock": 119, "toBlock": Some(124), "retry": 0, "p": "0"},
+          {"fromBlock": 125, "toBlock": Some(130), "retry": 0, "p": "0"},
+        ),
+        ~message=`Should create 2 chunks per fetchNextQuery call.
+The 3-4 chunks are not really expected, but created since we call fetchNextQuery twice:
+- on response handling
+- on batch write finish`,
+      )
+
+      // 5. Resolve LAST chunk of first batch FIRST with PARTIAL range: 113-115 instead of 113-118
+      // This leaves a gap at 116-118 in the same partition (no new partition created)
+      chunk2.resolve([], ~latestFetchedBlockNumber=115)
+
+      // 6. Resolve first chunk normally (107-112)
+      // Main partition consumes up to 115, detects gap before 119, creates gap-fill query
+      chunk1.resolve([], ~latestFetchedBlockNumber=112)
+
+      await indexerMock.getBatchWritePromise()
+
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+        [
+          chunk3.payload,
+          chunk4.payload,
+          {
+            "fromBlock": 116,
+            "toBlock": Some(118),
+            "retry": 0,
+            // Gap-fill query for the partial chunk range, same partition
+            "p": "0",
+          },
+          {
+            "fromBlock": 131,
+            "toBlock": Some(136),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 137,
+            "toBlock": Some(142),
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 143,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(148),
+          },
+          {
+            "fromBlock": 149,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(154),
+          },
+          {
+            "fromBlock": 155,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(160),
+          },
+          {
+            "fromBlock": 161,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(166),
+          },
+        ],
+        ~message="Should create gap-fill query for partial chunk range in same partition",
+      )
+
+    | _ => Assert.fail("Step 4 should have 4 chunks")
+    }
+
+    // 8. Trigger rollback via reorg detection to block 116
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~prevRangeLastBlock={
+        blockNumber: 115,
+        blockHash: "0x115-reorged",
+      },
+      ~resolveAt=#first,
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    Assert.deepEqual(
+      sourceMock.getBlockHashesCalls,
+      [[100, 103, 106, 112]],
+      ~message="Should have called getBlockHashes to find rollback depth",
+    )
+
+    // Rollback to block 112
+    sourceMock.resolveGetBlockHashes([
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
+      {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
+      {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
+    ])
+
+    // Clean up pending calls from before rollback
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
+
+    await indexerMock.getRollbackReadyPromise()
+
+    Assert.deepEqual(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      [
+        // Partition recreated fresh (no chunk history), single unchunked query
+        {
+          "fromBlock": 115,
+          "toBlock": None,
+          "retry": 0,
+          "p": "0",
+        },
+      ],
+      ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
+    )
+  })
+
+  Async.it(
+    "Should efficiently refetch only blocks after rollback target with chunked partitions",
+    async () => {
+      // Setup mock source and indexer
+      let sourceMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+
+      // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+      switch sourceMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
+      | _ => Assert.fail("Should have a single pending call for query 1")
+      }
+      await indexerMock.getBatchWritePromise()
+
+      // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+      // After this, chunking will be enabled with chunkRange=min(3,3)=3
+      switch sourceMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
+      | _ => Assert.fail("Should have a single pending call for query 2")
+      }
+      await indexerMock.getBatchWritePromise()
+
+      // Chunked queries: chunk1=107-112, chunk2=113-118
+      // chunkRange=3, chunkSize=ceil(5.4)=6
+      let calls = sourceMock.getItemsOrThrowCalls
+      Assert.ok(calls->Array.length >= 2, ~message="Should have at least 2 chunked queries")
+      let chunk1 = calls->Array.getUnsafe(0)
+      let chunk2 = calls->Array.getUnsafe(1)
+      Assert.deepEqual(
+        (chunk1.payload, chunk2.payload),
+        (
+          {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
+          {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
+        ),
+        ~message="Should create chunked queries",
+      )
+
+      // Resolve chunk1 to half its range, chunk2 to half its range
+      chunk1.resolve([], ~latestFetchedBlockNumber=109) // half of 107-112
+      chunk2.resolve([], ~latestFetchedBlockNumber=115) // first half of 113-118, stores checkpoint at 115
+      await indexerMock.getBatchWritePromise()
+      // lfb=109 (chunk2 unconsumed due to gap 110-112)
+
+      // Resolve chunk2's second half: continuation from 116+ resolves to 118
+      // This stores a reorg checkpoint at block 118
+      let continuationCall = sourceMock.getItemsOrThrowCalls->Array.getUnsafe(1)
+      Assert.ok(
+        continuationCall.payload["fromBlock"] >= 116,
+        ~message=`Continuation should start from >= 116, got ${continuationCall.payload["fromBlock"]->Int.toString}`,
+      )
+      continuationCall.resolve([], ~latestFetchedBlockNumber=118)
+      await Utils.delay(0)
+
+      // Trigger rollback: prevRangeLastBlock at 118 with reorged hash
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={
+          blockNumber: 118,
+          blockHash: "0x118-reorged",
+        },
+        ~resolveAt=#first,
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 109, 112, 115]
+      Assert.deepEqual(
+        sourceMock.getBlockHashesCalls,
+        [[100, 103, 106, 109, 112, 115]],
+        ~message="Should have called getBlockHashes to find rollback depth",
+      )
+
+      // All blocks up to 115 are valid -> rollback target = 115
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
+        {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
+        {blockNumber: 109, blockHash: "0x109", blockTimestamp: 100},
+        {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
+        {blockNumber: 115, blockHash: "0x115", blockTimestamp: 100},
+      ])
+
+      // Clean up pending calls from before rollback
+      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
+
+      await indexerMock.getRollbackReadyPromise()
+
+      // After rollback to 115:
+      // - lfb=109 (unchanged), chunk2 survives with fetchedBlock=115
+      // - continuation(116+) removed (fromBlock > 115)
+      // Two queries expected:
+      //   1. Gap-fill finishing chunk1 range (fromBlock=110)
+      //   2. After rollback target (fromBlock=116)
+      let queries = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
+
+      Assert.deepEqual(
+        queries,
+        [
+          {
+            "fromBlock": 110,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(112),
+          },
+          {
+            "fromBlock": 116,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(121),
+          },
+          {
+            "fromBlock": 122,
+            "p": "0",
+            "retry": 0,
+            "toBlock": Some(127),
+          },
+        ],
+        ~message="First query should finish chunk1 range starting from block 110, Second query should start after rollback target at block 116",
       )
     },
   )

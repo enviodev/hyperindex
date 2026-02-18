@@ -32,7 +32,7 @@ describe("Transfers", () => {
 
   let account_id = userAddress1->Address.toString
   //Make a mock entity to set the initial state of the mock db
-  let mockAccountEntity: Entities.Account.t = {
+  let mockAccountEntity: Indexer.Entities.Account.t = {
     id: account_id,
   }
 

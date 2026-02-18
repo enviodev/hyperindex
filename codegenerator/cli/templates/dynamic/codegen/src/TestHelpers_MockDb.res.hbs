@@ -42,7 +42,7 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     }
   `)
 
-let config = Generated.configWithoutRegistrations
+let config = Indexer.Generated.configWithoutRegistrations
 
 /**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
@@ -58,14 +58,14 @@ type rec t = {
   entities: entities,
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, InternalTable.RawEvents.t>,
   dynamicContractRegistry: entityStoreOperations<InternalTable.DynamicContractRegistry.t>,
-  processEvents: array<Types.eventLog<unknown>> => promise<t>,
+  processEvents: array<Indexer.eventLog<unknown>> => promise<t>,
 }
 
 // Each user defined entity will be in this record with all the store or "mockdb" operators
 @genType
 and entities = {
   {{#each entities as | entity |}}
-    @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityStoreOperations<Entities.{{entity.name.capitalized}}.t>,
+    @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityStoreOperations<Indexer.Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
   }
 // User defined entities always have a string for an id which is used as the
@@ -90,8 +90,8 @@ let makeStoreOperatorEntity = (
   ~inMemoryStore: InMemoryStore.t,
   ~makeMockDb,
   ~getStore: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
-  ~getKey: 'entity => Types.id,
-): storeOperations<Types.id, 'entity> => {
+  ~getKey: 'entity => Indexer.id,
+): storeOperations<Indexer.id, 'entity> => {
   let {getUnsafe, values, set} = module(InMemoryTable.Entity)
 
   let get = id => {
@@ -268,7 +268,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db =>
       db
       ->InMemoryStore.getInMemTable(
-        ~entityConfig=InternalTable.DynamicContractRegistry.config,
+        ~entityConfig=InternalTable.DynamicContractRegistry.entityConfig,
       )
       ->(
         Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
@@ -288,10 +288,10 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
           ~inMemoryStore,
           ~makeMockDb=makeWithInMemoryStore,
           ~getStore=db => db->InMemoryStore.getInMemTable(
-            ~entityConfig=module(Entities.{{entity.name.capitalized}})->Entities.entityModToInternal,
+            ~entityConfig=config.userEntitiesByName->Js.Dict.unsafeGet("{{entity.name.capitalized}}"),
           )->(
             Utils.magic: InMemoryTable.Entity.t<Internal.entity> => InMemoryTable.Entity.t<
-              Entities.{{entity.name.capitalized}}.t,
+              Indexer.Entities.{{entity.name.capitalized}}.t,
             >
           ),
           ~getKey=({id}) => id,
@@ -311,7 +311,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
   mockDb
 }
 and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
-  events: array<Types.eventLog<unknown>>,
+  events: array<Indexer.eventLog<unknown>>,
 ) => {
   if events->Utils.Array.isEmpty {
     mockDb
@@ -324,11 +324,11 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       await HandlerLoader.registerAllHandlers(~config)
     }
 
-    let config = Generated.makeGeneratedConfig()
+    let config = Indexer.Generated.makeGeneratedConfig()
     let ctx: Ctx.t = {
       registrations,
       config,
-      persistence: Generated.codegenPersistence,
+      persistence: Indexer.Generated.codegenPersistence,
     }
 
     let processingChainId = ref(chainId)
@@ -394,6 +394,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       ~config,
       ~registrations=ctx.registrations,
       ~targetBufferSize=5000,
+      ~knownHeight=latestFetchedBlockNumber.contents,
     )
 
     //Deep copy the data in mockDb, mutate the clone and return the clone
@@ -402,7 +403,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     let mockDbClone = mockDb->cloneMockDb
 
     //Construct a new instance of an in memory store to run for the given event
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
     let loadManager = LoadManager.make()
     let persistence = {
       ...ctx.persistence,
@@ -439,47 +440,33 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         updatedFetchState.contents->FetchState.registerDynamicContracts(newItemsWithDcs)
     }
 
-    updatedFetchState :=
-      updatedFetchState.contents
-      ->FetchState.handleQueryResult(
-        ~latestFetchedBlock={
-          blockNumber: latestFetchedBlockNumber.contents,
-          blockTimestamp: 0,
-        },
-        ~query={
-          partitionId: (updatedFetchState.contents.partitions->Array.getUnsafe(0)).id,
-          fromBlock: 0,
-          selection: {eventConfigs: [], dependsOnAddresses: false},
-          addressesByContractName: Js.Dict.empty(),
-          target: FetchState.Head,
-          indexingContracts: Js.Dict.empty(),
-        },
-        ~newItems,
-      )
-      ->Result.getExn
-
-    // Handle query for the rest partitions without items
-    // to catch up the latest fully fetched block
-    for idx in 1 to updatedFetchState.contents.partitions->Array.length - 1 {
-      let partition = updatedFetchState.contents.partitions->Array.getUnsafe(idx)
+    // Handle query for all partitions
+    let partitionIds = updatedFetchState.contents.optimizedPartitions.idsInAscOrder
+    for idx in 0 to partitionIds->Array.length - 1 {
+      let partitionId = partitionIds->Array.getUnsafe(idx)
+      let query: FetchState.query = {
+        partitionId,
+        fromBlock: 0,
+        selection: {eventConfigs: [], dependsOnAddresses: false},
+        addressesByContractName: Js.Dict.empty(),
+        toBlock: None,
+        indexingContracts: Js.Dict.empty(),
+        isChunk: false,
+      }
+      updatedFetchState.contents->FetchState.startFetchingQueries(~queries=[query])
       updatedFetchState :=
-        updatedFetchState.contents
-        ->FetchState.handleQueryResult(
+        updatedFetchState.contents->FetchState.handleQueryResult(
           ~latestFetchedBlock={
             blockNumber: latestFetchedBlockNumber.contents,
             blockTimestamp: 0,
           },
-          ~query={
-            partitionId: partition.id,
-            fromBlock: 0,
-            selection: {eventConfigs: [], dependsOnAddresses: false},
-            addressesByContractName: Js.Dict.empty(),
-            target: FetchState.Head,
-            indexingContracts: Js.Dict.empty(),
+          ~query,
+          ~newItems=if idx === 0 {
+            newItems
+          } else {
+            []
           },
-          ~newItems=[],
         )
-        ->Result.getExn
     }
 
     let batch = Batch.prepareUnorderedBatch(
@@ -636,7 +623,7 @@ writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     },
   )
 
-  Generated.codegenPersistence.allEntities->Array.forEach(entityConfig => {
+  Indexer.Generated.codegenPersistence.allEntities->Array.forEach(entityConfig => {
     mockDb->executeRowsEntity(~inMemoryStore, ~entityConfig)
   })
 }
@@ -650,4 +637,4 @@ new state so you can compare states before and after.
 @genType
 let //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
 
-createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=Entities.allEntities))
+createMockDb = () => makeWithInMemoryStore(InMemoryStore.make(~entities=Indexer.Generated.allEntities))

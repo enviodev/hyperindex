@@ -1,5 +1,5 @@
 open RescriptMocha
-module SingleOrMultiple = Types.SingleOrMultiple
+module SingleOrMultiple = Indexer.SingleOrMultiple
 type tupleWithArrays = (array<bigint>, array<string>)
 
 describe("Single or Multiple", () => {

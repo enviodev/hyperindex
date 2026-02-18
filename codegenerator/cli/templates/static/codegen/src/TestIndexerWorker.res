@@ -2,11 +2,5 @@
 // This file runs in a worker thread when createTestIndexer().process() is called
 
 TestIndexer.initTestWorker(
-  ~makeGeneratedConfig=Generated.makeGeneratedConfig,
-  ~makePersistence=(~storage) =>
-    Persistence.make(
-      ~userEntities=Entities.userEntities,
-      ~allEnums=Enums.allEnums,
-      ~storage,
-    ),
+  ~makeGeneratedConfig=Indexer.Generated.makeGeneratedConfig,
 )

@@ -67,7 +67,7 @@ module EventFunctions = {
     // a manually created event. We don't want to break the existing tests here.
     let _ =
       TestHelpers_MockDb.mockEventRegisters->Utils.WeakMap.set(event, register)
-    TestHelpers_MockDb.makeProcessEvents(mockDb, ~chainId=?chainId)([event->(Utils.magic: Internal.event => Types.eventLog<unknown>)])
+    TestHelpers_MockDb.makeProcessEvents(mockDb, ~chainId=?chainId)([event->(Utils.magic: Internal.event => Indexer.eventLog<unknown>)])
   }
 
   module MockBlock = {
@@ -82,7 +82,7 @@ module EventFunctions = {
       {{#each aggregated_field_selection.block_fields as | field |}}
       {{field.res_name}}: _mock.{{field.res_name}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
-    }->(Utils.magic: Types.AggregatedBlock.t => Internal.eventBlock)
+    }->(Utils.magic: Indexer.AggregatedBlock.t => Internal.eventBlock)
   }
 
   module MockTransaction = {
@@ -97,7 +97,7 @@ module EventFunctions = {
       {{#each aggregated_field_selection.transaction_fields as | field |}}
       {{field.res_name}}: _mock.{{field.res_name}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
-    }->(Utils.magic: Types.AggregatedTransaction.t => Internal.eventTransaction)
+    }->(Utils.magic: Indexer.AggregatedTransaction.t => Internal.eventTransaction)
   }
 
   @genType
@@ -127,7 +127,7 @@ module EventFunctions = {
       chainId: switch chainId {
       | Some(chainId) => chainId
       | None =>
-        switch Generated.configWithoutRegistrations.defaultChain {
+        switch Indexer.Generated.configWithoutRegistrations.defaultChain {
         | Some(chainConfig) => chainConfig.id
         | None =>
           Js.Exn.raiseError(
@@ -152,8 +152,8 @@ module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}
   module {{event.name}} = {
     @genType
-    let processEvent: EventFunctions.eventProcessor<Types.{{contract.name.capitalized}}.{{event.name}}.event> = EventFunctions.makeEventProcessor(
-      ~register=(Types.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
+    let processEvent: EventFunctions.eventProcessor<Indexer.{{contract.name.capitalized}}.{{event.name}}.event> = EventFunctions.makeEventProcessor(
+      ~register=(Indexer.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
     )
 
     {{#if ../../is_evm_ecosystem}}
@@ -188,23 +188,23 @@ module {{contract.name.capitalized}} = {
       }
       {{else}}
       ()
-      {{/if}}->(Utils.magic: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams)
+      {{/if}}->(Utils.magic: Indexer.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams)
 
       EventFunctions.makeEventMocker(
         ~params,
         ~mockEventData,
-        ~register=(Types.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
-      )->(Utils.magic: Internal.event => Types.{{contract.name.capitalized}}.{{event.name}}.event)
+        ~register=(Indexer.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
+      )->(Utils.magic: Internal.event => Indexer.{{contract.name.capitalized}}.{{event.name}}.event)
     }
     {{/if}}
     {{#if ../../is_fuel_ecosystem}}
     @genType
     let mockData = (params) => {
       EventFunctions.makeEventMocker(
-        ~params=params->(Utils.magic: Types.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams),
+        ~params=params->(Utils.magic: Indexer.{{contract.name.capitalized}}.{{event.name}}.eventArgs => Internal.eventParams),
         ~mockEventData=None,
-        ~register=(Types.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
-      )->(Utils.magic: Internal.event => Types.{{contract.name.capitalized}}.{{event.name}}.event)
+        ~register=(Indexer.{{contract.name.capitalized}}.{{event.name}}.register :> unit => Internal.eventConfig),
+      )->(Utils.magic: Internal.event => Indexer.{{contract.name.capitalized}}.{{event.name}}.event)
     }
     {{/if}}
   }

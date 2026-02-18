@@ -2,16 +2,41 @@
 source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
-@genType
-module Contract1 = {
-  module NewGravatar = Types.MakeRegister(Types.Contract1.NewGravatar)
-  module UpdatedGravatar = Types.MakeRegister(Types.Contract1.UpdatedGravatar)
+module Enums = {
+
+}
+
+module Entities = {
+  type id = string
+
+  module EmptyEntity = {
+    @genType
+    type t = {id: id, emptyField: id}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
+  }
+
+  type rec name<'entity> =
+    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t>
 }
 
 @genType
-module Contract2 = {
-  module NewGravatar = Types.MakeRegister(Types.Contract2.NewGravatar)
-  module UpdatedGravatar = Types.MakeRegister(Types.Contract2.UpdatedGravatar)
+type entityHandlerContext<'entity, 'getWhereFilter> = {
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}
+
+@genType.import(("./Types.ts", "HandlerContext"))
+type handlerContext = {
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
+  chain: Internal.chainInfo,
+  @as("EmptyEntity") emptyEntity: entityHandlerContext<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
 }
 
 @genType.import(("./Types.ts", "EvmChainId"))
@@ -62,8 +87,6 @@ type indexer = {
   chains: indexerChains,
 }
 
-let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)
-
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
 switch chainId {
@@ -75,7 +98,7 @@ switch chainId {
 @genType /** Register a Block Handler. It'll be called for every block by default. */
 let onBlock: (
 Envio.onBlockOptions<chainId>,
-Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>,
+Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
 ) => unit = (
 EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
@@ -89,4 +112,12 @@ type testIndexerProcessConfig = {
   chains: testIndexerProcessConfigChains,
 }
 
-let createTestIndexer: unit => TestIndexer.t<testIndexerProcessConfig> = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)
+/** Test indexer type with process method and chain info. */
+type testIndexer = {
+  /** Process blocks for the specified chains and return progress with changes. */
+  process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
+  /** Array of all chain IDs this indexer operates on. */
+  chainIds: array<chainId>,
+  /** Per-chain configuration keyed by chain ID. */
+  chains: indexerChains,
+}
