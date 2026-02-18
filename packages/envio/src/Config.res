@@ -55,6 +55,7 @@ type chain = {
   startBlock: int,
   endBlock?: int,
   maxReorgDepth: int,
+  blockLag: int,
   contracts: array<contract>,
   sourceConfig: sourceConfig,
 }
@@ -190,6 +191,7 @@ let publicConfigChainSchema = S.schema(s =>
     "startBlock": s.matches(S.int),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
+    "blockLag": s.matches(S.option(S.int)),
     // EVM/Fuel source config (hypersync for EVM, hyperfuel for Fuel)
     "hypersync": s.matches(S.option(S.string)),
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
@@ -624,6 +626,7 @@ let fromPublic = (
         // Fuel doesn't have reorgs, SVM reorg handling is not supported
         | Ecosystem.Fuel | Ecosystem.Svm => 0
         },
+        blockLag: publicChainConfig["blockLag"]->Option.getWithDefault(0),
         contracts: mergedContracts,
         sourceConfig,
       }

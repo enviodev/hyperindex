@@ -489,6 +489,12 @@ pub mod evm {
                            in case of reorgs."
         )]
         pub max_reorg_depth: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The number of blocks behind the chain head that the indexer should lag. \
+                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+        )]
+        pub block_lag: Option<i32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1045,6 +1051,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 rpc: None,
                 start_block: 2_000,
                 max_reorg_depth: None,
+                block_lag: None,
                 end_block: Some(2_000_000),
                 contracts: Some(vec![])
             },

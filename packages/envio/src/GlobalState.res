@@ -573,7 +573,7 @@ let onEnterReorgThreshold = (~state: t) => {
     {
       ...chainFetcher,
       fetchState: chainFetcher.fetchState->FetchState.updateInternal(
-        ~blockLag=Env.indexingBlockLag->Option.getWithDefault(0),
+        ~blockLag=chainFetcher.chainConfig.blockLag,
       ),
     }
   })
@@ -715,7 +715,7 @@ let actionReducer = (state: t, action: action) => {
       {
         ...cf,
         fetchState: shouldEnterReorgThreshold
-          ? fs->FetchState.updateInternal(~blockLag=Env.indexingBlockLag->Option.getWithDefault(0))
+          ? fs->FetchState.updateInternal(~blockLag=cf.chainConfig.blockLag)
           : fs,
       }
     })

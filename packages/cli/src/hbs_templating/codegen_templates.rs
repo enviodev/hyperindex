@@ -196,6 +196,8 @@ struct InternalChainConfig {
     end_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reorg_depth: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_lag: Option<i32>,
     // EVM/Fuel-specific source config (hypersync/hyperfuel endpoint)
     #[serde(skip_serializing_if = "Option::is_none")]
     hypersync: Option<String>,
@@ -1069,6 +1071,7 @@ type EthAddress = String;
 struct NetworkTemplate {
     pub id: u64,
     max_reorg_depth: Option<i32>,
+    block_lag: Option<i32>,
     start_block: u64,
     end_block: Option<u64>,
 }
@@ -1078,6 +1081,7 @@ impl NetworkTemplate {
         NetworkTemplate {
             id: network.id,
             max_reorg_depth: network.max_reorg_depth,
+            block_lag: network.block_lag,
             start_block: network.start_block,
             end_block: network.end_block,
         }
@@ -1698,6 +1702,7 @@ type testIndexer = {{
                             start_block: network.start_block,
                             end_block: network.end_block,
                             max_reorg_depth: network.max_reorg_depth,
+                            block_lag: network.block_lag,
                             hypersync,
                             rpcs,
                             rpc,
