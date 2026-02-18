@@ -444,7 +444,7 @@ type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndRecei
 // Parse fields from a raw JSON object into a result dict.
 // Absent fields (undefined) are skipped. Nullable fields use S.nullable in their schema.
 let parseFieldsFromJson = (
-  result: Js.Dict.t<Js.Json.t>,
+  mutTransactionAcc: Js.Dict.t<Js.Json.t>,
   fields: array<(S.item, fieldDef)>,
   json: Js.Json.t,
 ) => {
@@ -455,7 +455,7 @@ let parseFieldsFromJson = (
     | Some(raw) =>
       try {
         let parsed = raw->S.parseOrThrow(def.schema)
-        result->Js.Dict.set(item.location, parsed)
+        mutTransactionAcc->Js.Dict.set(item.location, parsed)
       } catch {
       | S.Raised(error) =>
         Js.Exn.raiseError(
@@ -517,24 +517,24 @@ let makeThrowingGetEventTransaction = (
           | (true, true) => TransactionAndReceipt
           | (true, false) => TransactionOnly
           | (false, true) => ReceiptOnly
-          | (false, false) if bothFields->Array.length > 0 => ReceiptOnly
+          | (false, false) if bothFields->Array.length > 0 => TransactionOnly
           | (false, false) => NoRpc
           }
 
-          // Assign Both fields to whichever source is already being fetched; default to receipt
-          let targetForBoth = strategy == TransactionOnly ? txFields : receiptFields
+          // Assign Both fields to whichever source is already being fetched; default to transaction
+          let targetForBoth = strategy == ReceiptOnly ? receiptFields : txFields
           bothFields->Array.forEach(f => targetForBoth->Js.Array2.push(f)->ignore)
 
-          // Set log-derived fields on result dict
-          let setLogFields = (result: Js.Dict.t<Js.Json.t>, log: Rpc.GetLogs.log) => {
+          // Set log-derived fields on the mutable accumulator
+          let setLogFields = (mutTransactionAcc: Js.Dict.t<Js.Json.t>, log: Rpc.GetLogs.log) => {
             if hasTransactionIndex.contents {
-              result->Js.Dict.set(
+              mutTransactionAcc->Js.Dict.set(
                 "transactionIndex",
                 log.transactionIndex->(Utils.magic: int => Js.Json.t),
               )
             }
             if hasHash.contents {
-              result->Js.Dict.set(
+              mutTransactionAcc->Js.Dict.set(
                 "hash",
                 log.transactionHash->(Utils.magic: string => Js.Json.t),
               )
@@ -545,9 +545,9 @@ let makeThrowingGetEventTransaction = (
           | ([], _) => _ => %raw(`{}`)->Promise.resolve
           | (_, NoRpc) =>
             (log: Rpc.GetLogs.log) => {
-              let result = Js.Dict.empty()
-              setLogFields(result, log)
-              (result->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a))->Promise.resolve
+              let mutTransactionAcc = Js.Dict.empty()
+              setLogFields(mutTransactionAcc, log)
+              (mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a))->Promise.resolve
             }
           | (_, _) =>
             (log: Rpc.GetLogs.log) => {
@@ -566,19 +566,19 @@ let makeThrowingGetEventTransaction = (
                 txJson,
                 receiptJson,
               )) => {
-                let result = Js.Dict.empty()
-                setLogFields(result, log)
+                let mutTransactionAcc = Js.Dict.empty()
+                setLogFields(mutTransactionAcc, log)
 
                 switch txJson {
-                | Some(json) => parseFieldsFromJson(result, txFields, json)
+                | Some(json) => parseFieldsFromJson(mutTransactionAcc, txFields, json)
                 | None => ()
                 }
                 switch receiptJson {
-                | Some(json) => parseFieldsFromJson(result, receiptFields, json)
+                | Some(json) => parseFieldsFromJson(mutTransactionAcc, receiptFields, json)
                 | None => ()
                 }
 
-                result->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
+                mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
               })
             }
           }
