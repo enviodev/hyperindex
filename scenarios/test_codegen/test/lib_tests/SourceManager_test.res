@@ -205,6 +205,7 @@ describe("SourceManager fetchNext", () => {
       blockLag: 0,
       onBlockConfigs: [],
       knownHeight,
+      firstEventBlock: None,
     }
   }
 

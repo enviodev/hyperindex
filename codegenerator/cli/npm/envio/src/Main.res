@@ -305,7 +305,7 @@ let start = async (
                 numBatchesFetched: cf.numBatchesFetched,
                 startBlock: cf.fetchState.startBlock,
                 endBlock: cf.fetchState.endBlock,
-                firstEventBlockNumber: cf.firstEventBlockNumber,
+                firstEventBlockNumber: cf.fetchState.firstEventBlock,
                 latestProcessedBlock: cf.committedProgressBlockNumber === -1
                   ? None
                   : Some(cf.committedProgressBlockNumber),

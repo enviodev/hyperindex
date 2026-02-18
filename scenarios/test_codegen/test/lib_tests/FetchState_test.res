@@ -186,6 +186,7 @@ describe("FetchState.make", () => {
         blockLag: 0,
         onBlockConfigs: [],
         knownHeight,
+        firstEventBlock: None,
       },
     )
   })
@@ -265,6 +266,7 @@ describe("FetchState.make", () => {
           blockLag: 0,
           onBlockConfigs: [],
           knownHeight,
+          firstEventBlock: None,
         },
         ~message=`Should create only one partition`,
       )
@@ -341,6 +343,7 @@ describe("FetchState.make", () => {
           blockLag: 0,
           onBlockConfigs: [],
           knownHeight,
+          firstEventBlock: None,
         },
       )
 
@@ -459,6 +462,7 @@ describe("FetchState.make", () => {
           blockLag: 0,
           onBlockConfigs: [],
           knownHeight,
+          firstEventBlock: None,
         },
       )
     },
@@ -1413,6 +1417,7 @@ describe("FetchState.registerDynamicContracts", () => {
           blockLag: 0,
           onBlockConfigs: [],
           knownHeight,
+          firstEventBlock: None,
         },
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       )
@@ -1472,6 +1477,7 @@ describe("FetchState.getNextQuery & integration", () => {
       contractConfigs: makeInitial().contractConfigs,
       onBlockConfigs: [],
       knownHeight,
+      firstEventBlock: None,
     }
   }
 
@@ -1529,6 +1535,7 @@ describe("FetchState.getNextQuery & integration", () => {
       blockLag: 0,
       onBlockConfigs: [],
       knownHeight,
+      firstEventBlock: None,
     }
   }
 
@@ -2925,11 +2932,12 @@ describe("FetchState.sortForUnorderedBatch", () => {
     let fs0 = makeInitial(~knownHeight=10)
     let query = mkQuery(fs0)
     fs0->FetchState.startFetchingQueries(~queries=[query])
-    fs0->FetchState.handleQueryResult(
+    let fs = fs0->FetchState.handleQueryResult(
       ~query,
       ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
       ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
     )
+    {...fs, firstEventBlock: Some(0)}
   }
 
   it("Sorts by progress percentage. Chains further behind have higher priority", () => {

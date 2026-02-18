@@ -476,6 +476,7 @@ type t = {
   targetBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
+  firstEventBlock: option<int>,
 }
 
 @inline
@@ -634,6 +635,7 @@ let updateInternal = (
     | Some(mutItems) => mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)
     | None => fetchState.buffer
     },
+    firstEventBlock: fetchState.firstEventBlock,
   }
 
   Prometheus.IndexingPartitions.set(
@@ -1450,6 +1452,7 @@ let make = (
   ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=[],
   ~blockLag=0,
+  ~firstEventBlock=None,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -1572,6 +1575,7 @@ let make = (
     targetBufferSize,
     knownHeight,
     buffer: [],
+    firstEventBlock,
   }
 }
 
@@ -1798,15 +1802,19 @@ let sortForUnorderedBatch = {
 
   // Lower progress percentage = further behind = higher priority
   let getProgressPercentage = (fetchState: t) => {
-    let totalRange = fetchState.knownHeight - fetchState.startBlock
-    if totalRange <= 0 {
-      0.
-    } else {
-      let progress = switch fetchState.buffer->Belt.Array.get(0) {
-      | Some(item) => item->Internal.getItemBlockNumber - fetchState.startBlock
-      | None => fetchState->bufferBlockNumber - fetchState.startBlock
+    switch fetchState.firstEventBlock {
+    | None => 0.
+    | Some(firstEventBlock) =>
+      let totalRange = fetchState.knownHeight - firstEventBlock
+      if totalRange <= 0 {
+        0.
+      } else {
+        let progress = switch fetchState.buffer->Belt.Array.get(0) {
+        | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
+        | None => fetchState->bufferBlockNumber - firstEventBlock
+        }
+        progress->Int.toFloat /. totalRange->Int.toFloat
       }
-      progress->Int.toFloat /. totalRange->Int.toFloat
     }
   }
 
