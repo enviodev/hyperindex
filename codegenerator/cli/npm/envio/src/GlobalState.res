@@ -158,7 +158,7 @@ let updateChainMetadataTable = (
     chainsData->Js.Dict.set(
       cf.chainConfig.id->Belt.Int.toString,
       {
-        firstEventBlockNumber: cf.firstEventBlockNumber->Js.Null.fromOption,
+        firstEventBlockNumber: cf.fetchState.firstEventBlock->Js.Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
@@ -224,9 +224,13 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
           ...cf,
           // Since we process per chain always in order,
           // we need to calculate it once, by using the first item in a batch
-          firstEventBlockNumber: switch cf.firstEventBlockNumber {
-          | Some(_) => cf.firstEventBlockNumber
-          | None => batch->Batch.findFirstEventBlockNumber(~chainId=chain->ChainMap.Chain.toChainId)
+          fetchState: switch cf.fetchState.firstEventBlock {
+          | Some(_) => cf.fetchState
+          | None =>
+            switch batch->Batch.findFirstEventBlockNumber(~chainId=chain->ChainMap.Chain.toChainId) {
+            | Some(_) as firstEventBlock => {...cf.fetchState, firstEventBlock}
+            | None => cf.fetchState
+            }
           },
           committedProgressBlockNumber: chainAfterBatch.progressBlockNumber,
           numEventsProcessed: chainAfterBatch.totalEventsProcessed,

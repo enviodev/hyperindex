@@ -104,7 +104,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let sources = [mockSource.source]
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
-      firstEventBlockNumber: None,
       committedProgressBlockNumber: -1,
       numEventsProcessed: 0,
       numBatchesFetched: 0,

@@ -67,6 +67,22 @@ let getMinHistoryRange = (p: partition) => {
   }
 }
 
+let getMinQueryRange = (partitions: array<partition>) => {
+  let min = ref(0)
+  for i in 0 to partitions->Array.length - 1 {
+    let p = partitions->Js.Array2.unsafe_get(i)
+    let a = p.prevQueryRange
+    let b = p.prevPrevQueryRange
+    if a > 0 && (min.contents == 0 || a < min.contents) {
+      min := a
+    }
+    if b > 0 && (min.contents == 0 || b < min.contents) {
+      min := b
+    }
+  }
+  min.contents
+}
+
 module OptimizedPartitions = {
   type t = {
     idsInAscOrder: array<string>,
@@ -127,6 +143,7 @@ module OptimizedPartitions = {
       completed->Js.Array2.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
       let newId = nextPartitionIndexRef.contents->Js.Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+      let minRange = getMinQueryRange([p1, p2])
       {
         id: newId,
         dynamicContract: Some(contractName),
@@ -135,8 +152,8 @@ module OptimizedPartitions = {
         mergeBlock: None,
         addressesByContractName: Js.Dict.empty(), // set below
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevPrevQueryRange: 0,
+        prevQueryRange: minRange,
+        prevPrevQueryRange: minRange,
         latestBlockRangeUpdateBlock: 0,
       }
     }
@@ -476,6 +493,7 @@ type t = {
   targetBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
+  firstEventBlock: option<int>,
 }
 
 @inline
@@ -634,6 +652,7 @@ let updateInternal = (
     | Some(mutItems) => mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)
     | None => fetchState.buffer
     },
+    firstEventBlock: fetchState.firstEventBlock,
   }
 
   Prometheus.IndexingPartitions.set(
@@ -1450,6 +1469,7 @@ let make = (
   ~progressBlockNumber=startBlock - 1,
   ~onBlockConfigs=[],
   ~blockLag=0,
+  ~firstEventBlock=None,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -1572,6 +1592,7 @@ let make = (
     targetBufferSize,
     knownHeight,
     buffer: [],
+    firstEventBlock,
   }
 }
 
@@ -1798,15 +1819,19 @@ let sortForUnorderedBatch = {
 
   // Lower progress percentage = further behind = higher priority
   let getProgressPercentage = (fetchState: t) => {
-    let totalRange = fetchState.knownHeight - fetchState.startBlock
-    if totalRange <= 0 {
-      0.
-    } else {
-      let progress = switch fetchState.buffer->Belt.Array.get(0) {
-      | Some(item) => item->Internal.getItemBlockNumber - fetchState.startBlock
-      | None => fetchState->bufferBlockNumber - fetchState.startBlock
+    switch fetchState.firstEventBlock {
+    | None => 0.
+    | Some(firstEventBlock) =>
+      let totalRange = fetchState.knownHeight - firstEventBlock
+      if totalRange <= 0 {
+        0.
+      } else {
+        let progress = switch fetchState.buffer->Belt.Array.get(0) {
+        | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
+        | None => fetchState->bufferBlockNumber - firstEventBlock
+        }
+        progress->Int.toFloat /. totalRange->Int.toFloat
       }
-      progress->Int.toFloat /. totalRange->Int.toFloat
     }
   }
 

@@ -22,7 +22,7 @@ let getKnownBlockWithBackoff = async (
   let result = ref(None)
 
   while result.contents->Option.isNone {
-    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId)
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_getBlockByNumber")
     switch await getKnownBlock(~client, ~blockNumber) {
     | exception err =>
       Logging.warn({
@@ -226,7 +226,7 @@ let getNextPage = (
     )
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
-  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId)
+  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
   let logsPromise =
     Rpc.getLogs(
       ~client,
@@ -625,6 +625,7 @@ let make = (
         Prometheus.SourceRequestCount.increment(
           ~sourceName=name,
           ~chainId=chain->ChainMap.Chain.toChainId,
+          ~method="eth_getTransactionByHash",
         )
         Rpc.GetTransactionByHash.rawRoute->Rest.fetch(transactionHash, ~client)
       },
@@ -677,7 +678,7 @@ let make = (
   let makeReceiptLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_getTransactionReceipt")
         Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(transactionHash, ~client)
       },
       ~onError=(am, ~exn) => {
@@ -984,6 +985,7 @@ let make = (
       Prometheus.SourceRequestCount.increment(
         ~sourceName=name,
         ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="eth_blockNumber",
       )
       Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
     },

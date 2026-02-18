@@ -235,7 +235,7 @@ let make = ({chain, endpointUrl}: options): t => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
-    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getLogs")
     let pageUnsafe = try await HyperFuel.GetLogs.query(
       ~serverUrl=endpointUrl,
       ~fromBlock,
@@ -498,7 +498,7 @@ let make = ({chain, endpointUrl}: options): t => {
     pollingInterval: 100,
     poweredByHyperSync: true,
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId)
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
       HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
     },
     getItemsOrThrow,

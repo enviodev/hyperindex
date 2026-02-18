@@ -1450,7 +1450,8 @@ describe("E2E tests", () => {
     // DC1("2"): mergeBlock=26980, query 7001→26980
     // DC2("3"): mergeBlock=26980, chunks still pending
     // P0("0"): still pending 25101→99800
-    // New("4"): lfb=26980, both addresses, query 26981→99800
+    // New("4"): lfb=26980, both addresses, inherits minRange=300 from DC2 history
+    //   → chunkSize=ceil(300*1.8)=540, chunks: 26981→27520, 27521→28060
     Assert.deepEqual(
       sourceMock.getItemsOrThrowCalls
       ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
@@ -1460,7 +1461,8 @@ describe("E2E tests", () => {
         ("0", 25101, Some(99800)),
         ("3", 25901, Some(26440)),
         ("3", 26441, Some(26980)),
-        ("4", 26981, Some(99800)),
+        ("4", 26981, Some(27520)),
+        ("4", 27521, Some(28060)),
       ],
       ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     )

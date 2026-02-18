@@ -15,7 +15,6 @@ type t = {
   isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
-  firstEventBlockNumber: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
@@ -28,7 +27,7 @@ let make = (
   ~dynamicContracts: array<Internal.indexingContract>,
   ~startBlock,
   ~endBlock,
-  ~firstEventBlockNumber,
+  ~firstEventBlock=None,
   ~progressBlockNumber,
   ~config: Config.t,
   ~registrations: EventRegister.registrations,
@@ -186,6 +185,7 @@ let make = (
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
     ~onBlockConfigs?,
+    ~firstEventBlock,
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
@@ -258,7 +258,6 @@ let make = (
     ),
     isProgressAtHead: false,
     fetchState,
-    firstEventBlockNumber,
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
@@ -283,7 +282,6 @@ let makeFromConfig = (
     ~endBlock=chainConfig.endBlock,
     ~reorgCheckpoints=[],
     ~maxReorgDepth=chainConfig.maxReorgDepth,
-    ~firstEventBlockNumber=None,
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
@@ -328,7 +326,7 @@ let makeFromDbState = async (
     ~registrations,
     ~reorgCheckpoints,
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
-    ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber,
+    ~firstEventBlock=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None

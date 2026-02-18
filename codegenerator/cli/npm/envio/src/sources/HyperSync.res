@@ -260,7 +260,7 @@ module BlockData = {
       },
     )
 
-    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId)
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="getBlockHashes")
     let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(() =>
       HyperSyncJsonApi.queryRoute->Rest.fetch(
         {

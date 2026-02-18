@@ -12,6 +12,7 @@ type chainData = {
   @as("currentBlockHeight")
   knownHeight: int,
   numBatchesFetched: int,
+  startBlock: int,
   endBlock: option<int>,
   numAddresses: int,
 }
@@ -39,6 +40,7 @@ let chainDataSchema = S.schema((s): chainData => {
   latestFetchedBlockNumber: s.matches(S.int),
   knownHeight: s.matches(S.int),
   numBatchesFetched: s.matches(S.int),
+  startBlock: s.matches(S.int),
   endBlock: s.matches(S.option(S.int)),
   numAddresses: s.matches(S.int),
 })
@@ -301,8 +303,9 @@ let start = async (
                 latestFetchedBlockNumber,
                 knownHeight,
                 numBatchesFetched: cf.numBatchesFetched,
+                startBlock: cf.fetchState.startBlock,
                 endBlock: cf.fetchState.endBlock,
-                firstEventBlockNumber: cf.firstEventBlockNumber,
+                firstEventBlockNumber: cf.fetchState.firstEventBlock,
                 latestProcessedBlock: cf.committedProgressBlockNumber === -1
                   ? None
                   : Some(cf.committedProgressBlockNumber),
