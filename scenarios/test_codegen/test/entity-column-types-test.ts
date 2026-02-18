@@ -20,7 +20,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
 
   it("should have the correct columns and data types in 'PostgresNumericPrecisionEntityTester' table", async () => {
     //  This SQL is quite a beast, but it does work 🙏
-    const columnsRes = await sql`
+    const { rows: columnsRes } = await sql.query(`
       SELECT
         a.attname AS column_name,
         pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
@@ -31,12 +31,12 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
         END AS element_data_type,
         CASE
           WHEN t.typname LIKE 'numeric%' OR et.typname LIKE 'numeric%' THEN
-            (regexp_match(pg_catalog.format_type(a.atttypid, a.atttypmod), 'numeric\\((\\d+),(\\d+)\\)'))[1]::int
+            (regexp_match(pg_catalog.format_type(a.atttypid, a.atttypmod), 'numeric\\\\((\\\\d+),(\\\\d+)\\\\)'))[1]::int
           ELSE NULL
         END AS numeric_precision,
         CASE
           WHEN t.typname LIKE 'numeric%' OR et.typname LIKE 'numeric%' THEN
-            (regexp_match(pg_catalog.format_type(a.atttypid, a.atttypmod), 'numeric\\((\\d+),(\\d+)\\)'))[2]::int
+            (regexp_match(pg_catalog.format_type(a.atttypid, a.atttypmod), 'numeric\\\\((\\\\d+),(\\\\d+)\\\\)'))[2]::int
           ELSE NULL
         END AS numeric_scale,
         CASE
@@ -58,7 +58,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
         NOT a.attisdropped
       ORDER BY
         a.attnum;
-    `;
+    `);
 
     // Define the expected columns and their properties
     const expectedColumns = [
