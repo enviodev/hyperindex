@@ -117,7 +117,6 @@ let fetchNext = async (
     ~concurrencyLimit={
       maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
     },
-    ~stateId,
   )
 
   switch nextQuery {
@@ -142,7 +141,7 @@ let fetchNext = async (
       }
     }
   | Ready(queries) => {
-      fetchState->FetchState.startFetchingQueries(~queries, ~stateId)
+      fetchState->FetchState.startFetchingQueries(~queries)
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
       Prometheus.IndexingConcurrency.set(
@@ -417,14 +416,7 @@ let getNextSyncSourceState = (
 }
 
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight) => {
-  let toBlockRef = ref(
-    switch query.target {
-    | Head => None
-    | EndBlock({toBlock})
-    | Merge({toBlock}) =>
-      Some(toBlock)
-    },
-  )
+  let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
   let initialSourceState =

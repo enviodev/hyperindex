@@ -167,7 +167,6 @@ pub mod evm {
                 ecosystem: None,
                 contracts,
                 chains: chains_map.into_values().sorted_by_key(|v| v.id).collect(),
-                multichain: None, // Default is Unordered
                 rollback_on_reorg: None,
                 save_full_history: None,
                 field_selection: None,

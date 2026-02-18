@@ -57,9 +57,9 @@ module Chains = {
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Js.null<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
+    @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: int,
-    @as("source_block") blockHeight: int,
     ...metaFields,
   }
 

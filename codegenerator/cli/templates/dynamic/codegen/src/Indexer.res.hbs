@@ -72,7 +72,7 @@ module SingleOrMultiple: {
         ~msg="The given empty array could be interperated as a flat array (value) or nested array. Since it's ambiguous,
         please pass in a nested empty array if the intention is to provide an empty array as a value",
       )
-    | Some(arr) => arr->Js.Array2.unsafe_get(0)->isMultiple(~nestedArrayDepth=nestedArrayDepth - 1)
+    | Some(arr) => arr->Utils.Array.firstUnsafe->isMultiple(~nestedArrayDepth=nestedArrayDepth - 1)
     }
 
   let normalizeOrThrow = (t: t<'a>, ~nestedArrayDepth=0): array<'a> => {
