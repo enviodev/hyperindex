@@ -608,6 +608,9 @@ module Set = {
 
   external toArray: t<'a> => array<'a> = "Array.from"
 
+  @send
+  external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
+
   let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
     return new Set([...set, value])
   }`)
@@ -654,6 +657,19 @@ module WeakMap = {
   @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
+
+  let memoize = (fn: 'k => 'v): ('k => 'v) => {
+    let cache = make()
+    key =>
+      switch cache->get(key) {
+      | Some(v) => v
+      | None => {
+          let v = fn(key)
+          let _ = cache->set(key, v)
+          v
+        }
+      }
+  }
 }
 
 module Map = {
