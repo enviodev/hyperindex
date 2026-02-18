@@ -54,7 +54,7 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
       Js.Exn.raiseError("Svm does not support getting block hashes"),
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId)
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
       GetFinalizedSlot.route->Rest.fetch((), ~client)
     },
     getItemsOrThrow: (

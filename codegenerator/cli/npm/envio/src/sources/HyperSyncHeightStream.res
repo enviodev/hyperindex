@@ -74,7 +74,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
       switch event.data->Belt.Int.fromString {
       | Some(height) =>
         // Track the SSE height event
-        Prometheus.SourceRequestCount.increment(~sourceName="HyperSync", ~chainId)
+        Prometheus.SourceRequestCount.increment(~sourceName="HyperSync", ~chainId, ~method="heightStream")
         // On a successful height event, update the timeout
         updateTimeoutId()
         // Call the callback with the new height
