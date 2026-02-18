@@ -36,6 +36,19 @@ use serde::Serialize;
 
 // ============== Internal Config JSON Types ==============
 
+fn indent(code: &str) -> String {
+    code.lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", line)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn is_true(v: &bool) -> bool {
     *v
 }
@@ -69,6 +82,59 @@ struct InternalConfigJson<'a> {
     fuel: Option<InternalFuelConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     svm: Option<InternalSvmConfig>,
+    enums: std::collections::BTreeMap<String, Vec<String>>,
+    entities: Vec<InternalEntityJson>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalEntityJson {
+    name: String,
+    properties: Vec<InternalPropertyJson>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    derived_fields: Vec<InternalDerivedFieldJson>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    composite_indices: Vec<Vec<InternalCompositeIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalPropertyJson {
+    name: String,
+    #[serde(rename = "type")]
+    field_type: String,
+    #[serde(skip_serializing_if = "is_false")]
+    is_nullable: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    is_array: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    is_index: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    linked_entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "enum")]
+    enum_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scale: Option<u32>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalDerivedFieldJson {
+    field_name: String,
+    derived_from_entity: String,
+    derived_from_field: String,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InternalCompositeIndexJson {
+    field_name: String,
+    direction: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -191,6 +257,58 @@ impl GraphQlEnumTypeTemplate {
             params,
         })
     }
+}
+
+fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
+    let mut code = String::new();
+
+    for gql_enum in gql_enums {
+        writeln!(code, "module {} = {{", gql_enum.name.capitalized).unwrap();
+        writeln!(code, "  @genType").unwrap();
+        write!(code, "  type t =\n").unwrap();
+        for param in &gql_enum.params {
+            writeln!(code, "    | @as(\"{}\") {}", param.original, param.capitalized).unwrap();
+        }
+        writeln!(code, "}}").unwrap();
+    }
+
+    code
+}
+
+fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
+    let mut code = String::new();
+
+    writeln!(code, "type id = string").unwrap();
+
+    for entity in entities {
+        writeln!(code).unwrap();
+        writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
+        writeln!(code, "  @genType").unwrap();
+        writeln!(code, "  type t = {}", entity.type_code).unwrap();
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "  type getWhereFilter = {}",
+            entity.get_where_filter_code
+        )
+        .unwrap();
+        writeln!(code, "}}").unwrap();
+    }
+
+    if !entities.is_empty() {
+        writeln!(code).unwrap();
+        writeln!(code, "type rec name<'entity> =").unwrap();
+        for entity in entities {
+            writeln!(
+                code,
+                "  | @as(\"{0}\") {0}: name<{0}.t>",
+                entity.name.capitalized
+            )
+            .unwrap();
+        }
+    }
+
+    code
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -1158,6 +1276,7 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
+    generated_top_level_bindings: String,
     internal_config_json_code: String,
     envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
@@ -1270,38 +1389,15 @@ impl ProjectTemplate {
                 .collect::<Vec<_>>(),
         };
 
-        // Generate contract modules with event registration
-        let contract_modules = codegen_contracts
-            .iter()
-            .map(|contract| {
-                let event_modules = contract
-                    .codegen_events
-                    .iter()
-                    .map(|event| {
-                        format!(
-                            "  module {} = Types.MakeRegister(Types.{}.{})",
-                            event.name, contract.name.capitalized, event.name
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!(
-                    "@genType\nmodule {} = {{\n{}\n}}",
-                    contract.name.capitalized, event_modules
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
         // Generate onBlock function with ecosystem-specific types
         let on_block_handler_type = match cfg.get_ecosystem() {
             Ecosystem::Evm => {
-                "Envio.onBlockArgs<Envio.blockEvent, Types.handlerContext> => promise<unit>"
+                "Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>"
             }
             Ecosystem::Fuel => {
-                "Envio.onBlockArgs<Envio.fuelBlockEvent, Types.handlerContext> => promise<unit>"
+                "Envio.onBlockArgs<Envio.fuelBlockEvent, handlerContext> => promise<unit>"
             }
-            Ecosystem::Svm => "Envio.svmOnBlockArgs<Types.handlerContext> => promise<unit>",
+            Ecosystem::Svm => "Envio.svmOnBlockArgs<handlerContext> => promise<unit>",
         };
 
         // Generate chainId type with ecosystem-specific import from Types.ts
@@ -1415,9 +1511,6 @@ type indexer = {
   chains: indexerChains,
 }"#;
 
-        // Generate indexer value using Main.getGlobalIndexer
-        let indexer_value = r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#;
-
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
             .iter()
@@ -1440,21 +1533,61 @@ switch chainId {{
             get_chain_by_id_cases
         );
 
+        // Generate Enums and Entities modules
+        let enums_module_code = indent(&generate_enums_code(&gql_enums));
+        let entities_module_code = indent(&generate_entities_code(&entities));
+
+        // Generate handlerContext types
+        let handler_context_entity_fields = entities
+            .iter()
+            .map(|entity| {
+                format!(
+                    "  @as(\"{}\") {}: entityHandlerContext<Entities.{}.t, Entities.{}.getWhereFilter>,",
+                    entity.name.original,
+                    entity.name.uncapitalized,
+                    entity.name.capitalized,
+                    entity.name.capitalized,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let handler_context_code = format!(
+            r#"@genType
+type entityHandlerContext<'entity, 'getWhereFilter> = {{
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}}
+
+@genType.import(("./Types.ts", "HandlerContext"))
+type handlerContext = {{
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+  isPreload: bool,
+  chain: Internal.chainInfo,
+{}
+}}"#,
+            handler_context_entity_fields
+        );
+
         // Combine all parts into indexer_code
         let indexer_code = format!(
-            "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
-            contract_modules,
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            enums_module_code,
+            entities_module_code,
+            handler_context_code,
             chain_id_type,
             indexer_contract_type,
             indexer_chain_type,
             indexer_chains_type,
             indexer_type,
-            indexer_value,
             get_chain_by_id,
+            on_block_code,
         );
-
-        // Add onBlock at the end
-        let indexer_code = format!("{}\n\n{}", indexer_code, on_block_code);
 
         // Generate testIndexer types and createTestIndexer
         let test_indexer_chains_fields = chain_configs
@@ -1466,7 +1599,7 @@ switch chainId {{
             .collect::<Vec<_>>()
             .join("\n");
 
-        let test_indexer_code = format!(
+        let test_indexer_types = format!(
             r#"type testIndexerProcessConfigChains = {{
 {}
 }}
@@ -1483,13 +1616,17 @@ type testIndexer = {{
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-}}
-
-let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
+}}"#,
             test_indexer_chains_fields
         );
 
-        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_code);
+        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
+
+        let generated_top_level_bindings = format!(
+            "{}\n\n{}",
+            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
+            r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
+        );
 
         // Helper function to convert kebab-case to camelCase
         let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
@@ -1632,6 +1769,99 @@ let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~
                 crate::config_parsing::human_config::evm::Multichain::Unordered => None,
             };
 
+            let enums_json: std::collections::BTreeMap<String, Vec<String>> = gql_enums
+                .iter()
+                .map(|e| {
+                    (
+                        e.name.original.clone(),
+                        e.params.iter().map(|p| p.original.clone()).collect(),
+                    )
+                })
+                .collect();
+
+            let entities_json: Vec<InternalEntityJson> = entities
+                .iter()
+                .map(|entity| {
+                    let properties = entity
+                        .postgres_fields
+                        .iter()
+                        .map(|f| {
+                            use field_types::Primitive;
+                            let (field_type, enum_name, entity_name, precision, scale) =
+                                match &f.field_type {
+                                    Primitive::Boolean => {
+                                        ("boolean".into(), None, None, None, None)
+                                    }
+                                    Primitive::String => ("string".into(), None, None, None, None),
+                                    Primitive::Int32 => ("int".into(), None, None, None, None),
+                                    Primitive::BigInt { precision } => {
+                                        ("bigint".into(), None, None, *precision, None)
+                                    }
+                                    Primitive::BigDecimal(config) => {
+                                        let (p, s) = match config {
+                                            Some((p, s)) => (Some(*p), Some(*s)),
+                                            None => (None, None),
+                                        };
+                                        ("bigdecimal".into(), None, None, p, s)
+                                    }
+                                    Primitive::Number => ("float".into(), None, None, None, None),
+                                    Primitive::Serial => ("serial".into(), None, None, None, None),
+                                    Primitive::Json => ("json".into(), None, None, None, None),
+                                    Primitive::Date => ("date".into(), None, None, None, None),
+                                    Primitive::Enum(name) => {
+                                        ("enum".into(), Some(name.clone()), None, None, None)
+                                    }
+                                    Primitive::Entity(name) => {
+                                        ("entity".into(), None, Some(name.clone()), None, None)
+                                    }
+                                };
+                            InternalPropertyJson {
+                                name: f.field_name.clone(),
+                                field_type,
+                                is_nullable: f.is_nullable,
+                                is_array: f.is_array,
+                                is_index: f.is_index,
+                                linked_entity: f.linked_entity.clone(),
+                                enum_name,
+                                entity: entity_name,
+                                precision,
+                                scale,
+                            }
+                        })
+                        .collect();
+
+                    let derived_fields = entity
+                        .derived_fields
+                        .iter()
+                        .map(|df| InternalDerivedFieldJson {
+                            field_name: df.field_name.clone(),
+                            derived_from_entity: df.derived_from_entity.clone(),
+                            derived_from_field: df.derived_from_field.clone(),
+                        })
+                        .collect();
+
+                    let composite_indices = entity
+                        .composite_indices
+                        .iter()
+                        .map(|ci| {
+                            ci.iter()
+                                .map(|f| InternalCompositeIndexJson {
+                                    field_name: f.field_name.clone(),
+                                    direction: f.direction.clone(),
+                                })
+                                .collect()
+                        })
+                        .collect();
+
+                    InternalEntityJson {
+                        name: entity.name.capitalized.clone(),
+                        properties,
+                        derived_fields,
+                        composite_indices,
+                    }
+                })
+                .collect();
+
             let config = InternalConfigJson {
                 version: CURRENT_CRATE_VERSION,
                 name: &cfg.name,
@@ -1645,6 +1875,8 @@ let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~
                 evm,
                 fuel,
                 svm,
+                enums: enums_json,
+                entities: entities_json,
             };
 
             serde_json::to_string_pretty(&config)? + "\n"
@@ -1848,6 +2080,7 @@ let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
+            generated_top_level_bindings,
             internal_config_json_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated

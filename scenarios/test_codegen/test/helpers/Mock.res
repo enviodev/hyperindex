@@ -2,30 +2,35 @@ open Belt
 
 type chainId = Indexer.chainId
 
+let config = Indexer.Generated.configWithoutRegistrations
+
+let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
+  config.userEntitiesByName
+  ->Js.Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
+  ->Option.getExn
+
 module InMemoryStore = {
-  let setEntity = (inMemoryStore, ~entityMod, entity) => {
+  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable =
-      inMemoryStore->InMemoryStore.getInMemTable(
-        ~entityConfig=entityMod->Entities.entityModToInternal,
-      )
-    let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
+      inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+    let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
       Set({
-        entityId: entity->Entities.getEntityId,
+        entityId: (entity: Internal.entity).id,
         checkpointId: 0.,
         entity,
       }),
-      ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
+      ~shouldSaveHistory=config->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
     )
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
-    entities->Js.Array2.forEach(((entityMod, items)) => {
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    entities->Js.Array2.forEach(((entityConfig, items)) => {
       items->Js.Array2.forEach(entity => {
-        inMemoryStore->setEntity(~entityMod, entity)
+        inMemoryStore->setEntity(~entityConfig, entity)
       })
     })
     inMemoryStore
@@ -213,7 +218,7 @@ module Storage = {
 
   let toPersistence = (storageMock: t) => {
     {
-      ...Generated.codegenPersistence,
+      ...Indexer.Generated.codegenPersistence,
       storage: storageMock.storage,
       storageStatus: Ready({
         cleanRun: false,
@@ -226,6 +231,12 @@ module Storage = {
   }
 }
 
+// Aliases to access the generated Indexer module after the local `module Indexer` shadows it
+type eventLog<'a> = Indexer.eventLog<'a>
+type handlerContext = Indexer.handlerContext
+type contractRegister<'a> = Indexer.HandlerTypes.contractRegister<'a>
+module Transaction = Indexer.Transaction
+
 module Indexer = {
   type metric = {
     value: string,
@@ -235,10 +246,9 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
-    query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
-    queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<Change.t<'entity>>,
-    >,
+    query: 'entity. Indexer.Entities.name<'entity> => promise<array<'entity>>,
+    queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
+    queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
@@ -266,12 +276,10 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await HandlerLoader.registerAllHandlers(
-      ~config=Generated.configWithoutRegistrations,
-    )
+    let registrations = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
 
     let config = {
-      let config = Generated.makeGeneratedConfig()
+      let config = Indexer.Generated.makeGeneratedConfig()
 
       let chainMap =
         chains
@@ -303,9 +311,9 @@ module Indexer = {
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let storage = Indexer.Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
-      ...Generated.codegenPersistence,
+      ...Indexer.Generated.codegenPersistence,
       storageStatus: Persistence.Unknown,
       storage,
     }
@@ -374,31 +382,31 @@ module Indexer = {
           resolve()
         })
       },
-      query: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
+      query: (type entity, name: Indexer.Entities.name<entity>) => {
+        let ec = entityConfig(name)
         sql
         ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
+          items->S.parseOrThrow(ec.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
-      queryHistory: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
+      queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
+        let ec = entityConfig(name)
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
-            ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
+            ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
           ),
         )
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(
             S.array(
               S.union([
-                PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
+                PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
                 S.object((s): Change.t<'entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                   Delete({
@@ -416,6 +424,16 @@ module Indexer = {
         ->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         )
+      },
+      queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(entityConfig.rowsSchema)
+        })
+        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryCheckpoints: () => {
         sql
@@ -482,10 +500,10 @@ module Source = {
   type itemMock = {
     blockNumber: int,
     logIndex: int,
-    handler?: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext> => promise<
+    handler?: Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<
       unit,
     >,
-    contractRegister?: Types.HandlerTypes.contractRegister<unit>,
+    contractRegister?: contractRegister<unit>,
   }
 
   type getItemsOrThrowCall = {
@@ -730,8 +748,8 @@ module Source = {
                               )->(
                                 Utils.magic: (
                                   Internal.genericHandlerArgs<
-                                    Types.eventLog<unknown>,
-                                    Types.handlerContext,
+                                    eventLog<unknown>,
+                                    handlerContext,
                                   > => promise<unit>
                                 ) => option<Internal.handler>
                               )
@@ -740,7 +758,7 @@ module Source = {
                             },
                             contractRegister: item.contractRegister->(
                               Utils.magic: option<
-                                Types.HandlerTypes.contractRegister<unit>,
+                                contractRegister<unit>,
                               > => option<Internal.contractRegister>
                             ),
                             paramsRawEventSchema: S.literal(%raw(`null`))
@@ -837,10 +855,10 @@ let mockRawEventRow: InternalTable.RawEvents.t = {
   logIndex: 10,
   transactionFields: S.reverseConvertToJsonOrThrow(
     {
-      Types.Transaction.transactionIndex: 20,
+      Transaction.transactionIndex: 20,
       hash: "0x1234567890abcdef",
     },
-    Types.Transaction.schema,
+    Transaction.schema,
   ),
   srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
   blockHash: "0x9876543210fedcba9876543210fedcba987654321",

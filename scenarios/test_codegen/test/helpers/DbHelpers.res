@@ -2,7 +2,7 @@
 let resetPostgresClient: unit => unit = () => {
   // This is a hack to reset the postgres client between tests. postgres.js seems to cache some types, and if tests clear the DB you need to also reset the storage.
   let sql = PgStorage.makeClient()
-  Generated.codegenPersistence.storage = Generated.makeStorage(~sql)
+  Indexer.Generated.codegenPersistence.storage = Indexer.Generated.makeStorage(~sql)
 }
 
 let runUpDownMigration = async () => {
