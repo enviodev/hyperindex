@@ -96,6 +96,12 @@ indexer.chains[1].MyContract.abi;    // [...]
 
 ## Common Pitfalls
 
+**Entity IDs** — prefer `${chainId}_${blockNumber}_${logIndex}` as a unique ID:
+```ts
+const id = `${event.chainId}_${event.block.number}_${event.logIndex}`;
+```
+This is globally unique across chains and blocks. Use it as the default unless the entity is a singleton (e.g., a Token or Pool keyed by address).
+
 **Entity relationships** — use `_id` suffix:
 ```ts
 // WRONG:  { token0: token0.id }
