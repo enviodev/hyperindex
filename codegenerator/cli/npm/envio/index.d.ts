@@ -29,6 +29,8 @@ export type WhereOperator<T> = {
   readonly _gt?: T;
   /** Matches entities where the field is less than the given value. */
   readonly _lt?: T;
+  /** Matches entities where the field equals any of the given values. */
+  readonly _in?: readonly T[];
 };
 
 /**

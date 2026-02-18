@@ -128,7 +128,7 @@ export type HandlerContext = {
     readonly getOrThrow: (id: string, message?: string) => Promise<Entities["{{entity.name.capitalized}}"]>,
     /**
      * Load entities {{entity.name.original}} matching the given filter.
-     * Supports Hasura-style operators: _eq, _gt, _lt.
+     * Supports Hasura-style operators: _eq, _gt, _lt, _in.
      * Currently only one filter field with one operator is supported per call.
      */
     readonly getWhere: (filter: GetWhereFilter<Entities["{{entity.name.capitalized}}"]>) => Promise<Entities["{{entity.name.capitalized}}"][]>,

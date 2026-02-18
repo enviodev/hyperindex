@@ -30,6 +30,7 @@ type whereOperator<'fieldType> = {
   _eq?: 'fieldType,
   _gt?: 'fieldType,
   _lt?: 'fieldType,
+  _in?: array<'fieldType>,
 }
 
 @genType.import(("./Types.ts", "Logger"))
