@@ -131,6 +131,7 @@ pub mod evm {
                                 start_block: selected_chain.network.get_start_block(),
                                 end_block,
                                 max_reorg_depth: None,
+                                block_lag: None,
                                 contracts: Some(Vec::new()),
                             }
                         });

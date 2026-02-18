@@ -326,6 +326,14 @@
           ],
           "format": "int32"
         },
+        "block_lag": {
+          "description": "The number of blocks behind the chain head that the indexer should lag. Useful for avoiding reorg issues by indexing slightly behind the tip.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
         "start_block": {
           "description": "The block at which the indexer should start ingesting data",
           "type": "integer",
