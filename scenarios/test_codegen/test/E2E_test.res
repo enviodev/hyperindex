@@ -1256,7 +1256,7 @@ describe("E2E tests", () => {
       // Item at 1500 should NOT be in DB yet — chunk1 hasn't completed,
       // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
       Assert.deepEqual(
-        await indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+        await indexerMock.query(SimpleEntity),
         [],
         ~message="Item at block 1500 should not be ready while chunk1 is pending",
       )
@@ -1291,8 +1291,8 @@ describe("E2E tests", () => {
       // Only item-850 should be in DB — chunk1 didn't finish its full range,
       // so chunk2's item at 1500 is still beyond the buffer.
       Assert.deepEqual(
-        await indexerMock.query(module(Indexer.Entities.SimpleEntity)),
-        [{Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}],
+        await indexerMock.query(SimpleEntity),
+        [{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}],
         ~message="Only item-850 should be in DB after partial chunk1 resolve",
       )
 
@@ -1312,10 +1312,10 @@ describe("E2E tests", () => {
 
       // Both items should now be in DB
       Assert.deepEqual(
-        await indexerMock.query(module(Indexer.Entities.SimpleEntity)),
+        await indexerMock.query(SimpleEntity),
         [
-          {Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
-          {Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
+          {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
+          {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
         ],
         ~message="Both items should be in DB after chunk1 fully completes",
       )
