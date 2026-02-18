@@ -67,6 +67,22 @@ let getMinHistoryRange = (p: partition) => {
   }
 }
 
+let getMinQueryRange = (partitions: array<partition>) => {
+  let min = ref(0)
+  for i in 0 to partitions->Array.length - 1 {
+    let p = partitions->Js.Array2.unsafe_get(i)
+    let a = p.prevQueryRange
+    let b = p.prevPrevQueryRange
+    if a > 0 && (min.contents == 0 || a < min.contents) {
+      min := a
+    }
+    if b > 0 && (min.contents == 0 || b < min.contents) {
+      min := b
+    }
+  }
+  min.contents
+}
+
 module OptimizedPartitions = {
   type t = {
     idsInAscOrder: array<string>,
@@ -127,6 +143,7 @@ module OptimizedPartitions = {
       completed->Js.Array2.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
       let newId = nextPartitionIndexRef.contents->Js.Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+      let minRange = getMinQueryRange([p1, p2])
       {
         id: newId,
         dynamicContract: Some(contractName),
@@ -135,8 +152,8 @@ module OptimizedPartitions = {
         mergeBlock: None,
         addressesByContractName: Js.Dict.empty(), // set below
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevPrevQueryRange: 0,
+        prevQueryRange: minRange,
+        prevPrevQueryRange: minRange,
         latestBlockRangeUpdateBlock: 0,
       }
     }
