@@ -147,20 +147,17 @@ module ProcessingBatch = {
     "help": "Total number of batch writes to storage.",
   })
 
-  let handlerSumTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_handler_time",
-    "help": "Cumulative time spent inside individual event handler executions. (milliseconds)",
+  let batchSizeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_processing_batch_size",
+    "help": "Cumulative number of items across all processed batches. Divide by envio_processing_batch_write_count for average batch size.",
   })
 
-  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration) => {
+  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration, ~batchSize) => {
     loadTimeCounter->PromClient.Counter.incMany(loadDuration)
     handlerTimeCounter->PromClient.Counter.incMany(handlerDuration)
     writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration)
     writeCount->PromClient.Counter.inc
-  }
-
-  let incrementHandlerTime = (~duration) => {
-    handlerSumTimeCounter->PromClient.Counter.incMany(duration)
+    batchSizeCounter->PromClient.Counter.incMany(batchSize)
   }
 }
 
@@ -175,9 +172,82 @@ module SyncedToHead = {
   }
 }
 
+let handlerLabelsSchema = S.schema(s =>
+  {
+    "contractName": s.matches(S.string),
+    "eventName": s.matches(S.string),
+  }
+)
+
+module ProcessingHandler = {
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_processing_handler_time",
+    ~help="Cumulative time spent inside individual event handler executions. (milliseconds)",
+    ~labelSchema=handlerLabelsSchema,
+  )
+
+  let count = SafeCounter.makeOrThrow(
+    ~name="envio_processing_handler_count",
+    ~help="Total number of individual event handler executions.",
+    ~labelSchema=handlerLabelsSchema,
+  )
+
+  let increment = (~contractName, ~eventName, ~duration) => {
+    let labels = {"contractName": contractName, "eventName": eventName}
+    timeCounter->SafeCounter.handleInt(~labels, ~value=duration)
+    count->SafeCounter.increment(~labels)
+  }
+}
+
 let chainIdLabelsSchema = S.object(s => {
   s.field("chainId", S.string->S.coerce(S.int))
 })
+
+module FetchingBlockRange = {
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_fetching_block_range_time",
+    ~help="Cumulative time spent fetching block ranges. (milliseconds)",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let parseTimeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_fetching_block_range_parse_time",
+    ~help="Cumulative time spent parsing block range fetch responses. (milliseconds)",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let count = SafeCounter.makeOrThrow(
+    ~name="envio_fetching_block_range_count",
+    ~help="Total number of block range fetch operations.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let eventsCount = SafeCounter.makeOrThrow(
+    ~name="envio_fetching_block_range_events_count",
+    ~help="Cumulative number of events fetched across all block range operations.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let sizeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_fetching_block_range_size",
+    ~help="Cumulative number of blocks covered across all block range fetch operations.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let increment = (
+    ~chainId,
+    ~totalTimeElapsed,
+    ~parsingTimeElapsed,
+    ~numEvents,
+    ~blockRangeSize,
+  ) => {
+    timeCounter->SafeCounter.handleInt(~labels=chainId, ~value=totalTimeElapsed)
+    parseTimeCounter->SafeCounter.handleInt(~labels=chainId, ~value=parsingTimeElapsed)
+    count->SafeCounter.increment(~labels=chainId)
+    eventsCount->SafeCounter.handleInt(~labels=chainId, ~value=numEvents)
+    sizeCounter->SafeCounter.handleInt(~labels=chainId, ~value=blockRangeSize)
+  }
+}
 
 module IndexingKnownHeight = {
   let gauge = SafeGauge.makeOrThrow(

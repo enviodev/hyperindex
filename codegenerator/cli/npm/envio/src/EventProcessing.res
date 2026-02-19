@@ -153,7 +153,11 @@ let runEventHandlerOrThrow = async (
     )
   }
   let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-  Prometheus.ProcessingBatch.incrementHandlerTime(~duration=handlerDuration)
+  Prometheus.ProcessingHandler.increment(
+    ~contractName=eventItem.eventConfig.contractName,
+    ~eventName=eventItem.eventConfig.name,
+    ~duration=handlerDuration,
+  )
 }
 
 let runHandlerOrThrow = async (
@@ -347,6 +351,7 @@ let registerProcessEventBatchMetrics = (
   ~loadDuration,
   ~handlerDuration,
   ~dbWriteDuration,
+  ~batchSize,
 ) => {
   logger->Logging.childTrace({
     "msg": "Finished processing batch",
@@ -355,7 +360,12 @@ let registerProcessEventBatchMetrics = (
     "write_time_elapsed": dbWriteDuration,
   })
 
-  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration, ~dbWriteDuration)
+  Prometheus.ProcessingBatch.registerMetrics(
+    ~loadDuration,
+    ~handlerDuration,
+    ~dbWriteDuration,
+    ~batchSize,
+  )
 }
 
 type logPartitionInfo = {
@@ -434,6 +444,7 @@ let processEventBatch = async (
         ~loadDuration=loaderDuration,
         ~handlerDuration,
         ~dbWriteDuration,
+        ~batchSize=totalBatchSize,
       )
       Ok()
     } catch {
