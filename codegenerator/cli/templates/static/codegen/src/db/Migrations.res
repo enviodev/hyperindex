@@ -44,7 +44,7 @@ let runDownMigrations = async (~shouldExit) => {
   await deleteAllTables()->Promise.catch(err => {
     exitCode := Failure
     err
-    ->ErrorHandling.make(~msg="EE804: Error dropping entity tables")
+    ->ErrorHandling.make(~msg="Error dropping entity tables")
     ->ErrorHandling.log
     Promise.resolve()
   })
