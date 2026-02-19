@@ -187,7 +187,13 @@ let hasRegistration = (~contractName, ~eventName) => {
 }
 
 type eventNamespace = {contractName: string, eventName: string}
-exception DuplicateEventRegistration(eventNamespace)
+
+let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
+  let eventNamespace = {contractName, eventName}
+  let msg = `${msg} for ${contractName}.${eventName}`
+  Logging.createChildFrom(~logger, ~params=eventNamespace)->Logging.childError(msg)
+  Js.Exn.raiseError(msg)
+}
 
 let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging.getLogger()) => {
   switch eventOptions {
@@ -203,10 +209,11 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
           // TODO: Can improve the check by using deepEqual
           existingValue.eventFilters !== value.eventFilters
       ) {
-        let eventNamespace = {contractName, eventName}
-        DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
-          ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
+        raiseDuplicateRegistration(
+          ~contractName,
+          ~eventName,
           ~msg="Duplicate eventOptions in handlers not allowed",
+          ~logger,
         )
       }
     }
@@ -226,10 +233,11 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Log
           ->Some,
       })
     | Some(_) =>
-      let eventNamespace = {contractName, eventName}
-      DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
-        ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
+      raiseDuplicateRegistration(
+        ~contractName,
+        ~eventName,
         ~msg="Duplicate registration of event handlers not allowed",
+        ~logger,
       )
     }
 
@@ -251,10 +259,11 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
         )->Some,
       })
     | Some(_) =>
-      let eventNamespace = {contractName, eventName}
-      DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
-        ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
+      raiseDuplicateRegistration(
+        ~contractName,
+        ~eventName,
         ~msg="Duplicate contractRegister handlers not allowed",
+        ~logger,
       )
     }
     setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
