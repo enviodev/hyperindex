@@ -66,7 +66,7 @@ let mkField = (
   {
     fieldName,
     fieldType,
-    fieldSchema: fieldSchema->S.castToUnknown,
+    fieldSchema: fieldSchema->S.toUnknown,
     isArray,
     isNullable,
     isPrimaryKey,
@@ -262,65 +262,32 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
   let hasArrayField = ref(false)
 
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
-    switch schema->(Utils.magic: S.t<'a> => S.t<unknown>) {
+    switch schema->S.classify {
     | Object({items}) =>
       let dict = Dict.make()
-      items->Belt.Array.forEach(({location, schema}) => {
-        let inlinedLocation = `"${location}"`
-        let rec coerceSchema = (schema: S.t<unknown>) => {
-          let tag = (schema->S.untag).tag
-          switch tag {
-          | BigInt => BigInt_.schema->S.castToUnknown
-          | Union => {
-              // Handle S.null(x) / S.option(x) wrappers
-              let anyOf: array<S.t<unknown>> = (
-                schema->S.untag->(Utils.magic: S.untagged => {..})
-              )["anyOf"]
-              let hasNullOrUndefined = anyOf->Array.some(
-                s => {
-                  let t = (s->S.untag).tag
-                  t == Null || t == Undefined
-                },
-              )
-              if hasNullOrUndefined {
-                let child = anyOf->Js.Array2.find(
-                  s => {
-                    let t = (s->S.untag).tag
-                    t != Null && t != Undefined
-                  },
-                )
-                switch child {
-                | Some(c) => S.null(c->coerceSchema)->S.castToUnknown
-                | None => schema
-                }
-              } else {
-                schema
-              }
-            }
-          | Array => {
+      items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
+        let rec coerceSchema = schema =>
+          switch schema->S.classify {
+          | BigInt => Utils.BigInt.schema->S.toUnknown
+          | Option(child)
+          | Null(child) =>
+            S.null(child->coerceSchema)->S.toUnknown
+          | Array(child) => {
               hasArrayField := true
-              let items: array<S.item> = (
-                schema->S.untag->(Utils.magic: S.untagged => {..})
-              )["items"]
-              switch items->Array.get(0) {
-              | Some({schema: child}) => S.array(child->coerceSchema)->S.castToUnknown
-              | None => schema
-              }
+              S.array(child->coerceSchema)->S.toUnknown
             }
-          | Unknown => {
-              // JSON schema (S.json) has Unknown tag
+          | JSON(_) => {
               hasArrayField := true
               schema
             }
-          | Boolean =>
+          | Bool =>
             // Workaround for https://github.com/porsager/postgres/issues/471
             S.union([
               S.literal(1)->S.shape(_ => true),
               S.literal(0)->S.shape(_ => false),
-            ])->S.castToUnknown
+            ])->S.toUnknown
           | _ => schema
           }
-        }
 
         let field = switch table->getFieldByDbName(location) {
         | Some(field) => field

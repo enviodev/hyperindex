@@ -125,7 +125,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
             }
           }
         } catch {
-        | S.Error(_) =>
+        | S.Raised(_) =>
           Logging.warn({
             "msg": "WebSocket height stream received unrecognized message",
             "chainId": chainId,

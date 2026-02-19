@@ -358,7 +358,7 @@ let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
       )
     }
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getWithDefault(Dict.make())
-    Promise_.resolve(entityDict->Dict.get(entityId))
+    Promise.resolve(entityDict->Dict.get(entityId))
   }
 }
 
@@ -583,7 +583,7 @@ let makeCreateTestIndexer = (
             ~dynamicContractsByChain,
           )
 
-          Promise_.make((resolve, reject) => {
+          Promise.make((resolve, reject) => {
             let workerDataObj = {
               "processConfig": processConfig->Utils.magic->Js.Json.serializeExn->JSON.parseOrThrow,
               "initialState": initialState->Utils.magic,

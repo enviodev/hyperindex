@@ -2401,7 +2401,7 @@ type handler = Internal.genericHandler<handlerArgs>
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
-let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt_.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
+let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", Utils.BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
 

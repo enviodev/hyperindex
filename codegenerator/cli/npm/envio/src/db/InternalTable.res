@@ -256,7 +256,7 @@ WHERE "id" = $1;`
       promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise_.all(promises)
+    Promise.all(promises)
   }
 
   type progressedChain = {
@@ -291,7 +291,7 @@ WHERE "id" = $1;`
       promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise_.all(promises)->Promise_.ignoreValue
+    Promise.all(promises)->Utils.Promise.ignoreValue
   }
 }
 
@@ -411,7 +411,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
         ) => unknown
       ),
     )
-    ->Promise_.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
@@ -420,7 +420,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
       [rollbackTargetCheckpointId]->Utils.magic,
     )
-    ->Promise_.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let makePruneStaleCheckpointsQuery = (~pgSchema) => {
@@ -433,7 +433,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
       makePruneStaleCheckpointsQuery(~pgSchema),
       [safeCheckpointId]->Obj.magic,
     )
-    ->Promise_.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
@@ -519,9 +519,9 @@ module RawEvents = {
     srcAddress: s.matches(Address.schema),
     blockHash: s.matches(S.string),
     blockTimestamp: s.matches(S.int),
-    blockFields: s.matches(S.json),
-    transactionFields: s.matches(S.json),
-    params: s.matches(S.json),
+    blockFields: s.matches(S.json(~validate=false)),
+    transactionFields: s.matches(S.json(~validate=false)),
+    params: s.matches(S.json(~validate=false)),
   })
 
   let table = mkTable(
@@ -536,9 +536,9 @@ module RawEvents = {
       mkField("src_address", String, ~fieldSchema=Address.schema),
       mkField("block_hash", String, ~fieldSchema=S.string),
       mkField("block_timestamp", Int32, ~fieldSchema=S.int),
-      mkField("block_fields", Json, ~fieldSchema=S.json),
-      mkField("transaction_fields", Json, ~fieldSchema=S.json),
-      mkField("params", Json, ~fieldSchema=S.json),
+      mkField("block_fields", Json, ~fieldSchema=S.json(~validate=false)),
+      mkField("transaction_fields", Json, ~fieldSchema=S.json(~validate=false)),
+      mkField("params", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("serial", Serial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
     ],
   )

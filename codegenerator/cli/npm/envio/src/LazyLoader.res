@@ -52,8 +52,8 @@ let deleteKey: (dict<'value>, string) => unit = (_obj, _k) => %raw(`delete _obj[
 
 // If something takes longer than this to load, reject the promise and try again
 let timeoutAfter = timeoutMillis =>
-  Utils.delay(timeoutMillis)->Promise_.then(() =>
-    Promise_.reject(
+  Utils.delay(timeoutMillis)->Promise.then(() =>
+    Promise.reject(
       LoaderTimeout(`Query took longer than ${Belt.Int.toString(timeoutMillis / 1000)} seconds`),
     )
   )
@@ -63,7 +63,7 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
   let _ = am.inProgress->Utils.Set.add(k)
 
   let awaitTaskPromiseAndLoadNextWithTimeout = async () => {
-    let val = await Promise_.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
+    let val = await Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
     // Resolve the external promise
     am.resolvers
     ->Utils.Map.get(k)
@@ -96,7 +96,7 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
 
   await (
     switch await awaitTaskPromiseAndLoadNextWithTimeout() {
-    | _ => Promise_.resolve()
+    | _ => Promise.resolve()
     | exception err =>
       switch am.onError {
       | None => ()
@@ -113,7 +113,7 @@ let get = (am: asyncMap<'key, 'value>, k: 'key): promise<'value> => {
   | Some(x) => x
   | None => {
       // Create a promise to deliver the eventual value asynchronously
-      let promise = Promise_.make((resolve, _) => {
+      let promise = Promise.make((resolve, _) => {
         // Expose the resolver externally, so that we can run it from the loader.
         let _ = am.resolvers->Utils.Map.set(k, resolve)
       })

@@ -208,7 +208,7 @@ module BlockData = {
           block => {
             switch block {
             | {number: blockNumber, timestamp, hash: blockHash} =>
-              let blockTimestamp = timestamp->BigInt_.toInt->Option.getExn
+              let blockTimestamp = timestamp->Utils.BigInt.toInt->Option.getExn
               Ok(
                 (
                   {
@@ -377,5 +377,5 @@ let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~sourceName, ~chainId
     ~sourceName,
     ~chainId,
     ~logger,
-  )->Promise_.thenResolve(res => res->Result.map(res => res->Array.get(0)))
+  )->Promise.thenResolve(res => res->Result.map(res => res->Array.get(0)))
 let queryBlockDataMulti = BlockData.queryBlockDataMulti

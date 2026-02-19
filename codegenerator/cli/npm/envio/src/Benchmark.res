@@ -241,7 +241,7 @@ let readFromCacheFile = async () => {
   | exception _ => None
   | content =>
     try content->S.parseJsonStringOrThrow(Data.schema)->Some catch {
-    | S.Error(_) as exn =>
+    | S.Raised(_) as exn =>
       Logging.error(
         "Failed to parse benchmark cache file, please delete it and rerun the benchmark",
       )

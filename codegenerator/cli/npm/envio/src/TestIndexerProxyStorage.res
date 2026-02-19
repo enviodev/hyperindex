@@ -99,7 +99,7 @@ let nextRequestId = (proxy: t): requestId => {
 }
 
 let sendRequest = (proxy: t, ~payload: workerPayload): promise<JSON.t> => {
-  Promise_.make((resolve, reject) => {
+  Promise.make((resolve, reject) => {
     let id = proxy->nextRequestId
     proxy.pendingRequests->Dict.set(id->Int.toString, {resolve, reject})
     proxy.parentPort->NodeJs.WorkerThreads.postMessage({id, payload})

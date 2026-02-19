@@ -12,7 +12,7 @@ module FieldValue = {
   let rec toString = tNonOptional =>
     switch tNonOptional {
     | String(v) => v
-    | BigInt(v) => v->BigInt_.toString
+    | BigInt(v) => v->BigInt.toString
     | Int(v) => v->Int.toString
     | BigDecimal(v) => v->BigDecimal.toString
     | Bool(v) => v ? "true" : "false"

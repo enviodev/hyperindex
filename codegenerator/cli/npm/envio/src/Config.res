@@ -206,7 +206,7 @@ let contractEventItemSchema = S.schema(s =>
 
 let contractConfigSchema = S.schema(s =>
   {
-    "abi": s.matches(S.json),
+    "abi": s.matches(S.json(~validate=false)),
     "handler": s.matches(S.option(S.string)),
     // EVM-specific: event signatures for HyperSync queries
     "events": s.matches(S.option(S.array(contractEventItemSchema))),
@@ -278,20 +278,20 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   let isIndex = prop["isIndex"]->Option.getWithDefault(false)
 
   let (fieldType, baseSchema) = switch typ {
-  | "string" => (Table.String, S.string->S.castToUnknown)
-  | "boolean" => (Table.Boolean, S.bool->S.castToUnknown)
-  | "int" => (Table.Int32, S.int->S.castToUnknown)
-  | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), BigInt_.schema->S.castToUnknown)
+  | "string" => (Table.String, S.string->S.toUnknown)
+  | "boolean" => (Table.Boolean, S.bool->S.toUnknown)
+  | "int" => (Table.Int32, S.int->S.toUnknown)
+  | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
   | "bigdecimal" => (
       Table.BigDecimal({
         config: ?(prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getWithDefault(0)))),
       }),
-      BigDecimal.schema->S.castToUnknown,
+      BigDecimal.schema->S.toUnknown,
     )
-  | "float" => (Table.Number, S.float->S.castToUnknown)
-  | "serial" => (Table.Serial, S.int->S.castToUnknown)
-  | "json" => (Table.Json, S.json->S.castToUnknown)
-  | "date" => (Table.Date, Utils.Schema.dbDate->S.castToUnknown)
+  | "float" => (Table.Number, S.float->S.toUnknown)
+  | "serial" => (Table.Serial, S.int->S.toUnknown)
+  | "json" => (Table.Json, S.json(~validate=false)->S.toUnknown)
+  | "date" => (Table.Date, Utils.Schema.dbDate->S.toUnknown)
   | "enum" => {
       let enumName = prop["enum"]->Option.getExn
       let enumConfig =
@@ -304,22 +304,22 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
 
         // Fuel doesn't have reorgs, SVM reorg handling is not supported
         ->Option.getExn
-      (Table.Enum({config: enumConfig}), enumConfig.schema->S.castToUnknown)
+      (Table.Enum({config: enumConfig}), enumConfig.schema->S.toUnknown)
     }
   | "entity" => {
       let entityName = prop["entity"]->Option.getExn
-      (Table.Entity({name: entityName}), S.string->S.castToUnknown)
+      (Table.Entity({name: entityName}), S.string->S.toUnknown)
     }
   | other => JsError.throwWithMessage("Unknown field type in entity config: " ++ other)
   }
 
   let fieldSchema = if isArray {
-    S.array(baseSchema)->S.castToUnknown
+    S.array(baseSchema)->S.toUnknown
   } else {
     baseSchema
   }
   let fieldSchema = if isNullable {
-    S.null(fieldSchema)->S.castToUnknown
+    S.null(fieldSchema)->S.toUnknown
   } else {
     fieldSchema
   }
@@ -443,7 +443,7 @@ let fromPublic = (
 ) => {
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
-  | S.Error(exn) =>
+  | S.Raised(exn) =>
     JsError.throwWithMessage(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->Utils.magic}`)
   }
 

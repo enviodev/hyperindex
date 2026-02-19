@@ -331,59 +331,45 @@ let rec parsePath = (path: string, ~pathItems, ~pathParams) => {
 }
 
 let coerceSchema = schema => {
-  // Determine the inner type tag, unwrapping Option/Null wrappers (Union with Null/Undefined member)
-  let tag = (schema->S.untag).tag
-  let innerTag = if tag == Union {
-    let anyOf: array<S.t<unknown>> = (schema->S.untag->(Obj.magic: S.untagged => {..}))["anyOf"]
-    let inner = anyOf->Array.find(s => {
-      let t = (s->S.untag).tag
-      t != Null && t != Undefined
-    })
-    switch inner {
-    | Some(s) => (s->S.untag).tag
-    | None => tag
+  schema->S.preprocess(s => {
+    let tagged = switch s.schema->S.classify {
+    | Option(optionalSchema) => optionalSchema->S.classify
+    | tagged => tagged
     }
-  } else {
-    tag
-  }
-  switch innerTag {
-  | Boolean =>
-    S.unknown
-    ->S.transform(_ => {
-      parser: unknown =>
-        switch unknown->Obj.magic {
-        | "true" => true->Obj.magic
-        | "false" => false->Obj.magic
-        | _ => unknown
+    switch tagged {
+    | Literal(Boolean(_))
+    | Bool => {
+        parser: unknown =>
+          switch unknown->Obj.magic {
+          | "true" => true
+          | "false" => false
+          | _ => unknown->Obj.magic
+          }->Obj.magic,
+      }
+    | Literal(Number(_))
+    | Int
+    | Float => {
+        parser: unknown => {
+          let float = %raw(`+unknown`)
+          if Float.isNaN(float) {
+            unknown
+          } else {
+            float->Obj.magic
+          }
         },
-    })
-    ->S.to(schema->Obj.magic)
-  | Number =>
-    S.unknown
-    ->S.transform(_ => {
-      parser: unknown => {
-        let float = %raw(`+unknown`)
-        if Float.isNaN(float) {
-          unknown
-        } else {
-          float->Obj.magic
-        }
-      },
-    })
-    ->S.to(schema->Obj.magic)
-  | _ => schema
-  }
+      }
+    | String
+    | Literal(String(_))
+    | Union(_)
+    | Never => {}
+    | _ => {}
+    }
+  })
 }
 
-let stripInPlace = schema => (schema->S.untag->Obj.magic)["additionalItems"] = "strip"
-let getSchemaField = (schema, fieldName): option<S.item> => {
-  let s = (schema->S.untag->Obj.magic)["properties"]->Dict.getUnsafe(fieldName)
-  if s->Obj.magic {
-    Some(({schema: s, location: fieldName}: S.item))
-  } else {
-    None
-  }
-}
+let stripInPlace = schema => (schema->S.classify->Obj.magic)["unknownKeys"] = S.Strip
+let getSchemaField = (schema, fieldName): option<S.item> =>
+  (schema->S.classify->Obj.magic)["fields"]->Dict.getUnsafe(fieldName)
 
 type typeValidation = (unknown, ~inputVar: string) => string
 let removeTypeValidationInPlace = schema => (schema->Obj.magic)["f"] = ()
@@ -392,10 +378,12 @@ let setTypeValidationInPlace = (schema, typeValidation: typeValidation) =>
 let unsafeGetTypeValidationInPlace = (schema): typeValidation => (schema->Obj.magic)["f"]
 
 let isNestedFlattenSupported = schema =>
-  switch schema->(Obj.magic: S.t<'a> => S.t<unknown>) {
-  | Object(_) =>
-    switch schema->S.reverse {
-    | Object(_) => true
+  switch schema->S.classify {
+  | Object({advanced: false}) =>
+    switch schema
+    ->S.reverse
+    ->S.classify {
+    | Object({advanced: false}) => true
     | _ => false
     }
   | _ => false
@@ -491,7 +479,11 @@ let params = route => {
               }
             },
             rawBody: schema => {
-              let isNonStringBased = (schema->S.untag).tag != String
+              let isNonStringBased = switch schema->S.classify {
+              | Literal(String(_))
+              | String => false
+              | _ => true
+              }
               if isNonStringBased {
                 panic("Only string-based schemas are allowed in rawBody")
               }
@@ -592,11 +584,14 @@ let params = route => {
           let dataSchema = (schema->getSchemaField("data")->Option.unsafeUnwrap).schema
           builder.dataSchema = dataSchema->Option.unsafeSome
 
-          if (dataSchema->S.untag->Obj.magic)["const"] !== %raw(`void 0`) {
-            let dataTypeValidation = dataSchema->unsafeGetTypeValidationInPlace
-            schema->setTypeValidationInPlace((b, ~inputVar) =>
-              dataTypeValidation(b, ~inputVar=`${inputVar}.data`)
-            )
+          switch dataSchema->S.classify {
+          | Literal(_) => {
+              let dataTypeValidation = dataSchema->unsafeGetTypeValidationInPlace
+              schema->setTypeValidationInPlace((b, ~inputVar) =>
+                dataTypeValidation(b, ~inputVar=`${inputVar}.data`)
+              )
+            }
+          | _ => ()
           }
           switch schema->getSchemaField("headers") {
           | Some({schema}) =>
@@ -803,7 +798,7 @@ let fetch = (type input response, route: route<input, response>, input, ~client=
       ~jsonQuery?,
     ),
     method: (method :> string),
-  })->Promise_.thenResolve(fetcherResponse => {
+  })->Promise.thenResolve(fetcherResponse => {
     switch responsesMap->Response.find(fetcherResponse.status) {
     | None =>
       let error = ref(`Unexpected response status "${fetcherResponse.status->Int.toString}"`)
@@ -820,15 +815,15 @@ let fetch = (type input response, route: route<input, response>, input, ~client=
       try fetcherResponse
       ->S.parseOrThrow(response.schema)
       ->(Obj.magic: unknown => response) catch {
-      | S.Error({path, code: InvalidType({expected, received})}) if path === S.Path.empty =>
+      | S.Raised({path, code: InvalidType({expected, received})}) if path === S.Path.empty =>
         panic(
           `Failed parsing response data. Reason: Expected ${(
               expected->getSchemaField("data")->Option.unsafeUnwrap
-            ).schema->S.toExpression}, received ${(received->Obj.magic)["data"]->Obj.magic}`,
+            ).schema->S.name}, received ${(received->Obj.magic)["data"]->Obj.magic}`,
         )
-      | S.Error(error) =>
+      | S.Raised(error) =>
         panic(
-          `Failed parsing response at ${error.path->S.Path.toString}. Reason: ${error.reason}`,
+          `Failed parsing response at ${error.path->S.Path.toString}. Reason: ${error->S.Error.reason}`,
           ~params={
             "response": fetcherResponse,
           },

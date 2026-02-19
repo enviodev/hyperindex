@@ -153,7 +153,7 @@ let fetchNext = async (
       let _ = await queries
       ->Array.map(q => {
         let promise = q->executeQuery
-        let _ = promise->Promise_.thenResolve(_ => {
+        let _ = promise->Promise.thenResolve(_ => {
           sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
           Prometheus.IndexingConcurrency.set(
             ~concurrency=sourceManager.fetchingPartitionsCount,
@@ -165,7 +165,7 @@ let fetchNext = async (
         })
         promise
       })
-      ->Promise_.all
+      ->Promise.all
     }
   }
 }
@@ -201,7 +201,7 @@ let getSourceNewHeight = async (
     // If subscription exists, wait for next height event
     switch sourceState.unsubscribe {
     | Some(_) =>
-      let height = await Promise_.make((resolve, _reject) => {
+      let height = await Promise.make((resolve, _reject) => {
         sourceState.pendingHeightResolvers->Array.push(resolve)
       })
 
@@ -315,7 +315,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
 
   let status = ref(Active)
 
-  let (source, newBlockHeight) = await Promise_.race(
+  let (source, newBlockHeight) = await Promise.race(
     syncSources
     ->Array.map(async sourceState => {
       (
@@ -324,7 +324,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
       )
     })
     ->Array.concat([
-      Utils.delay(sourceManager.newBlockFallbackStallTimeout)->Promise_.then(() => {
+      Utils.delay(sourceManager.newBlockFallbackStallTimeout)->Promise.then(() => {
         if status.contents !== Done {
           status := Stalled
 
@@ -341,9 +341,9 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
             )
           }
         }
-        // Promise_.race will be forever pending if fallbackSources is empty
+        // Promise.race will be forever pending if fallbackSources is empty
         // which is good for this use case
-        Promise_.race(
+        Promise.race(
           fallbackSources->Array.map(async sourceState => {
             (
               sourceState.source,

@@ -334,7 +334,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           blockTimestamp: timestamp,
           blockHash: hash,
         }: ReorgDetection.blockDataWithTimestamp
-      )->Promise_.resolve
+      )->Promise.resolve
     | None =>
       //The optional block and timestamp of the last item returned by the query
       //(Optional in the case that there are no logs returned in the query)
@@ -350,7 +350,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
             blockTimestamp: block.timestamp->Belt.Option.getUnsafe,
             blockHash: block.hash->Belt.Option.getUnsafe,
           }: ReorgDetection.blockDataWithTimestamp
-        )->Promise_.resolve
+        )->Promise.resolve
       //If it does not match it means that there were no matching logs in the last
       //block so we should fetch the block data
       | Some(_)
@@ -364,7 +364,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~sourceName=name,
           ~chainId=chain->ChainMap.Chain.toChainId,
           ~logger,
-        )->Promise_.thenResolve(res =>
+        )->Promise.thenResolve(res =>
           switch res {
           | Ok(Some(blockData)) => blockData
           | Ok(None) =>
@@ -500,7 +500,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~sourceName=name,
       ~chainId=chain->ChainMap.Chain.toChainId,
       ~logger,
-    )->Promise_.thenResolve(HyperSync.mapExn)
+    )->Promise.thenResolve(HyperSync.mapExn)
 
   let jsonApiClient = Rest.client(endpointUrl)
 
@@ -525,7 +525,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
         // Don't want to retry if the token is malformed
         // So just block forever
-        let _ = await Promise_.make((_, _) => ())
+        let _ = await Promise.make((_, _) => ())
         0
       | ErrorMessage(m) => JsError.throwWithMessage(m)
       }

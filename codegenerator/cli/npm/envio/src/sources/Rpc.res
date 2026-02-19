@@ -51,7 +51,7 @@ let makeHexSchema = fromStr =>
     serializer: value => value->Viem.toHex->Utils.magic,
   })
 
-let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt_.fromString)
+let hexBigintSchema: S.schema<bigint> = makeHexSchema(Utils.BigInt.fromString)
 external number: string => int = "Number"
 let hexIntSchema: S.schema<int> = makeHexSchema(v => v->number->Some)
 
@@ -195,7 +195,7 @@ module GetBlockByNumber = {
     stateRoot: s.field("stateRoot", S.string),
     timestamp: s.field("timestamp", hexIntSchema),
     totalDifficulty: s.field("totalDifficulty", S.null(hexBigintSchema)),
-    transactions: s.field("transactions", S.array(S.json)),
+    transactions: s.field("transactions", S.array(S.json(~validate=false))),
     transactionsRoot: s.field("transactionsRoot", S.string),
     uncles: s.field("uncles", S.null(S.array(S.string))),
   })
@@ -217,11 +217,11 @@ module GetBlockHeight = {
 }
 
 module GetTransactionByHash = {
-  let rawRoute = makeRpcRoute("eth_getTransactionByHash", S.tuple1(S.string), S.null(S.json))
+  let rawRoute = makeRpcRoute("eth_getTransactionByHash", S.tuple1(S.string), S.null(S.json(~validate=false)))
 }
 
 module GetTransactionReceipt = {
-  let rawRoute = makeRpcRoute("eth_getTransactionReceipt", S.tuple1(S.string), S.null(S.json))
+  let rawRoute = makeRpcRoute("eth_getTransactionReceipt", S.tuple1(S.string), S.null(S.json(~validate=false)))
 }
 
 let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {

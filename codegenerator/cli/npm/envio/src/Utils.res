@@ -248,6 +248,35 @@ module UnsafeIntOperators = {
 
 type asyncIterator<'a>
 
+module Promise = {
+  @new
+  external makeAsync: ((@uncurry ('a => unit), 'e => unit) => promise<unit>) => promise<'a> =
+    "Promise"
+
+  @send
+  external catchResolve: (promise<'a>, exn => 'a) => promise<'a> = "catch"
+
+  %%private(let noop = (() => ())->Obj.magic)
+  let silentCatch = (promise: promise<'a>): promise<'a> => {
+    promise->Promise.catch(noop)
+  }
+
+  let catch = (promise: promise<'a>, callback: exn => promise<'a>): promise<'a> => {
+    promise->Promise.catch(err => {
+      callback(JsExn.anyToExnInternal(err))
+    })
+  }
+
+  external done: promise<'a> => unit = "%ignore"
+
+  external ignoreValue: promise<'a> => promise<unit> = "%identity"
+
+  external unsafe_async: 'a => promise<'a> = "%identity"
+  external unsafe_await: promise<'a> => 'a = "?await"
+
+  let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
+}
+
 module Array = {
   let immutableEmpty: array<unknown> = []
 
@@ -494,41 +523,68 @@ let unwrapResultExn = res =>
 
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
-module Schema = {
-  // Sury doesn't expose setName/name. We access/mutate the name field via identity cast.
-  let setName = (schema: S.t<'a>, name: string): S.t<'a> => {
-    (schema->S.untag->(magic: S.untagged => {..}))["name"] = name
-    schema
-  }
-  let getName = (schema: S.t<'a>): option<string> => {
-    (schema->S.untag).name
-  }
-
-  let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
-
-  // Check if a schema is nullable or optional (S.null or S.option produce unions with Null/Undefined)
-  let isNullableOrOptional = (schema: S.t<unknown>) => {
-    let untagged = schema->S.untag
-    switch untagged.tag {
-    | Null | Undefined => true
-    | Union => {
-        let anyOf: array<S.t<unknown>> = (untagged->(magic: S.untagged => {..}))["anyOf"]
-        anyOf->Js.Array2.some(s => {
-          let t = (s->S.untag).tag
-          t == Null || t == Undefined
-        })
+module BigInt = {
+  %%private(
+    @inline
+    let unsafeToOption: (unit => 'a) => option<'a> = unsafeFunc => {
+      try {
+        unsafeFunc()->Some
+      } catch {
+      | JsExn(_obj) => None
       }
-    | _ => false
     }
-  }
+  )
+
+  @val external fromStringUnsafe: string => bigint = "BigInt"
+  @val external fromUnknownUnsafe: unknown => bigint = "BigInt"
+  let fromString = str => unsafeToOption(() => str->fromStringUnsafe)
+  let toInt = (b: bigint): option<int> => b->BigInt.toString->Belt.Int.fromString
+
+  //silence unused var warnings for raw bindings
+  @@warning("-27")
+  // Safe division and modulo that return 0n on divide by zero
+  let div = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a / b : 0n")
+  let mod = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a % b : 0n")
+
+  // Comparison operators (not in stdlib)
+  let eq = (a: bigint, b: bigint): bool => %raw("a === b")
+  let neq = (a: bigint, b: bigint): bool => %raw("a !== b")
+  let gt = (a: bigint, b: bigint): bool => %raw("a > b")
+  let gte = (a: bigint, b: bigint): bool => %raw("a >= b")
+  let lt = (a: bigint, b: bigint): bool => %raw("a < b")
+  let lte = (a: bigint, b: bigint): bool => %raw("a <= b")
+  @@warning("+27")
+
+  @genType
+  let schema =
+    S.string
+    ->S.setName("BigInt")
+    ->S.transform(s => {
+      parser: string =>
+        switch string->fromString {
+        | Some(bigInt) => bigInt
+        | None => s.fail("The string is not valid BigInt")
+        },
+      serializer: bigint => bigint->BigInt.toString,
+    })
+
+  let nativeSchema = S.bigint
+}
+
+module Schema = {
+  let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
   let getNonOptionalFieldNames = schema => {
     let acc = []
-    switch schema->(magic: S.t<'a> => S.t<unknown>) {
+    switch schema->S.classify {
     | Object({items}) =>
       items->Js.Array2.forEach(item => {
-        if !isNullableOrOptional(item.schema) {
-          acc->Js.Array2.push(item.location)->ignore
+        switch item.schema->S.classify {
+        // Check for null, since we generate S.null schema for db serializing
+        // In the future it should be changed to Option only
+        | Null(_) => ()
+        | Option(_) => ()
+        | _ => acc->Js.Array2.push(item.location)->ignore
         }
       })
     | _ => ()
@@ -537,7 +593,7 @@ module Schema = {
   }
 
   let getCapitalizedFieldNames = schema => {
-    switch schema->(magic: S.t<'a> => S.t<unknown>) {
+    switch schema->S.classify {
     | Object({items}) => items->Js.Array2.map(item => item.location->String.capitalize)
     | _ => []
     }
@@ -546,43 +602,38 @@ module Schema = {
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
   let dbDate =
-    S.json
+    S.json(~validate=false)
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
-    ->S.transform(_ => {
-      serializer: date =>
-        date->(magic: Date.t => Date.t)->Date.toISOString->(magic: string => Date.t),
-    })
+    ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
   let clickHouseDate =
-    S.json
+    S.json(~validate=false)
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
-    ->S.transform(_ => {
-      serializer: date => date->(magic: Date.t => Date.t)->Date.getTime->(magic: float => Date.t),
-    })
+    ->S.preprocess(_ => {serializer: date => date->magic->Date.getTime})
 
   // When trying to serialize data to Json pg type, it will fail with
   // PostgresError: column "params" is of type json but expression is of type boolean
   // If there's bool or null on the root level. It works fine as object field values.
   let coerceToJsonPgType = schema => {
-    let tag = (schema->(magic: S.t<'a> => S.t<unknown>)->S.untag).tag
-    switch tag {
-    // This is a workaround for Fuel Bytes type
-    | Unknown => schema->S.transform(_ => {serializer: _ => %raw(`"null"`)->(magic: string => 'a)})
-    | Boolean =>
-      schema->S.transform(_ => {
-        serializer: unknown => {
-          if unknown->(magic: 'a => 'b) === %raw(`false`) {
-            %raw(`"false"`)
-          } else if unknown->(magic: 'a => 'b) === %raw(`true`) {
-            %raw(`"true"`)
-          } else {
-            unknown
-          }
-        },
-      })
-    | _ => schema
-    }
+    schema->S.preprocess(s => {
+      switch s.schema->S.classify {
+      // This is a workaround for Fuel Bytes type
+      | Unknown => {serializer: _ => %raw(`"null"`)}
+      | Bool => {
+          serializer: unknown => {
+            if unknown === %raw(`false`) {
+              %raw(`"false"`)
+            } else if unknown === %raw(`true`) {
+              %raw(`"true"`)
+            } else {
+              unknown
+            }
+          },
+        }
+      | _ => {}
+      }
+    })
   }
 }
 
@@ -720,13 +771,13 @@ module Proxy = {
 module Hash = {
   let fail = name => {
     JsError.throwWithMessage(
-      `Failed to get hash for ${name}. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
+      `Failed to get hash for ${name}. If you're using a custom rescript-schema schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
     )
   }
 
   // Hash to JSON string. No specific reason for this,
   // just to stick to at least some sort of spec.
-  // After Sury v11 is out we'll be able to do it with schema
+  // TODO: consider doing it with schema
   let rec makeOrThrow = (any: 'a): string => {
     switch any->Js.typeof {
     | "string" => `"${any->magic}"` // Ideally should escape here,
@@ -804,7 +855,7 @@ module EnvioPackage = {
       version: s.matches(S.string),
     }),
   ) catch {
-  | S.Error(error) =>
-    JsError.throwWithMessage(`Failed to get package.json in envio package: ${error.message}`)
+  | S.Raised(error) =>
+    JsError.throwWithMessage(`Failed to get package.json in envio package: ${error->S.Error.message}`)
   }
 }

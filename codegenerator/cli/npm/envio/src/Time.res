@@ -35,7 +35,7 @@ let rec retryAsyncWithExponentialBackOff = async (
         ~msg=`Failure. Max retries ${retryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} exceeded`,
       )
       ->ErrorHandling.log
-      await Promise_.reject(exn->JsExn.anyToExnInternal)
+      await Promise.reject(exn->JsExn.anyToExnInternal)
     }
   }
 }

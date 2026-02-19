@@ -9,7 +9,7 @@ import type {Effect as $$effect} from './Types.ts';
 
 import type {Logger as $$logger} from './Types.ts';
 
-import type {t as S_t} from 'sury/src/S.gen.js';
+import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen.js';
 
 export type blockEvent = { readonly number: number };
 
@@ -41,9 +41,9 @@ export type effectOptions<input,output> = {
   /** The name of the effect. Used for logging and debugging. */
   readonly name: string; 
   /** The input schema of the effect. */
-  readonly input: S_t<input>; 
+  readonly input: RescriptSchema_S_t<input>; 
   /** The output schema of the effect. */
-  readonly output: S_t<output>; 
+  readonly output: RescriptSchema_S_t<output>; 
   /** Rate limit for the effect. Set to false to disable or provide {calls: number, per: "second" | "minute"} to enable. */
   readonly rateLimit: rateLimit; 
   /** Whether the effect should be cached. */

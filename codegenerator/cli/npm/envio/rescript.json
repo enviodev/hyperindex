@@ -8,6 +8,7 @@
     }
   ],
   "suffix": ".res.mjs",
+  "compiler-flags": ["-open RescriptSchema"],
   "package-specs": {
     "module": "esmodule",
     "in-source": true
@@ -22,5 +23,5 @@
   "jsx": {
     "version": 4
   },
-  "dependencies": ["sury", "@rescript/react"]
+  "dependencies": ["rescript-schema", "@rescript/react"]
 }

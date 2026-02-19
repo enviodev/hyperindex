@@ -8,7 +8,7 @@ type registry
 
 @module("prom-client") external defaultRegister: registry = "register"
 
-@send external metrics: registry => Promise_.t<string> = "metrics"
+@send external metrics: registry => promise<string> = "metrics"
 @get external getContentType: registry => string = "contentType"
 
 type metricValue = {

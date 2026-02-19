@@ -75,7 +75,7 @@ let makeFromDbState = async (
       ),
     )
   })
-  ->Promise_.all
+  ->Promise.all
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 

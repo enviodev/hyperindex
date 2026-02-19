@@ -40,7 +40,7 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
         // There are not fields with nested bigints, so this is safe
         new->Dict.set(
           key,
-          Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt_.toString->Utils.magic : value,
+          Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value,
         )
       }
       new->(Utils.magic: dict<unknown> => JSON.t)
@@ -97,7 +97,7 @@ let addItemToRawEvents = (
     params,
   }
 
-  let eventIdStr = eventId->BigInt_.toString
+  let eventIdStr = eventId->BigInt.toString
 
   inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }
@@ -276,8 +276,8 @@ let preloadBatchOrThrow = async (
                   isResolved: false,
                   config,
                 }),
-              })->Promise_.silentCatch,
-              // Must have Promise_.catch as well as normal catch,
+              })->Utils.Promise.silentCatch,
+              // Must have Utils.Promise.catch as well as normal catch,
               // because if user throws an error before await in the handler,
               // it won't create a rejected promise
             )
@@ -305,7 +305,7 @@ let preloadBatchOrThrow = async (
                   config,
                 }),
               )
-            })->Promise_.silentCatch,
+            })->Utils.Promise.silentCatch,
           )
         } catch {
         | _ => ()
@@ -316,7 +316,7 @@ let preloadBatchOrThrow = async (
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
 
-  let _ = await Promise_.all(promises)
+  let _ = await Promise.all(promises)
 }
 
 let runBatchHandlersOrThrow = async (

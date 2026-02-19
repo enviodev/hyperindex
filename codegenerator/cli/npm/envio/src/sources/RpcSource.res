@@ -220,8 +220,8 @@ let getNextPage = (
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
-    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise_.then(() =>
-      Promise_.reject(
+    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
+      Promise.reject(
         QueryTimout(
           `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
         ),
@@ -238,7 +238,7 @@ let getNextPage = (
       fromBlock,
       toBlock,
     },
-  )->Promise_.then(async logs => {
+  )->Promise.then(async logs => {
     {
       logs,
       latestFetchedBlock: await latestFetchedBlockPromise,
@@ -246,8 +246,8 @@ let getNextPage = (
   })
 
   [queryTimoutPromise, logsPromise]
-  ->Promise_.race
-  ->Promise_.catch(err => {
+  ->Promise.race
+  ->Utils.Promise.catch(err => {
     switch getSuggestedBlockIntervalFromExn(err) {
     | Some((nextBlockIntervalTry, isMaxRange)) =>
       mutSuggestedBlockIntervals->Dict.set(
@@ -590,9 +590,9 @@ let parseFieldsFromJson = (
       let parsed = raw->S.parseOrThrow(def.schema)
       mutTransactionAcc->Dict.set(def.location, parsed)
     } catch {
-    | S.Error(error) =>
+    | S.Raised(error) =>
       JsError.throwWithMessage(
-        `Invalid transaction field "${def.location}" found in the RPC response. Error: ${error.reason}`,
+        `Invalid transaction field "${def.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
       )
     }
   })
@@ -615,9 +615,7 @@ let makeThrowingGetEventTransaction = (
       | Some(fn) => fn
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
-          let transactionFieldItems = switch transactionSchema->(
-            Utils.magic: S.t<'a> => S.t<unknown>
-          ) {
+          let transactionFieldItems = switch transactionSchema->S.toUnknown->S.classify {
           | Object({items}) => items
           | _ =>
             JsError.throwWithMessage(
@@ -679,27 +677,27 @@ let makeThrowingGetEventTransaction = (
           }
 
           let fn = switch (transactionFieldItems, strategy) {
-          | ([], _) => _ => %raw(`{}`)->Promise_.resolve
+          | ([], _) => _ => %raw(`{}`)->Promise.resolve
           | (_, NoRpc) =>
             (log: Rpc.GetLogs.log) => {
               let mutTransactionAcc = Dict.make()
               setLogFields(mutTransactionAcc, log)
-              mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)->Promise_.resolve
+              mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)->Promise.resolve
             }
           | (_, _) =>
             (log: Rpc.GetLogs.log) => {
               let txJsonPromise = switch strategy {
               | TransactionOnly | TransactionAndReceipt =>
-                getTransactionJson(log.transactionHash)->Promise_.thenResolve(v => Some(v))
-              | _ => Promise_.resolve(None)
+                getTransactionJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
+              | _ => Promise.resolve(None)
               }
               let receiptJsonPromise = switch strategy {
               | ReceiptOnly | TransactionAndReceipt =>
-                getReceiptJson(log.transactionHash)->Promise_.thenResolve(v => Some(v))
-              | _ => Promise_.resolve(None)
+                getReceiptJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
+              | _ => Promise.resolve(None)
               }
 
-              Promise_.all2((txJsonPromise, receiptJsonPromise))->Promise_.thenResolve(((
+              Promise.all2((txJsonPromise, receiptJsonPromise))->Promise.thenResolve(((
                 txJson,
                 receiptJson,
               )) => {
@@ -936,8 +934,8 @@ let make = (
       fromBlock > 0
         ? blockLoader.contents
           ->LazyLoader.get(fromBlock - 1)
-          ->Promise_.thenResolve(res => res->Some)
-        : Promise_.resolve(None)
+          ->Promise.thenResolve(res => res->Some)
+        : Promise.resolve(None)
 
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
@@ -1021,7 +1019,7 @@ let make = (
           Some(
             (
               async () => {
-                let (block, transaction) = try await Promise_.all2((
+                let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow,
                   log->getEventTransactionOrThrow(~transactionSchema=eventConfig.transactionSchema),
                 )) catch {
@@ -1062,7 +1060,7 @@ let make = (
         }
       }
     })
-    ->Promise_.all
+    ->Promise.all
 
     let optFirstBlockParent = await firstBlockParentPromise
 
@@ -1103,8 +1101,8 @@ let make = (
 
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
-    ->Promise_.all
-    ->Promise_.thenResolve(blocks => {
+    ->Promise.all
+    ->Promise.thenResolve(blocks => {
       blocks
       ->Array.map((b): ReorgDetection.blockDataWithTimestamp => {
         blockNumber: b.number,
@@ -1113,7 +1111,7 @@ let make = (
       })
       ->Ok
     })
-    ->Promise_.catch(exn => exn->Error->Promise_.resolve)
+    ->Utils.Promise.catch(exn => exn->Error->Promise.resolve)
   }
 
   let createHeightSubscription =

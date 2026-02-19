@@ -180,7 +180,7 @@ let init = {
       }
       if shouldRun {
         let resolveRef = ref(%raw(`null`))
-        let promise = Promise_.make((resolve, _) => {
+        let promise = Promise.make((resolve, _) => {
           resolveRef := resolve
         })
         persistence.storageStatus = Initializing(promise)
@@ -368,7 +368,7 @@ let prepareRollbackDiff = async (
       )
     })
   })
-  ->Promise_.all
+  ->Promise.all
 
   {
     "inMemStore": inMemStore,

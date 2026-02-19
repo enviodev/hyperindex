@@ -20,7 +20,7 @@ let changeFieldType = Enum({config: RowAction.config->Table.fromGenericEnumConfi
 
 let unsafeCheckpointIdSchema =
   S.string
-  ->Utils.Schema.setName("CheckpointId")
+  ->S.setName("CheckpointId")
   ->S.transform(s => {
     parser: string =>
       switch string->Belt.Float.fromString {
@@ -141,7 +141,7 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
     makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
     [ids]->Obj.magic,
   )
-  ->Promise_.ignoreValue
+  ->Utils.Promise.ignoreValue
 }
 
 let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: float) => {
@@ -153,5 +153,5 @@ let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckp
       )}" WHERE "${checkpointIdFieldName}" > $1;`,
     [rollbackTargetCheckpointId]->Utils.magic,
   )
-  ->Promise_.ignoreValue
+  ->Utils.Promise.ignoreValue
 }

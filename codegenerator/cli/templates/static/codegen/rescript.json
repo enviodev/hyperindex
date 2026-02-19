@@ -23,7 +23,8 @@
     "in-source": true
   },
   "suffix": ".res.mjs",
-  "dependencies": ["sury", "envio"],
+  "compiler-flags": ["-open RescriptSchema"],
+  "dependencies": ["rescript-schema", "envio"],
   "jsx": {
     "version": 4
   }

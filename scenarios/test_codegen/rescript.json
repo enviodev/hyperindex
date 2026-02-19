@@ -28,10 +28,11 @@
   "jsx": {
     "version": 4
   },
+  "compiler-flags": ["-open RescriptSchema"],
   "dependencies": [
     "@rescript/react",
     "generated",
-    "sury",
+    "rescript-schema",
     "helpers",
     "envio"
   ]

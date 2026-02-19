@@ -32,7 +32,7 @@
     "mocha": "^10.2.0",
     "nyc": "^15.1.0",
     "rescript": "12.1.0",
-    "sury": "11.0.0-alpha.4",
+    "rescript-schema": "9.3.0-rescript12.0",
     "sinon": "^15.0.4"
   },
   "dependencies": {

@@ -79,7 +79,7 @@ let onBlockOptionsSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "chain": s.matches(S.int),
-    "interval": s.matches(S.option(S.int->S.min(1))->S.Option.getOr(1)),
+    "interval": s.matches(S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
     "startBlock": s.matches(S.option(S.int)),
     "endBlock": s.matches(S.option(S.int)),
   }

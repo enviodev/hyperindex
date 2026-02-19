@@ -62,12 +62,12 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   // Import handler files using absolute file:// URLs resolved from cwd
   let _ = await handlerFiles
   ->Array.map(file => {
-    Utils.importPath(toImportUrl(file))->Promise_.catch(exn => {
+    Utils.importPath(toImportUrl(file))->Utils.Promise.catch(exn => {
       Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
       JsError.throwWithMessage(`Failed to auto-load handler file: ${file}`)
     })
   })
-  ->Promise_.all
+  ->Promise.all
 }
 
 // Register all handlers - must be called BEFORE creating the final config
@@ -83,7 +83,7 @@ let registerAllHandlers = async (~config: Config.t) => {
   ->Array.map(({name, handler}) => {
     registerContractHandlers(~contractName=name, ~handler)
   })
-  ->Promise_.all
+  ->Promise.all
 
   EventRegister.finishRegistration()
 }

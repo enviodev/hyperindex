@@ -62,9 +62,9 @@ importers:
       rescript:
         specifier: 12.1.0
         version: 12.1.0
-      sury:
-        specifier: 11.0.0-alpha.4
-        version: 11.0.0-alpha.4(rescript@12.1.0)
+      rescript-schema:
+        specifier: 9.3.0-rescript12.0
+        version: 9.3.0-rescript12.0(rescript@12.1.0)
       tsx:
         specifier: 4.21.0
         version: 4.21.0
@@ -978,6 +978,14 @@ packages:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
 
+  rescript-schema@9.3.0-rescript12.0:
+    resolution: {integrity: sha512-K+1Ia5JMpqWfUrDaPFu4TR0sOa/k5P9KVx4HA7wyUJBBmx3z8Nz0pKR5nX0Bmq+clXnYPSzuukU3SJ1H6eEfaA==}
+    peerDependencies:
+      rescript: ^12.0.0-alpha.8
+    peerDependenciesMeta:
+      rescript:
+        optional: true
+
   rescript@12.1.0:
     resolution: {integrity: sha512-n/B43wzIEKV4OmlrWbrlQOL4zZaz0RM/Cc8PG2YvhQvQDW7nscHJliDq1AGeVwHoMX68MeaKKzLDOMOMU9Z6FA==}
     engines: {node: '>=20.11.0'}
@@ -1089,14 +1097,6 @@ packages:
   supports-color@8.1.1:
     resolution: {integrity: sha512-MpUEN2OodtUzxvKQl72cUF7RQ5EiHsGvSsVG0ia9c5RbWGL2CI4C7EpPS8UTBIplnlzZiNuV56w+FuNxy3ty2Q==}
     engines: {node: '>=10'}
-
-  sury@11.0.0-alpha.4:
-    resolution: {integrity: sha512-oeG/GJWZvQCKtGPpLbu0yCZudfr5LxycDo5kh7SJmKHDPCsEPJssIZL2Eb4Tl7g9aPEvIDuRrkS+L0pybsMEMA==}
-    peerDependencies:
-      rescript: 12.x
-    peerDependenciesMeta:
-      rescript:
-        optional: true
 
   tdigest@0.1.2:
     resolution: {integrity: sha512-+G0LLgjjo9BZX2MfdvPfH+MKLCrxlXSYec5DaPYP1fe6Iyhf0/fSmJ0bFiZ1F8BT6cGXl2LpltQptzjXKWEkKA==}
@@ -1982,6 +1982,10 @@ snapshots:
 
   require-directory@2.1.1: {}
 
+  rescript-schema@9.3.0-rescript12.0(rescript@12.1.0):
+    optionalDependencies:
+      rescript: 12.1.0
+
   rescript@12.1.0:
     dependencies:
       '@rescript/runtime': 12.1.0
@@ -2119,10 +2123,6 @@ snapshots:
   supports-color@8.1.1:
     dependencies:
       has-flag: 4.0.0
-
-  sury@11.0.0-alpha.4(rescript@12.1.0):
-    optionalDependencies:
-      rescript: 12.1.0
 
   tdigest@0.1.2:
     dependencies:

@@ -88,16 +88,16 @@ let callEffect = (
   effect.prevCallStartTimerRef = timerRef
 
   effect.handler(arg)
-  ->Promise_.thenResolve(output => {
+  ->Promise.thenResolve(output => {
     inMemTable.dict->Dict.set(arg.cacheKey, output)
     if arg.context.cache {
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
     }
   })
-  ->Promise_.catchResolve(exn => {
+  ->Utils.Promise.catchResolve(exn => {
     onError(~inputKey=arg.cacheKey, ~exn)
   })
-  ->Promise_.finally(() => {
+  ->Promise.finally(() => {
     effect.activeCallsCount = effect.activeCallsCount - 1
     Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
       ~labels=effectName,
@@ -142,7 +142,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
-        )->Promise_.ignoreValue,
+        )->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
@@ -175,7 +175,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
-        )->Promise_.ignoreValue,
+        )->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
@@ -209,7 +209,7 @@ let rec executeWithRateLimit = (
       promises
       ->Array.push(
         nextWindowPromise
-        ->Promise_.then(() => {
+        ->Promise.then(() => {
           if millisUntilReset.contents > 0 {
             Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.incrementMany(
               ~labels=effectName,
@@ -224,14 +224,14 @@ let rec executeWithRateLimit = (
             ~isFromQueue=true,
           )
         })
-        ->Promise_.ignoreValue,
+        ->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
   }
 
   // Wait for all to complete
-  promises->Promise_.all
+  promises->Promise.all
 }
 
 let loadEffect = (
@@ -284,7 +284,7 @@ let loadEffect = (
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
           inMemTable.dict->Dict.set(dbEntity.id, output)
         } catch {
-        | S.Error(error) =>
+        | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
           Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
           item
@@ -293,7 +293,7 @@ let loadEffect = (
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,
             "effect": effectName,
-            "err": error.message,
+            "err": error->S.Error.message,
           })
         }
       })
@@ -322,7 +322,7 @@ let loadEffect = (
           ~inMemTable,
           ~onError,
           ~isFromQueue=false,
-        )->Promise_.ignoreValue
+        )->Utils.Promise.ignoreValue
       }
     }
   }
@@ -419,7 +419,7 @@ let loadByField = (
         )
       }
     })
-    ->Promise_.all
+    ->Promise.all
 
     timerRef->Prometheus.StorageLoad.endOperation(
       ~operation=key,

@@ -31,5 +31,6 @@
     "version": 4
   },
   "suffix": ".res.mjs",
-  "dependencies": ["generated", "sury", "helpers", "envio"]
+  "compiler-flags": ["-open RescriptSchema"],
+  "dependencies": ["generated", "rescript-schema", "helpers", "envio"]
 }

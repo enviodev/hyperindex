@@ -18,5 +18,6 @@
     "module": "esmodule",
     "in-source": true
   },
-  "dependencies": ["generated", "envio", "sury"]
+  "compiler-flags": ["-open RescriptSchema"],
+  "dependencies": ["generated", "envio", "rescript-schema"]
 }

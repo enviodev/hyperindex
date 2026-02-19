@@ -108,11 +108,11 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
           let fieldName = f->Table.getDbFieldName
           let fieldSchema = switch f.fieldType {
           | Date => {
-              let dateSchema = Utils.Schema.clickHouseDate->S.castToUnknown
+              let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
               if f.isNullable {
-                S.null(dateSchema)->S.castToUnknown
+                S.null(dateSchema)->S.toUnknown
               } else if f.isArray {
-                S.array(dateSchema)->S.castToUnknown
+                S.array(dateSchema)->S.toUnknown
               } else {
                 dateSchema
               }
@@ -350,18 +350,18 @@ let initialize = async (
     await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
     await client->exec({query: `USE ${database}`})
 
-    await Promise_.all(
+    await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
       ),
-    )->Promise_.ignoreValue
+    )->Utils.Promise.ignoreValue
     await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
 
-    await Promise_.all(
+    await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
-    )->Promise_.ignoreValue
+    )->Utils.Promise.ignoreValue
 
     Logging.trace("ClickHouse sink initialization completed successfully")
   } catch {
@@ -394,14 +394,14 @@ let resume = async (client, ~database: string, ~checkpointId: float) => {
     let tables: array<{"name": string}> = await tablesResult->json
 
     // Delete rows with checkpoint IDs higher than the target for each history table
-    await Promise_.all(
+    await Promise.all(
       tables->Belt.Array.map(table => {
         let tableName = table["name"]
         client->exec({
           query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Belt.Float.toString}`,
         })
       }),
-    )->Promise_.ignoreValue
+    )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
     await client->exec({

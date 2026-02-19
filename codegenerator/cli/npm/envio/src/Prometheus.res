@@ -35,26 +35,17 @@ let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
 })
 
 module Labels = {
-  let rec schemaIsString = (schema: S.t<unknown>) => {
-    let tag = (schema->S.untag).tag
-    switch tag {
+  let rec schemaIsString = (schema: S.t<'a>) =>
+    switch schema->S.classify {
     | String => true
-    | Union => {
-        // For S.null(s) or S.option(s), check if the inner non-null/undefined member is a string
-        let anyOf: array<S.t<unknown>> = (
-          schema->S.untag->(Utils.magic: S.untagged => {..})
-        )["anyOf"]
-        anyOf->Array.some(s => {
-          let t = (s->S.untag).tag
-          t != Null && t != Undefined && schemaIsString(s)
-        })
-      }
+    | Null(s)
+    | Option(s) =>
+      s->schemaIsString
     | _ => false
     }
-  }
 
   let getLabelNames = (schema: S.t<'a>) =>
-    switch schema->(Utils.magic: S.t<'a> => S.t<unknown>) {
+    switch schema->S.classify {
     | Object({items}) =>
       let nonStringFields = items->Belt.Array.reduce([], (nonStringFields, item) => {
         if item.schema->schemaIsString {

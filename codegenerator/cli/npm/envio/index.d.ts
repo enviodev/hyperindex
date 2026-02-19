@@ -49,11 +49,11 @@ import type {
 } from "./src/Envio.gen.ts";
 
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
-import { schema as bigintSchema } from "./src/bindings/BigInt.gen.ts";
-import * as Sury from "rescript-schema";
+import { BigInt_schema as bigintSchema } from "./src/Utils.gen.ts";
+import * as RescriptSchema from "rescript-schema";
 
-type UnknownToOutput<T> = T extends Sury.Schema<unknown>
-  ? Sury.Output<T>
+type UnknownToOutput<T> = T extends RescriptSchema.Schema<unknown>
+  ? RescriptSchema.Output<T>
   : T extends (...args: any[]) => any
   ? T
   : T extends unknown[]
@@ -104,8 +104,8 @@ type Flatten<T> = T extends object
 //     foo: S.string,
 //   }),
 // })
-// The behaviour is inspired by Sury code:
-// https://github.com/DZakh/sury/blob/551f8ee32c1af95320936d00c086e5fb337f59fa/packages/sury/src/S.d.ts#L344C1-L355C50
+// The behaviour is inspired by rescript-schema code:
+// https://github.com/DZakh/rescript-schema
 export function createEffect<
   IS,
   OS,
@@ -132,43 +132,43 @@ export function createEffect<
 
 // Important! Should match the index.js file
 export declare namespace S {
-  export type Output<T> = Sury.Output<T>;
-  export type Infer<T> = Sury.Output<T>;
-  export type Input<T> = Sury.Input<T>;
-  export type Schema<Output, Input = unknown> = Sury.Schema<Output, Input>;
-  export const string: typeof Sury.string;
-  export const address: Sury.Schema<Address, Address>;
-  // export const evmChainId: Sury.Schema<EvmChainId, EvmChainId>;
-  // export const fuelChainId: Sury.Schema<FuelChainId, FuelChainId>;
-  // export const svmChainId: Sury.Schema<SvmChainId, SvmChainId>;
-  export const jsonString: typeof Sury.jsonString;
-  export const boolean: typeof Sury.boolean;
-  export const int32: typeof Sury.int32;
-  export const number: typeof Sury.number;
+  export type Output<T> = RescriptSchema.Output<T>;
+  export type Infer<T> = RescriptSchema.Output<T>;
+  export type Input<T> = RescriptSchema.Input<T>;
+  export type Schema<Output, Input = unknown> = RescriptSchema.Schema<Output, Input>;
+  export const string: typeof RescriptSchema.string;
+  export const address: RescriptSchema.Schema<Address, Address>;
+  // export const evmChainId: RescriptSchema.Schema<EvmChainId, EvmChainId>;
+  // export const fuelChainId: RescriptSchema.Schema<FuelChainId, FuelChainId>;
+  // export const svmChainId: RescriptSchema.Schema<SvmChainId, SvmChainId>;
+  export const jsonString: typeof RescriptSchema.jsonString;
+  export const boolean: typeof RescriptSchema.boolean;
+  export const int32: typeof RescriptSchema.int32;
+  export const number: typeof RescriptSchema.number;
   export const bigint: typeof bigintSchema;
-  export const never: typeof Sury.never;
-  export const union: typeof Sury.union;
-  export const object: typeof Sury.object;
+  export const never: typeof RescriptSchema.never;
+  export const union: typeof RescriptSchema.union;
+  export const object: typeof RescriptSchema.object;
   // Might change in a near future
-  // export const custom: typeof Sury.custom;
+  // export const custom: typeof RescriptSchema.custom;
   // Don't expose recursive for now, since it's too advanced
-  // export const recursive: typeof Sury.recursive;
-  export const transform: typeof Sury.transform;
-  export const shape: typeof Sury.shape;
-  export const refine: typeof Sury.refine;
-  export const schema: typeof Sury.schema;
-  export const record: typeof Sury.record;
-  export const array: typeof Sury.array;
-  export const tuple: typeof Sury.tuple;
-  export const merge: typeof Sury.merge;
-  export const optional: typeof Sury.optional;
-  export const nullable: typeof Sury.nullable;
+  // export const recursive: typeof RescriptSchema.recursive;
+  export const transform: typeof RescriptSchema.transform;
+  export const shape: typeof RescriptSchema.shape;
+  export const refine: typeof RescriptSchema.refine;
+  export const schema: typeof RescriptSchema.schema;
+  export const record: typeof RescriptSchema.record;
+  export const array: typeof RescriptSchema.array;
+  export const tuple: typeof RescriptSchema.tuple;
+  export const merge: typeof RescriptSchema.merge;
+  export const optional: typeof RescriptSchema.optional;
+  export const nullable: typeof RescriptSchema.nullable;
   export const bigDecimal: typeof bigDecimalSchema;
-  export const unknown: typeof Sury.unknown;
-  // Nullish type will change in "sury@10"
-  // export const nullish: typeof Sury.nullish;
-  export const assertOrThrow: typeof Sury.assertOrThrow;
-  export const parseOrThrow: typeof Sury.parseOrThrow;
+  export const unknown: typeof RescriptSchema.unknown;
+  // TODO: expose nullish
+  // export const nullish: typeof RescriptSchema.nullish;
+  export const assertOrThrow: typeof RescriptSchema.assertOrThrow;
+  export const parseOrThrow: typeof RescriptSchema.parseOrThrow;
 }
 
 // ============== Indexer Config (Module Augmentation) ==============

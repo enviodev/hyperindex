@@ -1,4 +1,4 @@
-// Vendored from rescript-envsafe v5.0.0, adapted for sury (ReScript 12)
+// Vendored from rescript-envsafe v5.0.0, adapted for ReScript 12
 // Original: https://github.com/DZakh/rescript-envsafe
 
 %%private(external magic: 'a => 'b = "%identity")
@@ -92,7 +92,7 @@ let close = envSafe => {
         maybeInvalidIssues->Stdlib.Option.forEach(invalidIssues => {
           output->Array.push("❌ Invalid environment variables:")
           invalidIssues->Array.forEach(issue => {
-            output->Array.push(`    ${issue.name}: ${issue.error.message}`)
+            output->Array.push(`    ${issue.name}: ${issue.error->S.Error.message}`)
           })
         })
 
@@ -153,32 +153,18 @@ let jsonCoerce = string => {
   }
 }
 
-// Get the tag of a schema's inner type (unwrapping option/union if needed)
-let getInnerTag = (schema: S.t<'a>): S.tag => {
-  let untagged = schema->(magic: S.t<'a> => S.t<unknown>)->S.untag
-  switch untagged.tag {
-  | Union => {
-      // For S.option(x), sury creates a union. Find the first non-undefined member tag.
-      let anyOf: array<S.t<unknown>> = (untagged->(magic: S.untagged => {..}))["anyOf"]
-      let innerTag =
-        anyOf->Array.find(s => S.untag(s).tag != Undefined)->Option.map(s => S.untag(s).tag)
-      switch innerTag {
-      | Some(tag) => tag
-      | None => Union
-      }
-    }
-  | tag => tag
+// Get the classified tag of a schema's inner type (unwrapping Option if needed)
+let rec getInnerClassified = (schema: S.t<unknown>): S.tagged => {
+  switch schema->S.classify {
+  | Option(child) => getInnerClassified(child)
+  | tagged => tagged
   }
 }
 
 // Check if a schema is optional (accepts undefined/None)
-let isOptionalSchema = (schema: S.t<'a>): bool => {
-  let untagged = schema->(magic: S.t<'a> => S.t<unknown>)->S.untag
-  switch untagged.tag {
-  | Union => {
-      let anyOf: array<S.t<unknown>> = (untagged->(magic: S.untagged => {..}))["anyOf"]
-      anyOf->Array.some(s => S.untag(s).tag == Undefined)
-    }
+let isOptionalSchema = (schema: S.t<unknown>): bool => {
+  switch schema->S.classify {
+  | Option(_) => true
   | _ => false
   }
 }
@@ -204,7 +190,7 @@ let get = (
   | (Some(""), false) => true
   | _ => false
   }
-  let isOptional = isOptionalSchema(schema)
+  let isOptional = isOptionalSchema(schema->S.toUnknown)
   if isMissing && !isOptional {
     switch (maybeDevFallback, maybeFallback) {
     | (Some(devFallback), _)
@@ -216,17 +202,17 @@ let get = (
       }
     }
   } else {
-    let innerTag = getInnerTag(schema)
+    let innerClassified = getInnerClassified(schema->S.toUnknown)
     let input = switch input {
     | Some("") if !allowEmpty => None
     | None => None
     | Some(string) =>
-      switch innerTag {
-      | Boolean => string->boolCoerce
+      switch innerClassified {
+      | Bool => string->boolCoerce
       | BigInt => string->bigintCoerce
-      | Number => string->numberCoerce
+      | Int | Float => string->numberCoerce
       | String | Never => string
-      | Union => {
+      | Union(_) => {
           // For union schemas, try coercions in order: bool, number, bigint, then keep as string
           let coerced = boolCoerce(string)
           if coerced !== string->(magic: string => 'a) {
@@ -249,7 +235,7 @@ let get = (
       }->Some
     }
     try input->S.parseOrThrow(schema) catch {
-    | S.Error(error) => {
+    | S.Raised(error) => {
         envSafe->mixinInvalidIssue({name, error, input})
         %raw(`undefined`)
       }

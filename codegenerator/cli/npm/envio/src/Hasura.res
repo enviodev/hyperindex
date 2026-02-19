@@ -50,7 +50,7 @@ let trackTablesRoute = Rest.route(() => {
   input: s => {
     let _ = s.field("type", S.literal("pg_track_tables"))
     {
-      "args": s.field("args", S.json),
+      "args": s.field("args", S.json(~validate=false)),
       "auth": s->auth,
     }
   },
@@ -63,7 +63,7 @@ let createSelectPermissionRoute = Rest.route(() => {
   input: s => {
     let _ = s.field("type", S.literal("pg_create_select_permission"))
     {
-      "args": s.field("args", S.json),
+      "args": s.field("args", S.json(~validate=false)),
       "auth": s->auth,
     }
   },
@@ -88,14 +88,14 @@ let bulkKeepGoingRoute = Rest.route(() => {
   input: s => {
     let _ = s.field("type", S.literal("bulk_keep_going"))
     {
-      "args": s.field("args", S.json),
+      "args": s.field("args", S.json(~validate=false)),
       "auth": s->auth,
     }
   },
   responses: [
     (s: Rest.Response.s) => {
       s.status(200)
-      s.data(S.json)
+      s.data(S.json(~validate=false))
     },
   ],
 })
@@ -250,7 +250,7 @@ let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOpera
       let errors = try {
         result->S.parseJsonOrThrow(bulkKeepGoingErrorsSchema)
       } catch {
-      | S.Error(error) => [error.message]
+      | S.Raised(error) => [error->S.Error.message]
       | exn => [exn->Utils.prettifyExn->Utils.magic]
       }
 

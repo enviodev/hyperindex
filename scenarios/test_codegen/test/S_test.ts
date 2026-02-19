@@ -2,7 +2,7 @@ import assert from "assert";
 import { it } from "mocha";
 import { S } from "envio";
 
-describe("Sury reexport", () => {
+describe("rescript-schema reexport", () => {
   it("S.parseOrThrow parses primitives", () => {
     const str = S.parseOrThrow("hello", S.string);
     assert.strictEqual(str, "hello");
@@ -11,7 +11,7 @@ describe("Sury reexport", () => {
     assert.strictEqual(num, 42);
 
     // TODO: Should be a native bigint schema
-    // after we start using Sury with built-in JSON transformations
+    // after we start using rescript-schema with built-in JSON transformations
     const bi = S.parseOrThrow("10", S.bigint);
     assert.strictEqual(bi, 10n);
   });

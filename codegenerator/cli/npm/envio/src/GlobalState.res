@@ -169,7 +169,7 @@ let updateChainMetadataTable = (
 
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    persistence.storage.setChainMeta(chainsData)->Promise_.ignoreValue
+    persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
   )
 }
 
@@ -828,7 +828,7 @@ let injectedTaskReducer = (
   ) => {
     switch task {
     | ProcessPartitionQueryResponse(partitionQueryResponse) =>
-      state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Promise_.done
+      state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Utils.Promise.done
     | PruneStaleEntityHistory =>
       let runPrune = async () => {
         switch state.chainManager->ChainManager.getSafeCheckpointId {
@@ -904,7 +904,7 @@ let injectedTaskReducer = (
         let _ = await state.chainManager.chainFetchers
         ->ChainMap.keys
         ->Array.map(fetchForChain(_))
-        ->Promise_.all
+        ->Promise.all
       }
     | ProcessEventBatch =>
       if !state.currentlyProcessingBatch && !isPreparingRollback(state) {

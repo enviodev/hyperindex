@@ -36,7 +36,7 @@
     "prom-client": "15.0.0",
     "yargs": "17.7.2",
     "rescript": "12.1.0",
-    "sury": "11.0.0-alpha.4",
+    "rescript-schema": "9.3.0-rescript12.0",
     "viem": "2.21.0",
     "dotenv": "16.4.5",
     "date-fns": "3.3.1",

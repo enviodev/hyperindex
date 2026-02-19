@@ -201,7 +201,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldGroup=params.isPreload,
             ~item=params.item,
             ~entityId,
-          )->Promise_.thenResolve(entity => {
+          )->Promise.thenResolve(entity => {
             switch entity {
             | Some(entity) => entity
             | None =>
@@ -224,7 +224,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldGroup=params.isPreload,
             ~item=params.item,
             ~entityId=entity.id,
-          )->Promise_.thenResolve(storageEntity => {
+          )->Promise.thenResolve(storageEntity => {
             switch storageEntity {
             | Some(entity) => entity
             | None => {

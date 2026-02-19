@@ -5,10 +5,10 @@
 
 import * as BigDecimalJS from './BigDecimal.res.mjs';
 
-import type {default as $$t} from 'bignumber.js';
+import type {S_t as RescriptSchema_S_t} from './RescriptSchema.gen.js';
 
-import type {t as S_t} from 'sury/src/S.gen.js';
+import type {default as $$t} from 'bignumber.js';
 
 export type t = $$t;
 
-export const schema: S_t<t> = BigDecimalJS.schema as any;
+export const schema: RescriptSchema_S_t<t> = BigDecimalJS.schema as any;
