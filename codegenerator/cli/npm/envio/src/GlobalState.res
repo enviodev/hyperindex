@@ -318,7 +318,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     ->Array.every(cf => cf->ChainFetcher.isLive)
 
   if allChainsSyncedAtHead {
-    Prometheus.setAllChainsSyncedToHead()
+    Prometheus.SyncedToHead.set()
   }
 
   {

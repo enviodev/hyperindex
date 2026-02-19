@@ -1,39 +1,3 @@
-let loadEntitiesDurationCounter = PromClient.Counter.makeCounter({
-  "name": "load_entities_processing_time_spent",
-  "help": "Duration spend on loading entities",
-  "labelNames": [],
-})
-
-let eventRouterDurationCounter = PromClient.Counter.makeCounter({
-  "name": "event_router_processing_time_spent",
-  "help": "Duration spend on event routing",
-  "labelNames": [],
-})
-
-let executeBatchDurationCounter = PromClient.Counter.makeCounter({
-  "name": "execute_batch_processing_time_spent",
-  "help": "Duration spend on executing batch",
-  "labelNames": [],
-})
-
-let storageWriteTimeCounter = PromClient.Counter.makeCounter({
-  "name": "envio_storage_write_time",
-  "help": "Cumulative time spent writing batches to storage in milliseconds",
-  "labelNames": [],
-})
-
-let storageWriteCounter = PromClient.Counter.makeCounter({
-  "name": "envio_storage_write_count",
-  "help": "Total number of batch writes to storage",
-  "labelNames": [],
-})
-
-let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
-  "name": "hyperindex_synced_to_head",
-  "help": "All chains fully synced",
-  "labelNames": [],
-})
-
 module Labels = {
   let rec schemaIsString = (schema: S.t<'a>) =>
     switch schema->S.classify {
@@ -162,55 +126,70 @@ let makeSafeHistogramOrThrow = (~name, ~help, ~labelSchema, ~backets=?) => {
   }
 }
 
-let incrementLoadEntityDurationCounter = (~duration) => {
-  loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
+module ProcessingBatch = {
+  let loadTimeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_processing_batch_load_time",
+    "help": "Cumulative time spent on preloading entities during batch processing. (milliseconds)",
+  })
+
+  let handlerTimeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_processing_batch_handler_time",
+    "help": "Cumulative time spent executing event handlers during batch processing. (milliseconds)",
+  })
+
+  let writeTimeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_processing_batch_write_time",
+    "help": "Cumulative time spent writing batch data to storage. (milliseconds)",
+  })
+
+  let writeCount = PromClient.Counter.makeCounter({
+    "name": "envio_processing_batch_write_count",
+    "help": "Total number of batch writes to storage.",
+  })
+
+  let handlerSumTimeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_processing_handler_time",
+    "help": "Cumulative time spent inside individual event handler executions. (milliseconds)",
+  })
+
+  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration) => {
+    loadTimeCounter->PromClient.Counter.incMany(loadDuration)
+    handlerTimeCounter->PromClient.Counter.incMany(handlerDuration)
+    writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration)
+    writeCount->PromClient.Counter.inc
+  }
+
+  let incrementHandlerTime = (~duration) => {
+    handlerSumTimeCounter->PromClient.Counter.incMany(duration)
+  }
 }
 
-let incrementEventRouterDurationCounter = (~duration) => {
-  eventRouterDurationCounter->PromClient.Counter.incMany(duration)
-}
+module SyncedToHead = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_synced_to_head",
+    "help": "All chains fully synced",
+  })
 
-let incrementExecuteBatchDurationCounter = (~duration) => {
-  executeBatchDurationCounter->PromClient.Counter.incMany(duration)
-}
-
-let incrementStorageWriteTimeCounter = (~duration) => {
-  storageWriteTimeCounter->PromClient.Counter.incMany(duration)
-}
-
-let incrementStorageWriteCounter = () => {
-  storageWriteCounter->PromClient.Counter.inc
-}
-
-let handlerTimeCounter = PromClient.Counter.makeCounter({
-  "name": "envio_handler_processing_time_spent",
-  "help": "Cumulative time spent executing event handlers in milliseconds",
-  "labelNames": [],
-})
-
-let incrementHandlerTimeCounter = (~duration) => {
-  handlerTimeCounter->PromClient.Counter.incMany(duration)
-}
-
-let knownHeightGauge = PromClient.Gauge.makeGauge({
-  "name": "envio_indexing_known_height",
-  "help": "The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.",
-  "labelNames": ["chainId"],
-})
-
-let setKnownHeight = (~blockNumber, ~chainId) => {
-  knownHeightGauge
-  ->PromClient.Gauge.labels({"chainId": chainId})
-  ->PromClient.Gauge.set(blockNumber)
-}
-
-let setAllChainsSyncedToHead = () => {
-  allChainsSyncedToHead->PromClient.Gauge.set(1)
+  let set = () => {
+    gauge->PromClient.Gauge.set(1)
+  }
 }
 
 let chainIdLabelsSchema = S.object(s => {
   s.field("chainId", S.string->S.coerce(S.int))
 })
+
+module IndexingKnownHeight = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_indexing_known_height",
+    ~help="The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
+
+  let set = (~blockNumber, ~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
+  }
+}
 
 module Info = {
   let gauge = SafeGauge.makeOrThrow(
@@ -324,12 +303,6 @@ module IndexingTargetBufferSize = {
 }
 
 module IndexingBufferBlockNumber = {
-  let deprecatedGauge = PromClient.Gauge.makeGauge({
-    "name": "chain_block_height_fully_fetched",
-    "help": "Block height fully fetched by indexer",
-    "labelNames": ["chainId"],
-  })
-
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_buffer_block_number",
     ~help="The highest block number that has been fully fetched by the indexer.",
@@ -337,9 +310,6 @@ module IndexingBufferBlockNumber = {
   )
 
   let set = (~blockNumber, ~chainId) => {
-    deprecatedGauge
-    ->PromClient.Gauge.labels({"chainId": chainId})
-    ->PromClient.Gauge.set(blockNumber)
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=blockNumber)
   }
 }
@@ -538,12 +508,6 @@ module ProgressBlockNumber = {
 }
 
 module ProgressEventsCount = {
-  let deprecatedGauge = PromClient.Gauge.makeGauge({
-    "name": "events_processed",
-    "help": "Total number of events processed",
-    "labelNames": ["chainId"],
-  })
-
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_progress_events_count",
     ~help="The number of events processed and reflected in the database.",
@@ -551,9 +515,6 @@ module ProgressEventsCount = {
   )
 
   let set = (~processedCount, ~chainId) => {
-    deprecatedGauge
-    ->PromClient.Gauge.labels({"chainId": chainId})
-    ->PromClient.Gauge.set(processedCount)
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=processedCount)
   }
 }
