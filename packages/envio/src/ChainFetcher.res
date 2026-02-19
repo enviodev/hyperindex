@@ -182,7 +182,7 @@ let make = (
     // FIXME: Shouldn't set with full history
     ~blockLag=Pervasives.max(
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
-      chainConfig.blockLag,
+      Pervasives.max(chainConfig.blockLag, Env.indexingBlockLag->Option.getWithDefault(0)),
     ),
     ~onBlockConfigs?,
     ~firstEventBlock,
