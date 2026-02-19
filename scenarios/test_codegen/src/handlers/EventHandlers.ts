@@ -702,6 +702,20 @@ Gravatar.FactoryEvent.handler(async ({ event, context }) => {
       break;
     }
 
+    case "duplicateHandler": {
+      // Gravatar.CustomSelection.handler is already registered at the top level.
+      // Registering it again should throw.
+      Gravatar.CustomSelection.handler(async () => {});
+      break;
+    }
+
+    case "duplicateContractRegister": {
+      // Gravatar.FactoryEvent.contractRegister is already registered at the top level.
+      // Registering it again should throw.
+      Gravatar.FactoryEvent.contractRegister(({ event, context }) => {});
+      break;
+    }
+
     case "onBlockInHandler": {
       onBlock({ name: "test", chain: 1 }, async () => {});
       break;
