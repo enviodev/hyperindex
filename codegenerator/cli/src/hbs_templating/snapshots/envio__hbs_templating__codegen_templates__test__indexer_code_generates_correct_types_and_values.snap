@@ -111,7 +111,7 @@ let onBlock: (
 Envio.onBlockOptions<chainId>,
 Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
 ) => unit = (
-EventRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
+HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
 
 type testIndexerProcessConfigChains = {

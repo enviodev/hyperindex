@@ -30,7 +30,7 @@ let make = (
   ~firstEventBlock=None,
   ~progressBlockNumber,
   ~config: Config.t,
-  ~registrations: EventRegister.registrations,
+  ~registrations: HandlerRegister.registrations,
   ~targetBufferSize,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
@@ -148,7 +148,7 @@ let make = (
     registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
   switch onBlockConfigs {
   | Some(onBlockConfigs) =>
-    // TODO: Move it to the EventRegister module
+    // TODO: Move it to the HandlerRegister module
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
       if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
