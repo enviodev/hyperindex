@@ -72,7 +72,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // Register all handlers - must be called BEFORE creating the final config
 // so that event registrations are captured in the config
 let registerAllHandlers = async (~config: Config.t) => {
-  EventRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
+  HandlerRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
 
   // Auto-load all .js files from src/handlers directory
   await autoLoadFromSrcHandlers(~handlers=config.handlers)
@@ -85,5 +85,5 @@ let registerAllHandlers = async (~config: Config.t) => {
     })
     ->Promise.all
 
-  EventRegister.finishRegistration()
+  HandlerRegister.finishRegistration()
 }

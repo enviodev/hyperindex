@@ -113,7 +113,7 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
   } catch {
   | exn =>
     Logging.error({
-      "msg": `EE806: There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "err": exn->Utils.prettifyExn,
     })
   }
@@ -154,7 +154,7 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
   } catch {
   | exn =>
     Logging.error({
-      "msg": `EE807: There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "msg": `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableNames": tableNames,
       "err": exn->Utils.prettifyExn,
     })
@@ -260,7 +260,7 @@ let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOpera
     } catch {
     | exn =>
       Logging.error({
-        "msg": `EE809: There was an issue executing bulk operations in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+        "msg": `There was an issue executing bulk operations in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
         "operations": operations->Js.Array2.length,
         "err": exn->Utils.prettifyExn,
       })

@@ -907,7 +907,7 @@ impl SystemConfig {
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
-                "EE104: Failed to resolve config path {0}. Make sure you're in the correct \
+                "Failed to resolve config path {0}. Make sure you're in the correct \
                  directory and that a config file with the name {0} exists. I can configure \
                  another path by using the --config flag.",
                 &project_paths.config.to_str().unwrap_or("{unknown}"),
@@ -921,7 +921,7 @@ impl SystemConfig {
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
-                "EE105: Failed to deserialize config. The config.yaml file is either not a valid \
+                "Failed to deserialize config. The config.yaml file is either not a valid \
                  yaml or the \"ecosystem\" field is not a string.",
             )?;
 
@@ -931,7 +931,7 @@ impl SystemConfig {
             Some("svm") => Ecosystem::Svm,
             Some(ecosystem) => {
                 return Err(anyhow!(
-                    "EE105: Failed to deserialize config. The ecosystem \"{}\" is not supported.",
+                    "Failed to deserialize config. The ecosystem \"{}\" is not supported.",
                     ecosystem
                 ))
             }
@@ -942,7 +942,7 @@ impl SystemConfig {
             Ecosystem::Evm => {
                 let evm_config: EvmConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "EE105: Failed to deserialize config. Visit the docs for more information \
+                        "Failed to deserialize config. Visit the docs for more information \
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
@@ -953,7 +953,7 @@ impl SystemConfig {
             Ecosystem::Fuel => {
                 let fuel_config: FuelConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "EE105: Failed to deserialize config. Visit the docs for more information \
+                        "Failed to deserialize config. Visit the docs for more information \
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
@@ -964,7 +964,7 @@ impl SystemConfig {
             Ecosystem::Svm => {
                 let svm_config: human_config::svm::HumanConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "EE105: Failed to deserialize config. Visit the docs for more information \
+                        "Failed to deserialize config. Visit the docs for more information \
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
@@ -1056,7 +1056,7 @@ impl DataSource {
         let mut rpcs = vec![];
         for rpc in raw_rpcs.iter() {
             match parse_url(rpc.url.as_str()) {
-              None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
+              None => return Err(anyhow!("The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
               Some(url) => {
                 // Validate ws URL protocol if provided
                 let ws = match &rpc.ws {
@@ -1088,7 +1088,7 @@ impl DataSource {
             Some(rpc) => {
                 if network.hypersync_config.is_some() {
                     Err(anyhow!(
-                        "EE106: Cannot define both hypersync_config and rpc as a data-source for \
+                        "Cannot define both hypersync_config and rpc as a data-source for \
                          historical sync at the same time, please choose only one option or set \
                          RPC to be a fallback. Read more in our docs {}",
                         links::DOC_CONFIGURATION_FILE
@@ -1099,7 +1099,7 @@ impl DataSource {
             }
             None => {
                 let url = hypersync_endpoint_url.ok_or(anyhow!(
-                    "EE106: Failed to automatically find HyperSync endpoint for the network {}. \
+                    "Failed to automatically find HyperSync endpoint for the network {}. \
                      Please provide it manually via the hypersync_config option, or provide an \
                      RPC URL for historical sync. Read more in our docs: {}",
                     network.id,
@@ -1107,7 +1107,7 @@ impl DataSource {
                 ))?;
 
                 let parsed_url = parse_url(&url).ok_or(anyhow!(
-                  "EE106: The HyperSync URL \"{}\" is in incorrect format. The URL needs to start with either http:// or https://",
+                  "The HyperSync URL \"{}\" is in incorrect format. The URL needs to start with either http:// or https://",
                   url
                 ))?;
 
@@ -1312,11 +1312,46 @@ pub struct Event {
 }
 
 impl Event {
+    /// Normalize an event signature string to handle common formatting variations:
+    /// - Strip trailing semicolons
+    /// - Remove spaces before commas (`uint128 ,uint16` -> `uint128,uint16`)
+    /// - Collapse multiple spaces into one (`uint128,  uint16` -> `uint128, uint16`)
+    fn normalize_event_signature(sig: &str) -> String {
+        let sig = sig.trim();
+        let sig = sig.strip_suffix(';').unwrap_or(sig).trim_end();
+
+        let mut result = String::with_capacity(sig.len());
+        let mut chars = sig.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == ',' {
+                // Remove any trailing spaces before this comma that we already added
+                while result.ends_with(' ') {
+                    result.pop();
+                }
+                result.push(',');
+                // Skip any whitespace after comma, then add exactly one space
+                while chars.peek() == Some(&' ') {
+                    chars.next();
+                }
+                // Add a space after comma if the next char isn't ')' or ']'
+                // (to handle cases like trailing commas)
+                if chars.peek().is_some() && chars.peek() != Some(&')') && chars.peek() != Some(&']') {
+                    result.push(' ');
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
+    }
+
     fn get_abi_event(event_string: &str, opt_abi: &Option<EvmAbi>) -> Result<AlloyEvent> {
         let parse_event_sig = |sig: &str| -> Result<AlloyEvent> {
             AlloyEvent::parse(sig).map_err(|err| {
                 anyhow!(
-                    "EE103: Unable to parse event signature {} due to the following error: {}. \
+                    "Unable to parse event signature {} due to the following error: {}. \
                      Please refer to our docs on how to correctly define a human readable ABI.",
                     sig,
                     err
@@ -1324,7 +1359,7 @@ impl Event {
             })
         };
 
-        let event_string = event_string.trim();
+        let event_string = &Self::normalize_event_signature(event_string);
 
         if event_string.starts_with("event ") {
             parse_event_sig(event_string)
@@ -2002,6 +2037,80 @@ mod test {
     }
 
     #[test]
+    fn normalize_event_signature_handles_formatting_issues() {
+        // Trailing semicolon
+        assert_eq!(
+            Event::normalize_event_signature("Transfer(address from);"),
+            "Transfer(address from)"
+        );
+        // Space before comma
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128 ,uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // Multiple spaces after comma
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128,  uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // No space after comma (should add one)
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128,uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // Already well-formatted
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128, uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // Leading/trailing whitespace
+        assert_eq!(
+            Event::normalize_event_signature("  Foo(uint128, uint16)  "),
+            "Foo(uint128, uint16)"
+        );
+    }
+
+    #[test]
+    fn parse_event_sig_with_trailing_semicolon() {
+        // Issue #959: trailing semicolons should be stripped
+        let event_string =
+            "AddShopItems((uint128, uint16, uint16, uint16, uint16, bool)[] shopItems, uint256 indexed globalEventId);";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+        assert_eq!(parsed.name, "AddShopItems");
+        assert_eq!(parsed.inputs.len(), 2);
+    }
+
+    #[test]
+    fn parse_event_sig_with_space_before_comma() {
+        // Issue #959: spaces before commas should be normalized
+        let event_string =
+            "AddShopItems((uint128 ,uint16,uint16 ,uint16,uint16,bool)[] shopItems, uint256 indexed globalEventId)";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+        assert_eq!(parsed.name, "AddShopItems");
+        assert_eq!(parsed.inputs.len(), 2);
+    }
+
+    #[test]
+    fn parse_event_sig_with_all_formatting_issues() {
+        // Issue #959: combination of trailing semicolon and inconsistent spacing
+        let event_string =
+            "AddShopItems((uint128 ,uint16,uint16 ,uint16,uint16,bool)[] shopItems, uint256 indexed globalEventId);";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+        assert_eq!(parsed.name, "AddShopItems");
+        assert_eq!(parsed.inputs.len(), 2);
+
+        // Should produce the same sighash as the well-formatted version
+        let well_formatted =
+            "AddShopItems((uint128, uint16, uint16, uint16, uint16, bool)[] shopItems, uint256 indexed globalEventId)";
+        let expected = Event::get_abi_event(well_formatted, &None).unwrap();
+        assert_eq!(
+            parsed.selector().to_string(),
+            expected.selector().to_string(),
+            "Sighash should match regardless of formatting"
+        );
+    }
+
+    #[test]
     fn fails_to_parse_event_name_without_abi() {
         let event_string = ("MyEvent").to_string();
         assert_eq!(
@@ -2052,7 +2161,7 @@ mod test {
 
         let error = DataSource::from_evm_network_config(cfg.chains[0].clone()).unwrap_err();
 
-        assert_eq!(error.to_string(), "EE106: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
+        assert_eq!(error.to_string(), "Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
     }
 
     #[test]

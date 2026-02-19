@@ -607,7 +607,7 @@ let make = (
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     Js.Exn.raiseError(
-      `EE109: The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
@@ -632,7 +632,7 @@ let make = (
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
-          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+          "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
@@ -661,7 +661,7 @@ let make = (
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
-          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+          "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
@@ -684,7 +684,7 @@ let make = (
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
-          "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+          "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
           "chainId": chain->ChainMap.Chain.toChainId,
