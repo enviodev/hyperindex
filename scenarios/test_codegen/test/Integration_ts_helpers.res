@@ -32,6 +32,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   {
     name: "LocalChain",
     maxReorgDepth: 200,
+    blockLag: 0,
     startBlock: 1,
     id: 1337,
     contracts,

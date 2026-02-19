@@ -678,6 +678,7 @@ impl SystemConfig {
                         max_reorg_depth: network
                             .max_reorg_depth
                             .or_else(|| get_max_reorg_depth_from_id(network.id)),
+                        block_lag: network.block_lag,
                         start_block: network.start_block,
                         end_block: network.end_block,
                         sync_source,
@@ -833,6 +834,7 @@ impl SystemConfig {
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: None,
+                        block_lag: None,
                         sync_source,
                         contracts,
                     };
@@ -872,6 +874,7 @@ impl SystemConfig {
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: None,
+                        block_lag: None,
                         sync_source,
                         contracts: vec![],
                     };
@@ -1128,6 +1131,7 @@ pub struct Network {
     pub start_block: u64,
     pub end_block: Option<u64>,
     pub max_reorg_depth: Option<i32>,
+    pub block_lag: Option<i32>,
     pub contracts: Vec<NetworkContract>,
 }
 
@@ -2068,6 +2072,7 @@ mod test {
             start_block: 0,
             end_block: None,
             max_reorg_depth: None,
+            block_lag: None,
             contracts: None,
         };
 
@@ -2148,6 +2153,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 max_reorg_depth: None,
+                block_lag: None,
                 contracts: None,
             }],
             rollback_on_reorg: None,
@@ -2195,6 +2201,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 max_reorg_depth: None,
+                block_lag: None,
                 contracts: None,
             }],
             rollback_on_reorg: None,

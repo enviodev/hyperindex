@@ -256,7 +256,7 @@ module Indexer = {
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
-  type chainConfig = {chain: chainId, sourceConfig: Config.sourceConfig, startBlock?: int}
+  type chainConfig = {chain: chainId, sourceConfig: Config.sourceConfig, startBlock?: int, blockLag?: int}
 
   let rec make = async (
     ~chains: array<chainConfig>,
@@ -293,6 +293,9 @@ module Indexer = {
               sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getWithDefault(
                 originalChainConfig.startBlock,
+              ),
+              blockLag: chainConfig.blockLag->Option.getWithDefault(
+                originalChainConfig.blockLag,
               ),
             },
           )
