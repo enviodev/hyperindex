@@ -155,7 +155,7 @@ let runEventHandlerOrThrow = async (
     )
   }
   let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-  Prometheus.incrementHandlerTimeCounter(~duration=handlerDuration)
+  Prometheus.ProcessingBatch.incrementHandlerTime(~duration=handlerDuration)
 }
 
 let runHandlerOrThrow = async (
@@ -357,11 +357,7 @@ let registerProcessEventBatchMetrics = (
     "write_time_elapsed": dbWriteDuration,
   })
 
-  Prometheus.incrementLoadEntityDurationCounter(~duration=loadDuration)
-  Prometheus.incrementEventRouterDurationCounter(~duration=handlerDuration)
-  Prometheus.incrementExecuteBatchDurationCounter(~duration=dbWriteDuration)
-  Prometheus.incrementStorageWriteTimeCounter(~duration=dbWriteDuration)
-  Prometheus.incrementStorageWriteCounter()
+  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration, ~dbWriteDuration)
 }
 
 type logPartitionInfo = {
