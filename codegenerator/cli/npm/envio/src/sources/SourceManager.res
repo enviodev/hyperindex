@@ -249,9 +249,12 @@ let getSourceNewHeight = async (
       } catch {
       | exn =>
         let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
-        logger->Logging.childTrace({
+        // Escalate log level after repeated failures to aid debugging
+        let log = retry.contents >= 4 ? Logging.childWarn : Logging.childTrace
+        logger->log({
           "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
           "source": source.name,
+          "retry": retry.contents,
           "err": exn->Utils.prettifyExn,
         })
         retry := retry.contents + 1
@@ -502,8 +505,9 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             )
           } else {
             logger->Logging.childInfo({
-              "msg": "Switching to another data-source",
-              "source": nextSourceState.source.name,
+              "msg": "Switching to another data-source due to unsupported selection",
+              "disabledSource": source.name,
+              "nextSource": nextSourceState.source.name,
             })
             sourceStateRef := nextSourceState
             shouldUpdateActiveSource := true
@@ -529,8 +533,10 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         let hasAnotherSource = nextSourceState !== initialSourceState
 
         logger->Logging.childWarn({
-          "msg": message ++ (hasAnotherSource ? " - Attempting to another source" : ""),
+          "msg": message ++ (hasAnotherSource ? " - Attempting another source" : ""),
           "toBlock": attemptedToBlock,
+          "currentSource": source.name,
+          "nextSource": hasAnotherSource ? nextSourceState.source.name : "none",
           "err": exn->Utils.prettifyExn,
         })
 
@@ -584,8 +590,10 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         let shouldSwitch = nextSourceState !== sourceState
         if shouldSwitch {
           logger->Logging.childInfo({
-            "msg": "Switching to another data-source",
-            "source": nextSourceState.source.name,
+            "msg": "Switching to another data-source after repeated failures",
+            "failedSource": source.name,
+            "nextSource": nextSourceState.source.name,
+            "totalRetries": retry,
           })
           sourceStateRef := nextSourceState
           shouldUpdateActiveSource := true

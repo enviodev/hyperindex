@@ -322,6 +322,12 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
+  Logging.info({
+    "msg": "Preparing rollback diff",
+    "targetCheckpointId": rollbackTargetCheckpointId,
+    "entities": persistence.allEntities->Js.Array2.length,
+  })
+
   let inMemStore = InMemoryStore.make(
     ~entities=persistence.allEntities,
     ~rollbackTargetCheckpointId,
@@ -368,6 +374,15 @@ let prepareRollbackDiff = async (
           ~containsRollbackDiffChange=true,
         )
       })
+
+      if removedIdsResult->Utils.Array.notEmpty || restoredEntities->Utils.Array.notEmpty {
+        Logging.info({
+          "msg": "Rollback diff computed for entity",
+          "entity": entityConfig.name,
+          "removedCount": removedIdsResult->Js.Array2.length,
+          "restoredCount": restoredEntities->Array.length,
+        })
+      }
     })
     ->Promise.all
 

@@ -464,8 +464,20 @@ let processEventBatch = async (
       Ok()
     } catch {
     | Persistence.StorageError({message, reason}) =>
+      logger->Logging.childError({
+        "msg": "Storage error during batch write",
+        "detail": message,
+        "batchSize": totalBatchSize,
+        "err": reason->Utils.prettifyExn,
+      })
       reason->ErrorHandling.make(~msg=message, ~logger)->Error
-    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
+    | exn =>
+      logger->Logging.childError({
+        "msg": "Failed writing batch to database",
+        "batchSize": totalBatchSize,
+        "err": exn->Utils.prettifyExn,
+      })
+      exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
     }
   } catch {
   | ProcessingError({message, exn, item}) =>
