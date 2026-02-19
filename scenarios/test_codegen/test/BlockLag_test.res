@@ -37,11 +37,9 @@ describe("E2E blockLag tests", () => {
 
       // After entering reorg threshold, a new height poll fires.
       // Resolve it so the indexer can proceed.
-      if sourceMock.getHeightOrThrowCalls->Array.length > 0 {
-        sourceMock.resolveGetHeightOrThrow(300)
-        await Utils.delay(0)
-        await Utils.delay(0)
-      }
+      sourceMock.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
 
       // After entering reorg threshold, blockLag is updated to chainConfig.blockLag=1.
       // Resolve the pending fetch with items up to block 299 (knownHeight - blockLag).
@@ -68,11 +66,9 @@ describe("E2E blockLag tests", () => {
       await Utils.delay(0)
       await Utils.delay(0)
 
-      if sourceMock.getHeightOrThrowCalls->Array.length > 0 {
-        sourceMock.resolveGetHeightOrThrow(301)
-        await Utils.delay(0)
-        await Utils.delay(0)
-      }
+      sourceMock.resolveGetHeightOrThrow(301)
+      await Utils.delay(0)
+      await Utils.delay(0)
 
       // Advance chain height to 301 and resolve fetch up to block 300.
       sourceMock.resolveGetItemsOrThrow(
