@@ -942,7 +942,13 @@ describe("Use Envio test framework to test event handlers", () => {
 
     const { duplicateHandlerError, duplicateContractRegisterError } =
       await import("../src/handlers/EventHandlers.js");
-    assert.notStrictEqual(duplicateHandlerError, undefined);
-    assert.notStrictEqual(duplicateContractRegisterError, undefined);
+    assert.deepStrictEqual((duplicateHandlerError as any)?._1, {
+      contractName: "Gravatar",
+      eventName: "CustomSelection",
+    });
+    assert.deepStrictEqual((duplicateContractRegisterError as any)?._1, {
+      contractName: "Gravatar",
+      eventName: "FactoryEvent",
+    });
   });
 });
