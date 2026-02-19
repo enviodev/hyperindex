@@ -95,7 +95,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
 
   if operatorKeys->Array.length === 0 {
     Js.Exn.raiseError(
-      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, or { _in: [values] }.`,
+      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
     )
   }
   if operatorKeys->Array.length > 1 {
@@ -146,6 +146,39 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     )
     ->Promise.all
     ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+  } else if operatorKey === "_gte" || operatorKey === "_lte" {
+    // _gte and _lte are composed from Eq + Gt/Lt, deduplicating by entity ID
+    let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
+    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+
+    let loadWithOperator = operator =>
+      LoadLayer.loadByField(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~operator,
+        ~entityConfig,
+        ~fieldName=dbFieldName,
+        ~fieldValueSchema=fieldSchema,
+        ~inMemoryStore=params.inMemoryStore,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~fieldValue,
+      )
+
+    [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
+    ->Promise.all
+    ->Promise.thenResolve(results => {
+      let seen = Utils.Set.make()
+      let combined = []
+      results->Belt.Array.concatMany->Js.Array2.forEach(entity => {
+        let id = entity.id
+        if !(seen->Utils.Set.has(id)) {
+          seen->Utils.Set.add(id)->ignore
+          combined->Js.Array2.push(entity)->ignore
+        }
+      })
+      combined
+    })
   } else {
     let operator: TableIndices.Operator.t = switch operatorKey {
     | "_eq" => Eq
@@ -153,7 +186,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     | "_lt" => Lt
     | _ =>
       Js.Exn.raiseError(
-        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _in.`,
+        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
       )
     }
 

@@ -30,6 +30,8 @@ type whereOperator<'fieldType> = {
   _eq?: 'fieldType,
   _gt?: 'fieldType,
   _lt?: 'fieldType,
+  _gte?: 'fieldType,
+  _lte?: 'fieldType,
   _in?: array<'fieldType>,
 }
 

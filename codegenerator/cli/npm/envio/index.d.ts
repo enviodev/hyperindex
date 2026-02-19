@@ -29,13 +29,17 @@ export type WhereOperator<T> = {
   readonly _gt?: T;
   /** Matches entities where the field is less than the given value. */
   readonly _lt?: T;
+  /** Matches entities where the field is greater than or equal to the given value. */
+  readonly _gte?: T;
+  /** Matches entities where the field is less than or equal to the given value. */
+  readonly _lte?: T;
   /** Matches entities where the field equals any of the given values. */
   readonly _in?: readonly T[];
 };
 
 /**
  * Constructs a getWhere filter type from an entity type.
- * Each field can be filtered using {@link WhereOperator} (`_eq`, `_gt`, `_lt`).
+ * Each field can be filtered using {@link WhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`).
  *
  * Note: only fields with `@index` in the schema can be queried at runtime.
  * Attempting to filter on a non-indexed field will throw a descriptive error.

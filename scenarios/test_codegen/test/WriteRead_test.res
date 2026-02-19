@@ -208,6 +208,10 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let whereTokenIdGt49Test = ref([])
     let whereTokenIdLt50Test = ref([])
     let whereTokenIdLt51Test = ref([])
+    let whereTokenIdGte50Test = ref([])
+    let whereTokenIdGte51Test = ref([])
+    let whereTokenIdLte50Test = ref([])
+    let whereTokenIdLte49Test = ref([])
     let whereInOwnerTest = ref([])
     let whereInTokenIdTest = ref([])
     let whereInTokenIdNoMatchTest = ref([])
@@ -261,6 +265,12 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           whereTokenIdLt50Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
           whereTokenIdLt51Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
 
+          // Execute _gte and _lte queries
+          whereTokenIdGte50Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
+          whereTokenIdGte51Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
+          whereTokenIdLte50Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
+          whereTokenIdLte49Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
+
           // Execute _in queries
           whereInOwnerTest := (await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
           whereInTokenIdTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]}}))
@@ -301,6 +311,30 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
       whereTokenIdLt51Test.contents->Array.length,
       1,
       ~message="Should have one token with tokenId < 51",
+    )
+
+    // Assert _gte results
+    Assert.equal(
+      whereTokenIdGte50Test.contents->Array.length,
+      2,
+      ~message="Should have two tokens with tokenId >= 50 (50 and 60)",
+    )
+    Assert.equal(
+      whereTokenIdGte51Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId >= 51 (only 60)",
+    )
+
+    // Assert _lte results
+    Assert.equal(
+      whereTokenIdLte50Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId <= 50",
+    )
+    Assert.equal(
+      whereTokenIdLte49Test.contents->Array.length,
+      0,
+      ~message="Shouldn't have any value with tokenId <= 49",
     )
 
     // Assert _in results
