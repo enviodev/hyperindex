@@ -872,12 +872,12 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "S.null(BigInt.schema)".to_string()
+            "S.null(BigInt_.schema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
-            "S.nullable(BigInt.nativeSchema)".to_string()
+            "S.nullable(BigInt_.nativeSchema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::Tuple(vec![TypeIdent::Int, TypeIdent::Bool]))
