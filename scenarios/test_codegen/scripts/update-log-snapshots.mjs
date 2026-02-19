@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { writeFileSync, mkdirSync } from "fs";
 
 const FIXTURE_PATH = "test/fixtures/LogTesting.res.mjs";
@@ -26,7 +26,7 @@ mkdirSync(SNAPSHOTS_DIR, { recursive: true });
 
 for (const strategy of strategies) {
   console.log(`Updating snapshot for ${strategy}...`);
-  const output = execSync(`node ${FIXTURE_PATH}`, {
+  const output = execFileSync("node", [FIXTURE_PATH], {
     encoding: "utf-8",
     env: {
       ...process.env,
