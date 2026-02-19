@@ -298,7 +298,7 @@ let start = async (
   // Register handlers (user code can access indexer.chains with DB state)
   let registrations = await HandlerLoader.registerAllHandlers(~config)
   // Apply registration data (isWildcard, eventFilters, etc.) to event configs
-  HandlerRegister.applyRegistrations(~config, ~ecosystem=config.ecosystem)
+  let config = HandlerRegister.applyRegistrations(~config, ~ecosystem=config.ecosystem)
 
   let ctx = {
     Ctx.registrations,
