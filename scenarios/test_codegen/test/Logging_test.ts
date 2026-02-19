@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { readFileSync } from "fs";
 import { strict as assert } from "assert";
 import path from "path";
@@ -15,7 +15,7 @@ const normalize = (s: string) =>
     .replace(/"@timestamp":"[^"]+"/g, '"@timestamp":"TIMESTAMP"');
 
 const runWithStrategy = (strategy: string): string => {
-  return execSync(`node ${FIXTURE_PATH}`, {
+  return execFileSync("node", [FIXTURE_PATH], {
     encoding: "utf-8",
     env: {
       ...process.env,
