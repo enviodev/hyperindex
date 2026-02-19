@@ -1312,6 +1312,41 @@ pub struct Event {
 }
 
 impl Event {
+    /// Normalize an event signature string to handle common formatting variations:
+    /// - Strip trailing semicolons
+    /// - Remove spaces before commas (`uint128 ,uint16` -> `uint128,uint16`)
+    /// - Collapse multiple spaces into one (`uint128,  uint16` -> `uint128, uint16`)
+    fn normalize_event_signature(sig: &str) -> String {
+        let sig = sig.trim();
+        let sig = sig.strip_suffix(';').unwrap_or(sig).trim_end();
+
+        let mut result = String::with_capacity(sig.len());
+        let mut chars = sig.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == ',' {
+                // Remove any trailing spaces before this comma that we already added
+                while result.ends_with(' ') {
+                    result.pop();
+                }
+                result.push(',');
+                // Skip any whitespace after comma, then add exactly one space
+                while chars.peek() == Some(&' ') {
+                    chars.next();
+                }
+                // Add a space after comma if the next char isn't ')' or ']'
+                // (to handle cases like trailing commas)
+                if chars.peek().is_some() && chars.peek() != Some(&')') && chars.peek() != Some(&']') {
+                    result.push(' ');
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
+    }
+
     fn get_abi_event(event_string: &str, opt_abi: &Option<EvmAbi>) -> Result<AlloyEvent> {
         let parse_event_sig = |sig: &str| -> Result<AlloyEvent> {
             AlloyEvent::parse(sig).map_err(|err| {
@@ -1324,7 +1359,7 @@ impl Event {
             })
         };
 
-        let event_string = event_string.trim();
+        let event_string = &Self::normalize_event_signature(event_string);
 
         if event_string.starts_with("event ") {
             parse_event_sig(event_string)
@@ -1998,6 +2033,80 @@ mod test {
         assert!(
             result.is_err(),
             "Expected error when parsing invalid type 'uint69'"
+        );
+    }
+
+    #[test]
+    fn normalize_event_signature_handles_formatting_issues() {
+        // Trailing semicolon
+        assert_eq!(
+            Event::normalize_event_signature("Transfer(address from);"),
+            "Transfer(address from)"
+        );
+        // Space before comma
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128 ,uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // Multiple spaces after comma
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128,  uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // No space after comma (should add one)
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128,uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // Already well-formatted
+        assert_eq!(
+            Event::normalize_event_signature("Foo(uint128, uint16)"),
+            "Foo(uint128, uint16)"
+        );
+        // Leading/trailing whitespace
+        assert_eq!(
+            Event::normalize_event_signature("  Foo(uint128, uint16)  "),
+            "Foo(uint128, uint16)"
+        );
+    }
+
+    #[test]
+    fn parse_event_sig_with_trailing_semicolon() {
+        // Issue #959: trailing semicolons should be stripped
+        let event_string =
+            "AddShopItems((uint128, uint16, uint16, uint16, uint16, bool)[] shopItems, uint256 indexed globalEventId);";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+        assert_eq!(parsed.name, "AddShopItems");
+        assert_eq!(parsed.inputs.len(), 2);
+    }
+
+    #[test]
+    fn parse_event_sig_with_space_before_comma() {
+        // Issue #959: spaces before commas should be normalized
+        let event_string =
+            "AddShopItems((uint128 ,uint16,uint16 ,uint16,uint16,bool)[] shopItems, uint256 indexed globalEventId)";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+        assert_eq!(parsed.name, "AddShopItems");
+        assert_eq!(parsed.inputs.len(), 2);
+    }
+
+    #[test]
+    fn parse_event_sig_with_all_formatting_issues() {
+        // Issue #959: combination of trailing semicolon and inconsistent spacing
+        let event_string =
+            "AddShopItems((uint128 ,uint16,uint16 ,uint16,uint16,bool)[] shopItems, uint256 indexed globalEventId);";
+        let parsed = Event::get_abi_event(event_string, &None).unwrap();
+        assert_eq!(parsed.name, "AddShopItems");
+        assert_eq!(parsed.inputs.len(), 2);
+
+        // Should produce the same sighash as the well-formatted version
+        let well_formatted =
+            "AddShopItems((uint128, uint16, uint16, uint16, uint16, bool)[] shopItems, uint256 indexed globalEventId)";
+        let expected = Event::get_abi_event(well_formatted, &None).unwrap();
+        assert_eq!(
+            parsed.selector().to_string(),
+            expected.selector().to_string(),
+            "Sighash should match regardless of formatting"
         );
     }
 
