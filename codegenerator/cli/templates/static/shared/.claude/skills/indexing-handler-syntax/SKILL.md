@@ -49,13 +49,16 @@ const entity = await context.Entity.getOrCreate({ id, ...defaults });
 const list = await context.Entity.getWhere({ fieldName: { _eq: value } });
 const list = await context.Entity.getWhere({ fieldName: { _gt: value } });
 const list = await context.Entity.getWhere({ fieldName: { _lt: value } });
+const list = await context.Entity.getWhere({ fieldName: { _gte: value } });
+const list = await context.Entity.getWhere({ fieldName: { _lte: value } });
+const list = await context.Entity.getWhere({ fieldName: { _in: [value1, value2] } });
 
 // Write
 context.Entity.set(entity);          // create or update (sync — no await)
 context.Entity.deleteUnsafe(id);     // delete (sync — no await)
 ```
 
-`getWhere` operators: `_eq`, `_gt`, `_lt`. Only `@index` fields are queryable. See `indexing-schema` for @index syntax.
+`getWhere` operators: `_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`. Only `@index` fields are queryable. See `indexing-schema` for @index syntax.
 
 ### Context Properties
 

@@ -208,6 +208,14 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let whereTokenIdGt49Test = ref([])
     let whereTokenIdLt50Test = ref([])
     let whereTokenIdLt51Test = ref([])
+    let whereTokenIdGte50Test = ref([])
+    let whereTokenIdGte51Test = ref([])
+    let whereTokenIdLte50Test = ref([])
+    let whereTokenIdLte49Test = ref([])
+    let whereInOwnerTest = ref([])
+    let whereInTokenIdTest = ref([])
+    let whereInTokenIdNoMatchTest = ref([])
+    let whereInTokenIdEmptyTest = ref([])
 
     let testUserId = "test-user-1"
     let testCollectionId = "test-collection-1"
@@ -242,6 +250,13 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
             owner_id: testUserId,
           })
 
+          context.token.set({
+            id: "token-2",
+            tokenId: BigInt.fromInt(60),
+            collection_id: testCollectionId,
+            owner_id: testUserId,
+          })
+
           // Execute getWhere queries
           whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
           whereEqTokenIdTest := (await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
@@ -249,6 +264,18 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           whereTokenIdGt49Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
           whereTokenIdLt50Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
           whereTokenIdLt51Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
+
+          // Execute _gte and _lte queries
+          whereTokenIdGte50Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
+          whereTokenIdGte51Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
+          whereTokenIdLte50Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
+          whereTokenIdLte49Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
+
+          // Execute _in queries
+          whereInOwnerTest := (await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
+          whereInTokenIdTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]}}))
+          whereInTokenIdNoMatchTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}))
+          whereInTokenIdEmptyTest := (await context.token.getWhere({tokenId: {_in: []}}))
         },
       },
     ])
@@ -257,7 +284,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     // Assert getWhere results
     Assert.equal(
       whereEqOwnerTest.contents->Array.length,
-      1,
+      2,
       ~message="should have successfully loaded values on where eq owner_id query",
     )
     Assert.equal(
@@ -267,23 +294,69 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     )
     Assert.equal(
       whereTokenIdGt50Test.contents->Array.length,
-      0,
-      ~message="Shouldn't have any value with tokenId > 50",
+      1,
+      ~message="Should have one token with tokenId > 50",
     )
-    Assert.deepEqual(
-      whereEqTokenIdTest.contents,
-      whereTokenIdGt49Test.contents,
-      ~message="Where gt 49 and eq 50 should return the same result",
+    Assert.equal(
+      whereTokenIdGt49Test.contents->Array.length,
+      2,
+      ~message="Should have two tokens with tokenId > 49",
     )
     Assert.equal(
       whereTokenIdLt50Test.contents->Array.length,
       0,
       ~message="Shouldn't have any value with tokenId < 50",
     )
-    Assert.deepEqual(
-      whereEqTokenIdTest.contents,
-      whereTokenIdLt51Test.contents,
-      ~message="Where lt 51 and eq 50 should return the same result",
+    Assert.equal(
+      whereTokenIdLt51Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId < 51",
+    )
+
+    // Assert _gte results
+    Assert.equal(
+      whereTokenIdGte50Test.contents->Array.length,
+      2,
+      ~message="Should have two tokens with tokenId >= 50 (50 and 60)",
+    )
+    Assert.equal(
+      whereTokenIdGte51Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId >= 51 (only 60)",
+    )
+
+    // Assert _lte results
+    Assert.equal(
+      whereTokenIdLte50Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId <= 50",
+    )
+    Assert.equal(
+      whereTokenIdLte49Test.contents->Array.length,
+      0,
+      ~message="Shouldn't have any value with tokenId <= 49",
+    )
+
+    // Assert _in results
+    Assert.equal(
+      whereInOwnerTest.contents->Array.length,
+      2,
+      ~message="_in on owner should return both tokens owned by testUserId",
+    )
+    Assert.equal(
+      whereInTokenIdTest.contents->Array.length,
+      2,
+      ~message="_in on tokenId with [50, 60] should return both tokens",
+    )
+    Assert.equal(
+      whereInTokenIdNoMatchTest.contents->Array.length,
+      0,
+      ~message="_in on tokenId with [999] should return no tokens",
+    )
+    Assert.equal(
+      whereInTokenIdEmptyTest.contents->Array.length,
+      0,
+      ~message="_in on tokenId with empty array should return no tokens",
     )
 
     // Test deletion and index cleanup
@@ -303,8 +376,8 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
 
     Assert.equal(
       whereEqOwnerTest.contents->Array.length,
-      0,
-      ~message="should have removed index on deleted token",
+      1,
+      ~message="should have removed index on deleted token, leaving one token",
     )
   })
 })

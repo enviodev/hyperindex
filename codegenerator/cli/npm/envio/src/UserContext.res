@@ -95,7 +95,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
 
   if operatorKeys->Array.length === 0 {
     Js.Exn.raiseError(
-      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, or { _lt: value }.`,
+      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
     )
   }
   if operatorKeys->Array.length > 1 {
@@ -105,19 +105,8 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
   }
 
   let operatorKey = operatorKeys->Js.Array2.unsafe_get(0)
-  let operator: TableIndices.Operator.t = switch operatorKey {
-  | "_eq" => Eq
-  | "_gt" => Gt
-  | "_lt" => Lt
-  | _ =>
-    Js.Exn.raiseError(
-      `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt.`,
-    )
-  }
 
-  let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
-
-  switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
+  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
   | None =>
     Js.Exn.raiseError(
       `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
@@ -130,7 +119,67 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     Js.Exn.raiseError(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
     )
-  | Some(Field({fieldSchema})) =>
+  | Some(Field({fieldSchema})) => fieldSchema
+  }
+
+  if operatorKey === "_in" {
+    let fieldValues =
+      operatorObj
+      ->Js.Dict.unsafeGet(operatorKey)
+      ->(Utils.magic: unknown => array<unknown>)
+
+    fieldValues
+    ->Js.Array2.map(fieldValue =>
+      LoadLayer.loadByField(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~operator=Eq,
+        ~entityConfig,
+        ~fieldName=dbFieldName,
+        ~fieldValueSchema=fieldSchema,
+        ~inMemoryStore=params.inMemoryStore,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~fieldValue,
+      )
+    )
+    ->Promise.all
+    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+  } else if operatorKey === "_gte" || operatorKey === "_lte" {
+    // _gte and _lte are composed from Eq + Gt/Lt
+    let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
+    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+
+    let loadWithOperator = operator =>
+      LoadLayer.loadByField(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~operator,
+        ~entityConfig,
+        ~fieldName=dbFieldName,
+        ~fieldValueSchema=fieldSchema,
+        ~inMemoryStore=params.inMemoryStore,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~fieldValue,
+      )
+
+    [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
+    ->Promise.all
+    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+  } else {
+    let operator: TableIndices.Operator.t = switch operatorKey {
+    | "_eq" => Eq
+    | "_gt" => Gt
+    | "_lt" => Lt
+    | _ =>
+      Js.Exn.raiseError(
+        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+      )
+    }
+
+    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+
     LoadLayer.loadByField(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
