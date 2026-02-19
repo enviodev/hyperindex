@@ -162,51 +162,6 @@ let makeSafeHistogramOrThrow = (~name, ~help, ~labelSchema, ~backets=?) => {
   }
 }
 
-module BenchmarkSummaryData = {
-  type labels = {
-    group: string,
-    stat: string,
-    label: string,
-  }
-  let labelSchema = S.schema(s => {
-    group: s.matches(S.string),
-    stat: s.matches(S.string),
-    label: s.matches(S.string),
-  })
-
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="benchmark_summary_data",
-    ~help="All data points collected during indexer benchmark",
-    ~labelSchema,
-  )
-
-  let set = (
-    ~group: string,
-    ~label: string,
-    ~n: float,
-    ~mean: float,
-    ~stdDev: option<float>,
-    ~min: float,
-    ~max: float,
-    ~sum: float,
-  ) => {
-    let mk = stat => {
-      group,
-      stat,
-      label,
-    }
-    gauge->SafeGauge.handleFloat(~labels=mk("n"), ~value=n)
-    gauge->SafeGauge.handleFloat(~labels=mk("mean"), ~value=mean)
-    gauge->SafeGauge.handleFloat(~labels=mk("min"), ~value=min)
-    gauge->SafeGauge.handleFloat(~labels=mk("max"), ~value=max)
-    gauge->SafeGauge.handleFloat(~labels=mk("sum"), ~value=sum)
-    switch stdDev {
-    | Some(stdDev) => gauge->SafeGauge.handleFloat(~labels=mk("stdDev"), ~value=stdDev)
-    | None => ()
-    }
-  }
-}
-
 let incrementLoadEntityDurationCounter = (~duration) => {
   loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
 }
@@ -227,6 +182,16 @@ let incrementStorageWriteCounter = () => {
   storageWriteCounter->PromClient.Counter.inc
 }
 
+let handlerTimeCounter = PromClient.Counter.makeCounter({
+  "name": "envio_handler_processing_time_spent",
+  "help": "Cumulative time spent executing event handlers in milliseconds",
+  "labelNames": [],
+})
+
+let incrementHandlerTimeCounter = (~duration) => {
+  handlerTimeCounter->PromClient.Counter.incMany(duration)
+}
+
 let knownHeightGauge = PromClient.Gauge.makeGauge({
   "name": "envio_indexing_known_height",
   "help": "The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.",
@@ -241,24 +206,6 @@ let setKnownHeight = (~blockNumber, ~chainId) => {
 
 let setAllChainsSyncedToHead = () => {
   allChainsSyncedToHead->PromClient.Gauge.set(1)
-}
-
-module BenchmarkCounters = {
-  type labels = {label: string}
-  let labelSchema = S.schema(s => {
-    label: s.matches(S.string),
-  })
-
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="benchmark_counters",
-    ~help="All counters collected during indexer benchmark",
-    ~labelSchema,
-  )
-
-  let set = (~label, ~millis, ~totalRuntimeMillis) => {
-    gauge->SafeGauge.handleFloat(~labels={label: label}, ~value=millis)
-    gauge->SafeGauge.handleFloat(~labels={label: "Total Run Time (ms)"}, ~value=totalRuntimeMillis)
-  }
 }
 
 let chainIdLabelsSchema = S.object(s => {

@@ -19,7 +19,6 @@ This document contains the help content for the `envio` command-line program.
 * [`envio dev`↴](#envio-dev)
 * [`envio stop`↴](#envio-stop)
 * [`envio codegen`↴](#envio-codegen)
-* [`envio benchmark-summary`↴](#envio-benchmark-summary)
 * [`envio local`↴](#envio-local)
 * [`envio local docker`↴](#envio-local-docker)
 * [`envio local docker up`↴](#envio-local-docker-up)
@@ -40,7 +39,6 @@ This document contains the help content for the `envio` command-line program.
 * `dev` — Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
 * `stop` — Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
 * `codegen` — Generate indexing code from user-defined configuration & schema files
-* `benchmark-summary` — Prints a summary of the benchmark data after running the indexer with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer without any automatic codegen
 
@@ -260,14 +258,6 @@ Generate indexing code from user-defined configuration & schema files
 
 
 
-## `envio benchmark-summary`
-
-Prints a summary of the benchmark data after running the indexer with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
-
-**Usage:** `envio benchmark-summary`
-
-
-
 ## `envio local`
 
 Prepare local environment for envio testing
@@ -357,7 +347,6 @@ Start the indexer without any automatic codegen
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
-* `-b`, `--bench` — Saves benchmark data to a file during indexing
 
 
 

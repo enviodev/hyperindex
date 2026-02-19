@@ -431,35 +431,6 @@ pub mod db_migrate {
     }
 }
 
-pub mod benchmark {
-    use super::{execute_command, to_js_path};
-    use crate::config_parsing::system_config::SystemConfig;
-    use anyhow::{anyhow, Result};
-    use pathdiff::diff_paths;
-
-    pub async fn print_summary(config: &SystemConfig) -> Result<()> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
-        )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let benchmark_script = format!(
-            "import(\"./{}/src/Benchmark.res.mjs\").then(m => m.Summary.printSummary())",
-            to_js_path(&relative_generated)
-        );
-        let args = vec!["-e", &benchmark_script];
-        let current_dir = &config.parsed_project_paths.project_root;
-        let exit = execute_command("node", args, current_dir).await?;
-
-        if !exit.success() {
-            return Err(anyhow!("Failed printing benchmark summary"));
-        }
-
-        Ok(())
-    }
-}
-
 pub mod git {
     use super::execute_command;
     use anyhow::{anyhow, Result};

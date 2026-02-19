@@ -333,16 +333,12 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
 let validatePartitionQueryResponse = (
   state,
-  {chain, response, query} as partitionQueryResponse: partitionQueryResponse,
+  {chain, response} as partitionQueryResponse: partitionQueryResponse,
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
-    parsedQueueItems,
-    latestFetchedBlockNumber,
-    stats,
     knownHeight,
     reorgGuard,
-    fromBlockQueried,
   } = response
 
   if knownHeight > chainFetcher.fetchState.knownHeight {
@@ -353,23 +349,6 @@ let validatePartitionQueryResponse = (
       // belong to the currently active source.
       // But for simplicity, assume it does.
       ~sourceName=(chainFetcher.sourceManager->SourceManager.getActiveSource).name,
-    )
-  }
-
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addBlockRangeFetched(
-      ~totalTimeElapsed=stats.totalTimeElapsed,
-      ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
-      ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~fromBlock=fromBlockQueried,
-      ~toBlock=latestFetchedBlockNumber,
-      ~numEvents=parsedQueueItems->Array.length,
-      ~numAddresses=query.addressesByContractName->FetchState.addressesByContractNameCount,
-      ~queryName=switch query {
-      | {selection: {dependsOnAddresses: false}} => `Wildcard Query`
-      | {selection: {dependsOnAddresses: true}} => `Normal Query`
-      },
     )
   }
 
@@ -918,7 +897,6 @@ let injectedTaskReducer = (
         )
 
       let progressedChainsById = batch.progressedChainsById
-      let totalBatchSize = batch.totalBatchSize
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let shouldSaveHistory = state.ctx.config->Config.shouldSaveHistory(~isInReorgThreshold)
@@ -946,15 +924,6 @@ let injectedTaskReducer = (
       if progressedChainsById->Utils.Dict.isEmpty {
         ()
       } else {
-        if Env.Benchmark.shouldSaveData {
-          let group = "Other"
-          Benchmark.addSummaryData(
-            ~group,
-            ~label=`Batch Size`,
-            ~value=totalBatchSize->Belt.Int.toFloat,
-          )
-        }
-
         dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 

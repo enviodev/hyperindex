@@ -29,4 +29,3 @@
 *.res.js
 *.res.mjs
 logs/*
-*BenchmarkCache.json

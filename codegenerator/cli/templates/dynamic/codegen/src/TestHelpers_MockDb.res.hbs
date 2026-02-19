@@ -510,7 +510,6 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         ~loadManager,
         ~ctx,
         ~shouldSaveHistory=false,
-        ~shouldBenchmark=false,
         ~chains,
       )
     } catch {

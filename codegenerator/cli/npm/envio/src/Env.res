@@ -65,50 +65,6 @@ let hypersyncClientSerializationFormat =
 let hypersyncClientEnableQueryCaching =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=true)
 
-module Benchmark = {
-  module SaveDataStrategy: {
-    type t
-    let schema: S.t<t>
-    let default: t
-    let shouldSaveJsonFile: t => bool
-    let shouldSavePrometheus: t => bool
-    let shouldSaveData: t => bool
-  } = {
-    @unboxed
-    type t = Bool(bool) | @as("json-file") JsonFile | @as("prometheus") Prometheus
-
-    let schema = S.enum([Bool(true), Bool(false), JsonFile, Prometheus])
-    let default = Bool(false)
-
-    let shouldSaveJsonFile = self =>
-      switch self {
-      | JsonFile | Bool(true) => true
-      | _ => false
-      }
-
-    let shouldSavePrometheus = _ => true
-
-    let shouldSaveData = self => self->shouldSavePrometheus || self->shouldSaveJsonFile
-  }
-
-  let saveDataStrategy =
-    envSafe->EnvSafe.get(
-      "ENVIO_SAVE_BENCHMARK_DATA",
-      SaveDataStrategy.schema,
-      ~fallback=SaveDataStrategy.default,
-    )
-
-  let shouldSaveData = saveDataStrategy->SaveDataStrategy.shouldSaveData
-
-  /**
-  StdDev involves saving sum of squares of data points, which could get very large.
-
-  Currently only do this for local runs on json-file and not prometheus.
-  */
-  let shouldSaveStdDev =
-    saveDataStrategy->SaveDataStrategy.shouldSaveJsonFile
-}
-
 let logStrategy =
   envSafe->EnvSafe.get(
     "LOG_STRATEGY",
@@ -234,19 +190,6 @@ module ThrottleWrites = {
       ~devFallback=30_000,
     )
 
-  let liveMetricsBenchmarkIntervalMillis =
-    envSafe->EnvSafe.get(
-      "ENVIO_THROTTLE_LIVE_METRICS_BENCHMARK_INTERVAL_MILLIS",
-      S.int,
-      ~devFallback=1_000,
-    )
-
-  let jsonFileBenchmarkIntervalMillis =
-    envSafe->EnvSafe.get(
-      "ENVIO_THROTTLE_JSON_FILE_BENCHMARK_INTERVAL_MILLIS",
-      S.int,
-      ~devFallback=500,
-    )
 }
 
 // You need to close the envSafe after you're done with it so that it immediately tells you about your  misconfigured environment on startup.
