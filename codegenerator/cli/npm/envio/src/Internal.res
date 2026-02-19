@@ -130,16 +130,21 @@ type eventConfig = private {
   id: string,
   name: string,
   contractName: string,
-  isWildcard: bool,
+  // Mutable because set after handler registration via applyRegistrations
+  mutable isWildcard: bool,
   // Whether the event has an event filter which uses addresses
-  filterByAddresses: bool,
+  mutable filterByAddresses: bool,
   // Usually always false for wildcard events
   // But might be true for wildcard event with dynamic event filter by addresses
-  dependsOnAddresses: bool,
-  handler: option<handler>,
-  contractRegister: option<contractRegister>,
+  mutable dependsOnAddresses: bool,
   paramsRawEventSchema: S.schema<eventParams>,
 }
+
+// Setters for mutable fields on private eventConfig type
+// Using @set externals to bypass private type restriction
+@set external setIsWildcard: (eventConfig, bool) => unit = "isWildcard"
+@set external setFilterByAddresses: (eventConfig, bool) => unit = "filterByAddresses"
+@set external setDependsOnAddresses: (eventConfig, bool) => unit = "dependsOnAddresses"
 
 type fuelEventKind =
   | LogData({logId: string, decode: string => eventParams})
@@ -169,10 +174,17 @@ type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
+type parsedEventFilters = {
+  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
+  filterByAddresses: bool,
+}
+
 @genType.opaque
 type evmEventConfig = {
   ...eventConfig,
-  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
+  mutable getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
+  // Captures per-event topic encoders; called after registration to resolve actual filters
+  resolveEventFilters: option<Js.Json.t> => parsedEventFilters,
   blockSchema: S.schema<eventBlock>,
   transactionSchema: S.schema<eventTransaction>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,

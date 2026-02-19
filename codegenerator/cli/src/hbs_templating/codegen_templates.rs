@@ -496,7 +496,7 @@ pub struct EventMod {
     pub topic_count: usize,
     pub event_name: String,
     pub data_type: String,
-    pub parse_event_filters_code: String,
+    pub parse_event_filters_code_with_arg: String,
     pub params_raw_event_schema: String,
     pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
@@ -519,7 +519,7 @@ impl EventMod {
         let params_raw_event_schema = &self.params_raw_event_schema;
         let convert_hyper_sync_event_args_code = &self.convert_hyper_sync_event_args_code;
         let event_filter_type = &self.event_filter_type;
-        let parse_event_filters_code = &self.parse_event_filters_code;
+        let parse_event_filters_code_with_arg = &self.parse_event_filters_code_with_arg;
 
         let event_filters_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
@@ -584,20 +584,20 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
         let base_event_config_code = r#"id,
 name,
 contractName,
-isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+isWildcard: false,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),"#.to_string();
 
         let non_event_mod_code = match fuel_event_kind_code {
             None => format!(
                 r#"
+let resolveEventFilters = (eventFilters) => {parse_event_filters_code_with_arg}
+let {{getEventFiltersOrThrow, filterByAddresses: _}} = resolveEventFilters(None)
 let register = (): Internal.evmEventConfig => {{
-let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
 {{
   getEventFiltersOrThrow,
-  filterByAddresses,
-  dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+  resolveEventFilters,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
@@ -610,7 +610,7 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
 let register = (): Internal.fuelEventConfig => {{
 kind: {fuel_event_kind_code},
 filterByAddresses: false,
-dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name),
+dependsOnAddresses: true,
 {base_event_config_code}
 }}"#
             ),
@@ -701,7 +701,8 @@ impl EventTemplate {
         format!("{{{field_rows}}}")
     }
 
-    pub fn generate_parse_event_filters_code(params: &[EventParam]) -> String {
+    // Generates code that takes eventFilters as a parameter (for resolveEventFilters)
+    pub fn generate_parse_event_filters_code_with_arg(params: &[EventParam]) -> String {
         let indexed_params = params.iter().filter(|param| param.indexed);
 
         //Prefixed with underscore for cases where it is not used to avoid compiler warnings
@@ -733,8 +734,7 @@ impl EventTemplate {
                 });
 
         format!(
-            "LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.\
-           getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[{params_code}]{topic_filter_calls})"
+            "LogSelection.parseEventFiltersOrThrow(~eventFilters, ~sighash, ~params=[{params_code}]{topic_filter_calls})"
         )
     }
 
@@ -796,7 +796,7 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            parse_event_filters_code: "".to_string(),
+            parse_event_filters_code_with_arg: "".to_string(),
             data_type: "Internal.fuelSupplyParams".to_string(),
             params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
@@ -822,7 +822,7 @@ impl EventTemplate {
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
-            parse_event_filters_code: "".to_string(),
+            parse_event_filters_code_with_arg: "".to_string(),
             data_type: "Internal.fuelTransferParams".to_string(),
             params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
@@ -881,7 +881,7 @@ impl EventTemplate {
                         .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc }),
                     event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
-                    parse_event_filters_code: Self::generate_parse_event_filters_code(params),
+                    parse_event_filters_code_with_arg: Self::generate_parse_event_filters_code_with_arg(params),
                     params_raw_event_schema: data_type_expr
                         .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
                     convert_hyper_sync_event_args_code:
@@ -905,7 +905,7 @@ impl EventTemplate {
                             sighash: config_event.sighash.to_string(),
                             topic_count: 0, //Default to 0 for fuel,
                             event_name: event_name.clone(),
-                            parse_event_filters_code: "".to_string(),
+                            parse_event_filters_code_with_arg: "".to_string(),
                             data_type: type_indent.to_string(),
                             params_raw_event_schema: format!(
                                 "{}->Utils.Schema.coerceToJsonPgType",
@@ -2405,21 +2405,21 @@ type eventFilter = {{}}
 
 @genType type eventFilters = Internal.noEventFilters
 
+let resolveEventFilters = (eventFilters) => LogSelection.parseEventFiltersOrThrow(~eventFilters, ~sighash, ~params=[])
+let {{getEventFiltersOrThrow, filterByAddresses: _}} = resolveEventFilters(None)
 let register = (): Internal.evmEventConfig => {{
-let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
 {{
   getEventFiltersOrThrow,
-  filterByAddresses,
-  dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+  resolveEventFilters,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
   id,
 name,
 contractName,
-isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+isWildcard: false,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }}
 }}"#
@@ -2488,21 +2488,21 @@ type eventFilter = {}
 
 @genType type eventFilters = Internal.noEventFilters
 
+let resolveEventFilters = (eventFilters) => LogSelection.parseEventFiltersOrThrow(~eventFilters, ~sighash, ~params=[])
+let {getEventFiltersOrThrow, filterByAddresses: _} = resolveEventFilters(None)
 let register = (): Internal.evmEventConfig => {
-let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
 {
   getEventFiltersOrThrow,
-  filterByAddresses,
-  dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+  resolveEventFilters,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
   id,
 name,
 contractName,
-isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+isWildcard: false,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
 }"#.to_string(),
@@ -2577,21 +2577,21 @@ type eventFilter = {}
 
 @genType type eventFilters = Internal.noEventFilters
 
+let resolveEventFilters = (eventFilters) => LogSelection.parseEventFiltersOrThrow(~eventFilters, ~sighash, ~params=[])
+let {getEventFiltersOrThrow, filterByAddresses: _} = resolveEventFilters(None)
 let register = (): Internal.evmEventConfig => {
-let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
 {
   getEventFiltersOrThrow,
-  filterByAddresses,
-  dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+  resolveEventFilters,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
   blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
   transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
   id,
 name,
 contractName,
-isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+isWildcard: false,
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
 }"#.to_string(),

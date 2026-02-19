@@ -57,10 +57,7 @@ let make = (~addresses, ~topicSelections) => {
   {addresses, topicSelections}
 }
 
-type parsedEventFilters = {
-  getEventFiltersOrThrow: ChainMap.Chain.t => Internal.eventFilters,
-  filterByAddresses: bool,
-}
+type parsedEventFilters = Internal.parsedEventFilters
 
 let parseEventFiltersOrThrow = {
   let emptyTopics = []

@@ -518,7 +518,10 @@ let processPartitionQueryResponse = async (
   for idx in 0 to parsedQueueItems->Array.length - 1 {
     let item = parsedQueueItems->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    if eventItem.eventConfig.contractRegister !== None {
+    if HandlerRegister.get(
+      ~contractName=eventItem.eventConfig.contractName,
+      ~eventName=eventItem.eventConfig.name,
+    ).contractRegister !== None {
       itemsWithContractRegister->Array.push(item)
     }
 
