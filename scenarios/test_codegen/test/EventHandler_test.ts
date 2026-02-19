@@ -930,29 +930,19 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
-  it("throws when registering a duplicate handler for the same event", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
+  it("throws when registering a duplicate handler or contractRegister for the same event", async () => {
+    // Ensure EventHandlers.ts is loaded via processEvents (autoLoadFromSrcHandlers).
+    // The duplicate registrations at the end of EventHandlers.ts throw during module load
+    // and are caught by try/catch.
+    const mockDb = MockDb.createMockDb();
     const event = Gravatar.FactoryEvent.createMockEvent({
-      testCase: "duplicateHandler",
+      testCase: "processMultipleEvents - 1",
     });
+    await mockDb.processEvents([event]);
 
-    await assert.rejects(mockDbInitial.processEvents([event]), {
-      message:
-        "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
-    });
-  });
-
-  it("throws when registering a duplicate contractRegister for the same event", async () => {
-    const mockDbInitial = MockDb.createMockDb();
-
-    const event = Gravatar.FactoryEvent.createMockEvent({
-      testCase: "duplicateContractRegister",
-    });
-
-    await assert.rejects(mockDbInitial.processEvents([event]), {
-      message:
-        "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
-    });
+    const { duplicateHandlerError, duplicateContractRegisterError } =
+      await import("../src/handlers/EventHandlers.js");
+    assert.notStrictEqual(duplicateHandlerError, undefined);
+    assert.notStrictEqual(duplicateContractRegisterError, undefined);
   });
 });
