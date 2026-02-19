@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
   let config = Indexer.Generated.configWithoutRegistrations

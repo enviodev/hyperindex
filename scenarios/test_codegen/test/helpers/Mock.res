@@ -823,7 +823,7 @@ module Source = {
 
 module Helper = {
   let initialEnterReorgThreshold = async (~indexerMock: Indexer.t, ~sourceMock: Source.t) => {
-    open RescriptMocha
+    open Vitest
 
     Assert.deepEqual(
       sourceMock.getHeightOrThrowCalls->Array.length,

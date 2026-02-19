@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Chains State", () => {
   describe("chainInfo type", () => {

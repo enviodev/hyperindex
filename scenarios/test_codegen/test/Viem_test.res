@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 @module("viem") external parseAbi: array<string> => EvmTypes.Abi.t = "parseAbi"
 

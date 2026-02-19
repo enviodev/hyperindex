@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 type arecord = {a: int}
 type logLike = {blockNum: int, logIndex: int}

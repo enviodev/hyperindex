@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 type testRecord = {optNumber: option<int>}
 let testRecordSchema = S.object(s => {

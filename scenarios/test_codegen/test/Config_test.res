@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Config.fromPublic", () => {
   it("resolves ABI for lowercase contract name in internal config", () => {

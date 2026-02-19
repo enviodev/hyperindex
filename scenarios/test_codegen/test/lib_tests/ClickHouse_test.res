@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Test makeClickHouseEntitySchema", () => {
   Async.it("Should serialize Date fields using getTime() instead of ISO string", async () => {

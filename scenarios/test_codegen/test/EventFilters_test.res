@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 let _ = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
 

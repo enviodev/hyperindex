@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async () => {

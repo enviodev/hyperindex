@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 open Belt
 
 let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn

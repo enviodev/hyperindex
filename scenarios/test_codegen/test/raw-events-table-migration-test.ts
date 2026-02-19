@@ -1,18 +1,14 @@
 import { mockRawEventRow } from "./helpers/Mock.gen";
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
-import chai, { expect } from "chai";
-import chaiAsPromised from "chai-as-promised";
-
-// require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
-chai.use(chaiAsPromised);
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 describe("Raw Events Table Migrations", () => {
   const sql = createSql();
 
-  before(async () => {
+  beforeAll(async () => {
     await runMigrationsNoLogs();
   });
-  after(async () => {
+  afterAll(async () => {
     await runMigrationsNoLogs();
   });
 
@@ -36,7 +32,11 @@ describe("Raw Events Table Migrations", () => {
       { column_name: "src_address", data_type: "text" },
     ];
 
-    expect(rawEventsColumnsRes).to.deep.include.members(expectedColumns);
+    expect(rawEventsColumnsRes).toEqual(
+      expect.arrayContaining(
+        expectedColumns.map((col) => expect.objectContaining(col))
+      )
+    );
   });
 
   //Since the rework of rollbacks in v2.8, rollbacks are not supported for raw events
@@ -48,12 +48,12 @@ describe("Raw Events Table Migrations", () => {
       mockRawEventRow as any
     )}`;
 
-    await expect(first_valid_row_query).to.eventually.be.fulfilled;
+    await expect(first_valid_row_query).resolves.toBeDefined();
 
     let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
       mockRawEventRow as any
     )}`;
 
-    await expect(second_valid_row_query).to.eventually.be.fulfilled;
+    await expect(second_valid_row_query).resolves.toBeDefined();
   });
 });

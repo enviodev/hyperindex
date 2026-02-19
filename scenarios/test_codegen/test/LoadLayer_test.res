@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async () => {

@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 type executeQueryMock = {
   fn: FetchState.query => Promise.t<unit>,
