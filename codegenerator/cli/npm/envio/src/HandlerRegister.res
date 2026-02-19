@@ -166,26 +166,6 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
   })
 }
 
-let getHandler = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).handler
-
-let getContractRegister = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).contractRegister
-
-let getEventFilters = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).eventOptions
-  ->Belt.Option.flatMap(value => value.eventFilters)
-
-let isWildcard = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).eventOptions
-  ->Belt.Option.flatMap(value => value.wildcard)
-  ->Belt.Option.getWithDefault(false)
-
-let hasRegistration = (~contractName, ~eventName) => {
-  let r = get(~contractName, ~eventName)
-  r.handler->Belt.Option.isSome || r.contractRegister->Belt.Option.isSome
-}
-
 type eventNamespace = {contractName: string, eventName: string}
 exception DuplicateEventRegistration(eventNamespace)
 
@@ -258,5 +238,41 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
       )
     }
     setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
+  })
+}
+
+// After handler registration, apply registration data to eventConfigs in the config.
+// Updates mutable fields: isWildcard, filterByAddresses, dependsOnAddresses, getEventFiltersOrThrow
+let applyRegistrations = (~config: Config.t, ~ecosystem: Ecosystem.t) => {
+  config.chainMap
+  ->ChainMap.values
+  ->Belt.Array.forEach(chainConfig => {
+    chainConfig.contracts->Belt.Array.forEach(contract => {
+      contract.events->Belt.Array.forEach(eventConfig => {
+        let reg = get(~contractName=eventConfig.contractName, ~eventName=eventConfig.name)
+        let isWildcard =
+          reg.eventOptions
+          ->Belt.Option.flatMap(o => o.wildcard)
+          ->Belt.Option.getWithDefault(false)
+        Internal.setIsWildcard(eventConfig, isWildcard)
+
+        switch ecosystem.name {
+        | Evm => {
+            let evmConfig =
+              eventConfig->(
+                Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+              )
+            let eventFilters =
+              reg.eventOptions->Belt.Option.flatMap(o => o.eventFilters)
+            let parsed = evmConfig.resolveEventFilters(eventFilters)
+            evmConfig.getEventFiltersOrThrow = parsed.getEventFiltersOrThrow
+            Internal.setFilterByAddresses(eventConfig, parsed.filterByAddresses)
+          }
+        | _ => ()
+        }
+
+        Internal.setDependsOnAddresses(eventConfig, !isWildcard || eventConfig.filterByAddresses)
+      })
+    })
   })
 }

@@ -1,3 +1,9 @@
+type eventRegistration = {
+  handler: option<Internal.handler>,
+  contractRegister: option<Internal.contractRegister>,
+  eventOptions: option<Internal.eventOptions<Js.Json.t>>,
+}
+
 type registrations = {
   onBlockByChainId: dict<array<Internal.onBlockConfig>>,
 }
@@ -5,6 +11,9 @@ type registrations = {
 let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Config.multichain) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: unit => registrations
+
+let get: (~contractName: string, ~eventName: string) => eventRegistration
+let set: (~contractName: string, ~eventName: string, eventRegistration) => unit
 
 let setHandler: (
   ~contractName: string,
@@ -20,10 +29,7 @@ let setContractRegister: (
   ~eventOptions: option<Internal.eventOptions<'eventFilters>>,
   ~logger: Pino.t=?,
 ) => unit
-let getHandler: (~contractName: string, ~eventName: string) => option<Internal.handler>
-let getContractRegister: (~contractName: string, ~eventName: string) => option<Internal.contractRegister>
-let getEventFilters: (~contractName: string, ~eventName: string) => option<Js.Json.t>
-let isWildcard: (~contractName: string, ~eventName: string) => bool
-let hasRegistration: (~contractName: string, ~eventName: string) => bool
 
 let onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
+
+let applyRegistrations: (~config: Config.t, ~ecosystem: Ecosystem.t) => unit

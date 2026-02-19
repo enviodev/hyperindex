@@ -726,6 +726,44 @@ module Source = {
                     },
                     parsedQueueItems: items->Array.map(
                       item => {
+                        // Register handler/contractRegister in HandlerRegister for mock events
+                        let () = {
+                          let mockHandler = switch item.handler {
+                          | Some(handler) =>
+                            (
+                              ({context} as args) => {
+                                // We don't want preload optimization for the tests
+                                if context.isPreload {
+                                  Promise.resolve()
+                                } else {
+                                  handler(args)
+                                }
+                              }
+                            )->(
+                              Utils.magic: (
+                                Internal.genericHandlerArgs<
+                                  eventLog<unknown>,
+                                  handlerContext,
+                                > => promise<unit>
+                              ) => option<Internal.handler>
+                            )
+                          | None => None
+                          }
+                          let mockContractRegister = item.contractRegister->(
+                            Utils.magic: option<
+                              contractRegister<unit>,
+                            > => option<Internal.contractRegister>
+                          )
+                          HandlerRegister.set(
+                            ~contractName="MockContract",
+                            ~eventName="MockEvent",
+                            {
+                              handler: mockHandler,
+                              contractRegister: mockContractRegister,
+                              eventOptions: None,
+                            },
+                          )
+                        }
                         Internal.Event({
                           eventConfig: ({
                             id: "MockEvent",
@@ -734,37 +772,11 @@ module Source = {
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
-                            handler: switch item.handler {
-                            | Some(handler) =>
-                              (
-                                ({context} as args) => {
-                                  // We don't want preload optimization for the tests
-                                  if context.isPreload {
-                                    Promise.resolve()
-                                  } else {
-                                    handler(args)
-                                  }
-                                }
-                              )->(
-                                Utils.magic: (
-                                  Internal.genericHandlerArgs<
-                                    eventLog<unknown>,
-                                    handlerContext,
-                                  > => promise<unit>
-                                ) => option<Internal.handler>
-                              )
-
-                            | None => None
-                            },
-                            contractRegister: item.contractRegister->(
-                              Utils.magic: option<
-                                contractRegister<unit>,
-                              > => option<Internal.contractRegister>
-                            ),
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
+                            resolveEventFilters: _ => Js.Exn.raiseError("Not implemented"),
                             blockSchema: S.object(_ => ())->Utils.magic,
                             transactionSchema: S.object(_ => ())->Utils.magic,
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),

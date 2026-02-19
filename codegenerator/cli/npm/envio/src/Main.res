@@ -59,6 +59,7 @@ let stateSchema = S.union([
 ])
 
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
+let globalInitialStateRef: ref<option<Persistence.initialState>> = ref(None)
 
 let getGlobalIndexer = (~config: Config.t): 'indexer => {
   let indexer = Utils.Object.createNullObject()
@@ -85,13 +86,38 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     let chainObj = Utils.Object.createNullObject()
     chainObj
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
-    ->Utils.Object.definePropertyWithValue(
+    // Use DB state for startBlock/endBlock when available (after persistence init)
+    ->Utils.Object.defineProperty(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {
+        enumerable: true,
+        get: () => {
+          switch globalInitialStateRef.contents {
+          | Some(initialState) =>
+            switch initialState.chains->Js.Array2.find(c => c.id === chainConfig.id) {
+            | Some(chainState) => chainState.startBlock
+            | None => chainConfig.startBlock
+            }
+          | None => chainConfig.startBlock
+          }
+        },
+      },
     )
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "endBlock",
-      {enumerable: true, value: chainConfig.endBlock},
+      {
+        enumerable: true,
+        get: () => {
+          switch globalInitialStateRef.contents {
+          | Some(initialState) =>
+            switch initialState.chains->Js.Array2.find(c => c.id === chainConfig.id) {
+            | Some(chainState) => chainState.endBlock
+            | None => chainConfig.endBlock
+            }
+          | None => chainConfig.endBlock
+          }
+        },
+      },
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
@@ -256,15 +282,24 @@ let start = async (
   // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
   let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
-  // Register all handlers first, then get the config with registrations
-  let configWithoutRegistrations = makeGeneratedConfig()
-  let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
+  // Create config once without registrations
   let config = makeGeneratedConfig()
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
   } else {
     config
   }
+
+  // Initialize persistence and load chain state from DB before handler registration
+  await persistence->Persistence.init(~chainConfigs=config.chainMap->ChainMap.values)
+  // Set the initial state ref so indexer.chains can read DB state
+  globalInitialStateRef := Some(persistence->Persistence.getInitializedState)
+
+  // Register handlers (user code can access indexer.chains with DB state)
+  let registrations = await HandlerLoader.registerAllHandlers(~config)
+  // Apply registration data (isWildcard, eventFilters, etc.) to event configs
+  HandlerRegister.applyRegistrations(~config, ~ecosystem=config.ecosystem)
+
   let ctx = {
     Ctx.registrations,
     config,
@@ -329,8 +364,6 @@ let start = async (
       }
     )
   }
-
-  await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
 
   let chainManager = await ChainManager.makeFromDbState(
     ~initialState=ctx.persistence->Persistence.getInitializedState,
