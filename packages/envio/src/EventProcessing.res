@@ -114,7 +114,6 @@ let runEventHandlerOrThrow = async (
   ~loadManager,
   ~persistence,
   ~shouldSaveHistory,
-  ~shouldBenchmark,
   ~chains: Internal.chains,
   ~config: Config.t,
 ) => {
@@ -155,15 +154,8 @@ let runEventHandlerOrThrow = async (
       }),
     )
   }
-  if shouldBenchmark {
-    let timeEnd = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.floatFromMillis
-    Benchmark.addSummaryData(
-      ~group="Handlers Per Event",
-      ~label=`${eventItem.eventConfig.contractName} ${eventItem.eventConfig.name} Handler (ms)`,
-      ~value=timeEnd,
-      ~decimalPlaces=4,
-    )
-  }
+  let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+  Prometheus.incrementHandlerTimeCounter(~duration=handlerDuration)
 }
 
 let runHandlerOrThrow = async (
@@ -173,7 +165,6 @@ let runHandlerOrThrow = async (
   ~loadManager,
   ~ctx: Ctx.t,
   ~shouldSaveHistory,
-  ~shouldBenchmark,
   ~chains: Internal.chains,
 ) => {
   switch item {
@@ -219,7 +210,6 @@ let runHandlerOrThrow = async (
           ~loadManager,
           ~persistence=ctx.persistence,
           ~shouldSaveHistory,
-          ~shouldBenchmark,
           ~chains,
           ~config=ctx.config,
         )
@@ -328,7 +318,6 @@ let runBatchHandlersOrThrow = async (
   ~loadManager,
   ~ctx,
   ~shouldSaveHistory,
-  ~shouldBenchmark,
   ~chains: Internal.chains,
 ) => {
   let itemIdx = ref(0)
@@ -348,7 +337,6 @@ let runBatchHandlersOrThrow = async (
         ~loadManager,
         ~ctx,
         ~shouldSaveHistory,
-        ~shouldBenchmark,
         ~chains,
       )
     }
@@ -428,7 +416,6 @@ let processEventBatch = async (
         ~loadManager,
         ~ctx,
         ~shouldSaveHistory=ctx.config->Config.shouldSaveHistory(~isInReorgThreshold),
-        ~shouldBenchmark=Env.Benchmark.shouldSaveData,
         ~chains,
       )
     }
@@ -454,15 +441,6 @@ let processEventBatch = async (
         ~handlerDuration,
         ~dbWriteDuration,
       )
-      if Env.Benchmark.shouldSaveData {
-        Benchmark.addEventProcessing(
-          ~batchSize=totalBatchSize,
-          ~loadDuration=loaderDuration,
-          ~handlerDuration,
-          ~dbWriteDuration,
-          ~totalTimeElapsed=elapsedTimeAfterDbWrite,
-        )
-      }
       Ok()
     } catch {
     | Persistence.StorageError({message, reason}) =>
