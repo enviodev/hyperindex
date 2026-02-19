@@ -14,14 +14,6 @@ import {
 import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { createTestIndexer } from "generated";
-import pino from "pino";
-import {
-  startRegistration,
-  finishRegistration,
-  setHandler,
-  setContractRegister,
-  getHandler,
-} from "envio/src/HandlerRegister.res.mjs";
 
 const { MockDb, Gravatar, EventFiltersTest } = TestHelpers;
 
@@ -937,113 +929,30 @@ describe("Use Envio test framework to test event handlers", () => {
         "Cannot call User.set() while indexer.process() is running. Wait for process() to complete before modifying entities directly.",
     });
   });
-});
 
-describe("HandlerRegister - multiple handlers for the same event", () => {
-  const logger = pino({ level: "silent" });
-  let counter = 0;
-  const uniqueName = (prefix: string) => `${prefix}_${++counter}`;
+  it("throws when registering a duplicate handler for the same event", async () => {
+    const mockDbInitial = MockDb.createMockDb();
 
-  afterEach(() => {
-    try {
-      finishRegistration();
-    } catch {
-      // ignore if not started
-    }
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "duplicateHandler",
+    });
+
+    await assert.rejects(mockDbInitial.processEvents([event]), {
+      message:
+        "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
+    });
   });
 
-  it("allows registering a handler for an event", () => {
-    startRegistration("mock" as any, "unordered");
-    const contractName = uniqueName("Contract");
-    const eventName = uniqueName("Event");
+  it("throws when registering a duplicate contractRegister for the same event", async () => {
+    const mockDbInitial = MockDb.createMockDb();
 
-    setHandler(contractName, eventName, "mock handler", undefined, logger);
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      testCase: "duplicateContractRegister",
+    });
 
-    assert.notStrictEqual(
-      getHandler(contractName, eventName),
-      undefined,
-      "Handler should be registered"
-    );
-  });
-
-  it("allows registering handlers for different events on the same contract", () => {
-    startRegistration("mock" as any, "unordered");
-    const contractName = uniqueName("Contract");
-    const eventName1 = uniqueName("Event");
-    const eventName2 = uniqueName("Event");
-
-    setHandler(contractName, eventName1, "handler1", undefined, logger);
-    setHandler(contractName, eventName2, "handler2", undefined, logger);
-
-    assert.notStrictEqual(
-      getHandler(contractName, eventName1),
-      undefined,
-      "First handler should be registered"
-    );
-    assert.notStrictEqual(
-      getHandler(contractName, eventName2),
-      undefined,
-      "Second handler should be registered"
-    );
-  });
-
-  it("allows registering handlers for the same event on different contracts", () => {
-    startRegistration("mock" as any, "unordered");
-    const contractName1 = uniqueName("Contract");
-    const contractName2 = uniqueName("Contract");
-    const eventName = uniqueName("Transfer");
-
-    setHandler(contractName1, eventName, "handler1", undefined, logger);
-    setHandler(contractName2, eventName, "handler2", undefined, logger);
-
-    assert.notStrictEqual(
-      getHandler(contractName1, eventName),
-      undefined,
-      "Handler for first contract should be registered"
-    );
-    assert.notStrictEqual(
-      getHandler(contractName2, eventName),
-      undefined,
-      "Handler for second contract should be registered"
-    );
-  });
-
-  it("throws on duplicate handler registration for the same event", () => {
-    startRegistration("mock" as any, "unordered");
-    const contractName = uniqueName("Contract");
-    const eventName = uniqueName("Event");
-
-    setHandler(contractName, eventName, "handler1", undefined, logger);
-
-    assert.throws(
-      () => setHandler(contractName, eventName, "handler2", undefined, logger),
-      "Should throw on duplicate handler registration"
-    );
-  });
-
-  it("throws on duplicate contractRegister for the same event", () => {
-    startRegistration("mock" as any, "unordered");
-    const contractName = uniqueName("Contract");
-    const eventName = uniqueName("Event");
-
-    setContractRegister(
-      contractName,
-      eventName,
-      "register1",
-      undefined,
-      logger
-    );
-
-    assert.throws(
-      () =>
-        setContractRegister(
-          contractName,
-          eventName,
-          "register2",
-          undefined,
-          logger
-        ),
-      "Should throw on duplicate contractRegister registration"
-    );
+    await assert.rejects(mockDbInitial.processEvents([event]), {
+      message:
+        "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
+    });
   });
 });
