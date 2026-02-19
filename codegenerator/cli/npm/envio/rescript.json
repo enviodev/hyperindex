@@ -22,6 +22,5 @@
   "jsx": {
     "version": 4
   },
-  "bs-dependencies": ["rescript-schema", "@rescript/react", "rescript-envsafe"],
-  "bsc-flags": ["-open RescriptSchema"]
+  "dependencies": ["sury", "@rescript/react"]
 }

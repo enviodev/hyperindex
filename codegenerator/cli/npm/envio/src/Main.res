@@ -5,7 +5,7 @@ type chainData = {
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   numEventsProcessed: int,
   latestFetchedBlockNumber: int,
   // Need this for API backwards compatibility
@@ -24,7 +24,7 @@ type state =
   Active({
       envioVersion: string,
       chains: array<chainData>,
-      indexerStartTime: Js.Date.t,
+      indexerStartTime: Date.t,
       isPreRegisteringDynamicContracts: bool,
       isUnorderedMultichainMode: bool,
       rollbackOnReorg: bool,
@@ -80,7 +80,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->Array.forEach(chainConfig => {
     let chainIdStr = chainConfig.id->Int.toString
 
-    chainIds->Js.Array2.push(chainConfig.id)->ignore
+    chainIds->Array.push(chainConfig.id)->ignore
 
     let chainObj = Utils.Object.createNullObject()
     chainObj
@@ -133,9 +133,9 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
 
                 // Collect all addresses for this contract name from indexingContracts
                 let addresses = []
-                let values = indexingContracts->Js.Dict.values
+                let values = indexingContracts->Dict.valuesToArray
                 for idx in 0 to values->Array.length - 1 {
-                  let indexingContract = values->Js.Array2.unsafe_get(idx)
+                  let indexingContract = values->Array.getUnsafe(idx)
                   if indexingContract.contractName === contract.name {
                     addresses->Array.push(indexingContract.address)->ignore
                   }
@@ -179,7 +179,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   let app = make()
 
   let consoleCorsMiddleware = (req, res, next) => {
-    switch req.headers->Js.Dict.get("origin") {
+    switch req.headers->Dict.get("origin") {
     | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
       res->setHeader("Access-Control-Allow-Origin", origin)
     | _ => ()
@@ -216,8 +216,8 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   app->post("/console/syncCache", (_req, res) => {
     if isDevelopmentMode {
       (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
-      ->Promise.thenResolve(_ => res->json(Boolean(true)))
-      ->Promise.done
+      ->Promise_.thenResolve(_ => res->json(Boolean(true)))
+      ->Promise_.done
     } else {
       res->json(Boolean(false))
     }
@@ -230,7 +230,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     let _ =
       PromClient.defaultRegister
       ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+      ->Promise_.thenResolve(metrics => res->endWithData(metrics))
   })
 
   let _ = app->listen(Env.serverPort)
@@ -296,7 +296,7 @@ let start = async (
                   : cf.fetchState.knownHeight
 
               {
-                chainId: cf.chainConfig.id->Js.Int.toFloat,
+                chainId: cf.chainConfig.id->Int.toFloat,
                 poweredByHyperSync: (
                   cf.sourceManager->SourceManager.getActiveSource
                 ).poweredByHyperSync,

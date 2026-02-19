@@ -58,7 +58,8 @@ let make = (
   ),
 ) => {
   let initialActiveSource = switch sources->Js.Array2.find(source => source.sourceFor === Sync) {
-  | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
+  | None =>
+    JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   | Some(source) => source
   }
   Prometheus.IndexingMaxConcurrency.set(
@@ -149,23 +150,22 @@ let fetchNext = async (
         ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
       sourceManager->trackNewStatus(~newStatus=Querieng)
-      let _ =
-        await queries
-        ->Array.map(q => {
-          let promise = q->executeQuery
-          let _ = promise->Promise.thenResolve(_ => {
-            sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-            Prometheus.IndexingConcurrency.set(
-              ~concurrency=sourceManager.fetchingPartitionsCount,
-              ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-            )
-            if sourceManager.fetchingPartitionsCount === 0 {
-              sourceManager->trackNewStatus(~newStatus=Idle)
-            }
-          })
-          promise
+      let _ = await queries
+      ->Array.map(q => {
+        let promise = q->executeQuery
+        let _ = promise->Promise_.thenResolve(_ => {
+          sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+          Prometheus.IndexingConcurrency.set(
+            ~concurrency=sourceManager.fetchingPartitionsCount,
+            ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+          )
+          if sourceManager.fetchingPartitionsCount === 0 {
+            sourceManager->trackNewStatus(~newStatus=Idle)
+          }
         })
-        ->Promise.all
+        promise
+      })
+      ->Promise_.all
     }
   }
 }
@@ -201,7 +201,7 @@ let getSourceNewHeight = async (
     // If subscription exists, wait for next height event
     switch sourceState.unsubscribe {
     | Some(_) =>
-      let height = await Promise.make((resolve, _reject) => {
+      let height = await Promise_.make((resolve, _reject) => {
         sourceState.pendingHeightResolvers->Array.push(resolve)
       })
 
@@ -315,7 +315,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
 
   let status = ref(Active)
 
-  let (source, newBlockHeight) = await Promise.race(
+  let (source, newBlockHeight) = await Promise_.race(
     syncSources
     ->Array.map(async sourceState => {
       (
@@ -324,7 +324,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
       )
     })
     ->Array.concat([
-      Utils.delay(sourceManager.newBlockFallbackStallTimeout)->Promise.then(() => {
+      Utils.delay(sourceManager.newBlockFallbackStallTimeout)->Promise_.then(() => {
         if status.contents !== Done {
           status := Stalled
 
@@ -341,9 +341,9 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
             )
           }
         }
-        // Promise.race will be forever pending if fallbackSources is empty
+        // Promise_.race will be forever pending if fallbackSources is empty
         // which is good for this use case
-        Promise.race(
+        Promise_.race(
           fallbackSources->Array.map(async sourceState => {
             (
               sourceState.source,

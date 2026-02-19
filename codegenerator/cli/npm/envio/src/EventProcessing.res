@@ -7,7 +7,7 @@ let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher
 }
 
 let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
-  let chains = Js.Dict.empty()
+  let chains = Dict.make()
 
   chainFetchers
   ->ChainMap.entries
@@ -15,7 +15,7 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
     let isLive = chainFetcher->ChainFetcher.isLive
 
-    chains->Js.Dict.set(
+    chains->Dict.set(
       chainId,
       {
         Internal.id: chain->ChainMap.Chain.toChainId,
@@ -31,19 +31,19 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   switch fields {
   | None => %raw(`{}`)
   | Some(fields) => {
-      let keys = fields->Js.Dict.keys
-      let new = Js.Dict.empty()
-      for i in 0 to keys->Js.Array2.length - 1 {
-        let key = keys->Js.Array2.unsafe_get(i)
-        let value = fields->Js.Dict.unsafeGet(key)
+      let keys = fields->Dict.keysToArray
+      let new = Dict.make()
+      for i in 0 to keys->Array.length - 1 {
+        let key = keys->Array.getUnsafe(i)
+        let value = fields->Dict.getUnsafe(key)
         // Skip `undefined` values and convert bigint fields to string
         // There are not fields with nested bigints, so this is safe
-        new->Js.Dict.set(
+        new->Dict.set(
           key,
-          Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value,
+          Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt_.toString->Utils.magic : value,
         )
       }
-      new->(Utils.magic: dict<unknown> => Js.Json.t)
+      new->(Utils.magic: dict<unknown> => JSON.t)
     }
   }
 }
@@ -72,7 +72,7 @@ let addItemToRawEvents = (
   let params =
     params
     ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
-    ->(Utils.magic: unknown => Js.Json.t)
+    ->(Utils.magic: unknown => JSON.t)
   let params = if params === %raw(`null`) {
     // Should probably make the params field nullable
     // But this is currently needed to make events
@@ -97,7 +97,7 @@ let addItemToRawEvents = (
     params,
   }
 
-  let eventIdStr = eventId->BigInt.toString
+  let eventIdStr = eventId->BigInt_.toString
 
   inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }
@@ -145,7 +145,7 @@ let runEventHandlerOrThrow = async (
     contextParams.isResolved = true
   } catch {
   | exn =>
-    raise(
+    throw(
       ProcessingError({
         message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
         item,
@@ -199,7 +199,7 @@ let runHandlerOrThrow = async (
       contextParams.isResolved = true
     } catch {
     | exn =>
-      raise(
+      throw(
         ProcessingError({
           message: "Unexpected error in the block handler. Please handle the error to keep the indexer running smoothly.",
           item,
@@ -250,12 +250,11 @@ let preloadBatchOrThrow = async (
   let itemIdx = ref(0)
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
-    let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
+    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event({eventConfig: {handler}, event}) =>
         switch handler {
@@ -277,8 +276,8 @@ let preloadBatchOrThrow = async (
                   isResolved: false,
                   config,
                 }),
-              })->Promise.silentCatch,
-              // Must have Promise.catch as well as normal catch,
+              })->Promise_.silentCatch,
+              // Must have Promise_.catch as well as normal catch,
               // because if user throws an error before await in the handler,
               // it won't create a rejected promise
             )
@@ -306,7 +305,7 @@ let preloadBatchOrThrow = async (
                   config,
                 }),
               )
-            })->Promise.silentCatch,
+            })->Promise_.silentCatch,
           )
         } catch {
         | _ => ()
@@ -317,7 +316,7 @@ let preloadBatchOrThrow = async (
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
 
-  let _ = await Promise.all(promises)
+  let _ = await Promise_.all(promises)
 }
 
 let runBatchHandlersOrThrow = async (
@@ -332,12 +331,11 @@ let runBatchHandlersOrThrow = async (
   let itemIdx = ref(0)
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
-    let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
+    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpointIdx)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
 
       await runHandlerOrThrow(
         item,

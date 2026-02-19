@@ -1,18 +1,18 @@
 type t<+'a> = promise<'a>
 
 @new
-external make: ((@uncurry 'a => unit, 'e => unit) => unit) => t<'a> = "Promise"
+external make: ((@uncurry ('a => unit), 'e => unit) => unit) => t<'a> = "Promise"
 
 @new
-external makeAsync: ((@uncurry 'a => unit, 'e => unit) => promise<unit>) => t<'a> = "Promise"
+external makeAsync: ((@uncurry ('a => unit), 'e => unit) => promise<unit>) => t<'a> = "Promise"
 
 @val @scope("Promise")
 external resolve: 'a => t<'a> = "resolve"
 
-@send external then: (t<'a>, @uncurry 'a => t<'b>) => t<'b> = "then"
+@send external then: (t<'a>, @uncurry ('a => t<'b>)) => t<'b> = "then"
 
 @send
-external thenResolve: (t<'a>, @uncurry 'a => 'b) => t<'b> = "then"
+external thenResolve: (t<'a>, @uncurry ('a => 'b)) => t<'b> = "then"
 
 @send external finally: (t<'a>, unit => unit) => t<'a> = "finally"
 
@@ -47,7 +47,7 @@ let silentCatch = (promise: promise<'a>): promise<'a> => {
 
 let catch = (promise: promise<'a>, callback: exn => promise<'a>): promise<'a> => {
   catch(promise, err => {
-    callback(Js.Exn.anyToExnInternal(err))
+    callback(JsExn.anyToExnInternal(err))
   })
 }
 

@@ -11,21 +11,21 @@ module Group = {
 
   let empty = () => {
     wildcard: None,
-    byContractName: Js.Dict.empty(),
+    byContractName: Dict.make(),
   }
 
   let addOrThrow = (group: t<'a>, event, ~contractName, ~isWildcard) => {
     let {byContractName, wildcard} = group
     switch byContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-    | Some(_) => raise(EventDuplicate)
+    | Some(_) => throw(EventDuplicate)
     | None =>
       if isWildcard && wildcard->Option.isSome {
-        raise(WildcardCollision)
+        throw(WildcardCollision)
       } else {
         if isWildcard {
           group.wildcard = Some(event)
         }
-        byContractName->Js.Dict.set(contractName, event)
+        byContractName->Dict.set(contractName, event)
       }
     }
   }
@@ -54,7 +54,7 @@ module Group = {
 
 type t<'a> = dict<Group.t<'a>>
 
-let empty = () => Js.Dict.empty()
+let empty = () => Dict.make()
 
 let addOrThrow = (
   router: t<'a>,
@@ -68,17 +68,17 @@ let addOrThrow = (
   let group = switch router->Utils.Dict.dangerouslyGetNonOption(eventId) {
   | None =>
     let group = Group.empty()
-    router->Js.Dict.set(eventId, group)
+    router->Dict.set(eventId, group)
     group
   | Some(group) => group
   }
   try group->Group.addOrThrow(event, ~contractName, ~isWildcard) catch {
   | EventDuplicate =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Duplicate event detected: ${eventName} for contract ${contractName} on chain ${chain->ChainMap.Chain.toString}`,
     )
   | WildcardCollision =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Another event is already registered with the same signature that would interfer with wildcard filtering: ${eventName} for contract ${contractName} on chain ${chain->ChainMap.Chain.toString}`,
     )
   }

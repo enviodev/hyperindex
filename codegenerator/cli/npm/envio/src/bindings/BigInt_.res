@@ -4,7 +4,7 @@
     try {
       unsafeFunc()->Some
     } catch {
-    | Js.Exn.Error(_obj) => None
+    | JsExn(_obj) => None
     }
   }
 )
@@ -47,7 +47,7 @@ let zero = fromInt(0)
 @genType
 let schema =
   S.string
-  ->S.setName("BigInt")
+  ->Utils.Schema.setName("BigInt")
   ->S.transform(s => {
     parser: string =>
       switch string->fromString {

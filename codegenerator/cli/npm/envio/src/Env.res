@@ -186,7 +186,7 @@ module Hasura = {
       ~devFallback="http://localhost:8080/v1/metadata",
     )
 
-  let url = graphqlEndpoint->Js.String2.slice(~from=0, ~to_=-("/v1/metadata"->Js.String2.length))
+  let url = graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
 
   let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 
@@ -200,7 +200,7 @@ module Hasura = {
       // Will be removed once comma support is added — don't rely on this.
       S.string->S.transform(s => {
         parser: string =>
-          switch string->Js.String2.split("&") {
+          switch string->String.split("&") {
           | []
           | [_] =>
             s.fail(`Provide an array of entities in the JSON format.`)

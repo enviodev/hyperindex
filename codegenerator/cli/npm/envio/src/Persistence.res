@@ -21,7 +21,7 @@ type initialChainState = {
   progressBlockNumber: int,
   numEventsProcessed: int,
   firstEventBlockNumber: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   dynamicContracts: array<Internal.indexingContract>,
   sourceBlockNumber: int,
 }
@@ -155,9 +155,9 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.entityConfig])
+  let allEntities = userEntities->Array.concat([InternalTable.DynamicContractRegistry.entityConfig])
   let allEnums =
-    allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+    allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
     userEntities,
     allEntities,
@@ -180,7 +180,7 @@ let init = {
       }
       if shouldRun {
         let resolveRef = ref(%raw(`null`))
-        let promise = Promise.make((resolve, _) => {
+        let promise = Promise_.make((resolve, _) => {
           resolveRef := resolve
         })
         persistence.storageStatus = Initializing(promise)
@@ -204,8 +204,8 @@ let init = {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
           persistence.storageStatus = Ready(initialState)
-          let progress = Js.Dict.empty()
-          initialState.chains->Js.Array2.forEach(c => {
+          let progress = Dict.make()
+          initialState.chains->Array.forEach(c => {
             progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
           Logging.info({
@@ -226,7 +226,7 @@ let getInitializedStorageOrThrow = persistence => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready(_) => persistence.storage
   }
 }
@@ -235,7 +235,7 @@ let getInitializedState = persistence => {
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the initial state. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the initial state. The Persistence layer is not initialized.`)
   | Ready(initialState) => initialState
   }
 }
@@ -250,7 +250,7 @@ let writeBatch = (
   switch persistence.storageStatus {
   | Unknown
   | Initializing(_) =>
-    Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
+    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
     let updatedEntities = persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
       let updates =
@@ -327,49 +327,48 @@ let prepareRollbackDiff = async (
     ~rollbackTargetCheckpointId,
   )
 
-  let deletedEntities = Js.Dict.empty()
-  let setEntities = Js.Dict.empty()
+  let deletedEntities = Dict.make()
+  let setEntities = Dict.make()
 
-  let _ =
-    await persistence.allEntities
-    ->Belt.Array.map(async entityConfig => {
-      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
+  let _ = await persistence.allEntities
+  ->Belt.Array.map(async entityConfig => {
+    let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
-      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
-        ~entityConfig,
-        ~rollbackTargetCheckpointId,
+    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+      ~entityConfig,
+      ~rollbackTargetCheckpointId,
+    )
+
+    // Process removed IDs
+    removedIdsResult->Array.forEach(data => {
+      deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+      entityTable->InMemoryTable.Entity.set(
+        Delete({
+          entityId: data["id"],
+          checkpointId: rollbackDiffCheckpointId,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
       )
-
-      // Process removed IDs
-      removedIdsResult->Js.Array2.forEach(data => {
-        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-        entityTable->InMemoryTable.Entity.set(
-          Delete({
-            entityId: data["id"],
-            checkpointId: rollbackDiffCheckpointId,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
-
-      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
-
-      // Process restored entities
-      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-        entityTable->InMemoryTable.Entity.set(
-          Set({
-            entityId: entity.id,
-            checkpointId: rollbackDiffCheckpointId,
-            entity,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
     })
-    ->Promise.all
+
+    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+    // Process restored entities
+    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+      setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+      entityTable->InMemoryTable.Entity.set(
+        Set({
+          entityId: entity.id,
+          checkpointId: rollbackDiffCheckpointId,
+          entity,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+  })
+  ->Promise_.all
 
   {
     "inMemStore": inMemStore,

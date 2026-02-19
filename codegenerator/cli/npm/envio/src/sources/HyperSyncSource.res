@@ -16,9 +16,9 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
-  let staticTopicSelectionsByContract = Js.Dict.empty()
-  let dynamicEventFiltersByContract = Js.Dict.empty()
-  let dynamicWildcardEventFiltersByContract = Js.Dict.empty()
+  let staticTopicSelectionsByContract = Dict.make()
+  let dynamicEventFiltersByContract = Dict.make()
+  let dynamicWildcardEventFiltersByContract = Dict.make()
   let noAddressesTopicSelections = []
   let contractNames = Utils.Set.make()
 
@@ -168,7 +168,7 @@ let make = (
   let apiToken = switch apiToken {
   | Some(token) => token
   | None =>
-    Js.Exn.raiseError(`An API token is required for using HyperSync as a data-source.
+    JsError.throwWithMessage(`An API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   }
@@ -270,7 +270,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
@@ -296,7 +296,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         ),
       )
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
@@ -334,7 +334,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           blockTimestamp: timestamp,
           blockHash: hash,
         }: ReorgDetection.blockDataWithTimestamp
-      )->Promise.resolve
+      )->Promise_.resolve
     | None =>
       //The optional block and timestamp of the last item returned by the query
       //(Optional in the case that there are no logs returned in the query)
@@ -350,7 +350,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
             blockTimestamp: block.timestamp->Belt.Option.getUnsafe,
             blockHash: block.hash->Belt.Option.getUnsafe,
           }: ReorgDetection.blockDataWithTimestamp
-        )->Promise.resolve
+        )->Promise_.resolve
       //If it does not match it means that there were no matching logs in the last
       //block so we should fetch the block data
       | Some(_)
@@ -364,7 +364,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~sourceName=name,
           ~chainId=chain->ChainMap.Chain.toChainId,
           ~logger,
-        )->Promise.thenResolve(res =>
+        )->Promise_.thenResolve(res =>
           switch res {
           | Ok(Some(blockData)) => blockData
           | Ok(None) =>
@@ -436,12 +436,12 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~contractAddress=log.address,
           ~blockNumber=block.number->Belt.Option.getUnsafe,
         )
-      let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
+      let maybeDecodedEvent = parsedEvents->Array.getUnsafe(index)
 
       switch (maybeEventConfig, maybeDecodedEvent) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
-        ->Js.Array2.push(
+        ->Array.push(
           makeEventBatchQueueItem(
             item,
             ~params=decoded->eventConfig.convertHyperSyncEventArgs,
@@ -500,7 +500,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~sourceName=name,
       ~chainId=chain->ChainMap.Chain.toChainId,
       ~logger,
-    )->Promise.thenResolve(HyperSync.mapExn)
+    )->Promise_.thenResolve(HyperSync.mapExn)
 
   let jsonApiClient = Rest.client(endpointUrl)
 
@@ -525,9 +525,9 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
         // Don't want to retry if the token is malformed
         // So just block forever
-        let _ = await Promise.make((_, _) => ())
+        let _ = await Promise_.make((_, _) => ())
         0
-      | ErrorMessage(m) => Js.Exn.raiseError(m)
+      | ErrorMessage(m) => JsError.throwWithMessage(m)
       }
     },
     getItemsOrThrow,

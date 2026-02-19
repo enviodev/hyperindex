@@ -44,10 +44,16 @@ module Chains = {
   ]
 
   type metaFields = {
-    @as("first_event_block") firstEventBlockNumber: Js.null<int>,
+    @as("first_event_block")
+    firstEventBlockNumber: Null.t<
+      // Push id first (for WHERE clause)
+
+      // Then push all updateable field values (for SET clause)
+      int,
+    >,
     @as("buffer_block") latestFetchedBlockNumber: int,
     @as("ready_at")
-    timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
+    timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
     @as("_num_batches_fetched") numBatchesFetched: int,
   }
@@ -55,7 +61,7 @@ module Chains = {
   type t = {
     @as("id") id: int,
     @as("start_block") startBlock: int,
-    @as("end_block") endBlock: Js.null<int>,
+    @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
@@ -104,12 +110,12 @@ module Chains = {
     {
       id: chainConfig.id,
       startBlock: chainConfig.startBlock,
-      endBlock: chainConfig.endBlock->Js.Null.fromOption,
+      endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,
-      firstEventBlockNumber: Js.Null.empty,
+      firstEventBlockNumber: Null.null,
       latestFetchedBlockNumber: -1,
-      timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
+      timestampCaughtUpToHeadOrEndblock: Null.null,
       progressBlockNumber: -1,
       isHyperSync: false,
       numEventsProcessed: 0,
@@ -128,22 +134,21 @@ module Chains = {
       let valuesRows = chainConfigs->Belt.Array.map(chainConfig => {
         let initialValues = initialFromConfig(chainConfig)
         let values = fields->Belt.Array.map((field: field) => {
-          let value =
-            initialValues->(Utils.magic: t => dict<unknown>)->Js.Dict.get((field :> string))
+          let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
           switch Js.typeof(value) {
           | "object" => "NULL"
           | "number" => value->Utils.magic->Belt.Int.toString
           | "boolean" => value->Utils.magic ? "true" : "false"
-          | _ => Js.Exn.raiseError("Invalid envio_chains value type")
+          | _ => JsError.throwWithMessage("Invalid envio_chains value type")
           }
         })
 
-        `(${values->Js.Array2.joinWith(", ")})`
+        `(${values->Array.joinUnsafe(", ")})`
       })
 
       Some(
-        `INSERT INTO "${pgSchema}"."${table.tableName}" (${columnNames->Js.Array2.joinWith(", ")})
-VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
+        `INSERT INTO "${pgSchema}"."${table.tableName}" (${columnNames->Array.joinUnsafe(", ")})
+VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
       )
     }
   }
@@ -166,17 +171,17 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
-SET ${setClauses->Js.Array2.joinWith(",\n    ")}
+SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
   type rawInitialState = {
     id: int,
     startBlock: int,
-    endBlock: Js.Null.t<int>,
+    endBlock: Null.t<int>,
     maxReorgDepth: int,
-    firstEventBlockNumber: Js.Null.t<int>,
-    timestampCaughtUpToHeadOrEndblock: Js.Null.t<Js.Date.t>,
+    firstEventBlockNumber: Null.t<int>,
+    timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: int,
     progressBlockNumber: int,
     dynamicContracts: array<Internal.indexingContract>,
@@ -226,7 +231,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
-SET ${setClauses->Js.Array2.joinWith(",\n    ")}
+SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "id" = $1;`
   }
 
@@ -239,19 +244,19 @@ WHERE "id" = $1;`
       let params = []
 
       // Push id first (for WHERE clause)
-      params->Js.Array2.push(chainId->(Utils.magic: string => unknown))->ignore
+      params->Array.push(chainId->(Utils.magic: string => unknown))->ignore
 
       // Then push all updateable field values (for SET clause)
-      metaFields->Js.Array2.forEach(field => {
+      metaFields->Array.forEach(field => {
         let value =
-          data->(Utils.magic: metaFields => dict<unknown>)->Js.Dict.unsafeGet((field :> string))
-        params->Js.Array2.push(value)->ignore
+          data->(Utils.magic: metaFields => dict<unknown>)->Dict.getUnsafe((field :> string))
+        params->Array.push(value)->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise.all(promises)
+    Promise_.all(promises)
   }
 
   type progressedChain = {
@@ -266,16 +271,14 @@ WHERE "id" = $1;`
 
     let promises = []
 
-    progressedChains->Js.Array2.forEach(data => {
+    progressedChains->Array.forEach(data => {
       let params = []
 
-      // Push id first (for WHERE clause)
-      params->Js.Array2.push(data.chainId->(Utils.magic: int => unknown))->ignore
+      params->Array.push(data.chainId->(Utils.magic: int => unknown))->ignore
 
-      // Then push all updateable field values (for SET clause)
-      progressFields->Js.Array2.forEach(field => {
+      progressFields->Array.forEach(field => {
         params
-        ->Js.Array2.push(
+        ->Array.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
           | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
@@ -285,10 +288,10 @@ WHERE "id" = $1;`
         ->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Array.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise.all(promises)->Promise.ignoreValue
+    Promise_.all(promises)->Promise_.ignoreValue
   }
 }
 
@@ -329,7 +332,7 @@ module Checkpoints = {
     @as("block_number")
     blockNumber: int,
     @as("block_hash")
-    blockHash: Js.null<string>,
+    blockHash: Null.t<string>,
     @as("events_processed")
     eventsProcessed: int,
   }
@@ -404,11 +407,11 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
         checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<float>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
+          (array<float>, array<int>, array<int>, array<Null.t<string>>, array<int>)
         ) => unknown
       ),
     )
-    ->Promise.ignoreValue
+    ->Promise_.ignoreValue
   }
 
   let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
@@ -417,7 +420,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
       [rollbackTargetCheckpointId]->Utils.magic,
     )
-    ->Promise.ignoreValue
+    ->Promise_.ignoreValue
   }
 
   let makePruneStaleCheckpointsQuery = (~pgSchema) => {
@@ -430,7 +433,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
       makePruneStaleCheckpointsQuery(~pgSchema),
       [safeCheckpointId]->Obj.magic,
     )
-    ->Promise.ignoreValue
+    ->Promise_.ignoreValue
   }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
@@ -501,9 +504,9 @@ module RawEvents = {
     @as("src_address") srcAddress: Address.t,
     @as("block_hash") blockHash: string,
     @as("block_timestamp") blockTimestamp: int,
-    @as("block_fields") blockFields: Js.Json.t,
-    @as("transaction_fields") transactionFields: Js.Json.t,
-    params: Js.Json.t,
+    @as("block_fields") blockFields: JSON.t,
+    @as("transaction_fields") transactionFields: JSON.t,
+    params: JSON.t,
   }
 
   let schema = S.schema(s => {
@@ -516,9 +519,9 @@ module RawEvents = {
     srcAddress: s.matches(Address.schema),
     blockHash: s.matches(S.string),
     blockTimestamp: s.matches(S.int),
-    blockFields: s.matches(S.json(~validate=false)),
-    transactionFields: s.matches(S.json(~validate=false)),
-    params: s.matches(S.json(~validate=false)),
+    blockFields: s.matches(S.json),
+    transactionFields: s.matches(S.json),
+    params: s.matches(S.json),
   })
 
   let table = mkTable(
@@ -533,9 +536,9 @@ module RawEvents = {
       mkField("src_address", String, ~fieldSchema=Address.schema),
       mkField("block_hash", String, ~fieldSchema=S.string),
       mkField("block_timestamp", Int32, ~fieldSchema=S.int),
-      mkField("block_fields", Json, ~fieldSchema=S.json(~validate=false)),
-      mkField("transaction_fields", Json, ~fieldSchema=S.json(~validate=false)),
-      mkField("params", Json, ~fieldSchema=S.json(~validate=false)),
+      mkField("block_fields", Json, ~fieldSchema=S.json),
+      mkField("transaction_fields", Json, ~fieldSchema=S.json),
+      mkField("params", Json, ~fieldSchema=S.json),
       mkField("serial", Serial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
     ],
   )

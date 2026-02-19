@@ -1,7 +1,7 @@
 @genType.import(("./Types.ts", "Address"))
 type t
 
-let schema = S.string->S.setName("Address")->(Utils.magic: S.t<string> => S.t<t>)
+let schema = S.string->Utils.Schema.setName("Address")->(Utils.magic: S.t<string> => S.t<t>)
 
 external toString: t => string = "%identity"
 
@@ -22,16 +22,16 @@ module Evm = {
   // Validate that the string is a proper address but return a lowercased value
   let fromStringLowercaseOrThrow = string => {
     if fromStringLowercaseOrThrow(string) {
-      unsafeFromString(string->Js.String2.toLowerCase)
+      unsafeFromString(string->String.toLowerCase)
     } else {
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Address "${string}" is invalid. Expected a 20-byte hex string starting with 0x.`,
       )
     }
   }
 
   let fromAddressLowercaseOrThrow = address =>
-    address->toString->Js.String2.toLowerCase->(Utils.magic: string => t)
+    address->toString->String.toLowerCase->(Utils.magic: string => t)
 
   // Reassign since the function might be used in the handler code
   // and we don't want to have a "viem" import there. It's needed to keep "viem" a dependency
@@ -42,7 +42,7 @@ module Evm = {
       fromStringOrThrow(string)
     } catch {
     | _ =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Address "${string}" is invalid. Expected a 20-byte hex string starting with 0x.`,
       )
     }

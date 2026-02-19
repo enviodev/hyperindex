@@ -129,7 +129,7 @@ let createEffect = (
         callsPerDuration: calls,
         durationMs: per->durationToMs,
         availableCalls: calls,
-        windowStartTime: Js.Date.now(),
+        windowStartTime: Date.now(),
         queueCount: 0,
         nextWindowPromise: None,
       })

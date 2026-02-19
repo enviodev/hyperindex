@@ -117,8 +117,7 @@ module Spacer = {
 
   For example, using <Spacer> in a <Box> with default flex direction (row) will position "Left" on the left side and will push "Right" to the right side.
   */
-  @module("ink")
-  @react.component
+  @module("ink") @react.component
   external make: unit => React.element = "Spacer"
 }
 
@@ -128,8 +127,7 @@ module Static = {
 
   It's preferred to use <Static> for use cases like these, when you can't know or control the amount of items that need to be rendered.
   */
-  @module("ink")
-  @react.component
+  @module("ink") @react.component
   external make: (
     ~children: ('a, int) => React.element,
     ~items: array<'a>,

@@ -39,7 +39,7 @@ let makeGetNormalRecieptsSelection = (
           ) {
           | Some(receiptTypes) =>
             selection
-            ->Js.Array2.push({
+            ->Array.push({
               rootContractId: addresses,
               receiptType: receiptTypes,
               txStatus: txStatusSelection,
@@ -52,7 +52,7 @@ let makeGetNormalRecieptsSelection = (
           | Some([]) => ()
           | Some(nonWildcardLogDataRbs) =>
             selection
-            ->Js.Array2.push({
+            ->Array.push({
               rootContractId: addresses,
               receiptType: logDataReceiptTypeSelection,
               txStatus: txStatusSelection,
@@ -75,7 +75,7 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
   | [] => ()
   | nonLogDataWildcardReceiptTypes =>
     selection
-    ->Js.Array2.push(
+    ->Array.push(
       (
         {
           receiptType: nonLogDataWildcardReceiptTypes,
@@ -90,7 +90,7 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
   | [] => ()
   | wildcardLogDataRbs =>
     selection
-    ->Js.Array2.push(
+    ->Array.push(
       (
         {
           receiptType: logDataReceiptTypeSelection,
@@ -107,11 +107,11 @@ let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardRec
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let eventRouter = EventRouter.empty()
-  let nonWildcardLogDataRbsByContract = Js.Dict.empty()
+  let nonWildcardLogDataRbsByContract = Dict.make()
   let wildcardLogDataRbs = []
 
   // This is for non-LogData events, since they don't have rb filter and can be grouped
-  let nonLogDataReceiptTypesByContract = Js.Dict.empty()
+  let nonLogDataReceiptTypesByContract = Dict.make()
   let nonLogDataWildcardReceiptTypes = []
 
   let addNonLogDataWildcardReceiptTypes = (receiptType: FuelSDK.receiptType) => {
@@ -119,7 +119,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
   let addNonLogDataReceiptType = (contractName, receiptType: FuelSDK.receiptType) => {
     switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-    | None => nonLogDataReceiptTypesByContract->Js.Dict.set(contractName, [receiptType])
+    | None => nonLogDataReceiptTypesByContract->Dict.set(contractName, [receiptType])
     | Some(receiptTypes) => receiptTypes->Array.push(receiptType)->ignore // Duplication prevented by EventRouter
     }
   }
@@ -157,15 +157,15 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
     | {kind: Call} =>
-      Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
+      JsError.throwWithMessage("Call receipt indexing currently supported only in wildcard mode")
     | {kind: LogData({logId}), isWildcard} => {
-        let rb = logId->BigInt.fromStringUnsafe
+        let rb = logId->BigInt_.fromStringUnsafe
         if isWildcard {
           wildcardLogDataRbs->Array.push(rb)->ignore
         } else {
           switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
           | Some(arr) => arr->Belt.Array.push(rb)
-          | None => nonWildcardLogDataRbsByContract->Js.Dict.set(contractName, [rb])
+          | None => nonWildcardLogDataRbsByContract->Dict.set(contractName, [rb])
           }
         }
       }
@@ -235,7 +235,11 @@ let make = ({chain, endpointUrl}: options): t => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
-    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getLogs")
+    Prometheus.SourceRequestCount.increment(
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~method="getLogs",
+    )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
       ~serverUrl=endpointUrl,
       ~fromBlock,
@@ -243,7 +247,7 @@ let make = ({chain, endpointUrl}: options): t => {
       ~recieptsSelection,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
@@ -269,7 +273,7 @@ let make = ({chain, endpointUrl}: options): t => {
         ),
       )
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
@@ -305,7 +309,7 @@ let make = ({chain, endpointUrl}: options): t => {
     //     ReorgDetection.blockNumber,
     //     blockTimestamp: timestamp,
     //     blockHash: hash,
-    //   }->Promise.resolve
+    //   }->Promise_.resolve
     // | None =>
     //The optional block and timestamp of the last item returned by the query
     //(Optional in the case that there are no logs returned in the query)
@@ -321,7 +325,7 @@ let make = ({chain, endpointUrl}: options): t => {
           blockTimestamp: block.time,
           blockHash: block.id,
         }: ReorgDetection.blockDataWithTimestamp
-      )->Promise.resolve
+      )->Promise_.resolve
     //If it does not match it means that there were no matching logs in the last
     //block so we should fetch the block data
     | Some(_)
@@ -329,7 +333,7 @@ let make = ({chain, endpointUrl}: options): t => {
       //If there were no logs at all in the current page query then fetch the
       //timestamp of the heighest block accounted for
       HyperFuel.queryBlockData(~serverUrl=endpointUrl, ~blockNumber=heighestBlockQueried, ~logger)
-      ->Promise.thenResolve(res => {
+      ->Promise_.thenResolve(res => {
         switch res {
         | Some(blockData) => blockData
         | None =>
@@ -339,7 +343,7 @@ let make = ({chain, endpointUrl}: options): t => {
           )
         }
       })
-      ->Promise.catch(exn => {
+      ->Promise_.catch(exn => {
         exn->mkLogAndRaise(
           ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
         )
@@ -353,7 +357,7 @@ let make = ({chain, endpointUrl}: options): t => {
 
       let chainId = chain->ChainMap.Chain.toChainId
       let eventId = switch receipt {
-      | LogData({rb}) => BigInt.toString(rb)
+      | LogData({rb}) => BigInt_.toString(rb)
       | Mint(_) => mintEventTag
       | Burn(_) => burnEventTag
       | Transfer(_)
@@ -435,7 +439,7 @@ let make = ({chain, endpointUrl}: options): t => {
           }: Internal.fuelTransferParams
         )->Obj.magic
       // This should never happen unless there's a bug in the routing logic
-      | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
+      | _ => JsError.throwWithMessage("Unexpected bug in the event routing logic")
       }
 
       Internal.Event({
@@ -486,7 +490,7 @@ let make = ({chain, endpointUrl}: options): t => {
   }
 
   let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
-    Js.Exn.raiseError("HyperFuel does not support getting block hashes")
+    JsError.throwWithMessage("HyperFuel does not support getting block hashes")
 
   let jsonApiClient = Rest.client(endpointUrl)
 
@@ -498,7 +502,11 @@ let make = ({chain, endpointUrl}: options): t => {
     pollingInterval: 100,
     poweredByHyperSync: true,
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+      )
       HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
     },
     getItemsOrThrow,

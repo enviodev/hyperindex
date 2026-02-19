@@ -21,7 +21,7 @@ type rec expectation<'a> = {
   toBeNaN: unit => unit,
   // String matchers
   toContain: string => unit,
-  toMatch: Js.Re.t => unit,
+  toMatch: RegExp.t => unit,
   toMatchString: string => unit,
   // Array matchers
   toContainItem: 'a => unit,

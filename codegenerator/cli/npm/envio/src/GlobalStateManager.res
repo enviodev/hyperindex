@@ -40,7 +40,7 @@ module MakeManager = (S: State) => {
   }
   and dispatchTask = (self, task: S.task) => {
     let stateId = self.state->S.getId
-    Js.Global.setTimeout(() => {
+    setTimeout(() => {
       if stateId !== self.state->S.getId {
         Logging.info("Invalidated task discarded")
       } else {
@@ -48,9 +48,9 @@ module MakeManager = (S: State) => {
           S.taskReducer(self.state, task, ~dispatchAction=action =>
             dispatchAction(~stateId, self, action)
           )
-          ->Promise.catch(e => {
+          ->Promise_.catch(e => {
             e->self.onError
-            Promise.resolve()
+            Promise_.resolve()
           })
           ->ignore
         } catch {

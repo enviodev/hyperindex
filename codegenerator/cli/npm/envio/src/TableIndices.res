@@ -12,7 +12,7 @@ module FieldValue = {
   let rec toString = tNonOptional =>
     switch tNonOptional {
     | String(v) => v
-    | BigInt(v) => v->BigInt.toString
+    | BigInt(v) => v->BigInt_.toString
     | Int(v) => v->Int.toString
     | BigDecimal(v) => v->BigDecimal.toString
     | Bool(v) => v ? "true" : "false"
@@ -107,4 +107,3 @@ module Index = {
     | Single(index) => SingleIndex.evaluate(index, ~fieldName, ~fieldValue)
     }
 }
-

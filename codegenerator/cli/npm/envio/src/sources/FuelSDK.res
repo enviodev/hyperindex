@@ -15,7 +15,7 @@ type receiptType =
   | @as(12) Burn
 
 @module("./vendored-fuel-abi-coder.js")
-external transpileAbi: Js.Json.t => EvmTypes.Abi.t = "transpileAbi"
+external transpileAbi: JSON.t => EvmTypes.Abi.t = "transpileAbi"
 
 @module("./vendored-fuel-abi-coder.js") @scope("AbiCoder")
 external getLogDecoder: (~abi: EvmTypes.Abi.t, ~logId: string) => string => unknown =

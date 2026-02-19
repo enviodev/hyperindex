@@ -10,6 +10,5 @@
     "in-source": true
   },
   "suffix": ".res.mjs",
-  "bs-dependencies": ["rescript-schema", "envio"],
-  "bsc-flags": ["-open Belt"]
+  "dependencies": ["sury", "envio"]
 }

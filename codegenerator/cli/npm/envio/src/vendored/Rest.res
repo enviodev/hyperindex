@@ -16,7 +16,12 @@ module Exn = {
   @new
   external makeError: string => error = "Error"
 
-  let raiseAny = (any: 'any): 'a => any->Obj.magic->raise
+  let raiseAny = (any: 'any): 'a =>
+    any
+    ->Obj.magic
+    ->throw
+
+  // Check if dataSchema is a literal (has a const value)
 
   let raiseError: error => 'a = raiseAny
 }
@@ -40,8 +45,12 @@ module Option = {
 module Dict = {
   @inline
   let has = (dict, key) => {
-    dict->Js.Dict.unsafeGet(key)->(Obj.magic: 'a => bool)
+    dict->Dict.getUnsafe(key)->(Obj.magic: 'a => bool)
   }
+  let set = Dict.set
+  let getUnsafe = Dict.getUnsafe
+  let make = Dict.make
+  let keysToArray = Dict.keysToArray
 }
 
 let panic = (message, ~params: option<{..}>=?) => {
@@ -78,15 +87,15 @@ module ApiFetcher = {
     // Note: contentType might be null
     if (
       contentType->Obj.magic &&
-      contentType->Js.String2.includes("application/") &&
-      contentType->Js.String2.includes("json")
+      contentType->String.includes("application/") &&
+      contentType->String.includes("json")
     ) {
       {
         status: result["status"],
         data: await result["json"](),
         headers: result["headers"],
       }
-    } else if contentType->Obj.magic && contentType->Js.String2.includes("text/") {
+    } else if contentType->Obj.magic && contentType->String.includes("text/") {
       {
         status: result["status"],
         data: await result["text"](),
@@ -206,19 +215,19 @@ module Response = {
     if map->Dict.has(key) {
       panic(`Response for the "${key}" status registered multiple times`)
     } else {
-      map->Js.Dict.set(key, builder->(Obj.magic: builder<'output> => t<'output>))
+      map->Dict.set(key, builder->(Obj.magic: builder<'output> => t<'output>))
     }
   }
 
   @inline
   let find = (map: dict<t<'output>>, responseStatus: int): option<t<'output>> => {
     (map
-    ->Js.Dict.unsafeGet(responseStatus->(Obj.magic: int => string))
+    ->Dict.getUnsafe(responseStatus->(Obj.magic: int => string))
     ->(Obj.magic: t<'output> => bool) ||
     map
-    ->Js.Dict.unsafeGet((responseStatus / 100)->(Obj.magic: int => string) ++ "XX")
+    ->Dict.getUnsafe((responseStatus / 100)->(Obj.magic: int => string) ++ "XX")
     ->(Obj.magic: t<'output> => bool) ||
-    map->Js.Dict.unsafeGet("default")->(Obj.magic: t<'output> => bool))
+    map->Dict.getUnsafe("default")->(Obj.magic: t<'output> => bool))
       ->(Obj.magic: bool => option<t<'output>>)
   }
 }
@@ -294,73 +303,87 @@ type route<'input, 'output> = unit => definition<'input, 'output>
 
 let rec parsePath = (path: string, ~pathItems, ~pathParams) => {
   if path !== "" {
-    switch path->Js.String2.indexOf("{") {
-    | -1 => pathItems->Js.Array2.push(Static(path))->ignore
+    switch path->String.indexOf("{") {
+    | -1 => pathItems->Array.push(Static(path))->ignore
     | paramStartIdx =>
-      switch path->Js.String2.indexOf("}") {
+      switch path->String.indexOf("}") {
       | -1 => panic("Path contains an unclosed parameter")
       | paramEndIdx =>
         if paramStartIdx > paramEndIdx {
           panic("Path parameter is not enclosed in curly braces")
         }
-        let paramName = Js.String2.slice(path, ~from=paramStartIdx + 1, ~to_=paramEndIdx)
+        let paramName = String.slice(path, ~start=paramStartIdx + 1, ~end=paramEndIdx)
         if paramName === "" {
           panic("Path parameter name cannot be empty")
         }
         let param = {name: paramName}
 
         pathItems
-        ->Js.Array2.push(Static(Js.String2.slice(path, ~from=0, ~to_=paramStartIdx)))
+        ->Array.push(Static(String.slice(path, ~start=0, ~end=paramStartIdx)))
         ->ignore
-        pathItems->Js.Array2.push(Param(param))->ignore
-        pathParams->Js.Dict.set(paramName, param)->ignore
+        pathItems->Array.push(Param(param))->ignore
+        pathParams->Dict.set(paramName, param)->ignore
 
-        parsePath(Js.String2.sliceToEnd(path, ~from=paramEndIdx + 1), ~pathItems, ~pathParams)
+        parsePath(String.slice(path, ~start=paramEndIdx + 1), ~pathItems, ~pathParams)
       }
     }
   }
 }
 
 let coerceSchema = schema => {
-  schema->S.preprocess(s => {
-    let tagged = switch s.schema->S.classify {
-    | Option(optionalSchema) => optionalSchema->S.classify
-    | tagged => tagged
+  // Determine the inner type tag, unwrapping Option/Null wrappers (Union with Null/Undefined member)
+  let tag = (schema->S.untag).tag
+  let innerTag = if tag == Union {
+    let anyOf: array<S.t<unknown>> = (schema->S.untag->(Obj.magic: S.untagged => {..}))["anyOf"]
+    let inner = anyOf->Array.find(s => {
+      let t = (s->S.untag).tag
+      t != Null && t != Undefined
+    })
+    switch inner {
+    | Some(s) => (s->S.untag).tag
+    | None => tag
     }
-    switch tagged {
-    | Literal(Boolean(_))
-    | Bool => {
-        parser: unknown =>
-          switch unknown->Obj.magic {
-          | "true" => true
-          | "false" => false
-          | _ => unknown->Obj.magic
-          }->Obj.magic,
-      }
-    | Literal(Number(_))
-    | Int
-    | Float => {
-        parser: unknown => {
-          let float = %raw(`+unknown`)
-          if Js.Float.isNaN(float) {
-            unknown
-          } else {
-            float->Obj.magic
-          }
+  } else {
+    tag
+  }
+  switch innerTag {
+  | Boolean =>
+    S.unknown
+    ->S.transform(_ => {
+      parser: unknown =>
+        switch unknown->Obj.magic {
+        | "true" => true->Obj.magic
+        | "false" => false->Obj.magic
+        | _ => unknown
         },
-      }
-    | String
-    | Literal(String(_))
-    | Union(_)
-    | Never => {}
-    | _ => {}
-    }
-  })
+    })
+    ->S.to(schema->Obj.magic)
+  | Number =>
+    S.unknown
+    ->S.transform(_ => {
+      parser: unknown => {
+        let float = %raw(`+unknown`)
+        if Float.isNaN(float) {
+          unknown
+        } else {
+          float->Obj.magic
+        }
+      },
+    })
+    ->S.to(schema->Obj.magic)
+  | _ => schema
+  }
 }
 
-let stripInPlace = schema => (schema->S.classify->Obj.magic)["unknownKeys"] = S.Strip
-let getSchemaField = (schema, fieldName): option<S.item> =>
-  (schema->S.classify->Obj.magic)["fields"]->Js.Dict.unsafeGet(fieldName)
+let stripInPlace = schema => (schema->S.untag->Obj.magic)["additionalItems"] = "strip"
+let getSchemaField = (schema, fieldName): option<S.item> => {
+  let s = (schema->S.untag->Obj.magic)["properties"]->Dict.getUnsafe(fieldName)
+  if s->Obj.magic {
+    Some(({schema: s, location: fieldName}: S.item))
+  } else {
+    None
+  }
+}
 
 type typeValidation = (unknown, ~inputVar: string) => string
 let removeTypeValidationInPlace = schema => (schema->Obj.magic)["f"] = ()
@@ -369,12 +392,10 @@ let setTypeValidationInPlace = (schema, typeValidation: typeValidation) =>
 let unsafeGetTypeValidationInPlace = (schema): typeValidation => (schema->Obj.magic)["f"]
 
 let isNestedFlattenSupported = schema =>
-  switch schema->S.classify {
-  | Object({advanced: false}) =>
-    switch schema
-    ->S.reverse
-    ->S.classify {
-    | Object({advanced: false}) => true
+  switch schema->(Obj.magic: S.t<'a> => S.t<unknown>) {
+  | Object(_) =>
+    switch schema->S.reverse {
+    | Object(_) => true
     | _ => false
     }
   | _ => false
@@ -385,7 +406,7 @@ let bearerAuthSchema = S.string->S.transform(s => {
     `Bearer ${token}`
   },
   parser: string => {
-    switch string->Js.String2.split(" ") {
+    switch string->String.split(" ") {
     | ["Bearer", token] => token
     | _ => s.fail("Invalid Bearer token")
     }
@@ -397,7 +418,7 @@ let basicAuthSchema = S.string->S.transform(s => {
     `Basic ${token}`
   },
   parser: string => {
-    switch string->Js.String2.split(" ") {
+    switch string->String.split(" ") {
     | ["Basic", token] => token
     | _ => s.fail("Invalid Basic token")
     }
@@ -432,8 +453,8 @@ let params = route => {
           emptyData: false,
           schema: outputSchema,
         }
-        let responsesMap = Js.Dict.empty()
-        responsesMap->Js.Dict.set("200", response)
+        let responsesMap = Dict.make()
+        responsesMap->Dict.set("200", response)
         {
           method: Post,
           path,
@@ -451,7 +472,7 @@ let params = route => {
         }
       } else {
         let pathItems = []
-        let pathParams = Js.Dict.empty()
+        let pathParams = Dict.make()
         parsePath(definition.path, ~pathItems, ~pathParams)
 
         // Don't use ref, since it creates an unnecessary object
@@ -470,11 +491,7 @@ let params = route => {
               }
             },
             rawBody: schema => {
-              let isNonStringBased = switch schema->S.classify {
-              | Literal(String(_))
-              | String => false
-              | _ => true
-              }
+              let isNonStringBased = (schema->S.untag).tag != String
               if isNonStringBased {
                 panic("Only string-based schemas are allowed in rawBody")
               }
@@ -482,7 +499,7 @@ let params = route => {
               s.field("body", schema)
             },
             header: (fieldName, schema) => {
-              s.nested("headers").field(fieldName->Js.String2.toLowerCase, coerceSchema(schema))
+              s.nested("headers").field(fieldName->String.toLowerCase, coerceSchema(schema))
             },
             query: (fieldName, schema) => {
               s.nested("query").field(fieldName, coerceSchema(schema))
@@ -525,9 +542,9 @@ let params = route => {
           }
         }
 
-        let responsesMap = Js.Dict.empty()
+        let responsesMap = Dict.make()
         let responses = []
-        definition.responses->Js.Array2.forEach(r => {
+        definition.responses->Array.forEach(r => {
           let builder: Response.builder<unknown> = {
             emptyData: true,
           }
@@ -539,7 +556,7 @@ let params = route => {
               s.tag("status", status)
             }
             let header = (fieldName, schema) => {
-              s.nested("headers").field(fieldName->Js.String2.toLowerCase, coerceSchema(schema))
+              s.nested("headers").field(fieldName->String.toLowerCase, coerceSchema(schema))
             }
             let definition = r({
               status,
@@ -574,14 +591,12 @@ let params = route => {
           schema->removeTypeValidationInPlace
           let dataSchema = (schema->getSchemaField("data")->Option.unsafeUnwrap).schema
           builder.dataSchema = dataSchema->Option.unsafeSome
-          switch dataSchema->S.classify {
-          | Literal(_) => {
-              let dataTypeValidation = dataSchema->unsafeGetTypeValidationInPlace
-              schema->setTypeValidationInPlace((b, ~inputVar) =>
-                dataTypeValidation(b, ~inputVar=`${inputVar}.data`)
-              )
-            }
-          | _ => ()
+
+          if (dataSchema->S.untag->Obj.magic)["const"] !== %raw(`void 0`) {
+            let dataTypeValidation = dataSchema->unsafeGetTypeValidationInPlace
+            schema->setTypeValidationInPlace((b, ~inputVar) =>
+              dataTypeValidation(b, ~inputVar=`${inputVar}.data`)
+            )
           }
           switch schema->getSchemaField("headers") {
           | Some({schema}) =>
@@ -591,11 +606,11 @@ let params = route => {
           }
           builder.schema = Option.unsafeSome(schema)
           responses
-          ->Js.Array2.push(builder->(Obj.magic: Response.builder<unknown> => Response.t<unknown>))
+          ->Array.push(builder->(Obj.magic: Response.builder<unknown> => Response.t<unknown>))
           ->ignore
         })
 
-        if responses->Js.Array2.length === 0 {
+        if responses->Array.length === 0 {
           panic("At least single response should be registered")
         }
 
@@ -603,7 +618,7 @@ let params = route => {
           method: definition.method,
           path: definition.path,
           inputSchema,
-          outputSchema: S.union(responses->Js.Array2.map(r => r.schema)),
+          outputSchema: S.union(responses->Array.map(r => r.schema)),
           responses,
           pathItems,
           responsesMap,
@@ -637,11 +652,11 @@ type client = {
  * This should be fully compatible with the "qs" library, but more optimised and without the need to add a dependency
  */
 let rec tokeniseValue = (key, value, ~append) => {
-  if Js.Array2.isArray(value) {
+  if Array.isArray(value) {
     value
     ->(Obj.magic: unknown => array<unknown>)
-    ->Js.Array2.forEachi((v, idx) => {
-      tokeniseValue(`${key}[${idx->Js.Int.toString}]`, v, ~append)
+    ->Array.forEachWithIndex((v, idx) => {
+      tokeniseValue(`${key}[${idx->Int.toString}]`, v, ~append)
     })
   } else if value === %raw(`null`) {
     append(key, "")
@@ -650,9 +665,9 @@ let rec tokeniseValue = (key, value, ~append) => {
   } else if Js.typeof(value) === "object" {
     let dict = value->(Obj.magic: unknown => dict<unknown>)
     dict
-    ->Js.Dict.keys
-    ->Js.Array2.forEach(k => {
-      tokeniseValue(`${key}[${encodeURIComponent(k)}]`, dict->Js.Dict.unsafeGet(k), ~append)
+    ->Dict.keysToArray
+    ->Array.forEach(k => {
+      tokeniseValue(`${key}[${encodeURIComponent(k)}]`, dict->Dict.getUnsafe(k), ~append)
     })
   } else {
     append(key, value->(Obj.magic: unknown => string))
@@ -663,12 +678,12 @@ let rec tokeniseValue = (key, value, ~append) => {
 let getCompletePath = (~baseUrl, ~pathItems, ~maybeQuery, ~maybeParams, ~jsonQuery=false) => {
   let path = ref(baseUrl)
 
-  for idx in 0 to pathItems->Js.Array2.length - 1 {
-    let pathItem = pathItems->Js.Array2.unsafe_get(idx)
+  for idx in 0 to pathItems->Array.length - 1 {
+    let pathItem = pathItems->Array.getUnsafe(idx)
     switch pathItem {
     | Static(static) => path := path.contents ++ static
     | Param({name}) =>
-      switch (maybeParams->Obj.magic && maybeParams->Js.Dict.unsafeGet(name)->Obj.magic)
+      switch (maybeParams->Obj.magic && maybeParams->Dict.getUnsafe(name)->Obj.magic)
         ->(Obj.magic: bool => option<string>) {
       | Some(param) => path := path.contents ++ param
       | None => panic(`Path parameter "${name}" is not defined in input`)
@@ -682,13 +697,13 @@ let getCompletePath = (~baseUrl, ~pathItems, ~maybeQuery, ~maybeParams, ~jsonQue
       let queryItems = []
 
       let append = (key, value) => {
-        let _ = queryItems->Js.Array2.push(key ++ "=" ++ encodeURIComponent(value))
+        let _ = queryItems->Array.push(key ++ "=" ++ encodeURIComponent(value))
       }
 
-      let queryNames = query->Js.Dict.keys
-      for idx in 0 to queryNames->Js.Array2.length - 1 {
-        let queryName = queryNames->Js.Array2.unsafe_get(idx)
-        let value = query->Js.Dict.unsafeGet(queryName)
+      let queryNames = query->Dict.keysToArray
+      for idx in 0 to queryNames->Array.length - 1 {
+        let queryName = queryNames->Array.getUnsafe(idx)
+        let value = query->Dict.getUnsafe(queryName)
         let key = encodeURIComponent(queryName)
         if value !== %raw(`void 0`) {
           switch jsonQuery {
@@ -704,12 +719,12 @@ let getCompletePath = (~baseUrl, ~pathItems, ~maybeQuery, ~maybeParams, ~jsonQue
                     value !== "true" &&
                     value !== "false" &&
                     value !== "null" &&
-                    Js.Float.isNaN(Js.Float.fromString(value))
+                    Float.isNaN(Float.parseFloat(value))
                   }
               ) {
                 value->(Obj.magic: unknown => string)
               } else {
-                value->(Obj.magic: unknown => Js.Json.t)->Js.Json.stringify
+                value->(Obj.magic: unknown => JSON.t)->JSON.stringify
               },
             )
           | false => tokeniseValue(key, value, ~append)
@@ -717,8 +732,8 @@ let getCompletePath = (~baseUrl, ~pathItems, ~maybeQuery, ~maybeParams, ~jsonQue
         }
       }
 
-      if queryItems->Js.Array2.length > 0 {
-        path := path.contents ++ "?" ++ queryItems->Js.Array2.joinWith("&")
+      if queryItems->Array.length > 0 {
+        path := path.contents ++ "?" ++ queryItems->Array.joinUnsafe("&")
       }
     }
   }
@@ -788,10 +803,10 @@ let fetch = (type input response, route: route<input, response>, input, ~client=
       ~jsonQuery?,
     ),
     method: (method :> string),
-  })->Promise.thenResolve(fetcherResponse => {
+  })->Promise_.thenResolve(fetcherResponse => {
     switch responsesMap->Response.find(fetcherResponse.status) {
     | None =>
-      let error = ref(`Unexpected response status "${fetcherResponse.status->Js.Int.toString}"`)
+      let error = ref(`Unexpected response status "${fetcherResponse.status->Int.toString}"`)
       if (
         fetcherResponse.data->Obj.magic &&
           Js.typeof((fetcherResponse.data->Obj.magic)["message"]) === "string"
@@ -805,15 +820,15 @@ let fetch = (type input response, route: route<input, response>, input, ~client=
       try fetcherResponse
       ->S.parseOrThrow(response.schema)
       ->(Obj.magic: unknown => response) catch {
-      | S.Raised({path, code: InvalidType({expected, received})}) if path === S.Path.empty =>
+      | S.Error({path, code: InvalidType({expected, received})}) if path === S.Path.empty =>
         panic(
           `Failed parsing response data. Reason: Expected ${(
               expected->getSchemaField("data")->Option.unsafeUnwrap
-            ).schema->S.name}, received ${(received->Obj.magic)["data"]->Obj.magic}`,
+            ).schema->S.toExpression}, received ${(received->Obj.magic)["data"]->Obj.magic}`,
         )
-      | S.Raised(error) =>
+      | S.Error(error) =>
         panic(
-          `Failed parsing response at ${error.path->S.Path.toString}. Reason: ${error->S.Error.reason}`,
+          `Failed parsing response at ${error.path->S.Path.toString}. Reason: ${error.reason}`,
           ~params={
             "response": fetcherResponse,
           },

@@ -96,7 +96,7 @@ module Async = {
 }
 
 module DoneCallback = {
-  type doneCallback = Js.Nullable.t<Js.Exn.t> => unit
+  type doneCallback = Nullable.t<JsExn.t> => unit
 
   @val
   external it: (string, doneCallback => unit) => unit = "it"

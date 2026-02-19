@@ -404,7 +404,7 @@ module ResponseTypes = {
     blockNumber?: int,
     address?: Address.t,
     data?: string,
-    topics?: array<Js.Nullable.t<EvmTypes.Hex.t>>,
+    topics?: array<Nullable.t<EvmTypes.Hex.t>>,
   }
 
   type event = {
@@ -558,10 +558,10 @@ module Decoder = {
   type t = {
     enableChecksummedAddresses: unit => unit,
     disableChecksummedAddresses: unit => unit,
-    decodeLogs: array<log> => promise<array<Js.Nullable.t<decodedEvent>>>,
-    decodeLogsSync: array<log> => array<Js.Nullable.t<decodedEvent>>,
-    decodeEvents: array<ResponseTypes.event> => promise<array<Js.Nullable.t<decodedEvent>>>,
-    decodeEventsSync: array<ResponseTypes.event> => array<Js.Nullable.t<decodedEvent>>,
+    decodeLogs: array<log> => promise<array<Nullable.t<decodedEvent>>>,
+    decodeLogsSync: array<log> => array<Nullable.t<decodedEvent>>,
+    decodeEvents: array<ResponseTypes.event> => promise<array<Nullable.t<decodedEvent>>>,
+    decodeEventsSync: array<ResponseTypes.event> => array<Nullable.t<decodedEvent>>,
   }
 
   @module("@envio-dev/hypersync-client") @scope("Decoder")

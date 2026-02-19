@@ -6,14 +6,14 @@ let make = (~loaded, ~buffered=?, ~outOf, ~barWidth=36, ~loadingColor=Style.Seco
 
   let loadedFraction = loaded->Int.toFloat /. outOf->Int.toFloat
   let loadedCount = Pervasives.min(
-    Js.Math.floor_float(maxCount->Js.Int.toFloat *. loadedFraction)->Belt.Float.toInt,
+    Math.floor(maxCount->Int.toFloat *. loadedFraction)->Belt.Float.toInt,
     maxCount,
   )
 
   let bufferedCount = buffered->Option.mapWithDefault(loadedCount, buffered => {
     let bufferedFraction = buffered->Int.toFloat /. outOf->Int.toFloat
     Pervasives.min(
-      Js.Math.floor_float(maxCount->Js.Int.toFloat *. bufferedFraction)->Belt.Float.toInt,
+      Math.floor(maxCount->Int.toFloat *. bufferedFraction)->Belt.Float.toInt,
       maxCount,
     )
   })
@@ -27,14 +27,14 @@ let make = (~loaded, ~buffered=?, ~outOf, ~barWidth=36, ~loadingColor=Style.Seco
 
   <Box>
     <Text backgroundColor={loadingColor} color={Gray}>
-      <Text> {" "->Js.String2.repeat(loadedSpaces)->React.string} </Text>
+      <Text> {" "->String.repeat(loadedSpaces)->React.string} </Text>
       <Text> {loadedPercentageStr->React.string} </Text>
     </Text>
     <Text backgroundColor={Gray}>
-      {" "->Js.String2.repeat(bufferedCount - loadedCount)->React.string}
+      {" "->String.repeat(bufferedCount - loadedCount)->React.string}
     </Text>
     <Text backgroundColor={White}>
-      {" "->Js.String2.repeat(maxCount - bufferedCount)->React.string}
+      {" "->String.repeat(maxCount - bufferedCount)->React.string}
     </Text>
   </Box>
 }

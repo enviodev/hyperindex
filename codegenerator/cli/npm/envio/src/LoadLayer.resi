@@ -15,7 +15,7 @@ let loadByField: (
   ~entityConfig: Internal.entityConfig,
   ~inMemoryStore: InMemoryStore.t,
   ~fieldName: string,
-  ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
+  ~fieldValueSchema: S.t<'fieldValue>,
   ~shouldGroup: bool,
   ~item: Internal.item,
   ~fieldValue: 'fieldValue,

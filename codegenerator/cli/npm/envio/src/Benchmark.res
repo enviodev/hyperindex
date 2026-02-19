@@ -1,27 +1,27 @@
 module MillisAccum = {
   type millis = float
-  type t = {counters: dict<millis>, startTime: Js.Date.t, mutable endTime: Js.Date.t}
+  type t = {counters: dict<millis>, startTime: Date.t, mutable endTime: Date.t}
   let schema: S.t<t> = S.schema(s => {
     counters: s.matches(S.dict(S.float)),
     startTime: s.matches(S.string->S.datetime),
     endTime: s.matches(S.string->S.datetime),
   })
   let make: unit => t = () => {
-    counters: Js.Dict.empty(),
-    startTime: Js.Date.make(),
-    endTime: Js.Date.make(),
+    counters: Dict.make(),
+    startTime: Date.make(),
+    endTime: Date.make(),
   }
 
   let increment = (self: t, label, amount) => {
-    self.endTime = Js.Date.make()
+    self.endTime = Date.make()
     let amount = amount->Belt.Float.fromInt
     switch self.counters->Utils.Dict.dangerouslyGetNonOption(label) {
     | None =>
-      self.counters->Js.Dict.set(label, amount)
+      self.counters->Dict.set(label, amount)
       amount
     | Some(current) =>
       let newAmount = current +. amount
-      self.counters->Js.Dict.set(label, newAmount)
+      self.counters->Dict.set(label, newAmount)
       newAmount
     }
   }
@@ -78,7 +78,7 @@ module SummaryData = {
   module Group = {
     type t = dict<DataSet.t>
     let schema: S.t<t> = S.dict(DataSet.schema)
-    let make = (): t => Js.Dict.empty()
+    let make = (): t => Dict.make()
 
     /**
     Adds a value to the data set for the given key. If the key does not exist, it will be created.
@@ -89,11 +89,11 @@ module SummaryData = {
       switch self->Utils.Dict.dangerouslyGetNonOption(label) {
       | None =>
         let new = DataSet.make(value, ~decimalPlaces)
-        self->Js.Dict.set(label, new)
+        self->Dict.set(label, new)
         new
       | Some(dataSet) =>
         let updated = dataSet->DataSet.add(value)
-        self->Js.Dict.set(label, updated)
+        self->Dict.set(label, updated)
         updated
       }
     }
@@ -101,13 +101,13 @@ module SummaryData = {
 
   type t = dict<Group.t>
   let schema = S.dict(Group.schema)
-  let make = (): t => Js.Dict.empty()
+  let make = (): t => Dict.make()
 
   let add = (self: t, ~group, ~label, ~value, ~decimalPlaces=2) => {
     let group = switch self->Utils.Dict.dangerouslyGetNonOption(group) {
     | None =>
       let newGroup = Group.make()
-      self->Js.Dict.set(group, newGroup)
+      self->Dict.set(group, newGroup)
       newGroup
     | Some(group) => group
     }
@@ -128,8 +128,8 @@ module Stats = {
   }
 
   let round = (float, ~precision=2) => {
-    let factor = Js.Math.pow_float(~base=10.0, ~exp=precision->Int.toFloat)
-    Js.Math.round(float *. factor) /. factor
+    let factor = Math.pow(10.0, ~exp=precision->Int.toFloat)
+    Math.round(float *. factor) /. factor
   }
 
   let makeFromDataSet = (dataSet: SummaryData.DataSet.t) => {
@@ -191,7 +191,7 @@ module Data = {
     ) {
       (millisAccum: MillisAccum.t, ~label, ~millis) => {
         let totalRuntimeMillis =
-          millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
+          millisAccum.endTime->Date.getTime -. millisAccum.startTime->Date.getTime
         Prometheus.BenchmarkCounters.set(~label, ~millis, ~totalRuntimeMillis)
       }
     } else {
@@ -216,7 +216,10 @@ let throttler = Throttler.make(
   ~logger=Logging.createChild(~params={"context": "Benchmarking framework"}),
 )
 let cacheFileName = "BenchmarkCache.json"
-let cacheFilePath = NodeJs.Path.join(NodeJs.Path.getDirname(NodeJs.ImportMeta.importMeta), cacheFileName)
+let cacheFilePath = NodeJs.Path.join(
+  NodeJs.Path.getDirname(NodeJs.ImportMeta.importMeta),
+  cacheFileName,
+)
 
 let saveToCacheFile = if (
   Env.Benchmark.saveDataStrategy->Env.Benchmark.SaveDataStrategy.shouldSaveJsonFile
@@ -238,11 +241,11 @@ let readFromCacheFile = async () => {
   | exception _ => None
   | content =>
     try content->S.parseJsonStringOrThrow(Data.schema)->Some catch {
-    | S.Raised(e) =>
+    | S.Error(_) as exn =>
       Logging.error(
         "Failed to parse benchmark cache file, please delete it and rerun the benchmark",
       )
-      e->S.Error.raise
+      throw(exn)
     }
   }
 }
@@ -330,7 +333,7 @@ module Summary = {
         "No benchmark cache file found, please use 'ENVIO_SAVE_BENCHMARK_DATA=true' and rerun the benchmark",
       )
     | Some({summaryData, millisAccum}) =>
-      Js.log("Time breakdown")
+      Console.log("Time breakdown")
       let timeBreakdown = [
         (
           "Total Runtime",
@@ -342,27 +345,27 @@ module Summary = {
       ]
 
       millisAccum.counters
-      ->Js.Dict.entries
+      ->Dict.toArray
       ->Array.forEach(((label, millis)) =>
         timeBreakdown
-        ->Js.Array2.push((label, DateFns.durationFromMillis(millis->Belt.Int.fromFloat)))
+        ->Array.push((label, DateFns.durationFromMillis(millis->Belt.Int.fromFloat)))
         ->ignore
       )
 
       timeBreakdown
-      ->Js.Dict.fromArray
+      ->Dict.fromArray
       ->logDictTable
 
-      Js.log("General")
+      Console.log("General")
       let batchSizesSum =
         summaryData
-        ->Js.Dict.get(eventProcessingGroup)
-        ->Option.flatMap(g => g->Js.Dict.get(batchSizeLabel))
+        ->Dict.get(eventProcessingGroup)
+        ->Option.flatMap(g => g->Dict.get(batchSizeLabel))
         ->Option.map(data => data.sum)
         ->Option.getWithDefault(BigDecimal.zero)
 
       let totalRuntimeMillis =
-        millisAccum.endTime->Js.Date.getTime -. millisAccum.startTime->Js.Date.getTime
+        millisAccum.endTime->Date.getTime -. millisAccum.startTime->Date.getTime
 
       let totalRuntimeSeconds = totalRuntimeMillis /. 1000.
 
@@ -379,14 +382,14 @@ module Summary = {
       })
 
       summaryData
-      ->Js.Dict.entries
+      ->Dict.toArray
       ->Js.Array2.sortInPlaceWith(((a, _), (b, _)) => a < b ? -1 : 1)
       ->Array.forEach(((groupName, group)) => {
-        Js.log(groupName)
+        Console.log(groupName)
         group
-        ->Js.Dict.entries
+        ->Dict.toArray
         ->Array.map(((label, values)) => (label, values->Stats.makeFromDataSet))
-        ->Js.Dict.fromArray
+        ->Dict.fromArray
         ->logDictTable
       })
     }

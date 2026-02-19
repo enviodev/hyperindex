@@ -31,6 +31,5 @@
     "version": 4
   },
   "suffix": ".res.mjs",
-  "bs-dependencies": ["generated", "rescript-schema", "helpers", "envio"],
-  "bsc-flags": ["-open RescriptSchema"]
+  "dependencies": ["generated", "sury", "helpers", "envio"]
 }

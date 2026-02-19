@@ -27,7 +27,18 @@ let clearMetadataRoute = Rest.route(() => {
   path: "",
   input: s => {
     let _ = s.field("type", S.literal("clear_metadata"))
-    let _ = s.field("args", S.literal(Js.Obj.empty()))
+    let _ = s.field(
+      "args",
+      S.literal(
+        Object.make(),
+
+        //Set array relationships
+
+        //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
+
+        //Set object relationships
+      ),
+    )
     s->auth
   },
   responses,
@@ -39,7 +50,7 @@ let trackTablesRoute = Rest.route(() => {
   input: s => {
     let _ = s.field("type", S.literal("pg_track_tables"))
     {
-      "args": s.field("args", S.json(~validate=false)),
+      "args": s.field("args", S.json),
       "auth": s->auth,
     }
   },
@@ -52,7 +63,7 @@ let createSelectPermissionRoute = Rest.route(() => {
   input: s => {
     let _ = s.field("type", S.literal("pg_create_select_permission"))
     {
-      "args": s.field("args", S.json(~validate=false)),
+      "args": s.field("args", S.json),
       "auth": s->auth,
     }
   },
@@ -77,14 +88,14 @@ let bulkKeepGoingRoute = Rest.route(() => {
   input: s => {
     let _ = s.field("type", S.literal("bulk_keep_going"))
     {
-      "args": s.field("args", S.json(~validate=false)),
+      "args": s.field("args", S.json),
       "auth": s->auth,
     }
   },
   responses: [
     (s: Rest.Response.s) => {
       s.status(200)
-      s.data(S.json(~validate=false))
+      s.data(S.json)
     },
   ],
 })
@@ -127,19 +138,18 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
         "args": {
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
-          "tables": tableNames->Js.Array2.map(tableName =>
+          "tables": tableNames->Array.map(tableName =>
             {
               "table": {
                 "name": tableName,
                 "schema": pgSchema,
               },
               "configuration": {
-                // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
                 "custom_name": tableName,
               },
             }
           ),
-        }->(Utils.magic: 'a => Js.Json.t),
+        }->(Utils.magic: 'a => JSON.t),
       },
       ~client=Rest.client(endpoint),
     )
@@ -163,7 +173,7 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
 
 type bulkOperation = {
   \"type": string,
-  args: Js.Json.t,
+  args: JSON.t,
 }
 
 let createSelectPermissionOperation = (
@@ -183,11 +193,11 @@ let createSelectPermissionOperation = (
       "source": "default",
       "permission": {
         "columns": "*",
-        "filter": Js.Obj.empty(),
+        "filter": Object.make(),
         "limit": responseLimit,
-        "allow_aggregations": aggregateEntities->Js.Array2.includes(tableName),
+        "allow_aggregations": aggregateEntities->Array.includes(tableName),
       },
-    }->(Utils.magic: 'a => Js.Json.t),
+    }->(Utils.magic: 'a => JSON.t),
   }
 }
 
@@ -217,22 +227,22 @@ let createEntityRelationshipOperation = (
             "schema": pgSchema,
             "name": mappedEntity,
           },
-          "column_mapping": Js.Json.parseExn(`{${derivedFromTo}}`),
+          "column_mapping": JSON.parseOrThrow(`{${derivedFromTo}}`),
         },
       },
-    }->(Utils.magic: 'a => Js.Json.t),
+    }->(Utils.magic: 'a => JSON.t),
   }
 }
 
 let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOperation>) => {
-  if operations->Js.Array2.length === 0 {
+  if operations->Array.length === 0 {
     Logging.trace("No hasura bulk configuration operations to execute")
   } else {
     try {
       let result = await bulkKeepGoingRoute->Rest.fetch(
         {
           "auth": auth,
-          "args": operations->(Utils.magic: 'a => Js.Json.t),
+          "args": operations->(Utils.magic: 'a => JSON.t),
         },
         ~client=Rest.client(endpoint),
       )
@@ -240,7 +250,7 @@ let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOpera
       let errors = try {
         result->S.parseJsonOrThrow(bulkKeepGoingErrorsSchema)
       } catch {
-      | S.Raised(error) => [error->S.Error.message]
+      | S.Error(error) => [error.message]
       | exn => [exn->Utils.prettifyExn->Utils.magic]
       }
 
@@ -248,20 +258,20 @@ let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOpera
       | [] =>
         Logging.trace({
           "msg": "Hasura configuration completed",
-          "operations": operations->Js.Array2.length,
+          "operations": operations->Array.length,
         })
       | _ =>
         Logging.warn({
           "msg": "Hasura configuration completed with errors. Indexing will still work - but you may have issues querying data via GraphQL.",
           "errors": errors,
-          "operations": operations->Js.Array2.length,
+          "operations": operations->Array.length,
         })
       }
     } catch {
     | exn =>
       Logging.error({
         "msg": `EE809: There was an issue executing bulk operations in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-        "operations": operations->Js.Array2.length,
+        "operations": operations->Array.length,
         "err": exn->Utils.prettifyExn,
       })
     }
@@ -282,7 +292,7 @@ let trackDatabase = async (
     InternalTable.Views.metaViewName,
     InternalTable.Views.chainMetadataViewName,
   ]
-  let userTableNames = userEntities->Js.Array2.map(entity => entity.table.tableName)
+  let userTableNames = userEntities->Array.map(entity => entity.table.tableName)
   let tableNames = [exposedInternalTableNames, userTableNames]->Belt.Array.concatMany
 
   Logging.info("Tracking tables in Hasura")
@@ -295,28 +305,26 @@ let trackDatabase = async (
   let allOperations = []
 
   // Add select permission operations
-  tableNames->Js.Array2.forEach(tableName => {
+  tableNames->Array.forEach(tableName => {
     allOperations
-    ->Js.Array2.push(
+    ->Array.push(
       createSelectPermissionOperation(~tableName, ~pgSchema, ~responseLimit, ~aggregateEntities),
     )
     ->ignore
   })
 
   // Add relationship operations
-  userEntities->Js.Array2.forEach(entityConfig => {
+  userEntities->Array.forEach(entityConfig => {
     let {tableName} = entityConfig.table
 
-    //Set array relationships
     entityConfig.table
     ->Table.getDerivedFromFields
-    ->Js.Array2.forEach(derivedFromField => {
-      //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
+    ->Array.forEach(derivedFromField => {
       let relationalFieldName =
         schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
 
       allOperations
-      ->Js.Array2.push(
+      ->Array.push(
         createEntityRelationshipOperation(
           ~pgSchema,
           ~tableName,
@@ -330,12 +338,11 @@ let trackDatabase = async (
       ->ignore
     })
 
-    //Set object relationships
     entityConfig.table
     ->Table.getLinkedEntityFields
-    ->Js.Array2.forEach(((field, linkedEntityName)) => {
+    ->Array.forEach(((field, linkedEntityName)) => {
       allOperations
-      ->Js.Array2.push(
+      ->Array.push(
         createEntityRelationshipOperation(
           ~pgSchema,
           ~tableName,

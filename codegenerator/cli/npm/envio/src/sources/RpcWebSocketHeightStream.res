@@ -17,7 +17,12 @@ type wsMessage =
 
 let subscribeRequestJson =
   {"jsonrpc": "2.0", "id": 1, "method": "eth_subscribe", "params": ["newHeads"]}
-  ->(Utils.magic: {"jsonrpc": string, "id": int, "method": string, "params": array<string>} => Js.Json.t)
+  ->(Utils.magic: {
+    "jsonrpc": string,
+    "id": int,
+    "method": string,
+    "params": array<string>,
+  } => Js.Json.t)
   ->Js.Json.serializeExn
 
 let wsMessageSchema = S.union([
@@ -29,9 +34,11 @@ let wsMessageSchema = S.union([
         S.object(s => {
           s.field(
             "result",
-            S.object(s => {
-              s.field("number", Rpc.hexIntSchema)
-            }),
+            S.object(
+              s => {
+                s.field("number", Rpc.hexIntSchema)
+              },
+            ),
           )
         }),
       ),
@@ -50,12 +57,12 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let wsRef: ref<option<WebSocket.t>> = ref(None)
   let isUnsubscribed = ref(false)
   let errorCount = ref(0)
-  let staleTimeoutId: ref<option<Js.Global.timeoutId>> = ref(None)
+  let staleTimeoutId: ref<option<timeoutId>> = ref(None)
 
   let clearStaleTimeout = () => {
     switch staleTimeoutId.contents {
     | Some(id) =>
-      Js.Global.clearTimeout(id)
+      clearTimeout(id)
       staleTimeoutId := None
     | None => ()
     }
@@ -63,27 +70,20 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
 
   let resetStaleTimeout = () => {
     clearStaleTimeout()
-    staleTimeoutId :=
-      Some(
-        Js.Global.setTimeout(() => {
+    staleTimeoutId := Some(setTimeout(() => {
           // Connection went stale - close to trigger reconnect
           switch wsRef.contents {
           | Some(ws) => ws->WebSocket.close
           | None => ()
           }
-        }, staleTimeMillis),
-      )
+        }, staleTimeMillis))
   }
 
   let rec scheduleReconnect = () => {
     if !isUnsubscribed.contents && errorCount.contents < retryCount {
       let duration =
-        baseDuration *
-        Js.Math.pow_float(
-          ~base=2.0,
-          ~exp=errorCount.contents->Belt.Int.toFloat,
-        )->Belt.Float.toInt
-      let _ = Js.Global.setTimeout(() => {
+        baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
+      let _ = setTimeout(() => {
         if !isUnsubscribed.contents {
           startConnection()
         }
@@ -104,14 +104,17 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
 
       ws->WebSocket.onmessage(event => {
         try {
-          switch event.data->Js.Json.parseExn->S.parseOrThrow(wsMessageSchema) {
+          switch event.data->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema) {
           | NewHead(blockNumber) =>
             errorCount := 0
             resetStaleTimeout()
-            Prometheus.SourceRequestCount.increment(~sourceName="WebSocket", ~chainId, ~method="eth_subscribe")
+            Prometheus.SourceRequestCount.increment(
+              ~sourceName="WebSocket",
+              ~chainId,
+              ~method="eth_subscribe",
+            )
             onHeight(blockNumber)
-          | SubscriptionConfirmed(_) =>
-            resetStaleTimeout()
+          | SubscriptionConfirmed(_) => resetStaleTimeout()
           | ErrorResponse =>
             if errorCount.contents < retryCount {
               errorCount := errorCount.contents + 1
@@ -122,13 +125,13 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
             }
           }
         } catch {
-        | S.Raised(_) =>
+        | S.Error(_) =>
           Logging.warn({
             "msg": "WebSocket height stream received unrecognized message",
             "chainId": chainId,
             "data": event.data,
           })
-        | Js.Exn.Error(_) as e =>
+        | JsExn(_) as e =>
           Logging.warn({
             "msg": "WebSocket height stream failed to parse message",
             "chainId": chainId,
@@ -142,7 +145,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
             "err": e->Utils.prettifyExn,
             "data": event.data,
           })
-          raise(e)
+          throw(e)
         }
       })
 

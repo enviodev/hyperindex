@@ -22,7 +22,7 @@ let logLevels = [
   ("warn", 40),
   ("error", 50),
   ("fatal", 60),
-]->Js.Dict.fromArray
+]->Dict.fromArray
 
 %%private(let logger = ref(None))
 
@@ -39,11 +39,15 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
     level: defaultFileLogLevel,
   }
 
-  let makeMultiStreamLogger =
-    MultiStreamLogger.make(~userLogLevel, ~defaultFileLogLevel, ~customLevels=logLevels, ...)
+  let makeMultiStreamLogger = MultiStreamLogger.make(
+    ~userLogLevel,
+    ~defaultFileLogLevel,
+    ~customLevels=logLevels,
+    ...
+  )
 
   // Empty base disables pid and hostname in logs
-  let base: Js.Json.t = %raw("{}")
+  let base: JSON.t = %raw("{}")
 
   switch logStrategy {
   | EcsFile =>
@@ -86,7 +90,7 @@ let setLogger = l => {
 let getLogger = () => {
   switch logger.contents {
   | Some(logger) => logger
-  | None => Js.Exn.raiseError("Unreachable code. Logger not initialized")
+  | None => JsError.throwWithMessage("Unreachable code. Logger not initialized")
   }
 }
 
@@ -176,7 +180,7 @@ let getItemLogger = {
             }->createChildParams
           },
         )
-        item->Utils.magic->Js.Dict.set(cacheKey, l)
+        item->Utils.magic->Dict.set(cacheKey, l)
         l
       }
     }
@@ -185,7 +189,7 @@ let getItemLogger = {
 
 @inline
 let logForItem = (item, level: Pino.logLevel, message: string, ~params=?) => {
-  (item->getItemLogger->Utils.magic->Js.Dict.unsafeGet((level :> string)))(params, message)
+  (item->getItemLogger->Utils.magic->Dict.getUnsafe((level :> string)))(params, message)
 }
 
 let noopLogger: Envio.logger = {

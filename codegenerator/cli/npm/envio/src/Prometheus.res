@@ -35,17 +35,26 @@ let allChainsSyncedToHead = PromClient.Gauge.makeGauge({
 })
 
 module Labels = {
-  let rec schemaIsString = (schema: S.t<'a>) =>
-    switch schema->S.classify {
+  let rec schemaIsString = (schema: S.t<unknown>) => {
+    let tag = (schema->S.untag).tag
+    switch tag {
     | String => true
-    | Null(s)
-    | Option(s) =>
-      s->schemaIsString
+    | Union => {
+        // For S.null(s) or S.option(s), check if the inner non-null/undefined member is a string
+        let anyOf: array<S.t<unknown>> = (
+          schema->S.untag->(Utils.magic: S.untagged => {..})
+        )["anyOf"]
+        anyOf->Array.some(s => {
+          let t = (s->S.untag).tag
+          t != Null && t != Undefined && schemaIsString(s)
+        })
+      }
     | _ => false
     }
+  }
 
   let getLabelNames = (schema: S.t<'a>) =>
-    switch schema->S.classify {
+    switch schema->(Utils.magic: S.t<'a> => S.t<unknown>) {
     | Object({items}) =>
       let nonStringFields = items->Belt.Array.reduce([], (nonStringFields, item) => {
         if item.schema->schemaIsString {
@@ -58,7 +67,7 @@ module Labels = {
       switch nonStringFields {
       | [] => items->Belt.Array.map(item => item.location)->Ok
       | nonStringItems =>
-        let nonStringItems = nonStringItems->Js.Array2.joinWith(", ")
+        let nonStringItems = nonStringItems->Array.joinUnsafe(", ")
         Error(
           `Label schema must be an object with string (or optional string) values. Non string values: ${nonStringItems}`,
         )
@@ -91,7 +100,7 @@ module MakeSafePromMetric = (
     switch labelSchema->Labels.getLabelNames {
     | Ok(labelNames) =>
       if metricNames->Utils.Set.has(name) {
-        Js.Exn.raiseError("Duplicate prometheus metric name: " ++ name)
+        JsError.throwWithMessage("Duplicate prometheus metric name: " ++ name)
       } else {
         metricNames->Utils.Set.add(name)->ignore
         let metric = M.make({
@@ -103,7 +112,7 @@ module MakeSafePromMetric = (
         {metric, labelSchema}
       }
 
-    | Error(error) => Js.Exn.raiseError(error)
+    | Error(error) => JsError.throwWithMessage(error)
     }
 
   let handleFloat = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
@@ -262,7 +271,17 @@ module BenchmarkCounters = {
 }
 
 let chainIdLabelsSchema = S.object(s => {
-  s.field("chainId", S.string->S.coerce(S.int))
+  s.field(
+    "chainId",
+    S.string->S.transform(s => {
+      parser: v =>
+        switch v->Int.fromString {
+        | Some(n) => n
+        | None => s.fail("Expected integer string")
+        },
+      serializer: v => Int.toString(v),
+    }),
+  )
 })
 
 module Info = {
@@ -412,14 +431,32 @@ module IndexingEndBlock = {
 let sourceLabelsSchema = S.schema(s =>
   {
     "source": s.matches(S.string),
-    "chainId": s.matches(S.string->S.coerce(S.int)),
+    "chainId": s.matches(
+      S.string->S.transform(s => {
+        parser: v =>
+          switch v->Int.fromString {
+          | Some(n) => n
+          | None => s.fail("Expected integer string")
+          },
+        serializer: v => Int.toString(v),
+      }),
+    ),
   }
 )
 
 let sourceRequestLabelsSchema = S.schema(s =>
   {
     "source": s.matches(S.string),
-    "chainId": s.matches(S.string->S.coerce(S.int)),
+    "chainId": s.matches(
+      S.string->S.transform(s => {
+        parser: v =>
+          switch v->Int.fromString {
+          | Some(n) => n
+          | None => s.fail("Expected integer string")
+          },
+        serializer: v => Int.toString(v),
+      }),
+    ),
     "method": s.matches(S.string),
   }
 )
@@ -743,13 +780,13 @@ module StorageLoad = {
     mutable pendingCount: int,
     timerRef: Hrtime.timeRef,
   }
-  let operations = Js.Dict.empty()
+  let operations = Dict.make()
 
   let startOperation = (~operation) => {
     switch operations->Utils.Dict.dangerouslyGetNonOption(operation) {
     | Some(operationRef) => operationRef.pendingCount = operationRef.pendingCount + 1
     | None =>
-      operations->Js.Dict.set(
+      operations->Dict.set(
         operation,
         (
           {
@@ -763,7 +800,7 @@ module StorageLoad = {
   }
 
   let endOperation = (timerRef, ~operation, ~whereSize, ~size) => {
-    let operationRef = operations->Js.Dict.unsafeGet(operation)
+    let operationRef = operations->Dict.getUnsafe(operation)
     operationRef.pendingCount = operationRef.pendingCount - 1
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleInt(

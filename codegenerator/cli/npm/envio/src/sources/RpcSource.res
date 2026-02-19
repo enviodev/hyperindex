@@ -7,7 +7,7 @@ let getKnownBlock = async (~client, ~blockNumber) =>
   switch await Rpc.getBlock(~client, ~blockNumber) {
   | Some(block) => block
   | None =>
-    Js.Exn.raiseError(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`)
+    JsError.throwWithMessage(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`)
   }
 
 let getKnownBlockWithBackoff = async (
@@ -22,7 +22,11 @@ let getKnownBlockWithBackoff = async (
   let result = ref(None)
 
   while result.contents->Option.isNone {
-    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_getBlockByNumber")
+    Prometheus.SourceRequestCount.increment(
+      ~sourceName,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~method="eth_getBlockByNumber",
+    )
     switch await getKnownBlock(~client, ~blockNumber) {
     | exception err =>
       Logging.warn({
@@ -47,43 +51,43 @@ let getKnownBlockWithBackoff = async (
 }
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
-  let suggestedRangeRegExp = %re(`/retry with the range (\d+)-(\d+)/`)
+  let suggestedRangeRegExp = /retry with the range (\d+)-(\d+)/
 
   // QuickNode, 1RPC, Blast: "limited to a 1000 blocks range"
-  let blockRangeLimitRegExp = %re(`/limited to a (\d+) blocks range/`)
+  let blockRangeLimitRegExp = /limited to a (\d+) blocks range/
 
   // Alchemy: "up to a 500 block range"
-  let alchemyRangeRegExp = %re(`/up to a (\d+) block range/`)
+  let alchemyRangeRegExp = /up to a (\d+) block range/
 
   // Cloudflare: "Max range: 3500"
-  let cloudflareRangeRegExp = %re(`/Max range: (\d+)/`)
+  let cloudflareRangeRegExp = /Max range: (\d+)/
 
   // Thirdweb: "Maximum allowed number of requested blocks is 3500"
-  let thirdwebRangeRegExp = %re(`/Maximum allowed number of requested blocks is (\d+)/`)
+  let thirdwebRangeRegExp = /Maximum allowed number of requested blocks is (\d+)/
 
   // BlockPI: "limited to 2000 block"
-  let blockpiRangeRegExp = %re(`/limited to (\d+) block/`)
+  let blockpiRangeRegExp = /limited to (\d+) block/
 
   // Base: "block range too large" - fixed 2000 block limit
-  let baseRangeRegExp = %re(`/block range too large/`)
+  let baseRangeRegExp = /block range too large/
 
   // evm-rpc.sei-apis.com: "block range too large (2000), maximum allowed is 1000 blocks"
-  let maxAllowedBlocksRegExp = %re(`/maximum allowed is (\d+) blocks/`)
+  let maxAllowedBlocksRegExp = /maximum allowed is (\d+) blocks/
 
   // Blast (paid): "exceeds the range allowed for your plan (5000 > 3000)"
-  let blastPaidRegExp = %re(`/exceeds the range allowed for your plan \(\d+ > (\d+)\)/`)
+  let blastPaidRegExp = /exceeds the range allowed for your plan \(\d+ > (\d+)\)/
 
   // Chainstack: "Block range limit exceeded" - 10000 block limit
-  let chainstackRegExp = %re(`/Block range limit exceeded./`)
+  let chainstackRegExp = /Block range limit exceeded./
 
   // Coinbase: "please limit the query to at most 1000 blocks"
-  let coinbaseRegExp = %re(`/please limit the query to at most (\d+) blocks/`)
+  let coinbaseRegExp = /please limit the query to at most (\d+) blocks/
 
   // PublicNode: "maximum block range: 2000"
-  let publicNodeRegExp = %re(`/maximum block range: (\d+)/`)
+  let publicNodeRegExp = /maximum block range: (\d+)/
 
   // Hyperliquid: "query exceeds max block range 1000"
-  let hyperliquidRegExp = %re(`/query exceeds max block range (\d+)/`)
+  let hyperliquidRegExp = /query exceeds max block range (\d+)/
 
   // TODO: Reproduce how the error message looks like
   // when we send request with numeric block range instead of hex
@@ -100,68 +104,65 @@ let getSuggestedBlockIntervalFromExn = {
   let parseMessageForBlockRange = (message: string) => {
     // Helper to extract block range from regex match
     let extractBlockRange = (execResult, ~isMaxRange) =>
-          switch execResult->Js.Re.captures {
-          | [_, Js.Nullable.Value(blockRangeLimit)] =>
-            switch blockRangeLimit->Int.fromString {
-            | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit, isMaxRange)
-            | _ => None
-            }
-          | _ => None
-          }
+      switch execResult->RegExp.Result.matches {
+      | [_, Some(blockRangeLimit)] =>
+        switch blockRangeLimit->Int.fromString {
+        | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit, isMaxRange)
+        | _ => None
+        }
+      | _ => None
+      }
 
-        // Try each regex pattern in order
-        switch suggestedRangeRegExp->Js.Re.exec_(message) {
-        | Some(execResult) =>
-          switch execResult->Js.Re.captures {
-          | [_, Js.Nullable.Value(fromBlock), Js.Nullable.Value(toBlock)] =>
-            switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
-            | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
-              Some(toBlock - fromBlock + 1, false)
-            | _ => None
-            }
-          | _ => None
-          }
+    // Try each regex pattern in order
+    switch suggestedRangeRegExp->RegExp.exec(message) {
+    | Some(execResult) =>
+      switch execResult->RegExp.Result.matches {
+      | [_, Some(fromBlock), Some(toBlock)] =>
+        switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
+        | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
+          Some(toBlock - fromBlock + 1, false)
+        | _ => None
+        }
+      | _ => None
+      }
+    | None =>
+      // Try each provider's specific error pattern
+      switch blockRangeLimitRegExp->RegExp.exec(message) {
+      | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
+      | None =>
+        switch alchemyRangeRegExp->RegExp.exec(message) {
+        | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
         | None =>
-          // Try each provider's specific error pattern
-          switch blockRangeLimitRegExp->Js.Re.exec_(message) {
+          switch cloudflareRangeRegExp->RegExp.exec(message) {
           | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
           | None =>
-            switch alchemyRangeRegExp->Js.Re.exec_(message) {
+            switch thirdwebRangeRegExp->RegExp.exec(message) {
             | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
             | None =>
-              switch cloudflareRangeRegExp->Js.Re.exec_(message) {
+              switch blockpiRangeRegExp->RegExp.exec(message) {
               | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
               | None =>
-                switch thirdwebRangeRegExp->Js.Re.exec_(message) {
+                switch maxAllowedBlocksRegExp->RegExp.exec(message) {
                 | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                 | None =>
-                  switch blockpiRangeRegExp->Js.Re.exec_(message) {
-                  | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
+                  switch baseRangeRegExp->RegExp.exec(message) {
+                  | Some(_) => Some(2000, true)
                   | None =>
-                    switch maxAllowedBlocksRegExp->Js.Re.exec_(message) {
+                    switch blastPaidRegExp->RegExp.exec(message) {
                     | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                     | None =>
-                      switch baseRangeRegExp->Js.Re.exec_(message) {
-                      | Some(_) => Some(2000, true)
+                      switch chainstackRegExp->RegExp.exec(message) {
+                      | Some(_) => Some(10000, true)
                       | None =>
-                        switch blastPaidRegExp->Js.Re.exec_(message) {
+                        switch coinbaseRegExp->RegExp.exec(message) {
                         | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                         | None =>
-                          switch chainstackRegExp->Js.Re.exec_(message) {
-                          | Some(_) => Some(10000, true)
+                          switch publicNodeRegExp->RegExp.exec(message) {
+                          | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
                           | None =>
-                            switch coinbaseRegExp->Js.Re.exec_(message) {
+                            switch hyperliquidRegExp->RegExp.exec(message) {
                             | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                            | None =>
-                              switch publicNodeRegExp->Js.Re.exec_(message) {
-                              | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                              | None =>
-                                switch hyperliquidRegExp->Js.Re.exec_(message) {
-                                | Some(execResult) =>
-                                  extractBlockRange(execResult, ~isMaxRange=true)
-                                | None => None
-                                }
-                              }
+                            | None => None
                             }
                           }
                         }
@@ -173,6 +174,8 @@ let getSuggestedBlockIntervalFromExn = {
             }
           }
         }
+      }
+    }
   }
 
   (exn): option<(
@@ -183,7 +186,7 @@ let getSuggestedBlockIntervalFromExn = {
   )> =>
     switch exn {
     | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
-    | Js.Exn.Error(error) =>
+    | JsExn(error) =>
       try {
         let message: string = (error->Obj.magic)["error"]["message"]
         message->S.assertOrThrow(S.string)
@@ -217,8 +220,8 @@ let getNextPage = (
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
-    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
-      Promise.reject(
+    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise_.then(() =>
+      Promise_.reject(
         QueryTimout(
           `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
         ),
@@ -227,33 +230,31 @@ let getNextPage = (
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
   Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
-  let logsPromise =
-    Rpc.getLogs(
-      ~client,
-      ~param={
-        address: ?addresses,
-        topics: topicQuery,
-        fromBlock,
-        toBlock,
-      },
-    )
-    ->Promise.then(async logs => {
-      {
-        logs,
-        latestFetchedBlock: await latestFetchedBlockPromise,
-      }
-    })
+  let logsPromise = Rpc.getLogs(
+    ~client,
+    ~param={
+      address: ?addresses,
+      topics: topicQuery,
+      fromBlock,
+      toBlock,
+    },
+  )->Promise_.then(async logs => {
+    {
+      logs,
+      latestFetchedBlock: await latestFetchedBlockPromise,
+    }
+  })
 
   [queryTimoutPromise, logsPromise]
-  ->Promise.race
-  ->Promise.catch(err => {
+  ->Promise_.race
+  ->Promise_.catch(err => {
     switch getSuggestedBlockIntervalFromExn(err) {
     | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Js.Dict.set(
+      mutSuggestedBlockIntervals->Dict.set(
         isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
         nextBlockIntervalTry,
       )
-      raise(
+      throw(
         Source.GetItemsError(
           FailedGettingItems({
             exn: err,
@@ -268,8 +269,8 @@ let getNextPage = (
       let executedBlockInterval = toBlock - fromBlock + 1
       let nextBlockIntervalTry =
         (executedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
-      mutSuggestedBlockIntervals->Js.Dict.set(partitionId, nextBlockIntervalTry)
-      raise(
+      mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: err,
@@ -303,7 +304,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   ->Belt.Array.forEach(({getEventFiltersOrThrow}) => {
     switch getEventFiltersOrThrow(chain) {
     | Static(s) => staticTopicSelections->Js.Array2.pushMany(s)->ignore
-    | Dynamic(fn) => dynamicEventFilters->Js.Array2.push(fn)->ignore
+    | Dynamic(fn) => dynamicEventFilters->Array.push(fn)->ignore
     }
   })
 
@@ -312,7 +313,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     dynamicEventFilters,
   ) {
   | ([], []) =>
-    raise(
+    throw(
       Source.GetItemsError(
         UnsupportedSelection({
           message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
@@ -329,7 +330,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         topicQuery,
       }
     }
-  | ([], [dynamicEventFilter]) if selection.eventConfigs->Js.Array2.length === 1 =>
+  | ([], [dynamicEventFilter]) if selection.eventConfigs->Array.length === 1 =>
     let eventConfig = selection.eventConfigs->Utils.Array.firstUnsafe
 
     (~addressesByContractName) => {
@@ -339,7 +340,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         topicQuery: switch dynamicEventFilter(addresses) {
         | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
         | _ =>
-          raise(
+          throw(
             Source.GetItemsError(
               UnsupportedSelection({
                 message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
@@ -350,7 +351,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     }
   | _ =>
-    raise(
+    throw(
       Source.GetItemsError(
         UnsupportedSelection({
           message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
@@ -379,21 +380,21 @@ type fieldSource = TransactionOnly | ReceiptOnly | Both
 type fieldDef = {
   location: string,
   jsonKey: string,
-  schema: S.t<Js.Json.t>, // Type-erased schema (S.nullable for optional fields)
+  schema: S.t<JSON.t>, // Type-erased schema (S.nullable for optional fields)
   source: fieldSource,
 }
 
 // Type-erase a schema for storage in the field registry
-external toFieldSchema: S.t<'a> => S.t<Js.Json.t> = "%identity"
+external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
 
-let lowercaseAddressSchema: S.t<Js.Json.t> =
+let lowercaseAddressSchema: S.t<JSON.t> =
   S.string
   ->S.transform(_ => {
-    parser: str => str->Js.String2.toLowerCase->Address.unsafeFromString,
+    parser: str => str->String.toLowerCase->Address.unsafeFromString,
   })
   ->toFieldSchema
 
-let checksumAddressSchema: S.t<Js.Json.t> =
+let checksumAddressSchema: S.t<JSON.t> =
   S.string
   ->S.transform(_ => {
     parser: str => str->Address.Evm.fromStringOrThrow,
@@ -403,40 +404,172 @@ let checksumAddressSchema: S.t<Js.Json.t> =
 // Field registry: maps field location (= JS property name) to parsing info.
 // Only includes fields that require an RPC call. Log-derived fields (hash, transactionIndex) are special-cased.
 // Nullable wrapping matches Res::option in system_config.rs
-let makeFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<fieldDef> =>
+let makeFieldRegistry = (addressSchema: S.t<JSON.t>): dict<fieldDef> =>
   [
     // TransactionOnly fields (only in eth_getTransactionByHash)
-    {location: "gas", jsonKey: "gas", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly},
-    {location: "gasPrice", jsonKey: "gasPrice", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: TransactionOnly},
+    {
+      location: "gas",
+      jsonKey: "gas",
+      schema: Rpc.hexBigintSchema->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "gasPrice",
+      jsonKey: "gasPrice",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: TransactionOnly,
+    },
     {location: "input", jsonKey: "input", schema: S.string->toFieldSchema, source: TransactionOnly},
-    {location: "nonce", jsonKey: "nonce", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly},
-    {location: "value", jsonKey: "value", schema: Rpc.hexBigintSchema->toFieldSchema, source: TransactionOnly},
-    {location: "v", jsonKey: "v", schema: S.nullable(S.string)->toFieldSchema, source: TransactionOnly},
-    {location: "r", jsonKey: "r", schema: S.nullable(S.string)->toFieldSchema, source: TransactionOnly},
-    {location: "s", jsonKey: "s", schema: S.nullable(S.string)->toFieldSchema, source: TransactionOnly},
-    {location: "yParity", jsonKey: "yParity", schema: S.nullable(S.string)->toFieldSchema, source: TransactionOnly},
-    {location: "maxPriorityFeePerGas", jsonKey: "maxPriorityFeePerGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: TransactionOnly},
-    {location: "maxFeePerGas", jsonKey: "maxFeePerGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: TransactionOnly},
-    {location: "maxFeePerBlobGas", jsonKey: "maxFeePerBlobGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: TransactionOnly},
-    {location: "blobVersionedHashes", jsonKey: "blobVersionedHashes", schema: S.nullable(S.array(S.string))->toFieldSchema, source: TransactionOnly},
+    {
+      location: "nonce",
+      jsonKey: "nonce",
+      schema: Rpc.hexBigintSchema->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "value",
+      jsonKey: "value",
+      schema: Rpc.hexBigintSchema->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "v",
+      jsonKey: "v",
+      schema: S.nullable(S.string)->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "r",
+      jsonKey: "r",
+      schema: S.nullable(S.string)->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "s",
+      jsonKey: "s",
+      schema: S.nullable(S.string)->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "yParity",
+      jsonKey: "yParity",
+      schema: S.nullable(S.string)->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "maxPriorityFeePerGas",
+      jsonKey: "maxPriorityFeePerGas",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "maxFeePerGas",
+      jsonKey: "maxFeePerGas",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "maxFeePerBlobGas",
+      jsonKey: "maxFeePerBlobGas",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: TransactionOnly,
+    },
+    {
+      location: "blobVersionedHashes",
+      jsonKey: "blobVersionedHashes",
+      schema: S.nullable(S.array(S.string))->toFieldSchema,
+      source: TransactionOnly,
+    },
     // ReceiptOnly fields (only in eth_getTransactionReceipt)
-    {location: "gasUsed", jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly},
-    {location: "cumulativeGasUsed", jsonKey: "cumulativeGasUsed", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly},
-    {location: "effectiveGasPrice", jsonKey: "effectiveGasPrice", schema: Rpc.hexBigintSchema->toFieldSchema, source: ReceiptOnly},
-    {location: "contractAddress", jsonKey: "contractAddress", schema: S.nullable(addressSchema)->toFieldSchema, source: ReceiptOnly},
-    {location: "logsBloom", jsonKey: "logsBloom", schema: S.string->toFieldSchema, source: ReceiptOnly},
-    {location: "root", jsonKey: "root", schema: S.nullable(S.string)->toFieldSchema, source: ReceiptOnly},
-    {location: "status", jsonKey: "status", schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema, source: ReceiptOnly},
-    {location: "l1Fee", jsonKey: "l1Fee", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: ReceiptOnly},
-    {location: "l1GasPrice", jsonKey: "l1GasPrice", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: ReceiptOnly},
-    {location: "l1GasUsed", jsonKey: "l1GasUsed", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: ReceiptOnly},
-    {location: "l1FeeScalar", jsonKey: "l1FeeScalar", schema: S.nullable(Rpc.decimalFloatSchema)->toFieldSchema, source: ReceiptOnly},
-    {location: "gasUsedForL1", jsonKey: "gasUsedForL1", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema, source: ReceiptOnly},
+    {
+      location: "gasUsed",
+      jsonKey: "gasUsed",
+      schema: Rpc.hexBigintSchema->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "cumulativeGasUsed",
+      jsonKey: "cumulativeGasUsed",
+      schema: Rpc.hexBigintSchema->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "effectiveGasPrice",
+      jsonKey: "effectiveGasPrice",
+      schema: Rpc.hexBigintSchema->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "contractAddress",
+      jsonKey: "contractAddress",
+      schema: S.nullable(addressSchema)->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "logsBloom",
+      jsonKey: "logsBloom",
+      schema: S.string->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "root",
+      jsonKey: "root",
+      schema: S.nullable(S.string)->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "status",
+      jsonKey: "status",
+      schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "l1Fee",
+      jsonKey: "l1Fee",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "l1GasPrice",
+      jsonKey: "l1GasPrice",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "l1GasUsed",
+      jsonKey: "l1GasUsed",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "l1FeeScalar",
+      jsonKey: "l1FeeScalar",
+      schema: S.nullable(Rpc.decimalFloatSchema)->toFieldSchema,
+      source: ReceiptOnly,
+    },
+    {
+      location: "gasUsedForL1",
+      jsonKey: "gasUsedForL1",
+      schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
+      source: ReceiptOnly,
+    },
     // Both fields (available in both eth_getTransactionByHash and eth_getTransactionReceipt)
-    {location: "from", jsonKey: "from", schema: S.nullable(addressSchema)->toFieldSchema, source: Both},
+    {
+      location: "from",
+      jsonKey: "from",
+      schema: S.nullable(addressSchema)->toFieldSchema,
+      source: Both,
+    },
     {location: "to", jsonKey: "to", schema: S.nullable(addressSchema)->toFieldSchema, source: Both},
-    {location: "type", jsonKey: "type", schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema, source: Both},
-  ]->Array.map(def => (def.location, def))->Js.Dict.fromArray
+    {
+      location: "type",
+      jsonKey: "type",
+      schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema,
+      source: Both,
+    },
+  ]
+  ->Array.map(def => (def.location, def))
+  ->Dict.fromArray
 
 let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
 let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
@@ -446,28 +579,28 @@ type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndRecei
 // Parse fields from a raw JSON object into a result dict.
 // Uses unsafeGet so nullable schemas (S.nullable) handle both null and undefined.
 let parseFieldsFromJson = (
-  mutTransactionAcc: Js.Dict.t<Js.Json.t>,
+  mutTransactionAcc: dict<JSON.t>,
   fields: array<fieldDef>,
-  json: Js.Json.t,
+  json: JSON.t,
 ) => {
-  let jsonDict = json->(Utils.magic: Js.Json.t => Js.Dict.t<Js.Json.t>)
+  let jsonDict = json->(Utils.magic: JSON.t => dict<JSON.t>)
   fields->Array.forEach(def => {
-    let raw = jsonDict->Js.Dict.unsafeGet(def.jsonKey)
+    let raw = jsonDict->Dict.getUnsafe(def.jsonKey)
     try {
       let parsed = raw->S.parseOrThrow(def.schema)
-      mutTransactionAcc->Js.Dict.set(def.location, parsed)
+      mutTransactionAcc->Dict.set(def.location, parsed)
     } catch {
-    | S.Raised(error) =>
-      Js.Exn.raiseError(
-        `Invalid transaction field "${def.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
+    | S.Error(error) =>
+      JsError.throwWithMessage(
+        `Invalid transaction field "${def.location}" found in the RPC response. Error: ${error.reason}`,
       )
     }
   })
 }
 
 let makeThrowingGetEventTransaction = (
-  ~getTransactionJson: string => promise<Js.Json.t>,
-  ~getReceiptJson: string => promise<Js.Json.t>,
+  ~getTransactionJson: string => promise<JSON.t>,
+  ~getReceiptJson: string => promise<JSON.t>,
   ~lowercaseAddresses: bool,
 ) => {
   let fieldRegistry = if lowercaseAddresses {
@@ -482,9 +615,14 @@ let makeThrowingGetEventTransaction = (
       | Some(fn) => fn
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
-          let transactionFieldItems = switch transactionSchema->S.classify {
+          let transactionFieldItems = switch transactionSchema->(
+            Utils.magic: S.t<'a> => S.t<unknown>
+          ) {
           | Object({items}) => items
-          | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
+          | _ =>
+            JsError.throwWithMessage(
+              "Unexpected internal error: transactionSchema is not an object",
+            )
           }
 
           // Classify fields: log-derived vs RPC fields
@@ -499,12 +637,12 @@ let makeThrowingGetEventTransaction = (
             | "transactionIndex" => hasTransactionIndex := true
             | "hash" => hasHash := true
             | _ =>
-              switch fieldRegistry->Js.Dict.get(item.location) {
+              switch fieldRegistry->Dict.get(item.location) {
               | Some(def) =>
                 switch def.source {
-                | TransactionOnly => txFields->Js.Array2.push(def)->ignore
-                | ReceiptOnly => receiptFields->Js.Array2.push(def)->ignore
-                | Both => bothFields->Js.Array2.push(def)->ignore
+                | TransactionOnly => txFields->Array.push(def)->ignore
+                | ReceiptOnly => receiptFields->Array.push(def)->ignore
+                | Both => bothFields->Array.push(def)->ignore
                 }
               | None => () // Unknown field — skip silently
               }
@@ -522,50 +660,50 @@ let makeThrowingGetEventTransaction = (
 
           // Assign Both fields to whichever source is already being fetched; default to transaction
           let targetForBoth = strategy == ReceiptOnly ? receiptFields : txFields
-          bothFields->Array.forEach(f => targetForBoth->Js.Array2.push(f)->ignore)
+          bothFields->Array.forEach(f => targetForBoth->Array.push(f)->ignore)
 
           // Set log-derived fields on the mutable accumulator
-          let setLogFields = (mutTransactionAcc: Js.Dict.t<Js.Json.t>, log: Rpc.GetLogs.log) => {
+          let setLogFields = (mutTransactionAcc: dict<JSON.t>, log: Rpc.GetLogs.log) => {
             if hasTransactionIndex.contents {
-              mutTransactionAcc->Js.Dict.set(
+              mutTransactionAcc->Dict.set(
                 "transactionIndex",
-                log.transactionIndex->(Utils.magic: int => Js.Json.t),
+                log.transactionIndex->(Utils.magic: int => JSON.t),
               )
             }
             if hasHash.contents {
-              mutTransactionAcc->Js.Dict.set(
+              mutTransactionAcc->Dict.set(
                 "hash",
-                log.transactionHash->(Utils.magic: string => Js.Json.t),
+                log.transactionHash->(Utils.magic: string => JSON.t),
               )
             }
           }
 
           let fn = switch (transactionFieldItems, strategy) {
-          | ([], _) => _ => %raw(`{}`)->Promise.resolve
+          | ([], _) => _ => %raw(`{}`)->Promise_.resolve
           | (_, NoRpc) =>
             (log: Rpc.GetLogs.log) => {
-              let mutTransactionAcc = Js.Dict.empty()
+              let mutTransactionAcc = Dict.make()
               setLogFields(mutTransactionAcc, log)
-              (mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a))->Promise.resolve
+              mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)->Promise_.resolve
             }
           | (_, _) =>
             (log: Rpc.GetLogs.log) => {
               let txJsonPromise = switch strategy {
               | TransactionOnly | TransactionAndReceipt =>
-                getTransactionJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
-              | _ => Promise.resolve(None)
+                getTransactionJson(log.transactionHash)->Promise_.thenResolve(v => Some(v))
+              | _ => Promise_.resolve(None)
               }
               let receiptJsonPromise = switch strategy {
               | ReceiptOnly | TransactionAndReceipt =>
-                getReceiptJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
-              | _ => Promise.resolve(None)
+                getReceiptJson(log.transactionHash)->Promise_.thenResolve(v => Some(v))
+              | _ => Promise_.resolve(None)
               }
 
-              Promise.all2((txJsonPromise, receiptJsonPromise))->Promise.thenResolve(((
+              Promise_.all2((txJsonPromise, receiptJsonPromise))->Promise_.thenResolve(((
                 txJson,
                 receiptJson,
               )) => {
-                let mutTransactionAcc = Js.Dict.empty()
+                let mutTransactionAcc = Dict.make()
                 setLogFields(mutTransactionAcc, log)
 
                 switch txJson {
@@ -577,7 +715,7 @@ let makeThrowingGetEventTransaction = (
                 | None => ()
                 }
 
-                mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
+                mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)
               })
             }
           }
@@ -601,12 +739,21 @@ type options = {
 }
 
 let make = (
-  {sourceFor, syncConfig, url, chain, eventRouter, allEventSignatures, lowercaseAddresses, ?ws}: options,
+  {
+    sourceFor,
+    syncConfig,
+    url,
+    chain,
+    eventRouter,
+    allEventSignatures,
+    lowercaseAddresses,
+    ?ws,
+  }: options,
 ): t => {
   let chainId = chain->ChainMap.Chain.toChainId
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `EE109: The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
@@ -615,7 +762,7 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
-  let mutSuggestedBlockIntervals = Js.Dict.empty()
+  let mutSuggestedBlockIntervals = Dict.make()
 
   let client = Rpc.makeClient(url)
 
@@ -678,7 +825,11 @@ let make = (
   let makeReceiptLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_getTransactionReceipt")
+        Prometheus.SourceRequestCount.increment(
+          ~sourceName=name,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+          ~method="eth_getTransactionReceipt",
+        )
         Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(transactionHash, ~client)
       },
       ~onError=(am, ~exn) => {
@@ -709,13 +860,14 @@ let make = (
     ~getTransactionJson=async transactionHash => {
       switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
       | Some(json) => json
-      | None => Js.Exn.raiseError(`Transaction not found for hash: ${transactionHash}`)
+      | None => JsError.throwWithMessage(`Transaction not found for hash: ${transactionHash}`)
       }
     },
     ~getReceiptJson=async transactionHash => {
       switch await receiptLoader.contents->LazyLoader.get(transactionHash) {
       | Some(json) => json
-      | None => Js.Exn.raiseError(`Transaction receipt not found for hash: ${transactionHash}`)
+      | None =>
+        JsError.throwWithMessage(`Transaction receipt not found for hash: ${transactionHash}`)
       }
     },
     ~lowercaseAddresses,
@@ -731,7 +883,7 @@ let make = (
       blockNumber: log.blockNumber,
       address: log.address,
       data: log.data,
-      topics: log.topics->(Utils.magic: array<string> => array<Js.Nullable.t<EvmTypes.Hex.t>>),
+      topics: log.topics->(Utils.magic: array<string> => array<Nullable.t<EvmTypes.Hex.t>>),
     }
     {log: hyperSyncLog}
   }
@@ -782,8 +934,10 @@ let make = (
 
     let firstBlockParentPromise =
       fromBlock > 0
-        ? blockLoader.contents->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
-        : Promise.resolve(None)
+        ? blockLoader.contents
+          ->LazyLoader.get(fromBlock - 1)
+          ->Promise_.thenResolve(res => res->Some)
+        : Promise_.resolve(None)
 
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
@@ -813,7 +967,7 @@ let make = (
     ) {
       // Increase batch size going forward, but do not increase past a configured maximum
       // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-      mutSuggestedBlockIntervals->Js.Dict.set(
+      mutSuggestedBlockIntervals->Dict.set(
         partitionId,
         Pervasives.min(
           executedBlockInterval + syncConfig.accelerationAdditive,
@@ -828,7 +982,7 @@ let make = (
     // Decode using HyperSyncClient decoder
     let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           FailedGettingItems({
             exn,
@@ -841,82 +995,74 @@ let make = (
       )
     }
 
-    let parsedQueueItems =
-      await logs
-      ->Array.zip(parsedEvents)
-      ->Array.keepMap(((
-        log: Rpc.GetLogs.log,
-        maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
-      )) => {
-        let topic0 = log.topics[0]->Option.getWithDefault("0x0")
-        let routedAddress = if lowercaseAddresses {
-          log.address->Address.Evm.fromAddressLowercaseOrThrow
-        } else {
-          log.address->Address.Evm.fromAddressOrThrow
-        }
+    let parsedQueueItems = await logs
+    ->Array.zip(parsedEvents)
+    ->Array.keepMap(((
+      log: Rpc.GetLogs.log,
+      maybeDecodedEvent: Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
+    )) => {
+      let topic0 = log.topics[0]->Option.getWithDefault("0x0")
+      let routedAddress = if lowercaseAddresses {
+        log.address->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        log.address->Address.Evm.fromAddressOrThrow
+      }
 
-        switch eventRouter->EventRouter.get(
-          ~tag=EventRouter.getEvmEventId(
-            ~sighash=topic0,
-            ~topicCount=log.topics->Array.length,
-          ),
-          ~indexingContracts,
-          ~contractAddress=routedAddress,
-          ~blockNumber=log.blockNumber,
-        ) {
-        | None => None
-        | Some(eventConfig) =>
-          switch maybeDecodedEvent {
-          | Js.Nullable.Value(decoded) =>
-            Some(
-              (
-                async () => {
-                  let (block, transaction) = try await Promise.all2((
-                    log->getEventBlockOrThrow,
-                    log->getEventTransactionOrThrow(
-                      ~transactionSchema=eventConfig.transactionSchema,
+      switch eventRouter->EventRouter.get(
+        ~tag=EventRouter.getEvmEventId(~sighash=topic0, ~topicCount=log.topics->Array.length),
+        ~indexingContracts,
+        ~contractAddress=routedAddress,
+        ~blockNumber=log.blockNumber,
+      ) {
+      | None => None
+      | Some(eventConfig) =>
+        switch maybeDecodedEvent {
+        | Js.Nullable.Value(decoded) =>
+          Some(
+            (
+              async () => {
+                let (block, transaction) = try await Promise_.all2((
+                  log->getEventBlockOrThrow,
+                  log->getEventTransactionOrThrow(~transactionSchema=eventConfig.transactionSchema),
+                )) catch {
+                | exn =>
+                  throw(
+                    Source.GetItemsError(
+                      FailedGettingFieldSelection({
+                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                        exn,
+                        blockNumber: log.blockNumber,
+                        logIndex: log.logIndex,
+                      }),
                     ),
-                  )) catch {
-                  | exn =>
-                    raise(
-                      Source.GetItemsError(
-                        FailedGettingFieldSelection({
-                          message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                          exn,
-                          blockNumber: log.blockNumber,
-                          logIndex: log.logIndex,
-                        }),
-                      ),
-                    )
-                  }
-
-                  Internal.Event({
-                    eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: block.timestamp,
-                    blockNumber: block.number,
-                    chain,
-                    logIndex: log.logIndex,
-                    event: {
-                      chainId: chain->ChainMap.Chain.toChainId,
-                      params: decoded->eventConfig.convertHyperSyncEventArgs,
-                      transaction,
-                      block: block->(
-                        Utils.magic: Rpc.GetBlockByNumber.block => Internal.eventBlock
-                      ),
-                      srcAddress: routedAddress,
-                      logIndex: log.logIndex,
-                    }->Internal.fromGenericEvent,
-                  })
+                  )
                 }
-              )(),
-            )
-          | Js.Nullable.Null
-          | Js.Nullable.Undefined =>
-            None
-          }
+
+                Internal.Event({
+                  eventConfig: (eventConfig :> Internal.eventConfig),
+                  timestamp: block.timestamp,
+                  blockNumber: block.number,
+                  chain,
+                  logIndex: log.logIndex,
+                  event: {
+                    chainId: chain->ChainMap.Chain.toChainId,
+                    params: decoded->eventConfig.convertHyperSyncEventArgs,
+                    transaction,
+                    block: block->(Utils.magic: Rpc.GetBlockByNumber.block => Internal.eventBlock),
+                    srcAddress: routedAddress,
+                    logIndex: log.logIndex,
+                  }->Internal.fromGenericEvent,
+                })
+              }
+            )(),
+          )
+        | Js.Nullable.Null
+        | Js.Nullable.Undefined =>
+          None
         }
-      })
-      ->Promise.all
+      }
+    })
+    ->Promise_.all
 
     let optFirstBlockParent = await firstBlockParentPromise
 
@@ -957,8 +1103,8 @@ let make = (
 
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
-    ->Promise.all
-    ->Promise.thenResolve(blocks => {
+    ->Promise_.all
+    ->Promise_.thenResolve(blocks => {
       blocks
       ->Array.map((b): ReorgDetection.blockDataWithTimestamp => {
         blockNumber: b.number,
@@ -967,12 +1113,13 @@ let make = (
       })
       ->Ok
     })
-    ->Promise.catch(exn => exn->Error->Promise.resolve)
+    ->Promise_.catch(exn => exn->Error->Promise_.resolve)
   }
 
-  let createHeightSubscription = ws->Belt.Option.map(wsUrl =>
-    (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
-  )
+  let createHeightSubscription =
+    ws->Belt.Option.map(wsUrl =>
+      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+    )
 
   {
     name,

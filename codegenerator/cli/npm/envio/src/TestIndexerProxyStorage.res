@@ -6,7 +6,7 @@ type requestId = int
 // Serializable change with entity as JSON (for worker thread messaging)
 @tag("type")
 type serializableChange =
-  | @as("SET") Set({entityId: string, entity: Js.Json.t, checkpointId: float})
+  | @as("SET") Set({entityId: string, entity: JSON.t, checkpointId: float})
   | @as("DELETE") Delete({entityId: string, checkpointId: float})
 
 type serializableEntityUpdate = {
@@ -28,7 +28,7 @@ type workerPayload =
   LoadByField({
       tableName: string,
       fieldName: string,
-      fieldValue: Js.Json.t,
+      fieldValue: JSON.t,
       operator: Persistence.operator,
     })
   | @as("writeBatch")
@@ -37,14 +37,14 @@ type workerPayload =
       checkpointIds: array<float>,
       checkpointChainIds: array<int>,
       checkpointBlockNumbers: array<int>,
-      checkpointBlockHashes: array<Js.Null.t<string>>,
+      checkpointBlockHashes: array<Null.t<string>>,
       checkpointEventsProcessed: array<int>,
     })
 
 // Main thread -> Worker payloads
 @tag("type")
 type mainPayload =
-  | @as("response") Response({data: Js.Json.t})
+  | @as("response") Response({data: JSON.t})
   | @as("error") Error({message: string})
 
 // Message wrapper with id
@@ -54,7 +54,7 @@ type mainMessage = message<mainPayload>
 
 // Pending request tracker
 type pendingRequest = {
-  resolve: Js.Json.t => unit,
+  resolve: JSON.t => unit,
   reject: exn => unit,
 }
 
@@ -69,7 +69,7 @@ let make = (~parentPort, ~initialState): t => {
   let proxy = {
     parentPort,
     initialState,
-    pendingRequests: Js.Dict.empty(),
+    pendingRequests: Dict.make(),
     requestCounter: 0,
   }
 
@@ -80,9 +80,9 @@ let make = (~parentPort, ~initialState): t => {
       idStr,
     ) {
     | Some(pending) => pending
-    | None => Js.Exn.raiseError(`TestIndexer: No pending request found for id ${idStr}`)
+    | None => JsError.throwWithMessage(`TestIndexer: No pending request found for id ${idStr}`)
     }
-    Js.Dict.unsafeDeleteKey(proxy.pendingRequests->Obj.magic, idStr)
+    Dict.delete(proxy.pendingRequests->Obj.magic, idStr)
 
     switch msg.payload {
     | Response({data}) => resolve(data)
@@ -98,10 +98,10 @@ let nextRequestId = (proxy: t): requestId => {
   proxy.requestCounter
 }
 
-let sendRequest = (proxy: t, ~payload: workerPayload): promise<Js.Json.t> => {
-  Promise.make((resolve, reject) => {
+let sendRequest = (proxy: t, ~payload: workerPayload): promise<JSON.t> => {
+  Promise_.make((resolve, reject) => {
     let id = proxy->nextRequestId
-    proxy.pendingRequests->Js.Dict.set(id->Int.toString, {resolve, reject})
+    proxy.pendingRequests->Dict.set(id->Int.toString, {resolve, reject})
     proxy.parentPort->NodeJs.WorkerThreads.postMessage({id, payload})
   })
 }
@@ -109,7 +109,7 @@ let sendRequest = (proxy: t, ~payload: workerPayload): promise<Js.Json.t> => {
 let makeStorage = (proxy: t): Persistence.storage => {
   isInitialized: async () => true,
   initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?) => {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       "TestIndexer: initialize should not be called. Use resumeInitialState instead.",
     )
   },
@@ -193,17 +193,17 @@ let makeStorage = (proxy: t): Persistence.storage => {
   pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
     (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) => {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )
   },
   getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) => {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )
   },
   getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) => {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
     )
   },

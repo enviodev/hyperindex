@@ -28,7 +28,7 @@ type t = {
   checkpointIds: array<float>,
   checkpointChainIds: array<int>,
   checkpointBlockNumbers: array<int>,
-  checkpointBlockHashes: array<Js.Null.t<string>>,
+  checkpointBlockHashes: array<Null.t<string>>,
   checkpointEventsProcessed: array<int>,
 }
 
@@ -67,7 +67,7 @@ let getOrderedNextChain = (fetchStates: ChainMap.t<FetchState.t>, ~batchSizePerC
 }
 
 // Save overhead of recreating the dict every time
-let immutableEmptyBatchSizePerChain: dict<int> = Js.Dict.empty()
+let immutableEmptyBatchSizePerChain: dict<int> = Dict.make()
 let hasOrderedReadyItem = (fetchStates: ChainMap.t<FetchState.t>) => {
   switch fetchStates->getOrderedNextChain(~batchSizePerChain=immutableEmptyBatchSizePerChain) {
   | Some(fetchState) => fetchState->FetchState.hasReadyItem
@@ -78,7 +78,7 @@ let hasOrderedReadyItem = (fetchStates: ChainMap.t<FetchState.t>) => {
 let hasUnorderedReadyItem = (fetchStates: ChainMap.t<FetchState.t>) => {
   fetchStates
   ->ChainMap.values
-  ->Js.Array2.some(fetchState => {
+  ->Array.some(fetchState => {
     fetchState->FetchState.isActivelyIndexing && fetchState->FetchState.hasReadyItem
   })
 }
@@ -127,7 +127,7 @@ let getProgressedChainsById = {
     ~batchSizePerChain: dict<int>,
     ~progressBlockNumberPerChain: dict<int>,
   ) => {
-    let progressedChainsById = Js.Dict.empty()
+    let progressedChainsById = Dict.make()
 
     // Needed to:
     // - Recalculate the computed queue sizes
@@ -201,11 +201,11 @@ let addReorgCheckpoints = (
         let checkpointId = prevCheckpointId.contents +. 1.
         prevCheckpointId := checkpointId
 
-        mutCheckpointIds->Js.Array2.push(checkpointId)->ignore
-        mutCheckpointChainIds->Js.Array2.push(chainId)->ignore
-        mutCheckpointBlockNumbers->Js.Array2.push(blockNumber)->ignore
-        mutCheckpointBlockHashes->Js.Array2.push(Js.Null.Value(hash))->ignore
-        mutCheckpointEventsProcessed->Js.Array2.push(0)->ignore
+        mutCheckpointIds->Array.push(checkpointId)->ignore
+        mutCheckpointChainIds->Array.push(chainId)->ignore
+        mutCheckpointBlockNumbers->Array.push(blockNumber)->ignore
+        mutCheckpointBlockHashes->Array.push(Js.Null.Value(hash))->ignore
+        mutCheckpointEventsProcessed->Array.push(0)->ignore
       | Js.Null.Null => ()
       }
     }
@@ -223,8 +223,8 @@ let prepareOrderedBatch = (
   let totalBatchSize = ref(0)
   let isFinished = ref(false)
   let prevCheckpointId = ref(checkpointIdBeforeBatch)
-  let mutBatchSizePerChain = Js.Dict.empty()
-  let mutProgressBlockNumberPerChain = Js.Dict.empty()
+  let mutBatchSizePerChain = Dict.make()
+  let mutProgressBlockNumberPerChain = Dict.make()
 
   let fetchStates = chainsBeforeBatch->ChainMap.map(chainBeforeBatch => chainBeforeBatch.fetchState)
 
@@ -282,30 +282,30 @@ let prepareOrderedBatch = (
           let checkpointId = prevCheckpointId.contents +. 1.
 
           items
-          ->Js.Array2.push(item0)
+          ->Array.push(item0)
           ->ignore
           for idx in 1 to newItemsCount - 1 {
             items
-            ->Js.Array2.push(fetchState.buffer->Belt.Array.getUnsafe(itemsCountBefore + idx))
+            ->Array.push(fetchState.buffer->Belt.Array.getUnsafe(itemsCountBefore + idx))
             ->ignore
           }
 
           checkpointIds
-          ->Js.Array2.push(checkpointId)
+          ->Array.push(checkpointId)
           ->ignore
           checkpointChainIds
-          ->Js.Array2.push(fetchState.chainId)
+          ->Array.push(fetchState.chainId)
           ->ignore
           checkpointBlockNumbers
-          ->Js.Array2.push(blockNumber)
+          ->Array.push(blockNumber)
           ->ignore
           checkpointBlockHashes
-          ->Js.Array2.push(
+          ->Array.push(
             chainBeforeBatch.reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber),
           )
           ->ignore
           checkpointEventsProcessed
-          ->Js.Array2.push(newItemsCount)
+          ->Array.push(newItemsCount)
           ->ignore
 
           prevCheckpointId := checkpointId
@@ -370,7 +370,7 @@ let prepareUnorderedBatch = (
   let preparedFetchStates =
     chainsBeforeBatch
     ->ChainMap.values
-    ->Js.Array2.map(chainBeforeBatch => chainBeforeBatch.fetchState)
+    ->Array.map(chainBeforeBatch => chainBeforeBatch.fetchState)
     ->FetchState.sortForUnorderedBatch(~batchSizeTarget)
 
   let chainIdx = ref(0)
@@ -378,8 +378,8 @@ let prepareUnorderedBatch = (
   let totalBatchSize = ref(0)
 
   let prevCheckpointId = ref(checkpointIdBeforeBatch)
-  let mutBatchSizePerChain = Js.Dict.empty()
-  let mutProgressBlockNumberPerChain = Js.Dict.empty()
+  let mutBatchSizePerChain = Dict.make()
+  let mutProgressBlockNumberPerChain = Dict.make()
 
   let items = []
   let checkpointIds = []
@@ -392,7 +392,7 @@ let prepareUnorderedBatch = (
   // the way to group as many items from a single chain as possible
   // This way the loaders optimisations will hit more often
   while totalBatchSize.contents < batchSizeTarget && chainIdx.contents < preparedNumber {
-    let fetchState = preparedFetchStates->Js.Array2.unsafe_get(chainIdx.contents)
+    let fetchState = preparedFetchStates->Array.getUnsafe(chainIdx.contents)
     let chainBatchSize =
       fetchState->FetchState.getReadyItemsCount(
         ~targetSize=batchSizeTarget - totalBatchSize.contents,
@@ -425,15 +425,15 @@ let prepareUnorderedBatch = (
 
           let checkpointId = prevCheckpointId.contents +. 1.
 
-          checkpointIds->Js.Array2.push(checkpointId)->ignore
-          checkpointChainIds->Js.Array2.push(fetchState.chainId)->ignore
-          checkpointBlockNumbers->Js.Array2.push(blockNumber)->ignore
+          checkpointIds->Array.push(checkpointId)->ignore
+          checkpointChainIds->Array.push(fetchState.chainId)->ignore
+          checkpointBlockNumbers->Array.push(blockNumber)->ignore
           checkpointBlockHashes
-          ->Js.Array2.push(
+          ->Array.push(
             chainBeforeBatch.reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber),
           )
           ->ignore
-          checkpointEventsProcessed->Js.Array2.push(1)->ignore
+          checkpointEventsProcessed->Array.push(1)->ignore
 
           prevBlockNumber := blockNumber
           prevCheckpointId := checkpointId
@@ -447,7 +447,7 @@ let prepareUnorderedBatch = (
           ->ignore
         }
 
-        items->Js.Array2.push(item)->ignore
+        items->Array.push(item)->ignore
       }
 
       totalBatchSize := totalBatchSize.contents + chainBatchSize

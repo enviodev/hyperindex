@@ -272,7 +272,7 @@ type fuelSupplyParams = {
 }
 let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(BigInt_.schema),
 })
 @genType
 type fuelTransferParams = {
@@ -283,13 +283,13 @@ type fuelTransferParams = {
 let fuelTransferParamsSchema = S.schema(s => {
   to: s.matches(Address.schema),
   assetId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(BigInt_.schema),
 })
 
 type entity = private {id: string}
 type clickHouseSetUpdatesCache = {
   tableName: string,
-  convertOrThrow: Change.t<entity> => Js.Json.t,
+  convertOrThrow: Change.t<entity> => JSON.t,
 }
 type genericEntityConfig<'entity> = {
   name: string,
@@ -338,7 +338,7 @@ type effect = {
   rateLimit: option<rateLimitState>,
 }
 let cacheTablePrefix = "envio_effect_"
-let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)
+let cacheOutputSchema = S.json->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
 let effectCacheItemRowsSchema = S.array(
   S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
 )

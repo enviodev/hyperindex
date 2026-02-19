@@ -21,24 +21,24 @@ type dateFormats =
   | @as("MMM") Month
   | @as("h:mma") HourMin
 
-@module("date-fns") external format: (Js.Date.t, dateFormats) => string = "format"
+@module("date-fns") external format: (Date.t, dateFormats) => string = "format"
 
 type formatDistanceToNowOptions = {includeSeconds: bool}
 @module("date-fns")
-external formatDistanceToNow: Js.Date.t => string = "formatDistanceToNow"
+external formatDistanceToNow: Date.t => string = "formatDistanceToNow"
 
 @module("date-fns")
-external formatDistance: (Js.Date.t, Js.Date.t) => string = "formatDistance"
+external formatDistance: (Date.t, Date.t) => Date.t = "formatDistance"
 
 @module("date-fns")
-external formatDistanceWithOptions: (Js.Date.t, Js.Date.t, formatDistanceToNowOptions) => string =
+external formatDistanceWithOptions: (Date.t, Date.t, formatDistanceToNowOptions) => string =
   "formatDistance"
 
 @module("date-fns")
-external formatDistanceToNowWithOptions: (Js.Date.t, formatDistanceToNowOptions) => string =
+external formatDistanceToNowWithOptions: (Date.t, formatDistanceToNowOptions) => string =
   "formatDistanceToNow"
 
-let formatDistanceToNowWithSeconds = (date: Js.Date.t) =>
+let formatDistanceToNowWithSeconds = (date: Date.t) =>
   date->formatDistanceToNowWithOptions({includeSeconds: true})
 
 type durationTimeFormat = {
@@ -52,14 +52,14 @@ type durationTimeFormat = {
 }
 
 @module("date-fns")
-external formatRelative: (Js.Date.t, Js.Date.t) => string = "formatRelative"
+external formatRelative: (Date.t, Date.t) => string = "formatRelative"
 
 type durationFormatOutput = {format: array<string>}
 
 @module("date-fns")
 external formatDuration: (durationTimeFormat, durationFormatOutput) => string = "formatDuration"
 
-type interval = {start: Js_date.t, end: Js_date.t}
+type interval = {start: Date.t, end: Date.t}
 
 @module("date-fns")
 external intervalToDuration: interval => durationTimeFormat = "intervalToDuration"
@@ -68,4 +68,4 @@ external intervalToDuration: interval => durationTimeFormat = "intervalToDuratio
 let durationFromMillis = (millis: int) =>
   intervalToDuration({start: 0->Utils.magic, end: millis->Utils.magic})
 
-@module("date-fns") external fromUnixTime: float => Js.Date.t = "fromUnixTime"
+@module("date-fns") external fromUnixTime: float => Date.t = "fromUnixTime"

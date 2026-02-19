@@ -12,7 +12,12 @@ let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
   }
 
 let hasFilters = ({topic1, topic2, topic3}: Internal.topicSelection) => {
-  [topic1, topic2, topic3]->Js.Array2.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
+  [topic1, topic2, topic3]
+  ->Array.find(topic => !Utils.Array.isEmpty(topic))
+
+  // In TS type validation doesn't catch this
+  // when we have eventFilters as a callback
+  ->Belt.Option.isSome
 }
 
 /**
@@ -26,10 +31,10 @@ let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) 
 
   topicSelections->Belt.Array.forEach(selection => {
     if selection->hasFilters {
-      selectionsWithFilters->Js.Array2.push(selection)->ignore
+      selectionsWithFilters->Array.push(selection)->ignore
     } else {
       selection.topic0->Belt.Array.forEach(topic0 => {
-        topic0sOfSelectionsWithoutFilters->Js.Array2.push(topic0)->ignore
+        topic0sOfSelectionsWithoutFilters->Array.push(topic0)->ignore
       })
     }
   })
@@ -67,7 +72,7 @@ let parseEventFiltersOrThrow = {
   let noopGetter = _ => emptyTopics
 
   (
-    ~eventFilters: option<Js.Json.t>,
+    ~eventFilters: option<JSON.t>,
     ~sighash,
     ~params,
     ~topic1=noopGetter,
@@ -83,7 +88,7 @@ let parseEventFiltersOrThrow = {
       topic3: emptyTopics,
     }
 
-    let parse = (eventFilters: Js.Json.t): array<Internal.topicSelection> => {
+    let parse = (eventFilters: JSON.t): array<Internal.topicSelection> => {
       if eventFilters === Obj.magic(true) {
         [default]
       } else if eventFilters === Obj.magic(false) {
@@ -93,18 +98,16 @@ let parseEventFiltersOrThrow = {
         | Array([]) => [%raw(`{}`)]
         | Array(a) => a
         | _ => [eventFilters]
-        }->Js.Array2.map(eventFilter => {
+        }->Array.map(eventFilter => {
           switch eventFilter {
           | Object(eventFilter) => {
-              let filterKeys = eventFilter->Js.Dict.keys
+              let filterKeys = eventFilter->Dict.keysToArray
               switch filterKeys {
               | [] => default
               | _ => {
-                  filterKeys->Js.Array2.forEach(key => {
-                    if params->Js.Array2.includes(key)->not {
-                      // In TS type validation doesn't catch this
-                      // when we have eventFilters as a callback
-                      Js.Exn.raiseError(
+                  filterKeys->Array.forEach(key => {
+                    if params->Array.includes(key)->not {
+                      JsError.throwWithMessage(
                         `Invalid event filters configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
                       )
                     }
@@ -118,7 +121,7 @@ let parseEventFiltersOrThrow = {
                 }
               }
             }
-          | _ => Js.Exn.raiseError("Invalid event filters configuration. Expected an object")
+          | _ => JsError.throwWithMessage("Invalid event filters configuration. Expected an object")
           }
         })
       }
@@ -131,7 +134,7 @@ let parseEventFiltersOrThrow = {
       }
     | Some(eventFilters) =>
       if Js.typeof(eventFilters) === "function" {
-        let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t)
+        let fn = eventFilters->(Utils.magic: JSON.t => Internal.eventFiltersArgs => JSON.t)
         // When user passess a function to event filters we need to
         // first determine whether it uses addresses or not
         // Because the fetching logic will be different for wildcard events

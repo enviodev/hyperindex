@@ -246,11 +246,11 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
-            )->Promise.catch(err => {
+            )->Promise_.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,
                 `EE803: Error tracking tables`,
-              )->Promise.resolve
+              )->Promise_.resolve
             })
           },
         )
@@ -270,11 +270,11 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
               },
               ~pgSchema=storagePgSchema,
               ~tableNames,
-            )->Promise.catch(err => {
+            )->Promise_.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,
                 `EE804: Error tracking new tables`,
-              )->Promise.resolve
+              )->Promise_.resolve
             })
           },
         )

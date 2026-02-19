@@ -1,7 +1,7 @@
 let toTwosComplement = (num: bigint, ~bytesLen: int) => {
-  let maxValue = 1n->BigInt.Bitwise.shift_left(BigInt.fromInt(bytesLen * 8))
-  let mask = maxValue->BigInt.sub(1n)
-  num->BigInt.add(maxValue)->BigInt.Bitwise.logand(mask)
+  let maxValue = 1n->BigInt_.Bitwise.shift_left(BigInt_.fromInt(bytesLen * 8))
+  let mask = maxValue->BigInt_.sub(1n)
+  num->BigInt_.add(maxValue)->BigInt_.Bitwise.logand(mask)
 }
 
 let fromSignedBigInt = val => {
@@ -23,5 +23,5 @@ let fromString: string => hex = val => val->Viem.stringToHex(~options={size: 32}
 let fromAddress: Address.t => hex = addr => addr->(Utils.magic: Address.t => hex)->Viem.pad
 let fromDynamicBytes: bytesHex => hex = bytes => bytes->(Utils.magic: bytesHex => hex)->keccak256
 let fromBytes: bytesHex => hex = bytes =>
-  bytes->(Utils.magic: bytesHex => bytes)->Viem.bytesToHex(~options={size: 32})
+  bytes->(Utils.magic: bytesHex => Uint8Array.t)->Viem.bytesToHex(~options={size: 32})
 let fromBool: bool => hex = b => b->Viem.boolToHex(~options={size: 32})

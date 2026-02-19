@@ -5,17 +5,17 @@ Pure subscription-based implementation of the HyperSync height stream.
 let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let eventsourceRef = ref(None)
   // Timeout doesn't do anything for initialization
-  let timeoutIdRef = ref(Js.Global.setTimeout(() => (), 0))
+  let timeoutIdRef = ref(setTimeout(() => (), 0))
 
   // On every successful ping or height event, clear the timeout and set a new one.
   // If the timeout lapses, close and reconnect the EventSource.
   let rec updateTimeoutId = () => {
-    timeoutIdRef.contents->Js.Global.clearTimeout
+    timeoutIdRef.contents->clearTimeout
 
     // Should receive a ping at least every 5s, so 15s is a safe margin
     // for staleness to restart the EventSource connection
     let staleTimeMillis = 15_000
-    let newTimeoutId = Js.Global.setTimeout(() => {
+    let newTimeoutId = setTimeout(() => {
       Logging.trace({
         "msg": "Timeout fired for height stream",
         "url": hyperSyncUrl,
@@ -40,7 +40,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     let es = EventSource.create(
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
-        headers: Js.Dict.fromArray([
+        headers: Dict.fromArray([
           ("Authorization", `Bearer ${apiToken}`),
           ("User-Agent", userAgent),
         ]),
@@ -59,7 +59,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     es->EventSource.onerror(error => {
       Logging.trace({
         "msg": "EventSource error",
-        "error": error->Js.Exn.message,
+        "error": error->JsExn.message,
       })
     })
 
@@ -74,13 +74,16 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
       switch event.data->Belt.Int.fromString {
       | Some(height) =>
         // Track the SSE height event
-        Prometheus.SourceRequestCount.increment(~sourceName="HyperSync", ~chainId, ~method="heightStream")
+        Prometheus.SourceRequestCount.increment(
+          ~sourceName="HyperSync",
+          ~chainId,
+          ~method="heightStream",
+        )
         // On a successful height event, update the timeout
         updateTimeoutId()
         // Call the callback with the new height
         onHeight(height)
-      | None =>
-        Logging.trace({"msg": "Height was not a number in event.data", "data": event.data})
+      | None => Logging.trace({"msg": "Height was not a number in event.data", "data": event.data})
       }
     })
   }
@@ -90,7 +93,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
 
   // Return unsubscribe function
   () => {
-    timeoutIdRef.contents->Js.Global.clearTimeout
+    timeoutIdRef.contents->clearTimeout
     switch eventsourceRef.contents {
     | Some(es) => es->EventSource.close
     | None => ()

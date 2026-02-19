@@ -24,7 +24,7 @@ let setContractRegister: (
 ) => unit
 let getHandler: t => option<Internal.handler>
 let getContractRegister: t => option<Internal.contractRegister>
-let getEventFilters: t => option<Js.Json.t>
+let getEventFilters: t => option<JSON.t>
 let isWildcard: t => bool
 let hasRegistration: t => bool
 

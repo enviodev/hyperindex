@@ -85,7 +85,7 @@ module GetLogs = {
         for idx in 0 to fieldNames->Array.length - 1 {
           let fieldName = fieldNames->Array.getUnsafe(idx)
           switch returnedObj
-          ->(Utils.magic: 'a => Js.Dict.t<unknown>)
+          ->(Utils.magic: 'a => dict<unknown>)
           ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
           | Some(_) => ()
           | None => acc->Array.push(prefix ++ "." ++ fieldName)->ignore
@@ -110,12 +110,12 @@ module GetLogs = {
       ~prefix="transaction",
     )
     if missingParams->Array.length > 0 {
-      raise(Error(UnexpectedMissingParams({missingParams: missingParams})))
+      throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
     }
 
     //Topics can be nullable and still need to be filtered
     let logUnsanitized: Log.t = event.log->Utils.magic
-    let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
+    let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
     let log = {
       ...logUnsanitized,
@@ -181,7 +181,7 @@ module GetLogs = {
     let res = await client.getEvents(~query)
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
-      raise(Error(WrongInstance))
+      throw(Error(WrongInstance))
     }
 
     res->convertResponse(~nonOptionalBlockFieldNames, ~nonOptionalTransactionFieldNames)
@@ -208,7 +208,7 @@ module BlockData = {
           block => {
             switch block {
             | {number: blockNumber, timestamp, hash: blockHash} =>
-              let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
+              let blockTimestamp = timestamp->BigInt_.toInt->Option.getExn
               Ok(
                 (
                   {
@@ -284,7 +284,15 @@ module BlockData = {
           `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~sourceName, ~chainId, ~logger)
+        await queryBlockData(
+          ~serverUrl,
+          ~apiToken,
+          ~fromBlock,
+          ~toBlock,
+          ~sourceName,
+          ~chainId,
+          ~logger,
+        )
       }
     | Some(res) =>
       switch res->convertResponse {
@@ -306,7 +314,14 @@ module BlockData = {
     }
   }
 
-  let queryBlockDataMulti = async (~serverUrl, ~apiToken, ~blockNumbers, ~sourceName, ~chainId, ~logger) => {
+  let queryBlockDataMulti = async (
+    ~serverUrl,
+    ~apiToken,
+    ~blockNumbers,
+    ~sourceName,
+    ~chainId,
+    ~logger,
+  ) => {
     switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstBlock) => {
@@ -324,7 +339,7 @@ module BlockData = {
           set->Utils.Set.add(blockNumber)->ignore
         }
         if toBlock.contents - fromBlock.contents > 1000 {
-          Js.Exn.raiseError(
+          JsError.throwWithMessage(
             `Invalid block data request. Range of block numbers is too large. Max range is 1000. Requested range: ${fromBlock.contents->Int.toString}-${toBlock.contents->Int.toString}`,
           )
         }
@@ -341,7 +356,7 @@ module BlockData = {
           datas->Array.keep(data => set->Utils.Set.delete(data.blockNumber))
         })
         if set->Utils.Set.size > 0 {
-          Js.Exn.raiseError(
+          JsError.throwWithMessage(
             `Invalid response. Failed to get block data for block numbers: ${set
               ->Utils.Set.toArray
               ->Js.Array2.joinWith(", ")}`,
@@ -362,5 +377,5 @@ let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~sourceName, ~chainId
     ~sourceName,
     ~chainId,
     ~logger,
-  )->Promise.thenResolve(res => res->Result.map(res => res->Array.get(0)))
+  )->Promise_.thenResolve(res => res->Result.map(res => res->Array.get(0)))
 let queryBlockDataMulti = BlockData.queryBlockDataMulti

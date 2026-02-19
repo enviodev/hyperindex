@@ -259,7 +259,7 @@ let rec makeWithInMemoryStore: InMemoryStore.t => t = (inMemoryStore: InMemorySt
     ~getStore=db => db.rawEvents,
     ~getKey=({chainId, eventId}) => {
       chainId,
-      eventId: eventId->BigInt.toString,
+      eventId: eventId->BigInt_.toString,
     },
   )
 
@@ -543,7 +543,7 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
       ids
       ->Array.keepMap(id => operations.get(id))
       ->(Utils.magic: array<Internal.entity> => array<item>)
-      ->Promise.resolve
+      ->Promise_.resolve
     },
     loadByFieldOrThrow: (
       ~fieldName,
@@ -572,13 +572,13 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
           ~fieldValue=entity->Utils.magic->Js.Dict.unsafeGet(fieldName),
         )
       })
-      ->Promise.resolve
+      ->Promise_.resolve
     },
     setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
-    setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise.resolve(),
+    setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise_.resolve(),
     dumpEffectCache: () => Js.Exn.raiseError("Not used yet"),
     executeUnsafe: _ => Js.Exn.raiseError("Not used yet"),
-    setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
+    setChainMeta: _ => Promise_.resolve(%raw(`undefined`)),
     pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not used yet"),
     pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
       Js.Exn.raiseError("Not used yet"),
@@ -619,7 +619,7 @@ writeFromMemoryStore = (mockDb: t, ~inMemoryStore: InMemoryStore.t) => {
     ~getInMemTable=inMemStore => {inMemStore.rawEvents},
     ~getKey=(entity): InMemoryStore.rawEventsKey => {
       chainId: entity.chainId,
-      eventId: entity.eventId->BigInt.toString,
+      eventId: entity.eventId->BigInt_.toString,
     },
   )
 

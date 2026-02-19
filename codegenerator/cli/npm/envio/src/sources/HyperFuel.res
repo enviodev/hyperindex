@@ -5,14 +5,14 @@ open Belt
 //we are still sharing the same signature with eth archive query builder
 
 module CachedClients = {
-  let cache: Js.Dict.t<HyperFuelClient.t> = Js.Dict.empty()
+  let cache: dict<HyperFuelClient.t> = Dict.make()
 
   let getClient = url => {
     switch cache->Utils.Dict.dangerouslyGetNonOption(url) {
     | Some(client) => client
     | None =>
       let newClient = HyperFuelClient.make({url: url})
-      cache->Js.Dict.set(url, newClient)
+      cache->Dict.set(url, newClient)
       newClient
     }
   }
@@ -106,7 +106,7 @@ module GetLogs = {
     switch param {
     | Some(v) => v
     | None =>
-      raise(
+      throw(
         Error(
           UnexpectedMissingParams({
             missingParams: [name],
@@ -122,11 +122,11 @@ module GetLogs = {
   > => {
     let {receipts, blocks} = response_data
 
-    let blocksDict = Js.Dict.empty()
+    let blocksDict = Dict.make()
     blocks
     ->(Utils.magic: option<'a> => 'a)
     ->Array.forEach(block => {
-      blocksDict->Js.Dict.set(block.height->(Utils.magic: int => string), block)
+      blocksDict->Dict.set(block.height->(Utils.magic: int => string), block)
     })
 
     let items = []
@@ -180,7 +180,7 @@ module GetLogs = {
     let res = await hyperFuelClient->HyperFuelClient.getSelectedData(query)
     if res.nextBlock <= fromBlock {
       // Might happen when /height response was from another instance of HyperSync
-      raise(Error(WrongInstance))
+      throw(Error(WrongInstance))
     }
     res->convertResponse
   }

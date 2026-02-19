@@ -555,13 +555,13 @@ impl TypeIdent {
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
-                SchemaMode::ForDb => "BigInt.schema".to_string(),
-                SchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
+                SchemaMode::ForDb => "BigInt_.schema".to_string(),
+                SchemaMode::ForFieldSelection => "BigInt_.nativeSchema".to_string(),
             },
             Self::BigDecimal => "BigDecimal.schema".to_string(),
             Self::Address => "Address.schema".to_string(),
             Self::String => "S.string".to_string(),
-            Self::Json => "S.json(~validate=false)".to_string(),
+            Self::Json => "S.json".to_string(),
             Self::ID => "S.string".to_string(),
             Self::Bool => "S.bool".to_string(),
             Self::Timestamp => "Utils.Schema.dbDate".to_string(),
@@ -835,14 +835,14 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "BigInt.schema".to_string()
+            "BigInt_.schema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt).to_rescript_schema(
                 &"eventArgs".to_string(),
                 &SchemaMode::ForFieldSelection
             ),
-            "BigInt.nativeSchema".to_string()
+            "BigInt_.nativeSchema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigDecimal)

@@ -60,14 +60,11 @@ importers:
         specifier: 15.0.0
         version: 15.0.0
       rescript:
-        specifier: 11.1.3
-        version: 11.1.3
-      rescript-envsafe:
-        specifier: 5.0.0
-        version: 5.0.0(rescript-schema@9.3.4(rescript@11.1.3))(rescript@11.1.3)
-      rescript-schema:
-        specifier: 9.3.4
-        version: 9.3.4(rescript@11.1.3)
+        specifier: 12.1.0
+        version: 12.1.0
+      sury:
+        specifier: 11.0.0-alpha.4
+        version: 11.0.0-alpha.4(rescript@12.1.0)
       tsx:
         specifier: 4.21.0
         version: 4.21.0
@@ -119,18 +116,21 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hyperfuel-client-linux-x64-gnu@1.2.2':
     resolution: {integrity: sha512-XDkvkBG/frS+xiZkJdY4KqOaoAwyxPdi2MysDQgF8NmZdssi32SWch0r4LTqKWLLlCBg9/R55POeXL5UAjg2wQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hyperfuel-client-linux-x64-musl@1.2.2':
     resolution: {integrity: sha512-DKnKJJSwsYtA7YT0EFGhFB5Eqoo42X0l0vZBv4lDuxngEXiiNjeLemXoKQVDzhcbILD7eyXNa5jWUc+2hpmkEg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@envio-dev/hyperfuel-client-win32-x64-msvc@1.2.2':
     resolution: {integrity: sha512-SwIgTAVM9QhCFPyHwL+e1yQ6o3paV6q25klESkXw+r/KW9QPhOOyA6Yr8nfnur3uqMTLJHAKHTLUnkyi/Nh7Aw==}
@@ -159,18 +159,21 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
     resolution: {integrity: sha512-Rpz3VSLqq2O9Qp3GiDXHmF3MPm7TcsTfRzSz2RkRVEfdchaKA7Ob86jQ2ueRyG1UEEu47V9JzL6mYmVs4gNa7w==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
     resolution: {integrity: sha512-SZ8RHNaCEcPvubFGdA7gkbxJeJe4whhw0oaAvSyGEbUjL5byFI9nqMVzW8o8mPACqqjlOHIq77GYxbbUI+53vQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
     resolution: {integrity: sha512-R7M1IBcWfqx1TyBcK5Mc/VJmayGeK9woWPzSPzjTgYsHFl65gE1e0hXb8B/gi+km8GQDZYNcaHyBh6xSVHkrzg==}
@@ -352,11 +355,44 @@ packages:
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
+  '@rescript/darwin-arm64@12.1.0':
+    resolution: {integrity: sha512-OuJMT+2h2Lp60n8ONFx1oBAAePSVkM9zl7E/EX4VD2xkQoVTPklz0BpHYOICnFJSCOOdbOhbsTBXdLpo3yvllg==}
+    engines: {node: '>=20.11.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@rescript/darwin-x64@12.1.0':
+    resolution: {integrity: sha512-r5Iv4ga+LaNq+6g9LODwZG4bwydd9UDXACP/HKxOfrP9XQCITlF/XqB1ZDJWyJOgJLZSJCd7erlG38YtB0VZKA==}
+    engines: {node: '>=20.11.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rescript/linux-arm64@12.1.0':
+    resolution: {integrity: sha512-UTZv4GTjbyQ/T5LQDfQiGcumK3SzE1K7+ug6gWpDcGZ7ALc7hCS6BVEFL/LDs8iWVwAwkK/6r456s2zRnvS7wQ==}
+    engines: {node: '>=20.11.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rescript/linux-x64@12.1.0':
+    resolution: {integrity: sha512-c0PXuBL09JRSA4nQusYbR4mW5QJrBPqxDrqvIX+M79fk3d6jQmj5x4NsBwk5BavxvmbR/JU1JjYBlSAa3h22Vg==}
+    engines: {node: '>=20.11.0'}
+    cpu: [x64]
+    os: [linux]
+
   '@rescript/react@0.14.0':
     resolution: {integrity: sha512-ncOHWK7ujQmff+QMYKRmtwETvJVolzkwRpDa0MFenEXdUz9ZYywNbq+xH9F9RDQeSwC3/4s9JeUQVyTu4fMpHw==}
     peerDependencies:
       react: '>=19.0.0'
       react-dom: '>=19.0.0'
+
+  '@rescript/runtime@12.1.0':
+    resolution: {integrity: sha512-bvr9RfvBD+JS/6foWCA4l2fLXmUXN0KGqylXQPHt09QxUghqgoCiaWVHaHSx5dOIk/jAPlGQ7zB5yVeMas/EFQ==}
+
+  '@rescript/win32-x64@12.1.0':
+    resolution: {integrity: sha512-nQC42QByyAbryfkbyK67iskipUqXVwTPCFrqissY4jJoP0128gg0yG6DydJnV1stXphtFdMFHtmyYE1ffG7UBg==}
+    engines: {node: '>=20.11.0'}
+    cpu: [x64]
+    os: [win32]
 
   '@scure/base@1.1.9':
     resolution: {integrity: sha512-8YKhl8GHiNI/pU2VMaofa2Tor7PJRAjwQLBBuilkJ9L5+13yVbC7JO/wS7piioAvPSwR3JKM1IJ/u4xQzbcXKg==}
@@ -942,23 +978,9 @@ packages:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
 
-  rescript-envsafe@5.0.0:
-    resolution: {integrity: sha512-xSQbNsFSSQEynvLWUYtI7GJJhzicACLTq5aO1tjgK0N2Vcm9qlrkcLSmnU8tTohebEu9zgm1V/xYY+oGeQgLvA==}
-    peerDependencies:
-      rescript: 11.x
-      rescript-schema: 9.x
-
-  rescript-schema@9.3.4:
-    resolution: {integrity: sha512-VPhkkHCSQSo2KienoMD4Adu/yS8WhckmsUFFrNhKrt5yqeiJt+pY6/V+puuRIFLlWSIqGyu5/pxqSNUg3VLyxA==}
-    peerDependencies:
-      rescript: 11.x
-    peerDependenciesMeta:
-      rescript:
-        optional: true
-
-  rescript@11.1.3:
-    resolution: {integrity: sha512-bI+yxDcwsv7qE34zLuXeO8Qkc2+1ng5ErlSjnUIZdrAWKoGzHXpJ6ZxiiRBUoYnoMsgRwhqvrugIFyNgWasmsw==}
-    engines: {node: '>=10'}
+  rescript@12.1.0:
+    resolution: {integrity: sha512-n/B43wzIEKV4OmlrWbrlQOL4zZaz0RM/Cc8PG2YvhQvQDW7nscHJliDq1AGeVwHoMX68MeaKKzLDOMOMU9Z6FA==}
+    engines: {node: '>=20.11.0'}
     hasBin: true
 
   resolve-pkg-maps@1.0.0:
@@ -1067,6 +1089,14 @@ packages:
   supports-color@8.1.1:
     resolution: {integrity: sha512-MpUEN2OodtUzxvKQl72cUF7RQ5EiHsGvSsVG0ia9c5RbWGL2CI4C7EpPS8UTBIplnlzZiNuV56w+FuNxy3ty2Q==}
     engines: {node: '>=10'}
+
+  sury@11.0.0-alpha.4:
+    resolution: {integrity: sha512-oeG/GJWZvQCKtGPpLbu0yCZudfr5LxycDo5kh7SJmKHDPCsEPJssIZL2Eb4Tl7g9aPEvIDuRrkS+L0pybsMEMA==}
+    peerDependencies:
+      rescript: 12.x
+    peerDependenciesMeta:
+      rescript:
+        optional: true
 
   tdigest@0.1.2:
     resolution: {integrity: sha512-+G0LLgjjo9BZX2MfdvPfH+MKLCrxlXSYec5DaPYP1fe6Iyhf0/fSmJ0bFiZ1F8BT6cGXl2LpltQptzjXKWEkKA==}
@@ -1341,10 +1371,27 @@ snapshots:
 
   '@pinojs/redact@0.4.0': {}
 
+  '@rescript/darwin-arm64@12.1.0':
+    optional: true
+
+  '@rescript/darwin-x64@12.1.0':
+    optional: true
+
+  '@rescript/linux-arm64@12.1.0':
+    optional: true
+
+  '@rescript/linux-x64@12.1.0':
+    optional: true
+
   '@rescript/react@0.14.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
+
+  '@rescript/runtime@12.1.0': {}
+
+  '@rescript/win32-x64@12.1.0':
+    optional: true
 
   '@scure/base@1.1.9': {}
 
@@ -1935,16 +1982,15 @@ snapshots:
 
   require-directory@2.1.1: {}
 
-  rescript-envsafe@5.0.0(rescript-schema@9.3.4(rescript@11.1.3))(rescript@11.1.3):
+  rescript@12.1.0:
     dependencies:
-      rescript: 11.1.3
-      rescript-schema: 9.3.4(rescript@11.1.3)
-
-  rescript-schema@9.3.4(rescript@11.1.3):
+      '@rescript/runtime': 12.1.0
     optionalDependencies:
-      rescript: 11.1.3
-
-  rescript@11.1.3: {}
+      '@rescript/darwin-arm64': 12.1.0
+      '@rescript/darwin-x64': 12.1.0
+      '@rescript/linux-arm64': 12.1.0
+      '@rescript/linux-x64': 12.1.0
+      '@rescript/win32-x64': 12.1.0
 
   resolve-pkg-maps@1.0.0: {}
 
@@ -2073,6 +2119,10 @@ snapshots:
   supports-color@8.1.1:
     dependencies:
       has-flag: 4.0.0
+
+  sury@11.0.0-alpha.4(rescript@12.1.0):
+    optionalDependencies:
+      rescript: 12.1.0
 
   tdigest@0.1.2:
     dependencies:

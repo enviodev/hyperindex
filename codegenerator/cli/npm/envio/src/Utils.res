@@ -9,12 +9,15 @@ external importPathWithJson: (
   string,
   @as(json`{with: {type: "json"}}`) _,
 ) => promise<{
-  "default": Js.Json.t,
+  "default": JSON.t,
+
+  // Check for null, since we generate S.null schema for db serializing
+  // In the future it should be changed to Option only
 }> = "import"
 
 let delay = milliseconds =>
-  Js.Promise2.make((~resolve, ~reject as _) => {
-    let _interval = Js.Global.setTimeout(_ => {
+  Promise.make((resolve, _) => {
+    let _interval = setTimeout(_ => {
       resolve()
     }, milliseconds)
   })
@@ -76,7 +79,7 @@ module Option = {
 
   let getExn = (opt, message) => {
     switch opt {
-    | None => Js.Exn.raiseError(message)
+    | None => JsError.throwWithMessage(message)
     | Some(v) => v
     }
   }
@@ -89,42 +92,42 @@ module Tuple = {
 }
 
 module Dict = {
-  @get_index
   /**
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
    */
+  @get_index
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
   let getOrInsertEmptyDict = (dict, key) => {
     switch dict->dangerouslyGetNonOption(key) {
     | Some(d) => d
     | None => {
-        let d = Js.Dict.empty()
-        dict->Js.Dict.set(key, d)
+        let d = Dict.make()
+        dict->Dict.set(key, d)
         d
       }
     }
   }
 
-  @get_index
   /**
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
    */
+  @get_index
   external dangerouslyGetByIntNonOption: (dict<'a>, int) => option<'a> = ""
 
   let has: (dict<'a>, string) => bool = %raw(`(dict, key) => key in dict`)
 
   let push = (dict, key, value) => {
     switch dict->dangerouslyGetNonOption(key) {
-    | Some(arr) => arr->Js.Array2.push(value)->ignore
-    | None => dict->Js.Dict.set(key, [value])
+    | Some(arr) => arr->Array.push(value)->ignore
+    | None => dict->Dict.set(key, [value])
     }
   }
 
   let pushMany = (dict, key, values) => {
     switch dict->dangerouslyGetNonOption(key) {
-    | Some(arr) => arr->Js.Array2.pushMany(values)->ignore
-    | None => dict->Js.Dict.set(key, values)
+    | Some(arr) => arr->Array.pushMany(values)->ignore
+    | None => dict->Dict.set(key, values)
     }
   }
 
@@ -265,18 +268,18 @@ module Array = {
 
       let rec loop = (i, j, k) => {
         if i < Array.length(xs) && j < Array.length(ys) {
-          if f(xs[i], ys[j]) {
-            result[k] = xs[i]
+          if f(xs->Array.getUnsafe(i), ys->Array.getUnsafe(j)) {
+            result[k] = xs->Array.getUnsafe(i)
             loop(i + 1, j, k + 1)
           } else {
-            result[k] = ys[j]
+            result[k] = ys->Array.getUnsafe(j)
             loop(i, j + 1, k + 1)
           }
         } else if i < Array.length(xs) {
-          result[k] = xs[i]
+          result[k] = xs->Array.getUnsafe(i)
           loop(i + 1, j, k + 1)
         } else if j < Array.length(ys) {
-          result[k] = ys[j]
+          result[k] = ys->Array.getUnsafe(j)
           loop(i, j + 1, k + 1)
         }
       }
@@ -295,7 +298,7 @@ module Array = {
   */
   let setIndexImmutable = (arr: array<'a>, index: int, value: 'a): array<'a> => {
     let shallowCopy = arr->Belt.Array.copy
-    shallowCopy->Js.Array2.unsafe_set(index, value)
+    shallowCopy->Array.setUnsafe(index, value)
     shallowCopy
   }
 
@@ -304,7 +307,7 @@ module Array = {
       if index >= Array.length(results) {
         Ok(output)
       } else {
-        switch results->Js.Array2.unsafe_get(index) {
+        switch results->Array.getUnsafe(index) {
         | Ok(value) => {
             output[index] = value
             loop(index + 1, output)
@@ -314,14 +317,14 @@ module Array = {
       }
     }
 
-    loop(0, Belt.Array.makeUninitializedUnsafe(results->Js.Array2.length))
+    loop(0, Belt.Array.makeUninitializedUnsafe(results->Array.length))
   }
 
   /**
 Helper to check if a value exists in an array
 */
   let includes = (arr: array<'a>, val: 'a) =>
-    arr->Js.Array2.find(item => item == val)->Belt.Option.isSome
+    arr->Array.find(item => item == val)->Belt.Option.isSome
 
   let isEmpty = (arr: array<_>) =>
     switch arr {
@@ -337,7 +340,7 @@ Helper to check if a value exists in an array
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
-      let item = arr[i]
+      let item = arr->Array.getUnsafe(i)
       await item->fn
     }
   }
@@ -351,9 +354,7 @@ Helper to check if a value exists in an array
     if index < 0 {
       array->Array.copy
     } else {
-      array
-      ->Js.Array2.slice(~start=0, ~end_=index)
-      ->Js.Array2.concat(array->Js.Array2.sliceFrom(index + 1))
+      array->Array.slice(~start=0, ~end=index)->Array.concat(array->Array.slice(~start=index + 1))
     }
   }
 
@@ -361,14 +362,14 @@ Helper to check if a value exists in an array
   let first = (arr: array<'a>): option<'a> => arr->Belt.Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Belt.Array.getUnsafe(arr->Array.length - 1)
-  let firstUnsafe = (arr: array<'a>): 'a => arr->Js.Array2.unsafe_get(0)
+  let firstUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(0)
 
   let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
     let rec loop = (index: int) => {
       if index < 0 {
         None
       } else {
-        let item = arr[index]
+        let item = arr->Array.getUnsafe(index)
         if fn(item) {
           Some((item, index))
         } else {
@@ -393,10 +394,10 @@ Helper to check if a value exists in an array
   */
   let interleave = (arr: array<'a>, separator: 'a) => {
     let interleaved = []
-    arr->Js.Array2.forEachi((v, i) => {
-      interleaved->Js.Array2.push(v)->ignore
+    arr->Array.forEachWithIndex((v, i) => {
+      interleaved->Array.push(v)->ignore
       if i < arr->Array.length - 1 {
-        interleaved->Js.Array2.push(separator)->ignore
+        interleaved->Array.push(separator)->ignore
       }
     })
     interleaved
@@ -426,8 +427,7 @@ Helper to check if a value exists in an array
 
 module String = {
   let capitalize = str => {
-    str->Js.String2.slice(~from=0, ~to_=1)->Js.String.toUpperCase ++
-      str->Js.String2.sliceToEnd(~from=1)
+    str->String.slice(~start=0, ~end=1)->String.toUpperCase ++ str->String.slice(~start=1)
   }
 
   /**
@@ -458,12 +458,12 @@ module Url = {
     // - (https?:\/\/) : Required http:// or https:// (capturing group)
     // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
     // - .* : Match rest of the string
-    let regex = %re("/https?:\/\/([^\/?]+).*/")
-    switch Js.Re.exec_(regex, url) {
+    let regex = /https?:\/\/([^\/?]+).*/
+    switch RegExp.exec(regex, url) {
     | Some(result) =>
-      switch Js.Re.captures(result)->Belt.Array.get(1) {
-      | Some(host) => host->Js.Nullable.toOption
-      | None => None
+      switch RegExp.Result.matches(result)->Belt.Array.get(1) {
+      | Some(Some(host)) => Some(host)
+      | _ => None
       }
     | None => None
     }
@@ -489,25 +489,46 @@ bet the actual underlying exn
 let unwrapResultExn = res =>
   switch res {
   | Ok(v) => v
-  | Error(exn) => exn->raise
+  | Error(exn) => exn->throw
   }
 
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
 module Schema = {
+  // Sury doesn't expose setName/name. We access/mutate the name field via identity cast.
+  let setName = (schema: S.t<'a>, name: string): S.t<'a> => {
+    (schema->S.untag->(magic: S.untagged => {..}))["name"] = name
+    schema
+  }
+  let getName = (schema: S.t<'a>): option<string> => {
+    (schema->S.untag).name
+  }
+
   let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
+
+  // Check if a schema is nullable or optional (S.null or S.option produce unions with Null/Undefined)
+  let isNullableOrOptional = (schema: S.t<unknown>) => {
+    let untagged = schema->S.untag
+    switch untagged.tag {
+    | Null | Undefined => true
+    | Union => {
+        let anyOf: array<S.t<unknown>> = (untagged->(magic: S.untagged => {..}))["anyOf"]
+        anyOf->Js.Array2.some(s => {
+          let t = (s->S.untag).tag
+          t == Null || t == Undefined
+        })
+      }
+    | _ => false
+    }
+  }
 
   let getNonOptionalFieldNames = schema => {
     let acc = []
-    switch schema->S.classify {
+    switch schema->(magic: S.t<'a> => S.t<unknown>) {
     | Object({items}) =>
       items->Js.Array2.forEach(item => {
-        switch item.schema->S.classify {
-        // Check for null, since we generate S.null schema for db serializing
-        // In the future it should be changed to Option only
-        | Null(_) => ()
-        | Option(_) => ()
-        | _ => acc->Js.Array2.push(item.location)->ignore
+        if !isNullableOrOptional(item.schema) {
+          acc->Js.Array2.push(item.location)->ignore
         }
       })
     | _ => ()
@@ -516,7 +537,7 @@ module Schema = {
   }
 
   let getCapitalizedFieldNames = schema => {
-    switch schema->S.classify {
+    switch schema->(magic: S.t<'a> => S.t<unknown>) {
     | Object({items}) => items->Js.Array2.map(item => item.location->String.capitalize)
     | _ => []
     }
@@ -525,38 +546,43 @@ module Schema = {
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
   let dbDate =
-    S.json(~validate=false)
-    ->(magic: S.t<Js.Json.t> => S.t<Js.Date.t>)
-    ->S.preprocess(_ => {serializer: date => date->magic->Js.Date.toISOString})
+    S.json
+    ->(magic: S.t<JSON.t> => S.t<Date.t>)
+    ->S.transform(_ => {
+      serializer: date =>
+        date->(magic: Date.t => Date.t)->Date.toISOString->(magic: string => Date.t),
+    })
 
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
   let clickHouseDate =
-    S.json(~validate=false)
-    ->(magic: S.t<Js.Json.t> => S.t<Js.Date.t>)
-    ->S.preprocess(_ => {serializer: date => date->magic->Js.Date.getTime})
+    S.json
+    ->(magic: S.t<JSON.t> => S.t<Date.t>)
+    ->S.transform(_ => {
+      serializer: date => date->(magic: Date.t => Date.t)->Date.getTime->(magic: float => Date.t),
+    })
 
   // When trying to serialize data to Json pg type, it will fail with
   // PostgresError: column "params" is of type json but expression is of type boolean
   // If there's bool or null on the root level. It works fine as object field values.
   let coerceToJsonPgType = schema => {
-    schema->S.preprocess(s => {
-      switch s.schema->S.classify {
-      // This is a workaround for Fuel Bytes type
-      | Unknown => {serializer: _ => %raw(`"null"`)}
-      | Bool => {
-          serializer: unknown => {
-            if unknown === %raw(`false`) {
-              %raw(`"false"`)
-            } else if unknown === %raw(`true`) {
-              %raw(`"true"`)
-            } else {
-              unknown
-            }
-          },
-        }
-      | _ => {}
-      }
-    })
+    let tag = (schema->(magic: S.t<'a> => S.t<unknown>)->S.untag).tag
+    switch tag {
+    // This is a workaround for Fuel Bytes type
+    | Unknown => schema->S.transform(_ => {serializer: _ => %raw(`"null"`)->(magic: string => 'a)})
+    | Boolean =>
+      schema->S.transform(_ => {
+        serializer: unknown => {
+          if unknown->(magic: 'a => 'b) === %raw(`false`) {
+            %raw(`"false"`)
+          } else if unknown->(magic: 'a => 'b) === %raw(`true`) {
+            %raw(`"true"`)
+          } else {
+            unknown
+          }
+        },
+      })
+    | _ => schema
+    }
   }
 }
 
@@ -649,7 +675,7 @@ external entries: t<'value> => Js_iterator.t<('value, 'value)> = "entries"
 }
 
 module WeakMap = {
-  type t<'k, 'v> = Js.WeakMap.t<'k, 'v>
+  type t<'k, 'v> = WeakMap.t<'k, 'v>
 
   @new external make: unit => t<'k, 'v> = "WeakMap"
 
@@ -673,13 +699,13 @@ module WeakMap = {
 }
 
 module Map = {
-  type t<'k, 'v> = Js.Map.t<'k, 'v>
+  type t<'k, 'v> = Map.t<'k, 'v>
 
   @new external make: unit => t<'k, 'v> = "Map"
 
   @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
   @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
-  @send external has: (t<'k, 'v>, 'k) => bool = "has"
+  @send external has: (Map.t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
 }
@@ -693,7 +719,7 @@ module Proxy = {
 
 module Hash = {
   let fail = name => {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Failed to get hash for ${name}. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
     )
   }
@@ -705,8 +731,12 @@ module Hash = {
     switch any->Js.typeof {
     | "string" => `"${any->magic}"` // Ideally should escape here,
     // but since we don't parse it back, it's fine to keep it super simple
-    | "number" => any->magic->Js.Int.toString
-    | "bigint" => `"${any->magic->BigInt.toString}"`
+    | "number" => any->magic->Int.toString
+    | "bigint" => {
+        // Inline to avoid circular dependency with BigInt module
+        let s: string = %raw(`any.toString()`)
+        `"${s}"`
+      }
     | "boolean" => any->magic ? "true" : "false"
     | "undefined" => "null"
     | "object" =>
@@ -760,8 +790,8 @@ module Hash = {
 }
 
 let prettifyExn = exn => {
-  switch exn->Js.Exn.anyToExnInternal {
-  | Js.Exn.Error(e) => e->(magic: Js.Exn.t => exn)
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->(magic: JsExn.t => exn)
   | exn => exn
   }
 }
@@ -774,7 +804,7 @@ module EnvioPackage = {
       version: s.matches(S.string),
     }),
   ) catch {
-  | S.Raised(error) =>
-    Js.Exn.raiseError(`Failed to get package.json in envio package: ${error->S.Error.message}`)
+  | S.Error(error) =>
+    JsError.throwWithMessage(`Failed to get package.json in envio package: ${error.message}`)
   }
 }

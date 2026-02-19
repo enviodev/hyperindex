@@ -8,7 +8,7 @@ let getOrderedBatchItemComparator = (item: Internal.item) => {
       logIndex,
     )
   | Internal.Block(_) =>
-    Js.Exn.raiseError("Block handlers are not supported for ordered multichain mode.")
+    JsError.throwWithMessage("Block handlers are not supported for ordered multichain mode.")
   }
 }
 
@@ -29,42 +29,42 @@ let isEarlierUnordered = (item1: (int, int, int), item2: (int, int, int)) => {
 // takes blockNumber, logIndex and packs them into a number with
 //32 bits, 16 bits and 16 bits respectively
 let packEventIndex = (~blockNumber, ~logIndex) => {
-  let blockNumber = blockNumber->BigInt.fromInt
-  let logIndex = logIndex->BigInt.fromInt
-  let blockNumber = BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
+  let blockNumber = blockNumber->BigInt_.fromInt
+  let logIndex = logIndex->BigInt_.fromInt
+  let blockNumber = BigInt_.Bitwise.shift_left(blockNumber, 16->BigInt_.fromInt)
 
-  blockNumber->BigInt.Bitwise.logor(logIndex)
+  blockNumber->BigInt_.Bitwise.logor(logIndex)
 }
 
 // //Currently not used but keeping in utils
 // //using @live flag for dead code analyser
 // @live
 // let packMultiChainEventIndex = (~timestamp, ~chainId, ~blockNumber, ~logIndex) => {
-//   let timestamp = timestamp->BigInt.fromInt
-//   let chainId = chainId->BigInt.fromInt
-//   let blockNumber = blockNumber->BigInt.fromInt
-//   let logIndex = logIndex->BigInt.fromInt
+//   let timestamp = timestamp->BigInt_.fromInt
+//   let chainId = chainId->BigInt_.fromInt
+//   let blockNumber = blockNumber->BigInt_.fromInt
+//   let logIndex = logIndex->BigInt_.fromInt
 
-//   let timestamp = BigInt.Bitwise.shift_left(timestamp, 48->BigInt.fromInt)
-//   let chainId = BigInt.Bitwise.shift_left(chainId, 16->BigInt.fromInt)
-//   let blockNumber = BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
+//   let timestamp = BigInt_.Bitwise.shift_left(timestamp, 48->BigInt_.fromInt)
+//   let chainId = BigInt_.Bitwise.shift_left(chainId, 16->BigInt_.fromInt)
+//   let blockNumber = BigInt_.Bitwise.shift_left(blockNumber, 16->BigInt_.fromInt)
 
 //   timestamp
-//   ->BigInt.Bitwise.logor(chainId)
-//   ->BigInt.Bitwise.logor(blockNumber)
-//   ->BigInt.Bitwise.logor(logIndex)
+//   ->BigInt_.Bitwise.logor(chainId)
+//   ->BigInt_.Bitwise.logor(blockNumber)
+//   ->BigInt_.Bitwise.logor(logIndex)
 // }
 
 // //Currently not used but keeping in utils
 // //using @live flag for dead code analyser
 // @live
 // let unpackEventIndex = (packedEventIndex: bigint) => {
-//   let blockNumber = packedEventIndex->BigInt.Bitwise.shift_right(16->BigInt.fromInt)
-//   let logIndexMask = 65535->BigInt.fromInt
-//   let logIndex = packedEventIndex->BigInt.Bitwise.logand(logIndexMask)
+//   let blockNumber = packedEventIndex->BigInt_.Bitwise.shift_right(16->BigInt_.fromInt)
+//   let logIndexMask = 65535->BigInt_.fromInt
+//   let logIndex = packedEventIndex->BigInt_.Bitwise.logand(logIndexMask)
 //   {
-//     blockNumber: blockNumber->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
-//     logIndex: logIndex->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
+//     blockNumber: blockNumber->BigInt_.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
+//     logIndex: logIndex->BigInt_.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
 //   }
 // }
 

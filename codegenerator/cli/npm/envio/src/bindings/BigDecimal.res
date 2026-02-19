@@ -50,7 +50,7 @@ let one = fromInt(1)
 @genType
 let schema =
   S.string
-  ->S.setName("BigDecimal")
+  ->Utils.Schema.setName("BigDecimal")
   ->S.transform(s => {
     parser: string =>
       switch string->fromString {

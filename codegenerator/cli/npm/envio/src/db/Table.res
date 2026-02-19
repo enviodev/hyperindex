@@ -66,7 +66,7 @@ let mkField = (
   {
     fieldName,
     fieldType,
-    fieldSchema: fieldSchema->S.toUnknown,
+    fieldSchema: fieldSchema->S.castToUnknown,
     isArray,
     isNullable,
     isPrimaryKey,
@@ -219,6 +219,8 @@ let getNonDefaultFieldNames = table => {
 let getFieldByName = (table, fieldName) =>
   table.fields->Js.Array2.find(field => field->getUserDefinedFieldName === fieldName)
 
+// TODO: Test whether it should be passed via args and match the column type
+
 let getFieldByDbName = (table, dbFieldName) =>
   table.fields->Js.Array2.find(field =>
     switch field {
@@ -238,7 +240,7 @@ let getUnfilteredCompositeIndicesUnsafe = (table): array<array<compositeIndexFie
     compositeIndex->Array.map(indexField => {
       let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
       | Some(field) => field->getFieldName
-      | None => raise(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
+      | None => throw(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
       }
       {fieldName: dbFieldName, direction: indexField.direction}
     })
@@ -259,52 +261,85 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
   let arrayFieldTypes = []
   let hasArrayField = ref(false)
 
-  let dbSchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
-    switch schema->S.classify {
+  let dbSchema: S.t<dict<unknown>> = S.schema(s =>
+    switch schema->(Utils.magic: S.t<'a> => S.t<unknown>) {
     | Object({items}) =>
-      let dict = Js.Dict.empty()
-      items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
-        let rec coerceSchema = schema =>
-          switch schema->S.classify {
-          | BigInt => BigInt.schema->S.toUnknown
-          | Option(child)
-          | Null(child) =>
-            S.null(child->coerceSchema)->S.toUnknown
-          | Array(child) => {
-              hasArrayField := true
-              S.array(child->coerceSchema)->S.toUnknown
+      let dict = Dict.make()
+      items->Belt.Array.forEach(({location, schema}) => {
+        let inlinedLocation = `"${location}"`
+        let rec coerceSchema = (schema: S.t<unknown>) => {
+          let tag = (schema->S.untag).tag
+          switch tag {
+          | BigInt => BigInt_.schema->S.castToUnknown
+          | Union => {
+              // Handle S.null(x) / S.option(x) wrappers
+              let anyOf: array<S.t<unknown>> = (
+                schema->S.untag->(Utils.magic: S.untagged => {..})
+              )["anyOf"]
+              let hasNullOrUndefined = anyOf->Array.some(
+                s => {
+                  let t = (s->S.untag).tag
+                  t == Null || t == Undefined
+                },
+              )
+              if hasNullOrUndefined {
+                let child = anyOf->Js.Array2.find(
+                  s => {
+                    let t = (s->S.untag).tag
+                    t != Null && t != Undefined
+                  },
+                )
+                switch child {
+                | Some(c) => S.null(c->coerceSchema)->S.castToUnknown
+                | None => schema
+                }
+              } else {
+                schema
+              }
             }
-          | JSON(_) => {
+          | Array => {
+              hasArrayField := true
+              let items: array<S.item> = (
+                schema->S.untag->(Utils.magic: S.untagged => {..})
+              )["items"]
+              switch items->Array.get(0) {
+              | Some({schema: child}) => S.array(child->coerceSchema)->S.castToUnknown
+              | None => schema
+              }
+            }
+          | Unknown => {
+              // JSON schema (S.json) has Unknown tag
               hasArrayField := true
               schema
             }
-          | Bool =>
+          | Boolean =>
             // Workaround for https://github.com/porsager/postgres/issues/471
             S.union([
               S.literal(1)->S.shape(_ => true),
               S.literal(0)->S.shape(_ => false),
-            ])->S.toUnknown
+            ])->S.castToUnknown
           | _ => schema
           }
+        }
 
         let field = switch table->getFieldByDbName(location) {
         | Some(field) => field
-        | None => raise(NonExistingTableField(location))
+        | None => throw(NonExistingTableField(location))
         }
 
         quotedFieldNames
-        ->Js.Array2.push(inlinedLocation)
+        ->Array.push(inlinedLocation)
         ->ignore
         switch field {
         | Field({isPrimaryKey: false}) =>
           quotedNonPrimaryFieldNames
-          ->Js.Array2.push(inlinedLocation)
+          ->Array.push(inlinedLocation)
           ->ignore
         | _ => ()
         }
 
         arrayFieldTypes
-        ->Js.Array2.push(
+        ->Array.push(
           switch field {
           | Field(f) =>
             let pgFieldType = getPgFieldType(
@@ -312,7 +347,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               ~pgSchema,
               ~isArray=true,
               ~isNullable=f.isNullable,
-              ~isNumericArrayAsText=false, // TODO: Test whether it should be passed via args and match the column type
+              ~isNumericArrayAsText=false,
             )
             switch f.fieldType {
             | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
@@ -323,10 +358,11 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
           },
         )
         ->ignore
-        dict->Js.Dict.set(location, s.matches(schema->coerceSchema))
+        dict->Dict.set(location, s.matches(schema->coerceSchema))
       })
       dict
-    | _ => Js.Exn.raiseError("Failed creating db schema. Expected an object schema for table")
+    | _ =>
+      JsError.throwWithMessage("Failed creating db schema. Expected an object schema for table")
     }
   )
 

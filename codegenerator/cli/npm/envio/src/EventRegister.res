@@ -26,7 +26,7 @@ let withRegistration = (fn: activeRegistration => unit) => {
   | None => preRegistered->Belt.Array.push(fn)
   | Some(r) =>
     if r.finished {
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
       )
     } else {
@@ -40,15 +40,15 @@ let startRegistration = (~ecosystem, ~multichain) => {
     ecosystem,
     multichain,
     registrations: {
-      onBlockByChainId: Js.Dict.empty(),
+      onBlockByChainId: Dict.make(),
       hasEvents: false,
     },
     finished: false,
   }
   activeRegistration.contents = Some(r)
-  while preRegistered->Js.Array2.length > 0 {
+  while preRegistered->Array.length > 0 {
     // Loop + cleanup in one go
-    switch preRegistered->Js.Array2.pop {
+    switch preRegistered->Array.pop {
     | Some(fn) => fn(r)
     | None => ()
     }
@@ -62,7 +62,9 @@ let finishRegistration = () => {
       r.registrations
     }
   | None =>
-    Js.Exn.raiseError("The indexer has not started registering handlers, so can't finish it.")
+    JsError.throwWithMessage(
+      "The indexer has not started registering handlers, so can't finish it.",
+    )
   }
 }
 
@@ -77,7 +79,7 @@ let onBlockOptionsSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "chain": s.matches(S.int),
-    "interval": s.matches(S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
+    "interval": s.matches(S.option(S.int->S.min(1))->S.Option.getOr(1)),
     "startBlock": s.matches(S.option(S.int)),
     "endBlock": s.matches(S.option(S.int)),
   }
@@ -89,7 +91,7 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
     switch registration.multichain {
     | Unordered => ()
     | Ordered =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature. Or enable unordered multichain mode by removing `multichain: ordered` from the config.yaml file.",
       )
     }
@@ -146,7 +148,7 @@ type t = {
   eventName: string,
   mutable handler: option<Internal.handler>,
   mutable contractRegister: option<Internal.contractRegister>,
-  mutable eventOptions: option<Internal.eventOptions<Js.Json.t>>,
+  mutable eventOptions: option<Internal.eventOptions<JSON.t>>,
 }
 
 let getHandler = (t: t) => t.handler
@@ -176,7 +178,7 @@ let setEventOptions = (t: t, ~eventOptions, ~logger=Logging.getLogger()) => {
   switch eventOptions {
   | Some(value) =>
     let value =
-      value->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Js.Json.t>)
+      value->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<JSON.t>)
     switch t.eventOptions {
     | None => t.eventOptions = Some(value)
     | Some(existingValue) =>

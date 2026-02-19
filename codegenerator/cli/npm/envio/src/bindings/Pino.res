@@ -73,12 +73,12 @@ module Transport = {
 type hooks = {logMethod: (array<string>, string, logLevel) => unit}
 
 type formatters = {
-  level: (string, int) => Js.Json.t,
-  bindings: Js.Json.t => Js.Json.t,
-  log: Js.Json.t => Js.Json.t,
+  level: (string, int) => JSON.t,
+  bindings: JSON.t => JSON.t,
+  log: JSON.t => JSON.t,
 }
 
-type serializers = {err: Js.Json.t => Js.Json.t}
+type serializers = {err: JSON.t => JSON.t}
 
 type options = {
   name?: string,
@@ -87,16 +87,16 @@ type options = {
   useOnlyCustomLevels?: bool,
   depthLimit?: int,
   edgeLimit?: int,
-  mixin?: unit => Js.Json.t,
-  mixinMergeStrategy?: (Js.Json.t, Js.Json.t) => Js.Json.t,
+  mixin?: unit => JSON.t,
+  mixinMergeStrategy?: (JSON.t, JSON.t) => JSON.t,
   redact?: array<string>,
   hooks?: hooks,
   formatters?: formatters,
   serializers?: serializers,
   msgPrefix?: string,
-  base?: Js.Json.t,
+  base?: JSON.t,
   enabled?: bool,
-  crlf?: bool,
+  crlf?: JSON.t,
   timestamp?: bool,
   messageKey?: string,
 }
@@ -159,7 +159,7 @@ module MultiStreamLogger = {
 
   let makeStreams = (~userLogLevel, ~formatter, ~logFile, ~defaultFileLogLevel) => {
     let stream = {
-      stream: {write: v => formatter(v)->Js.log},
+      stream: {write: v => formatter(v)->Console.log},
       level: userLogLevel,
     }
     let maybeFileStream = logFile->Belt.Option.mapWithDefault([], dest => [

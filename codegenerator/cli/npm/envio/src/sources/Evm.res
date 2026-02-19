@@ -2,7 +2,7 @@
 @get external getTimestamp: Internal.eventBlock => int = "timestamp"
 @get external getId: Internal.eventBlock => string = "hash"
 
-let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
+let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
     delete fields.number
     delete fields.timestamp
@@ -82,6 +82,3 @@ let ecosystem: Ecosystem.t = {
   getId,
   cleanUpRawEventFieldsInPlace,
 }
-
-
-

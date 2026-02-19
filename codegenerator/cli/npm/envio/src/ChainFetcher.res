@@ -13,7 +13,7 @@ type t = {
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   isProgressAtHead: bool,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   committedProgressBlockNumber: int,
   numEventsProcessed: int,
   numBatchesFetched: int,
@@ -111,7 +111,7 @@ let make = (
 
     switch contract.startBlock {
     | Some(startBlock) if startBlock < chainConfig.startBlock =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `The start block for contract "${contractName}" is less than the chain start block. This is not supported yet.`,
       )
     | _ => ()
@@ -152,14 +152,14 @@ let make = (
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
       if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
-        Js.Exn.raiseError(
+        JsError.throwWithMessage(
           `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
         )
       }
       switch endBlock {
       | Some(chainEndBlock) =>
         if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
-          Js.Exn.raiseError(
+          JsError.throwWithMessage(
             `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
           )
         }
@@ -395,7 +395,7 @@ let runContractRegistersOrThrow = async (
     | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
     | {eventConfig: {contractRegister: None, name: eventName}} =>
       // Unexpected case, since we should pass only events with contract register to this function
-      Js.Exn.raiseError("Contract register is not set for event " ++ eventName)
+      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
@@ -412,14 +412,14 @@ let runContractRegistersOrThrow = async (
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Promise.isCatchable {
+      if result->Promise_.isCatchable {
         promises->Array.push(
           result
-          ->Promise.thenResolve(r => {
+          ->Promise_.thenResolve(r => {
             params.isResolved = true
             r
           })
-          ->Promise.catch(exn => {
+          ->Promise_.catch(exn => {
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
           }),
@@ -434,7 +434,7 @@ let runContractRegistersOrThrow = async (
   }
 
   if promises->Utils.Array.notEmpty {
-    let _ = await Promise.all(promises)
+    let _ = await Promise_.all(promises)
   }
 
   itemsWithDcs
@@ -502,7 +502,7 @@ let getLastKnownValidBlock = async (
     )
 
   let getBlockHashes = blockNumbers => {
-    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Promise.thenResolve(res =>
+    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Promise_.thenResolve(res =>
       switch res {
       | Ok(v) => v
       | Error(exn) =>
