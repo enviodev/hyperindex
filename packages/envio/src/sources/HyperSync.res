@@ -114,7 +114,7 @@ module GetLogs = {
     }
 
     //Topics can be nullable and still need to be filtered
-    let logUnsanitized: Log.t = event.log->Utils.magic
+    let logUnsanitized: Log.t = event.log->(Utils.magic: HyperSyncClient.ResponseTypes.log => Log.t)
     let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
     let log = {
@@ -125,8 +125,8 @@ module GetLogs = {
 
     {
       log,
-      block: event.block->Utils.magic,
-      transaction: event.transaction->Utils.magic,
+      block: event.block->(Utils.magic: option<HyperSyncClient.ResponseTypes.block> => HyperSyncClient.ResponseTypes.block),
+      transaction: event.transaction->(Utils.magic: option<HyperSyncClient.ResponseTypes.transaction> => Internal.eventTransaction),
     }
   }
 

@@ -136,7 +136,7 @@ module SafeCounter = MakeSafePromMetric({
   let make = PromClient.Counter.makeCounter
   let labels = PromClient.Counter.labels
   let handleInt = PromClient.Counter.incMany
-  let handleFloat = PromClient.Counter.incMany->Utils.magic
+  let handleFloat = PromClient.Counter.incMany->(Utils.magic: ((PromClient.Counter.counter, int) => unit) => ((PromClient.Counter.counter, float) => unit))
 })
 
 module SafeGauge = MakeSafePromMetric({

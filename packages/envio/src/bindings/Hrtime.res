@@ -38,7 +38,7 @@ let toInt = float => float->Belt.Int.fromFloat
 let intFromMillis = toInt
 let intFromNanos = toInt
 let intFromSeconds = toInt
-let floatFromMillis = Utils.magic
+let floatFromMillis: milliseconds => float = v => v->(Utils.magic: milliseconds => float)
 
 let millisBetween = (~from: timeRef, ~to: timeRef): int => {
   to->toMillis->intFromMillis - from->toMillis->intFromMillis
