@@ -1,31 +1,29 @@
 type registrations = {
   onBlockByChainId: dict<array<Internal.onBlockConfig>>,
-  mutable hasEvents: bool,
 }
 
 let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Config.multichain) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: unit => registrations
 
-@genType
-type t
-let make: (~contractName: string, ~eventName: string) => t
 let setHandler: (
-  t,
+  ~contractName: string,
+  ~eventName: string,
   Internal.genericHandler<Internal.genericHandlerArgs<'event, Internal.handlerContext>>,
   ~eventOptions: option<Internal.eventOptions<'eventFilters>>,
   ~logger: Pino.t=?,
 ) => unit
 let setContractRegister: (
-  t,
+  ~contractName: string,
+  ~eventName: string,
   Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, 'context>>,
   ~eventOptions: option<Internal.eventOptions<'eventFilters>>,
   ~logger: Pino.t=?,
 ) => unit
-let getHandler: t => option<Internal.handler>
-let getContractRegister: t => option<Internal.contractRegister>
-let getEventFilters: t => option<Js.Json.t>
-let isWildcard: t => bool
-let hasRegistration: t => bool
+let getHandler: (~contractName: string, ~eventName: string) => option<Internal.handler>
+let getContractRegister: (~contractName: string, ~eventName: string) => option<Internal.contractRegister>
+let getEventFilters: (~contractName: string, ~eventName: string) => option<Js.Json.t>
+let isWildcard: (~contractName: string, ~eventName: string) => bool
+let hasRegistration: (~contractName: string, ~eventName: string) => bool
 
 let onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
