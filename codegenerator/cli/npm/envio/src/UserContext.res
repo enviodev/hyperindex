@@ -127,7 +127,6 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
       operatorObj
       ->Js.Dict.unsafeGet(operatorKey)
       ->(Utils.magic: unknown => array<unknown>)
-      ->Js.Array2.filter(v => v !== %raw(`undefined`))
 
     fieldValues
     ->Js.Array2.map(fieldValue =>
@@ -147,7 +146,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     ->Promise.all
     ->Promise.thenResolve(results => results->Belt.Array.concatMany)
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
-    // _gte and _lte are composed from Eq + Gt/Lt, deduplicating by entity ID
+    // _gte and _lte are composed from Eq + Gt/Lt
     let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
     let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
 
@@ -167,18 +166,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
 
     [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
     ->Promise.all
-    ->Promise.thenResolve(results => {
-      let seen = Utils.Set.make()
-      let combined = []
-      results->Belt.Array.concatMany->Js.Array2.forEach(entity => {
-        let id = entity.id
-        if !(seen->Utils.Set.has(id)) {
-          seen->Utils.Set.add(id)->ignore
-          combined->Js.Array2.push(entity)->ignore
-        }
-      })
-      combined
-    })
+    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
   } else {
     let operator: TableIndices.Operator.t = switch operatorKey {
     | "_eq" => Eq
