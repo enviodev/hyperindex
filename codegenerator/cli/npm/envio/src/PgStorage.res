@@ -200,44 +200,54 @@ let makeInitializeTransaction = (
   })
   let derivedSchema = Schema.make(allEntityTables)
 
-  let query = ref(
-    (
-      isEmptyPgSchema && pgSchema === "public"
-      // Hosted Service already have a DB with the created public schema
-      // It also doesn't allow to simply drop it,
-      // so we reuse the existing schema when it's empty
-      // (but only for public, since it's usually always exists)
-        ? ""
-        : `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
+  // Accumulate query parts in an array, then join once at the end
+  // to avoid O(n²) string concatenation from repeated `query := query.contents ++ ...`
+  let queryParts = []
+
+  let schemaInit =
+    isEmptyPgSchema && pgSchema === "public"
+    // Hosted Service already have a DB with the created public schema
+    // It also doesn't allow to simply drop it,
+    // so we reuse the existing schema when it's empty
+    // (but only for public, since it's usually always exists)
+      ? ""
+      : `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
 CREATE SCHEMA "${pgSchema}";\n`
-    ) ++
+
+  queryParts
+  ->Js.Array2.push(
+    schemaInit ++
     `GRANT ALL ON SCHEMA "${pgSchema}" TO "${pgUser}";
 GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
+  ->ignore
 
   // Optimized enum creation - direct when cleanRun, conditional otherwise
   enums->Js.Array2.forEach((enumConfig: Table.enumConfig<Table.enum>) => {
     // Create base enum creation query once
-    let enumCreateQuery = `CREATE TYPE "${pgSchema}".${enumConfig.name} AS ENUM(${enumConfig.variants
-      ->Js.Array2.map(v => `'${v->(Utils.magic: Table.enum => string)}'`)
-      ->Js.Array2.joinWith(", ")});`
-
-    query := query.contents ++ "\n" ++ enumCreateQuery
+    queryParts
+    ->Js.Array2.push(
+      `CREATE TYPE "${pgSchema}".${enumConfig.name} AS ENUM(${enumConfig.variants
+        ->Js.Array2.map(v => `'${v->(Utils.magic: Table.enum => string)}'`)
+        ->Js.Array2.joinWith(", ")});`,
+    )
+    ->ignore
   })
 
   // Batch all table creation first (optimal for PostgreSQL)
   allTables->Js.Array2.forEach((table: Table.table) => {
-    query :=
-      query.contents ++
-      "\n" ++
-      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled)
+    queryParts
+    ->Js.Array2.push(
+      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled),
+    )
+    ->ignore
   })
 
   // Then batch all indices (better performance when tables exist)
   allTables->Js.Array2.forEach((table: Table.table) => {
     let indices = makeCreateTableIndicesQuery(table, ~pgSchema)
     if indices !== "" {
-      query := query.contents ++ "\n" ++ indices
+      queryParts->Js.Array2.push(indices)->ignore
     }
   })
 
@@ -248,29 +258,31 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     ->Js.Array2.forEach(derivedFromField => {
       let indexField =
         derivedSchema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
-      query :=
-        query.contents ++
-        "\n" ++
+      queryParts
+      ->Js.Array2.push(
         makeCreateIndexQuery(
           ~tableName=derivedFromField.derivedFromEntity,
           ~indexFields=[indexField],
           ~pgSchema,
-        )
+        ),
+      )
+      ->ignore
     })
   })
 
   // Create views for Hasura integration
-  query := query.contents ++ "\n" ++ InternalTable.Views.makeMetaViewQuery(~pgSchema)
-  query := query.contents ++ "\n" ++ InternalTable.Views.makeChainMetadataViewQuery(~pgSchema)
+  queryParts->Js.Array2.push(InternalTable.Views.makeMetaViewQuery(~pgSchema))->ignore
+  queryParts->Js.Array2.push(InternalTable.Views.makeChainMetadataViewQuery(~pgSchema))->ignore
 
   // Populate initial chain data
   switch InternalTable.Chains.makeInitialValuesQuery(~pgSchema, ~chainConfigs) {
-  | Some(initialChainsValuesQuery) => query := query.contents ++ "\n" ++ initialChainsValuesQuery
+  | Some(initialChainsValuesQuery) =>
+    queryParts->Js.Array2.push(initialChainsValuesQuery)->ignore
   | None => ()
   }
 
   [
-    query.contents,
+    queryParts->Js.Array2.joinWith("\n"),
     `CREATE OR REPLACE FUNCTION ${getCacheRowCountFnName}(table_name text) 
 RETURNS integer AS $$
 DECLARE
@@ -345,23 +357,21 @@ let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~it
   let fieldsCount = quotedFieldNames->Array.length
 
   // Create placeholder variables for the VALUES clause - using $1, $2, etc.
-  let placeholders = ref("")
+  // Accumulate row placeholders in an array and join once to avoid O(n²) string concatenation
+  let rowParts = []
   for idx in 1 to itemsCount {
-    if idx > 1 {
-      placeholders := placeholders.contents ++ ","
-    }
-    placeholders := placeholders.contents ++ "("
+    let fieldParts = []
     for fieldIdx in 0 to fieldsCount - 1 {
-      if fieldIdx > 0 {
-        placeholders := placeholders.contents ++ ","
-      }
-      placeholders := placeholders.contents ++ `$${(fieldIdx * itemsCount + idx)->Js.Int.toString}`
+      fieldParts
+      ->Js.Array2.push(`$${(fieldIdx * itemsCount + idx)->Js.Int.toString}`)
+      ->ignore
     }
-    placeholders := placeholders.contents ++ ")"
+    rowParts->Js.Array2.push("(" ++ fieldParts->Js.Array2.joinWith(",") ++ ")")->ignore
   }
+  let placeholders = rowParts->Js.Array2.joinWith(",")
 
   `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Js.Array2.joinWith(", ")})
-VALUES${placeholders.contents}` ++
+VALUES${placeholders}` ++
   switch primaryKeyFieldNames {
   | [] => ``
   | primaryKeyFieldNames =>

@@ -7,18 +7,23 @@ use crate::constants::reserved_keywords::{
 use anyhow::anyhow;
 use regex::Regex;
 use std::collections::HashSet;
+use std::sync::LazyLock;
+
+// Pre-compiled regexes to avoid recompilation on every call
+static POSTGRES_DB_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$").unwrap());
+static ETHEREUM_ADDRESS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^0x[0-9a-fA-F]{40}$").unwrap());
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
 // It must have a maximum length of 63 characters (the first character + 62 subsequent characters)
 pub fn is_valid_postgres_db_name(name: &str) -> bool {
-    let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$").unwrap();
-    re.is_match(name)
+    POSTGRES_DB_NAME_RE.is_match(name)
 }
 
 pub fn is_valid_ethereum_address(address: &str) -> bool {
-    let re = Regex::new(r"^0x[0-9a-fA-F]{40}$").unwrap();
-    re.is_match(address)
+    ETHEREUM_ADDRESS_RE.is_match(address)
 }
 
 // Contracts must have unique names in the config file.
@@ -36,22 +41,25 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
     true
 }
 
-// Check for reserved words in a string, to be applied for schema and config.
-// Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
-fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
-    let mut flagged_words = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript, typescript and rescript
-    let mut set = HashSet::new();
+// Pre-computed set of reserved words from javascript, typescript and rescript
+static ALL_RESERVED_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    let mut set = HashSet::with_capacity(
+        JAVASCRIPT_RESERVED_WORDS.len() + TYPESCRIPT_RESERVED_WORDS.len() + RESCRIPT_RESERVED_WORDS.len(),
+    );
     set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
     set.extend(TYPESCRIPT_RESERVED_WORDS.iter());
     set.extend(RESCRIPT_RESERVED_WORDS.iter());
+    set
+});
 
-    let words_set: Vec<&str> = set.into_iter().cloned().collect();
+// Check for reserved words in a string, to be applied for schema and config.
+// Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
+fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
+    let reserved = &*ALL_RESERVED_WORDS;
+    let mut flagged_words = Vec::new();
 
-    // Find all alphanumeric words in the YAML string
     for word in words {
-        let word = word.as_str();
-        if words_set.contains(&word) {
+        if reserved.contains(word.as_str()) {
             flagged_words.push(word.to_string());
         }
     }
@@ -185,14 +193,14 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         chain.validate_endblock_lte_startblock()?;
         chain.validate_finite_endblock_networks(evm_config)?;
 
-        for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
+        for contract in chain.contracts.as_deref().unwrap_or(&[]) {
             if contract.config.as_ref().is_some() {
                 contract_names.push(contract.name.clone());
             }
 
             // Checking if contract addresses are valid addresses
-            for contract_address in contract.address.clone().into_iter() {
-                if !is_valid_ethereum_address(&contract_address) {
+            for contract_address in contract.address.iter() {
+                if !is_valid_ethereum_address(contract_address) {
                     return Err(anyhow!(
                         "One of the contract addresses in the config file isn't valid",
                     ));

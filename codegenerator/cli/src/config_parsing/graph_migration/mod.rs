@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, sync::LazyLock};
 use tokio::{
     task::JoinSet,
     time::{timeout, Duration},
@@ -225,9 +225,11 @@ fn get_ipfs_id_from_file_path(file_path: &str) -> &str {
     &file_path[6..]
 }
 
+static IPFS_CID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Qm[1-9A-HJ-NP-Za-km-z]{44,}").unwrap());
+
 fn valid_ipfs_cid(cid: &str) -> bool {
-    let ipfs_cid_regex = Regex::new(r"Qm[1-9A-HJ-NP-Za-km-z]{44,}").unwrap();
-    ipfs_cid_regex.is_match(cid)
+    IPFS_CID_RE.is_match(cid)
 }
 
 // Function to generate config, schema and abis from subgraph ID
