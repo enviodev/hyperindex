@@ -90,7 +90,7 @@ pub fn validate_names_valid_rescript(
     let detected_reserved_words = check_reserved_words(names_from_config);
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "EE102: The config contains reserved words for {} names: {}. They are used for the \
+            "The config contains reserved words for {} names: {}. They are used for the \
              generated code and must be valid identifiers, containing only alphanumeric \
              characters and underscores.",
             part_of_config,
@@ -110,7 +110,7 @@ pub fn validate_names_valid_rescript(
     }
     if !invalid_names.is_empty() {
         return Err(anyhow!(
-            "EE111: The config contains invalid characters for {} names: {}. They are used for \
+            "The config contains invalid characters for {} names: {}. They are used for \
              the generated code and must be valid identifiers, containing only alphanumeric \
              characters and underscores.",
             part_of_config,
@@ -161,7 +161,7 @@ impl human_config::evm::Chain {
         if let Some(network_endblock) = self.end_block {
             if network_endblock < self.start_block {
                 return Err(anyhow!(
-                    "EE110: The config file has an endBlock that is less than the startBlock for \
+                    "The config file has an endBlock that is less than the startBlock for \
                      network id: {}. The endBlock must be greater than the startBlock.",
                     &self.id.to_string()
                 ));
@@ -194,7 +194,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
             for contract_address in contract.address.clone().into_iter() {
                 if !is_valid_ethereum_address(&contract_address) {
                     return Err(anyhow!(
-                        "EE100: One of the contract addresses in the config file isn't valid",
+                        "One of the contract addresses in the config file isn't valid",
                     ));
                 }
             }
@@ -203,7 +203,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     // Checking that contract names are non-unique
     if !are_contract_names_unique(&contract_names) {
         return Err(anyhow!(
-            "EE101: Duplicate contract names detected. All contract names must be unique across all networks, and are case-insensitive. \
+            "Duplicate contract names detected. All contract names must be unique across all networks, and are case-insensitive. \
      For multichain indexing, consider using a global contract definition. More information is available at: https://docs.envio.dev/docs/HyperIndex/multichain-indexing",
         ));
     }
@@ -413,7 +413,7 @@ mod tests {
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "EE102: The config contains reserved words for contract names: \"module\", \"this\". \
+            "The config contains reserved words for contract names: \"module\", \"this\". \
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
@@ -435,7 +435,7 @@ mod tests {
         );
         assert_eq!(
             invalid_names.unwrap_err().to_string(),
-            "EE111: The config contains invalid characters for contract names: \
+            "The config contains invalid characters for contract names: \
              \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". \
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."

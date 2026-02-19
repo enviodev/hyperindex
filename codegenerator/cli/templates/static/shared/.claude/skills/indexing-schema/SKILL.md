@@ -111,7 +111,7 @@ type Token {
 
 - Supported: `[Type!]!` — non-nullable elements, non-nullable array
 - **Not supported**: `[Type]!` (nullable elements), nested arrays, `[Boolean!]!`, `[Timestamp!]!`
-- Entity arrays require `@derivedFrom` — bare `[Swap!]!` without it causes `EE211` error
+- Entity arrays require `@derivedFrom` — bare `[Swap!]!` without it causes a codegen error
 
 ## Example
 

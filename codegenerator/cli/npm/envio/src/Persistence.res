@@ -217,7 +217,7 @@ let init = {
       }
     } catch {
     | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=`EE800: Failed to initialize the indexer storage.`)
+      exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
     }
   }
 }

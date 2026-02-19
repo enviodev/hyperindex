@@ -108,13 +108,13 @@ impl Schema {
         .context("Failed creating a relative path to schema")?;
 
         let schema_string = std::fs::read_to_string(&schema_path).context(format!(
-            "EE200: Failed to read schema file at {}. Please ensure that the schema file is \
+            "Failed to read schema file at {}. Please ensure that the schema file is \
              placed correctly in the directory.",
             &schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
-            .context("EE201: Failed to parse schema as document")?;
+            .context("Failed to parse schema as document")?;
 
         Self::from_document(schema_doc).context("Failed converting schema doc to schema struct")
     }
@@ -141,7 +141,7 @@ impl Schema {
         match check_enums_for_internal_reserved_words(self.get_all_enum_type_names()) {
             reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
             reserved_enum_types_used => Err(anyhow!(
-                "EE212: Schema contains the following reserved enum names: {}",
+                "Schema contains the following reserved enum names: {}",
                 reserved_enum_types_used.join(", ")
             )),
         }
@@ -160,7 +160,7 @@ impl Schema {
         match check_names_from_schema_for_reserved_words(all_names) {
             reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
             reserved_enum_types_used => Err(anyhow!(
-                "EE210: Schema contains the following reserved keywords: {}",
+                "Schema contains the following reserved keywords: {}",
                 reserved_enum_types_used.join(", ")
             )),
         }
@@ -174,7 +174,7 @@ impl Schema {
             .collect::<Vec<_>>();
         if !duplicate_names.is_empty() {
             Err(anyhow!(
-                "EE214: Schema contains the following enums and entities with the same name, all \
+                "Schema contains the following enums and entities with the same name, all \
                  type definitions must be unique in the schema: {}",
                 duplicate_names.join(", ")
             ))
@@ -279,7 +279,7 @@ impl GraphQLEnum {
 
         if !duplicate_values.is_empty() {
             Err(anyhow!(
-                "EE213: Schema enum has duplicate values. Enum: {}, duplicate values: {}",
+                "Schema enum has duplicate values. Enum: {}, duplicate values: {}",
                 self.name,
                 duplicate_values.join(", ")
             ))
@@ -297,7 +297,7 @@ impl GraphQLEnum {
 
         if !invalid_names.is_empty() {
             Err(anyhow!(
-                "EE214: Schema contains the enum names and/or values that does not match the \
+                "Schema contains the enum names and/or values that does not match the \
                  following pattern: It must start with a letter. It can only contain letters, \
                  numbers, and underscores (no spaces). It must have a maximum length of 63 \
                  characters. Invalid names: '{}'",
@@ -575,13 +575,13 @@ fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
         Value::Int(i) => {
             let val = i
                 .as_i64()
-                .context("EE217: Failed to convert value to i64")?;
+                .context("Failed to convert value to i64")?;
             if val < 0 {
-                return Err(anyhow!("EE217: Value must be a positive integer"));
+                return Err(anyhow!("Value must be a positive integer"));
             }
             Ok(val as u32)
         }
-        _ => Err(anyhow!("EE217: Value must be an integer")),
+        _ => Err(anyhow!("Value must be an integer")),
     }
 }
 
@@ -619,14 +619,14 @@ impl Field {
 
         if derived_from_count > 1 || indexed_count > 1 || config_count > 1 {
             return Err(anyhow!(
-                "EE202: Cannot use more than one of the same directive on field {}",
+                "Cannot use more than one of the same directive on field {}",
                 field.name
             ));
         }
 
         if derived_from_count > 0 && indexed_count > 0 {
             return Err(anyhow!(
-                "EE202: A field cannot be both @derivedFrom and @index: {}",
+                "A field cannot be both @derivedFrom and @index: {}",
                 field.name
             ));
         }
@@ -635,7 +635,7 @@ impl Field {
             && (indexed_count > 0 || derived_from_count > 0)
         {
             return Err(anyhow!(
-                "EE202: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove \
+                "The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove \
                  the @index or @derivedFrom directive from field {}",
                 field.name
             ));
@@ -647,14 +647,14 @@ impl Field {
             Some(d) => {
                 let field_arg = d.arguments.iter().find(|a| a.0 == "field").ok_or_else(|| {
                     anyhow!(
-                        "EE203: No 'field' argument supplied to @derivedFrom directive on field {}",
+                        "No 'field' argument supplied to @derivedFrom directive on field {}",
                         field.name
                     )
                 })?;
                 match &field_arg.1 {
                     Value::String(val) => Some(val.clone()),
                     _ => Err(anyhow!(
-                        "EE204: 'field' argument in @derivedFrom directive on field {} needs to \
+                        "'field' argument in @derivedFrom directive on field {} needs to \
                          contain a string",
                         field.name
                     ))?,
@@ -680,7 +680,7 @@ impl Field {
                     // Process precision for BigInt
                     if config_directive.arguments.len() != 1 {
                         return Err(anyhow!(
-                            "EE216: The config directive on a BigInt should only take a single \
+                            "The config directive on a BigInt should only take a single \
                              integer argument called 'precision'. Field '{}'",
                             field.name
                         ));
@@ -688,7 +688,7 @@ impl Field {
                     let (arg_name, arg_value) = config_directive.arguments.first().unwrap();
                     if arg_name != "precision" {
                         return Err(anyhow!(
-                            "EE216: The config directive on a BigInt should only have a \
+                            "The config directive on a BigInt should only have a \
                              'precision' parameter. Unknown parameter '{}'. Field '{}'",
                             arg_name,
                             field.name
@@ -731,7 +731,7 @@ impl Field {
 
                     if !unknown_params.is_empty() {
                         return Err(anyhow!(
-                            "EE216: The config directive on a BigDecimal should only have \
+                            "The config directive on a BigDecimal should only have \
                              'precision' and 'scale' parameters. Unknown parameter(s) '{}'. Field \
                              '{}'",
                             unknown_params.join(", "),
@@ -741,7 +741,7 @@ impl Field {
 
                     if precision.is_none() || scale.is_none() {
                         return Err(anyhow!(
-                            "EE216: The config directive on a BigDecimal must have both \
+                            "The config directive on a BigDecimal must have both \
                              'precision' and 'scale' parameters. Field '{}'",
                             field.name
                         ));
@@ -752,7 +752,7 @@ impl Field {
                 }
                 _ => {
                     return Err(anyhow!(
-                        "EE215: The config directive is only applicable to BigInt and BigDecimal \
+                        "The config directive is only applicable to BigInt and BigDecimal \
                          scalar types. Field '{}'",
                         field.name
                     ));
@@ -1005,7 +1005,7 @@ impl MultiFieldIndex {
             if let Some(field) = fields.iter().find(|f| f.name == single_field_index) {
                 if field.field_type.has_indexed_directive() {
                     return Err(anyhow!(
-                        "EE202: The field '{}' is marked as an index. Please either remove the \
+                        "The field '{}' is marked as an index. Please either remove the \
                          @index directive on the field, or the @index(fields: [\"{}\"]) directive \
                          on the entity",
                         field.name,
@@ -1081,7 +1081,7 @@ impl UserDefinedFieldType {
                         if matches!(schema.try_get_type_def(name)?, TypeDef::Entity(_)) =>
                     {
                         Err(anyhow!(
-                            "EE211: The [{name}!]! field type requires an explicit @derivedFrom. Alternatively, check methods for referencing entities outlined in the docs. https://docs.envio.dev/docs/HyperIndex/schema#relationships-one-to-many-derivedfrom"
+                            "The [{name}!]! field type requires an explicit @derivedFrom. Alternatively, check methods for referencing entities outlined in the docs. https://docs.envio.dev/docs/HyperIndex/schema#relationships-one-to-many-derivedfrom"
                         ))
                     }
                     //TODO: add support for these types
@@ -1096,12 +1096,12 @@ impl UserDefinedFieldType {
                     _ => field_type.validate_type(schema),
                 },
                 Self::Single(gql_scalar) => Err(anyhow!(
-                    "EE208: Nullable scalars inside lists are unsupported. Please include a '!' \
+                    "Nullable scalars inside lists are unsupported. Please include a '!' \
                      after your '{}' scalar",
                     gql_scalar
                 )),
                 Self::ListType(_) => Err(anyhow!(
-                    "EE209: Nullable multidimensional lists types are unsupported,please include \
+                    "Nullable multidimensional lists types are unsupported, please include \
                      a '!' for your inner list type eg. [[Int!]!]"
                 )),
             },
@@ -1562,7 +1562,7 @@ mod tests {
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<'_, String>> {
         parse_schema::<String>(schema)
-            .map_err(|e| anyhow!("EE201: Failed to parse schema: {:?}", e))
+            .map_err(|e| anyhow!("Failed to parse schema: {:?}", e))
     }
 
     fn get_entities_from_document(gql_doc: Document<String>) -> Vec<ObjectType<String>> {
@@ -1682,7 +1682,7 @@ type TestEntity @index(fields: ["tokenId"]) {
         let err_message = format!("{:?}", parsed_entity.unwrap_err());
         println!("{err_message}");
         assert!(err_message.contains(
-            "EE202: The field 'tokenId' is marked as an index. Please either remove the @index \
+            "The field 'tokenId' is marked as an index. Please either remove the @index \
              directive on the field, or the @index(fields: [\"tokenId\"]) directive on the entity"
         ));
     }
@@ -2349,7 +2349,7 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("EE215"));
+        assert!(err_message.contains("The config directive is only applicable to BigInt and BigDecimal"));
     }
 
     #[test]
@@ -2366,7 +2366,7 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("EE216"));
+        assert!(err_message.contains("The config directive on a Big"));
     }
 
     #[test]
@@ -2383,7 +2383,7 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("EE216"));
+        assert!(err_message.contains("The config directive on a Big"));
     }
 
     #[test]
@@ -2400,7 +2400,7 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("EE216"));
+        assert!(err_message.contains("The config directive on a Big"));
     }
 
     #[test]
@@ -2417,7 +2417,7 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("EE216"));
+        assert!(err_message.contains("The config directive on a Big"));
     }
 
     #[test]

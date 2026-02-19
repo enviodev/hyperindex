@@ -89,11 +89,11 @@ Clear generated event handlers and replace with empty TODO handlers.
 - Remove `@entity` decorators
 - `Bytes!` → `String!`
 - Keep `BigInt!`, `BigDecimal!`, `ID!`
-- ALL entity arrays MUST have `@derivedFrom` (causes "EE211" error without it)
+- ALL entity arrays MUST have `@derivedFrom` (causes a codegen error without it)
 - `@derivedFrom` arrays are virtual — cannot access in handlers, only API queries
 
 ```graphql
-# WRONG — causes "EE211: Arrays of entities is unsupported"
+# WRONG — causes "Arrays of entities is unsupported" error
 type Transaction { mints: [Mint!]! }
 
 # CORRECT
