@@ -787,9 +787,11 @@ impl EventTemplate {
         code
     }
 
-    pub fn from_fuel_supply_event(
+    fn from_fuel_builtin_event(
         config_event: &system_config::Event,
         fuel_event_kind: FuelEventKind,
+        data_type: &str,
+        params_raw_event_schema: &str,
     ) -> Self {
         let event_name = config_event.name.capitalize();
         let event_mod = EventMod {
@@ -797,34 +799,8 @@ impl EventTemplate {
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
             parse_event_filters_code: "".to_string(),
-            data_type: "Internal.fuelSupplyParams".to_string(),
-            params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
-            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
-                .to_string(),
-            event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
-            custom_field_selection: config_event.field_selection.clone(),
-            fuel_event_kind: Some(fuel_event_kind),
-        };
-        EventTemplate {
-            name: event_name,
-            module_code: event_mod.to_string(),
-            params: vec![],
-        }
-    }
-
-    pub fn from_fuel_transfer_event(
-        config_event: &system_config::Event,
-
-        fuel_event_kind: FuelEventKind,
-    ) -> Self {
-        let event_name = config_event.name.capitalize();
-        let event_mod = EventMod {
-            sighash: config_event.sighash.to_string(),
-            topic_count: 0, //Default to 0 for fuel,
-            event_name: event_name.clone(),
-            parse_event_filters_code: "".to_string(),
-            data_type: "Internal.fuelTransferParams".to_string(),
-            params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
+            data_type: data_type.to_string(),
+            params_raw_event_schema: params_raw_event_schema.to_string(),
             convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
@@ -925,11 +901,21 @@ impl EventTemplate {
                         })
                     }
                     FuelEventKind::Mint | FuelEventKind::Burn => {
-                        Ok(Self::from_fuel_supply_event(config_event, fuel_event_kind))
+                        Ok(Self::from_fuel_builtin_event(
+                            config_event,
+                            fuel_event_kind,
+                            "Internal.fuelSupplyParams",
+                            "Internal.fuelSupplyParamsSchema",
+                        ))
                     }
-                    FuelEventKind::Call | FuelEventKind::Transfer => Ok(
-                        Self::from_fuel_transfer_event(config_event, fuel_event_kind),
-                    ),
+                    FuelEventKind::Call | FuelEventKind::Transfer => {
+                        Ok(Self::from_fuel_builtin_event(
+                            config_event,
+                            fuel_event_kind,
+                            "Internal.fuelTransferParams",
+                            "Internal.fuelTransferParamsSchema",
+                        ))
+                    }
                 }
             }
         }
@@ -1153,55 +1139,44 @@ struct FieldSelectionOptions {
 }
 
 impl FieldSelection {
+    fn process_fields(
+        fields: Vec<SelectedField>,
+        type_name: &String,
+    ) -> (Vec<SelectedFieldTemplate>, String, String) {
+        let mut templates = vec![];
+        let mut record_fields = vec![];
+        for field in fields {
+            let res_name = RecordField::to_valid_rescript_name(&field.name);
+            let name: CaseOptions = field.name.into();
+
+            templates.push(SelectedFieldTemplate {
+                name: name.clone(),
+                res_name,
+                default_value_rescript: field.data_type.get_default_value_rescript(),
+                res_type: field.data_type.to_string(),
+            });
+
+            record_fields.push(RecordField::new(name.camel, field.data_type));
+        }
+        let type_expr = TypeExpr::Record(record_fields);
+        let type_str = type_expr.to_string();
+        let schema = type_expr.to_rescript_schema(type_name, &SchemaMode::ForFieldSelection);
+        (templates, type_str, schema)
+    }
+
     fn new(options: FieldSelectionOptions) -> Self {
-        let mut block_field_templates = vec![];
-        let mut all_block_fields = vec![];
-        for field in options.block_fields.into_iter() {
-            let res_name = RecordField::to_valid_rescript_name(&field.name);
-            let name: CaseOptions = field.name.into();
-
-            block_field_templates.push(SelectedFieldTemplate {
-                name: name.clone(),
-                res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
-                res_type: field.data_type.to_string(),
-            });
-
-            let record_field = RecordField::new(name.camel, field.data_type);
-            all_block_fields.push(record_field.clone());
-        }
-
-        let mut transaction_field_templates = vec![];
-        let mut all_transaction_fields = vec![];
-        for field in options.transaction_fields.into_iter() {
-            let res_name = RecordField::to_valid_rescript_name(&field.name);
-            let name: CaseOptions = field.name.into();
-
-            transaction_field_templates.push(SelectedFieldTemplate {
-                name: name.clone(),
-                res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
-                res_type: field.data_type.to_string(),
-            });
-
-            let record_field = RecordField::new(name.camel, field.data_type);
-            all_transaction_fields.push(record_field);
-        }
-
-        let block_expr = TypeExpr::Record(all_block_fields);
-        let transaction_expr = TypeExpr::Record(all_transaction_fields);
+        let (block_fields, block_type, block_schema) =
+            Self::process_fields(options.block_fields, &options.block_type_name);
+        let (transaction_fields, transaction_type, transaction_schema) =
+            Self::process_fields(options.transaction_fields, &options.transaction_type_name);
 
         Self {
-            transaction_fields: transaction_field_templates,
-            block_fields: block_field_templates,
-            transaction_type: transaction_expr.to_string(),
-            transaction_schema: transaction_expr.to_rescript_schema(
-                &options.transaction_type_name,
-                &SchemaMode::ForFieldSelection,
-            ),
-            block_type: block_expr.to_string(),
-            block_schema: block_expr
-                .to_rescript_schema(&options.block_type_name, &SchemaMode::ForFieldSelection),
+            transaction_fields,
+            block_fields,
+            transaction_type,
+            transaction_schema,
+            block_type,
+            block_schema,
         }
     }
 
@@ -1880,118 +1855,51 @@ type testIndexer = {{
         // Generate envio.d.ts content (type declarations only)
         // Always export all ecosystem types, even when empty
         let envio_dts_code = {
-            let mut parts = Vec::new();
+            // Format entries as a TS exported type: empty `{}` when no entries, object otherwise
+            let format_ts_type = |name: &str, entries: Vec<String>| -> String {
+                if entries.is_empty() {
+                    format!("export type {} = {{}};", name)
+                } else {
+                    format!("export type {} = {{\n{}\n}};", name, entries.join("\n"))
+                }
+            };
 
-            // Generate EvmChains type
-            let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+            // Generate chain entries for the given ecosystem (empty if not the active one)
+            let chain_entries_for = |ecosystem: Ecosystem| -> Vec<String> {
+                if cfg.get_ecosystem() != ecosystem {
+                    return vec![];
+                }
                 chain_configs
                     .iter()
                     .map(|chain_config| {
                         let chain_name =
-                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Evm);
+                            chain_id_to_name(chain_config.network_config.id, &ecosystem);
                         format!(
                             "  \"{}\": {{ id: {} }};",
                             chain_name, chain_config.network_config.id
                         )
                     })
                     .collect()
-            } else {
-                vec![]
             };
-            parts.push(if evm_chains_entries.is_empty() {
-                "export type EvmChains = {};".to_string()
-            } else {
-                format!(
-                    "export type EvmChains = {{\n{}\n}};",
-                    evm_chains_entries.join("\n")
-                )
-            });
 
-            // Generate EvmContracts type
-            let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+            // Generate contract entries for the given ecosystem (empty if not the active one)
+            let contract_entries_for = |ecosystem: Ecosystem| -> Vec<String> {
+                if cfg.get_ecosystem() != ecosystem {
+                    return vec![];
+                }
                 cfg.contracts
                     .keys()
                     .map(|name| format!("  \"{}\": {{}};", name))
                     .collect()
-            } else {
-                vec![]
             };
-            parts.push(if evm_contracts_entries.is_empty() {
-                "export type EvmContracts = {};".to_string()
-            } else {
-                format!(
-                    "export type EvmContracts = {{\n{}\n}};",
-                    evm_contracts_entries.join("\n")
-                )
-            });
 
-            // Generate FuelChains type
-            let fuel_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
-                chain_configs
-                    .iter()
-                    .map(|chain_config| {
-                        let chain_name =
-                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Fuel);
-                        format!(
-                            "  \"{}\": {{ id: {} }};",
-                            chain_name, chain_config.network_config.id
-                        )
-                    })
-                    .collect()
-            } else {
-                vec![]
-            };
-            parts.push(if fuel_chains_entries.is_empty() {
-                "export type FuelChains = {};".to_string()
-            } else {
-                format!(
-                    "export type FuelChains = {{\n{}\n}};",
-                    fuel_chains_entries.join("\n")
-                )
-            });
-
-            // Generate FuelContracts type
-            let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
-                cfg.contracts
-                    .keys()
-                    .map(|name| format!("  \"{}\": {{}};", name))
-                    .collect()
-            } else {
-                vec![]
-            };
-            parts.push(if fuel_contracts_entries.is_empty() {
-                "export type FuelContracts = {};".to_string()
-            } else {
-                format!(
-                    "export type FuelContracts = {{\n{}\n}};",
-                    fuel_contracts_entries.join("\n")
-                )
-            });
-
-            // Generate SvmChains type
-            let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
-                chain_configs
-                    .iter()
-                    .map(|chain_config| {
-                        let chain_name =
-                            chain_id_to_name(chain_config.network_config.id, &Ecosystem::Svm);
-                        format!(
-                            "  \"{}\": {{ id: {} }};",
-                            chain_name, chain_config.network_config.id
-                        )
-                    })
-                    .collect()
-            } else {
-                vec![]
-            };
-            parts.push(if svm_chains_entries.is_empty() {
-                "export type SvmChains = {};".to_string()
-            } else {
-                format!(
-                    "export type SvmChains = {{\n{}\n}};",
-                    svm_chains_entries.join("\n")
-                )
-            });
+            let mut parts = vec![
+                format_ts_type("EvmChains", chain_entries_for(Ecosystem::Evm)),
+                format_ts_type("EvmContracts", contract_entries_for(Ecosystem::Evm)),
+                format_ts_type("FuelChains", chain_entries_for(Ecosystem::Fuel)),
+                format_ts_type("FuelContracts", contract_entries_for(Ecosystem::Fuel)),
+                format_ts_type("SvmChains", chain_entries_for(Ecosystem::Svm)),
+            ];
 
             // Generate Enums type with all enum types as fields
             let enum_entries: Vec<String> = gql_enums
@@ -2009,11 +1917,7 @@ type testIndexer = {{
                     )
                 })
                 .collect();
-            parts.push(if enum_entries.is_empty() {
-                "export type Enums = {};".to_string()
-            } else {
-                format!("export type Enums = {{\n{}\n}};", enum_entries.join("\n"))
-            });
+            parts.push(format_ts_type("Enums", enum_entries));
 
             // Generate Entities type with all entity types as fields
             let entity_entries: Vec<String> = entities
@@ -2048,14 +1952,7 @@ type testIndexer = {{
                     )
                 })
                 .collect();
-            parts.push(if entity_entries.is_empty() {
-                "export type Entities = {};".to_string()
-            } else {
-                format!(
-                    "export type Entities = {{\n{}\n}};",
-                    entity_entries.join("\n")
-                )
-            });
+            parts.push(format_ts_type("Entities", entity_entries));
 
             parts.join("\n")
         };
