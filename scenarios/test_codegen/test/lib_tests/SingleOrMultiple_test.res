@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 module SingleOrMultiple = Indexer.SingleOrMultiple
 type tupleWithArrays = (array<bigint>, array<string>)
 

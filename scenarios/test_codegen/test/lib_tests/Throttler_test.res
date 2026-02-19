@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Throttler", () => {
   Async.it("Schedules and throttles functions as expected", async () => {

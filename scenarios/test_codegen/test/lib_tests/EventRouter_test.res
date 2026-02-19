@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 let mockChain = ChainMap.Chain.makeUnsafe(~chainId=1)
 let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]

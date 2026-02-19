@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 open Belt
 

@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Test PackageJson module", () => {
   it("Should get correct package.json with version", () => {

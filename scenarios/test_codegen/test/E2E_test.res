@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 // A workaround for ReScript v11 issue, where it makes the field optional
 // instead of setting a value to undefined. It's fixed in v12.

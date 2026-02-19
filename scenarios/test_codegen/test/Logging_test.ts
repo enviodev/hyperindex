@@ -2,6 +2,7 @@ import { execSync } from "child_process";
 import { readFileSync } from "fs";
 import { strict as assert } from "assert";
 import path from "path";
+import { describe, it } from "vitest";
 
 const FIXTURE_PATH = "test/fixtures/LogTesting.res.mjs";
 const SNAPSHOTS_DIR = path.join(import.meta.dirname, "__snapshots__");

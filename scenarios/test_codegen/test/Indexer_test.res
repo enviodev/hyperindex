@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Indexer.indexer", () => {
   it("has correct metadata", () => {

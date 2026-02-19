@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
 

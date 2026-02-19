@@ -1,6 +1,6 @@
 import { expectType, type TypeEqual } from "ts-expect";
 import assert from "assert";
-import { it } from "mocha";
+import { it, describe } from "vitest";
 import { TestHelpers } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 

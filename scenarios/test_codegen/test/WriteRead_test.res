@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 @send external padStart: (string, ~padCount: int, ~padChar: string) => string = "padStart"
 

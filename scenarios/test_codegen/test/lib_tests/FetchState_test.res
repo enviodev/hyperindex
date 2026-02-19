@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 let chainId = 0
 let targetBufferSize = 5000

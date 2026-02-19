@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Address lowercase helpers", () => {
   it("lowercases a valid address", () => {

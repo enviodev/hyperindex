@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 describe("Test PgStorage SQL generation functions", () => {
   describe("makeCreateIndexQuery", () => {

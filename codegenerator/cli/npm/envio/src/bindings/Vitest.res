@@ -1,6 +1,47 @@
-// Minimal Vitest bindings for ReScript
+// Vitest bindings for ReScript
 
+// ============================================================================
+// Assert Module (Node.js assert bindings, framework-agnostic)
+// ============================================================================
+
+module Assert = {
+  type assertion<'a> = ('a, 'a, ~message: string=?) => unit
+
+  @module("assert") external equal: assertion<'a> = "equal"
+  @module("assert") external notEqual: assertion<'a> = "notEqual"
+
+  @module("assert") external deepEqual: assertion<'a> = "deepEqual"
+  @module("assert")
+  external notDeepEqual: assertion<'a> = "notDeepEqual"
+
+  @module("assert") external strictEqual: assertion<'a> = "strictEqual"
+  @module("assert")
+  external notStrictEqual: assertion<'a> = "notStrictEqual"
+
+  @module("assert")
+  external deepStrictEqual: assertion<'a> = "deepStrictEqual"
+  @module("assert")
+  external notDeepStrictEqual: assertion<'a> = "notDeepStrictEqual"
+
+  @module("assert") external ifError: 'a => unit = "ifError"
+
+  @module("assert")
+  external throws: (unit => 'a, ~error: 'error=?, ~message: string=?) => unit = "throws"
+  @module("assert")
+  external doesNotThrow: (unit => 'a, ~error: 'error=?, ~message: string=?) => unit = "doesNotThrow"
+
+  @module("assert")
+  external rejects: (unit => promise<'a>, ~error: 'error=?, ~message: string=?) => promise<unit> =
+    "rejects"
+
+  @module("assert") external ok: (bool, ~message: string=?) => unit = "ok"
+  @module("assert") external fail: string => 'a = "fail"
+}
+
+// ============================================================================
 // Expectation object returned by expect()
+// ============================================================================
+
 type rec expectation<'a> = {
   // Equality matchers
   toBe: 'a => unit,
@@ -96,22 +137,22 @@ external afterEach: (unit => unit) => unit = "afterEach"
 
 module Async = {
   @module("vitest")
-  external it: (string, testContext => promise<unit>) => unit = "it"
+  external it: (string, unit => promise<unit>) => unit = "it"
 
   @module("vitest") @scope("it")
-  external it_only: (string, testContext => promise<unit>) => unit = "only"
+  external it_only: (string, unit => promise<unit>) => unit = "only"
 
   @module("vitest") @scope("it")
-  external it_skip: (string, testContext => promise<unit>) => unit = "skip"
+  external it_skip: (string, unit => promise<unit>) => unit = "skip"
 
   @module("vitest")
-  external test: (string, testContext => promise<unit>) => unit = "test"
+  external test: (string, unit => promise<unit>) => unit = "test"
 
   @module("vitest") @scope("test")
-  external test_only: (string, testContext => promise<unit>) => unit = "only"
+  external test_only: (string, unit => promise<unit>) => unit = "only"
 
   @module("vitest") @scope("test")
-  external test_skip: (string, testContext => promise<unit>) => unit = "skip"
+  external test_skip: (string, unit => promise<unit>) => unit = "skip"
 
   @module("vitest")
   external beforeAll: (unit => promise<unit>) => unit = "beforeAll"
