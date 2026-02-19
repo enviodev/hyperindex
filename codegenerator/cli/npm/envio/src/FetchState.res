@@ -539,6 +539,66 @@ let compareBufferItem = (a: Internal.item, b: Internal.item) => {
   }
 }
 
+/**
+Merges two sorted arrays into a single sorted array in O(n+m) time.
+Both input arrays must be sorted by (blockNumber, logIndex) ascending.
+Includes fast paths for the common case where one array entirely precedes the other.
+*/
+let mergeSortedBuffers = (sortedA: array<Internal.item>, sortedB: array<Internal.item>) => {
+  let lenA = sortedA->Array.length
+  let lenB = sortedB->Array.length
+  if lenA === 0 {
+    sortedB
+  } else if lenB === 0 {
+    sortedA
+  } else {
+    // Quick check: if all of B comes after all of A, just concat
+    let lastA = sortedA->Js.Array2.unsafe_get(lenA - 1)
+    let firstB = sortedB->Js.Array2.unsafe_get(0)
+    if compareBufferItem(lastA, firstB) <= 0 {
+      sortedA->Js.Array2.concat(sortedB)
+    } else {
+      // Quick check: if all of A comes after all of B, just concat in reverse
+      let firstA = sortedA->Js.Array2.unsafe_get(0)
+      let lastB = sortedB->Js.Array2.unsafe_get(lenB - 1)
+      if compareBufferItem(lastB, firstA) <= 0 {
+        sortedB->Js.Array2.concat(sortedA)
+      } else {
+        // General merge of two sorted arrays
+        let result = Belt.Array.makeUninitializedUnsafe(lenA + lenB)
+        let idxA = ref(0)
+        let idxB = ref(0)
+        let idxR = ref(0)
+        while idxA.contents < lenA && idxB.contents < lenB {
+          let a = sortedA->Js.Array2.unsafe_get(idxA.contents)
+          let b = sortedB->Js.Array2.unsafe_get(idxB.contents)
+          if compareBufferItem(a, b) <= 0 {
+            result->Js.Array2.unsafe_set(idxR.contents, a)
+            idxA := idxA.contents + 1
+          } else {
+            result->Js.Array2.unsafe_set(idxR.contents, b)
+            idxB := idxB.contents + 1
+          }
+          idxR := idxR.contents + 1
+        }
+        // Copy remaining elements from A
+        while idxA.contents < lenA {
+          result->Js.Array2.unsafe_set(idxR.contents, sortedA->Js.Array2.unsafe_get(idxA.contents))
+          idxA := idxA.contents + 1
+          idxR := idxR.contents + 1
+        }
+        // Copy remaining elements from B
+        while idxB.contents < lenB {
+          result->Js.Array2.unsafe_set(idxR.contents, sortedB->Js.Array2.unsafe_get(idxB.contents))
+          idxB := idxB.contents + 1
+          idxR := idxR.contents + 1
+        }
+        result
+      }
+    }
+  }
+}
+
 // Some big number which should be bigger than any log index
 let blockItemLogIndex = 16777216
 
@@ -553,6 +613,9 @@ let updateInternal = (
   ~optimizedPartitions=fetchState.optimizedPartitions,
   ~indexingContracts=fetchState.indexingContracts,
   ~mutItems=?,
+  // Sorted items to merge into the existing buffer using O(n+m) merge
+  // instead of O((n+m) log(n+m)) sort. Mutually exclusive with ~mutItems.
+  ~newSortedItems=?,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
 ): t => {
@@ -645,12 +708,22 @@ let updateInternal = (
     indexingContracts,
     blockLag,
     knownHeight,
-    buffer: switch mutItemsRef.contents {
-    // Theoretically it could be faster to asume that
-    // the items are sorted, but there are cases
-    // when the data source returns them unsorted
-    | Some(mutItems) => mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)
-    | None => fetchState.buffer
+    buffer: switch (mutItemsRef.contents, newSortedItems) {
+    // When newSortedItems is provided, merge with existing buffer in O(n+m)
+    // instead of concat+sort in O((n+m) log(n+m)).
+    // The existing buffer is always sorted, and newSortedItems from source
+    // responses are sorted by (blockNumber, logIndex).
+    | (None, Some(newSorted)) =>
+      mergeSortedBuffers(fetchState.buffer, newSorted)
+    | (Some(mutItems), Some(newSorted)) =>
+      // onBlock items were appended to mutItems; sort those first, then merge
+      mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)->ignore
+      mergeSortedBuffers(mutItems, newSorted)
+    | (Some(mutItems), None) =>
+      // Fallback: sort the full array for cases like rollback, batch slice,
+      // or when the data source returns unsorted items
+      mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)
+    | (None, None) => fetchState.buffer
     },
     firstEventBlock: fetchState.firstEventBlock,
   }
@@ -1150,10 +1223,14 @@ let handleQueryResult = (
       ~knownHeight=fetchState.knownHeight,
       ~latestFetchedBlock,
     ),
-    ~mutItems=?{
+    // Use sorted merge O(k log k + n) instead of concat+sort O((n+k) log(n+k))
+    // where k = newItems length (small) and n = buffer length (large).
+    // Sort newItems first since sources may occasionally return unsorted data,
+    // then merge with the already-sorted existing buffer.
+    ~newSortedItems=?{
       switch newItems {
       | [] => None
-      | _ => Some(fetchState.buffer->Array.concat(newItems))
+      | _ => Some(newItems->Js.Array2.sortInPlaceWith(compareBufferItem))
       }
     },
   )
