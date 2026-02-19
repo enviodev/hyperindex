@@ -307,7 +307,11 @@ let getFieldTypeAndSchema = (
       let entityName = prop["entity"]->Option.getExn
       (Table.Entity({name: entityName}), S.string->S.toUnknown)
     }
-  | other => Js.Exn.raiseError("Unknown field type in entity config: " ++ other)
+  | other =>
+    Js.Exn.raiseError(
+      `Unknown field type "${other}" in entity config. ` ++
+      "Valid types: string, boolean, int, bigint, bigdecimal, float, serial, json, date, enum, entity",
+    )
   }
 
   let fieldSchema = if isArray {S.array(baseSchema)->S.toUnknown} else {baseSchema}
@@ -512,8 +516,11 @@ let fromPublic = (
           eventSignatures,
         }
       | None =>
+        let availableContracts = contractsWithAbis->Js.Dict.keys->Js.Array2.joinWith(", ")
         Js.Exn.raiseError(
-          `Contract "${codegenContract.name}" is missing ABI in public config (internal.config.ts)`,
+          `Contract "${codegenContract.name}" not found in config. ` ++
+          `Available contracts: [${availableContracts}]. ` ++
+          "Make sure contract names match between config.yaml and the generated config.",
         )
       }
     })
@@ -539,13 +546,21 @@ let fromPublic = (
       let codegenChain = switch codegenChainById->Js.Dict.get(chainId->Int.toString) {
       | Some(c) => c
       | None =>
-        Js.Exn.raiseError(`Chain with id ${chainId->Int.toString} not found in codegen chains`)
+        let availableIds = codegenChainById->Js.Dict.keys->Js.Array2.joinWith(", ")
+        Js.Exn.raiseError(
+          `Chain with id ${chainId->Int.toString} not found in codegen config. ` ++
+          `Available chain ids: [${availableIds}]. ` ++
+          "Run codegen to regenerate the config.",
+        )
       }
       let mergedContracts = switch contractsByChainId->Js.Dict.get(chainId->Int.toString) {
       | Some(contracts) => contracts
       | None =>
+        let availableIds = contractsByChainId->Js.Dict.keys->Js.Array2.joinWith(", ")
         Js.Exn.raiseError(
-          `Contracts for chain with id ${chainId->Int.toString} not found in merged contracts`,
+          `Contracts for chain with id ${chainId->Int.toString} not found. ` ++
+          `Chains with contracts: [${availableIds}]. ` ++
+          "Run codegen to regenerate the config.",
         )
       }
 
@@ -722,10 +737,18 @@ let shouldPruneHistory = (config, ~isInReorgThreshold) =>
 
 let getChain = (config, ~chainId) => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId)
-  config.chainMap->ChainMap.has(chain)
-    ? chain
-    : Js.Exn.raiseError(
-        "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
-      )
+  if config.chainMap->ChainMap.has(chain) {
+    chain
+  } else {
+    let availableChains =
+      config.chainMap
+      ->ChainMap.keys
+      ->Array.map(ChainMap.Chain.toString)
+      ->Js.Array2.joinWith(", ")
+    Js.Exn.raiseError(
+      `No chain with id ${chain->ChainMap.Chain.toString} found in config. ` ++
+      `Available chain ids: [${availableChains}]`,
+    )
+  }
 }
 
