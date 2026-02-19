@@ -320,7 +320,7 @@ impl FuelAbi {
                 Ok(Some(FuelType {
                     id: abi_type_decl.type_id,
                     abi_type_field: abi_type_decl.type_field.clone(),
-                    type_decl: TypeDecl::new(name, type_expr?, type_params),
+                    type_decl: TypeDecl::new(name, type_expr?, type_params)?,
                 }))
             })
             .collect::<Result<Vec<Option<FuelType>>>>()
@@ -477,6 +477,6 @@ impl FuelAbi {
             .map(|t| t.type_decl.clone())
             .collect();
 
-        Ok(TypeDeclMulti::new(type_declerations))
+        TypeDeclMulti::new(type_declerations)
     }
 }
