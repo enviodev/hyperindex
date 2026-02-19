@@ -92,7 +92,7 @@ importers:
         specifier: 3.3.1
         version: 3.3.1
       envio:
-        specifier: file:/Users/dzakh/code/envio/hyperindex/scenarios/test_codegen/../../codegenerator/target/debug/envio/../../../cli/npm/envio
+        specifier: file:/home/user/hyperindex/codegenerator/target/debug/envio/../../../cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio(react-dom@19.2.3(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
       js-sdsl:
         specifier: 4.4.2
@@ -316,18 +316,21 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hyperfuel-client-linux-x64-gnu@1.2.2':
     resolution: {integrity: sha512-XDkvkBG/frS+xiZkJdY4KqOaoAwyxPdi2MysDQgF8NmZdssi32SWch0r4LTqKWLLlCBg9/R55POeXL5UAjg2wQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hyperfuel-client-linux-x64-musl@1.2.2':
     resolution: {integrity: sha512-DKnKJJSwsYtA7YT0EFGhFB5Eqoo42X0l0vZBv4lDuxngEXiiNjeLemXoKQVDzhcbILD7eyXNa5jWUc+2hpmkEg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@envio-dev/hyperfuel-client-win32-x64-msvc@1.2.2':
     resolution: {integrity: sha512-SwIgTAVM9QhCFPyHwL+e1yQ6o3paV6q25klESkXw+r/KW9QPhOOyA6Yr8nfnur3uqMTLJHAKHTLUnkyi/Nh7Aw==}
@@ -356,18 +359,21 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
     resolution: {integrity: sha512-Rpz3VSLqq2O9Qp3GiDXHmF3MPm7TcsTfRzSz2RkRVEfdchaKA7Ob86jQ2ueRyG1UEEu47V9JzL6mYmVs4gNa7w==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
     resolution: {integrity: sha512-SZ8RHNaCEcPvubFGdA7gkbxJeJe4whhw0oaAvSyGEbUjL5byFI9nqMVzW8o8mPACqqjlOHIq77GYxbbUI+53vQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
     resolution: {integrity: sha512-R7M1IBcWfqx1TyBcK5Mc/VJmayGeK9woWPzSPzjTgYsHFl65gE1e0hXb8B/gi+km8GQDZYNcaHyBh6xSVHkrzg==}
