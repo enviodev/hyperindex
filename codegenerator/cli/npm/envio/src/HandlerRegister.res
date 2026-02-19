@@ -242,37 +242,49 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
 }
 
 // After handler registration, apply registration data to eventConfigs in the config.
-// Updates mutable fields: isWildcard, filterByAddresses, dependsOnAddresses, getEventFiltersOrThrow
-let applyRegistrations = (~config: Config.t, ~ecosystem: Ecosystem.t) => {
-  config.chainMap
-  ->ChainMap.values
-  ->Belt.Array.forEach(chainConfig => {
-    chainConfig.contracts->Belt.Array.forEach(contract => {
-      contract.events->Belt.Array.forEach(eventConfig => {
+// Returns a new config with updated isWildcard, filterByAddresses, dependsOnAddresses, getEventFiltersOrThrow
+let applyRegistrations = (~config: Config.t, ~ecosystem: Ecosystem.t): Config.t => {
+  let chainMap = config.chainMap->ChainMap.map(chainConfig => {
+    let contracts = chainConfig.contracts->Belt.Array.map(contract => {
+      let events = contract.events->Belt.Array.map(eventConfig => {
         let reg = get(~contractName=eventConfig.contractName, ~eventName=eventConfig.name)
         let isWildcard =
           reg.eventOptions
           ->Belt.Option.flatMap(o => o.wildcard)
           ->Belt.Option.getWithDefault(false)
-        Internal.setIsWildcard(eventConfig, isWildcard)
 
         switch ecosystem.name {
         | Evm => {
             let evmConfig =
-              eventConfig->(
-                Utils.magic: Internal.eventConfig => Internal.evmEventConfig
-              )
+              eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
             let eventFilters =
               reg.eventOptions->Belt.Option.flatMap(o => o.eventFilters)
             let parsed = evmConfig.resolveEventFilters(eventFilters)
-            evmConfig.getEventFiltersOrThrow = parsed.getEventFiltersOrThrow
-            Internal.setFilterByAddresses(eventConfig, parsed.filterByAddresses)
+            ({
+              ...evmConfig,
+              isWildcard,
+              filterByAddresses: parsed.filterByAddresses,
+              dependsOnAddresses: !isWildcard || parsed.filterByAddresses,
+              getEventFiltersOrThrow: parsed.getEventFiltersOrThrow,
+            }: Internal.evmEventConfig)->(Utils.magic: Internal.evmEventConfig => Internal.eventConfig)
           }
-        | _ => ()
+        | Fuel => {
+            let fuelConfig =
+              eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
+            ({
+              ...fuelConfig,
+              isWildcard,
+              dependsOnAddresses: !isWildcard,
+            }: Internal.fuelEventConfig)->(Utils.magic: Internal.fuelEventConfig => Internal.eventConfig)
+          }
+        | Svm =>
+          // SVM has no specific event config type, just update base fields via identity cast
+          eventConfig
         }
-
-        Internal.setDependsOnAddresses(eventConfig, !isWildcard || eventConfig.filterByAddresses)
       })
+      {...contract, events}
     })
+    {...chainConfig, contracts}
   })
+  {...config, chainMap}
 }

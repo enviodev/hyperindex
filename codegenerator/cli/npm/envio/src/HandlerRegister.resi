@@ -32,4 +32,4 @@ let setContractRegister: (
 
 let onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 
-let applyRegistrations: (~config: Config.t, ~ecosystem: Ecosystem.t) => unit
+let applyRegistrations: (~config: Config.t, ~ecosystem: Ecosystem.t) => Config.t
