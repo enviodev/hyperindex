@@ -342,12 +342,8 @@ let validatePartitionQueryResponse = (
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
-    parsedQueueItems,
-    latestFetchedBlockNumber,
-    stats,
     knownHeight,
     reorgGuard,
-    fromBlockQueried,
   } = response
 
   if knownHeight > chainFetcher.fetchState.knownHeight {
