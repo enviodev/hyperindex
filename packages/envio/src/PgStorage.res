@@ -1018,6 +1018,10 @@ let rec writeBatch = async (
     }
   } catch {
   | PgEncodingError({table}) =>
+    Logging.info({
+      "msg": "Invalid UTF-8 encoding detected in batch write, retrying with escaped data",
+      "table": table.tableName,
+    })
     let escapeTables = switch escapeTables {
     | Some(set) => set
     | None => Utils.Set.make()
