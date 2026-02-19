@@ -66,6 +66,6 @@ external intervalToDuration: interval => durationTimeFormat = "intervalToDuratio
 
 //helper to convert millis elapsed to duration object
 let durationFromMillis = (millis: int) =>
-  intervalToDuration({start: 0->Utils.magic, end: millis->Utils.magic})
+  intervalToDuration({start: 0->(Utils.magic: int => Js_date.t), end: millis->(Utils.magic: int => Js_date.t)})
 
 @module("date-fns") external fromUnixTime: float => Js.Date.t = "fromUnixTime"

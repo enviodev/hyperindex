@@ -269,7 +269,7 @@ let addBlockRangeFetched = (
   ~queryName,
 ) => {
   let group = `BlockRangeFetched Summary for Chain ${chainId->Belt.Int.toString} ${queryName}`
-  let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=Utils.magic(value))
+  let add = (label, value) => data->Data.addSummaryData(~group, ~label, ~value=value->(Utils.magic: int => float))
 
   add("Total Time Elapsed (ms)", totalTimeElapsed)
   add("Parsing Time Elapsed (ms)", parsingTimeElapsed)

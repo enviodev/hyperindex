@@ -48,7 +48,7 @@ let makeHexSchema = fromStr =>
       | Some(v) => v
       | None => s.fail("The string is not valid hex")
       },
-    serializer: value => value->Viem.toHex->Utils.magic,
+    serializer: value => value->Viem.toHex->(Utils.magic: EvmTypes.Hex.t => 'a),
   })
 
 let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)

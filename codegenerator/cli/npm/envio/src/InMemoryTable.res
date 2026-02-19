@@ -51,7 +51,7 @@ module Entity = {
   // Helper to extract entity ID from any entity
   exception UnexpectedIdNotDefinedOnEntity
   let getEntityIdUnsafe = (entity: 'entity): string =>
-    switch Utils.magic(entity)["id"] {
+    switch (entity->(Utils.magic: 'entity => {"id": option<string>}))["id"] {
     | Some(id) => id
     | None =>
       UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(

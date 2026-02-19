@@ -40,7 +40,9 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
         // There are not fields with nested bigints, so this is safe
         new->Js.Dict.set(
           key,
-          Js.typeof(value) === "bigint" ? value->Utils.magic->BigInt.toString->Utils.magic : value,
+          Js.typeof(value) === "bigint"
+            ? value->(Utils.magic: unknown => bigint)->BigInt.toString->(Utils.magic: string => unknown)
+            : value,
         )
       }
       new->(Utils.magic: dict<unknown> => Js.Json.t)

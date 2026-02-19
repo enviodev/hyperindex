@@ -33,6 +33,6 @@ module Receipt = {
 
   let getLogDataDecoder = (~abi: EvmTypes.Abi.t, ~logId: string) => {
     let decode = getLogDecoder(~abi, ~logId)
-    data => data->decode->Utils.magic
+    data => data->decode->(Utils.magic: 'a => Internal.eventParams)
   }
 }

@@ -426,7 +426,7 @@ let fromPublic = (
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
-    Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->Utils.magic}`)
+    Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`)
   }
 
   // Determine ecosystem from publicConfig (extract just chains for unified handling)
