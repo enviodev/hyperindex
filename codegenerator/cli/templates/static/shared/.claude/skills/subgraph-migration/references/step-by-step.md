@@ -102,7 +102,7 @@ type EventEntity {
 
 ### Entity Arrays MUST Have @derivedFrom
 
-Entity arrays like `[Mint!]!` are ONLY valid with `@derivedFrom`. Arrays without it cause codegen to fail with "EE211: Arrays of entities is unsupported".
+Entity arrays like `[Mint!]!` are ONLY valid with `@derivedFrom`. Arrays without it cause codegen to fail with "The [Mint!]! field type requires an explicit @derivedFrom".
 
 ```graphql
 # WRONG — causes codegen failure

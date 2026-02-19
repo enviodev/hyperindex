@@ -249,7 +249,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
             )->Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,
-                `EE803: Error tracking tables`,
+                `Error tracking tables`,
               )->Promise.resolve
             })
           },
@@ -273,7 +273,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
             )->Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,
-                `EE804: Error tracking new tables`,
+                `Error tracking new tables`,
               )->Promise.resolve
             })
           },
