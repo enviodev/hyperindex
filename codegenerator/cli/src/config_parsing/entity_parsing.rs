@@ -155,15 +155,38 @@ impl Schema {
         ]
         .concat();
 
-        // TODO: It'd be nice to check field names not having __proto__ name
-        // I don't think any other field names should be restricted
         match check_names_from_schema_for_reserved_words(all_names) {
-            reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
-            reserved_enum_types_used => Err(anyhow!(
-                "Schema contains the following reserved keywords: {}",
-                reserved_enum_types_used.join(", ")
-            )),
+            reserved_enum_types_used if reserved_enum_types_used.is_empty() => {}
+            reserved_enum_types_used => {
+                return Err(anyhow!(
+                    "Schema contains the following reserved keywords: {}",
+                    reserved_enum_types_used.join(", ")
+                ))
+            }
         }
+
+        self.check_field_names_for_proto()
+    }
+
+    /// Check that no entity field uses the __proto__ name, which can cause
+    /// prototype pollution issues in JavaScript runtimes.
+    fn check_field_names_for_proto(self) -> anyhow::Result<Self> {
+        let mut violations: Vec<String> = vec![];
+        for entity in self.entities.values() {
+            for field in &entity.fields {
+                if field.name == "__proto__" {
+                    violations.push(format!("{}.{}", entity.name, field.name));
+                }
+            }
+        }
+        if !violations.is_empty() {
+            return Err(anyhow!(
+                "Schema contains fields named '__proto__' which can cause prototype \
+                 pollution issues: {}. Please rename these fields.",
+                violations.join(", ")
+            ));
+        }
+        Ok(self)
     }
 
     fn check_duplicate_naming_between_enums_and_entities(self) -> anyhow::Result<Self> {
