@@ -237,7 +237,7 @@ pub async fn generate_config_from_subgraph_id(
 ) -> anyhow::Result<HumanConfig> {
     if !valid_ipfs_cid(subgraph_id) {
         return Err(anyhow!(
-            "EE402: Invalid subgraph ID. Subgraph ID must match the IPFS CID format convention. More information can be found here: https://github.com/multiformats/cid#cidv0"
+            "Invalid subgraph ID. Subgraph ID must match the IPFS CID format convention. More information can be found here: https://github.com/multiformats/cid#cidv0"
         ));
     }
 

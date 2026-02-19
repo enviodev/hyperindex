@@ -102,9 +102,8 @@ module HandlerTypes = {
 
 module type Event = {
   type event
-
-  let handlerRegister: EventRegister.t
-
+  let contractName: string
+  let name: string
   type eventFilters
 }
 
@@ -131,7 +130,9 @@ module MakeRegister = (Event: Event) => {
     >,
     HandlerTypes.eventConfig<Event.eventFilters>,
   > = (contractRegister, ~eventConfig=?) =>
-    Event.handlerRegister->EventRegister.setContractRegister(
+    HandlerRegister.setContractRegister(
+      ~contractName=Event.contractName,
+      ~eventName=Event.name,
       contractRegister,
       ~eventOptions=eventConfig,
     )
@@ -140,7 +141,9 @@ module MakeRegister = (Event: Event) => {
     Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext>>,
     HandlerTypes.eventConfig<Event.eventFilters>,
   > = (handler, ~eventConfig=?) => {
-    Event.handlerRegister->EventRegister.setHandler(
+    HandlerRegister.setHandler(
+      ~contractName=Event.contractName,
+      ~eventName=Event.name,
       handler->(
         Utils.magic: Internal.genericHandler<
           Internal.genericHandlerArgs<Event.event, handlerContext>,
@@ -249,7 +252,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
             )->Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,
-                `EE803: Error tracking tables`,
+                `Error tracking tables`,
               )->Promise.resolve
             })
           },
@@ -273,7 +276,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
             )->Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,
-                `EE804: Error tracking new tables`,
+                `Error tracking new tables`,
               )->Promise.resolve
             })
           },
