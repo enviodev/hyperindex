@@ -31,7 +31,7 @@ describe("E2E: Indexer with GraphQL", () => {
       adminSecret: config.hasuraAdminSecret,
     });
 
-    // Setup: run codegen, install deps, and build
+    // Setup: run codegen and install generated deps
     console.log("Running codegen...");
     const codegenResult = await runCommand(config.envioBin, ["codegen"], {
       cwd: PROJECT_DIR,
@@ -48,15 +48,6 @@ describe("E2E: Indexer with GraphQL", () => {
     });
     if (installResult.exitCode !== 0) {
       throw new Error(`Install failed: ${installResult.stderr}`);
-    }
-
-    console.log("Building...");
-    const buildResult = await runCommand("pnpm", ["build"], {
-      cwd: PROJECT_DIR,
-      timeout: 60_000,
-    });
-    if (buildResult.exitCode !== 0) {
-      throw new Error(`Build failed: ${buildResult.stderr}\n${buildResult.stdout}`);
     }
 
     await killProcessOnPort(config.indexerPort);
