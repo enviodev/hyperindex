@@ -71,7 +71,15 @@ let handleLoadByField = (
   // Get the field schema from the entity's table to properly parse the JSON field value
   let fieldSchema = switch entityConfig.table->Table.getFieldByName(fieldName) {
   | Some(Table.Field({fieldSchema})) => fieldSchema
-  | _ => Js.Exn.raiseError(`Field ${fieldName} not found in entity ${tableName}`)
+  | _ =>
+    let availableFields =
+      entityConfig.table
+      ->Table.getFields
+      ->Array.map(Table.getDbFieldName)
+      ->Js.Array2.joinWith(", ")
+    Js.Exn.raiseError(
+      `Field "${fieldName}" not found in entity "${tableName}". Available fields: [${availableFields}]`,
+    )
   }
 
   // Parse JSON field value to typed value using the field's schema
@@ -258,7 +266,16 @@ let makeInitialState = (
     let chain = ChainMap.Chain.makeUnsafe(~chainId)
 
     if !(config.chainMap->ChainMap.has(chain)) {
-      Js.Exn.raiseError(`Chain ${chainIdStr} is not configured in config.yaml`)
+      let availableChains =
+        config.chainMap
+        ->ChainMap.entries
+        ->Array.map(((chain, chainConfig)) =>
+          `${chain->ChainMap.Chain.toString} (${chainConfig.name})`
+        )
+        ->Js.Array2.joinWith(", ")
+      Js.Exn.raiseError(
+        `Chain ${chainIdStr} is not configured in config.yaml. Available chains: [${availableChains}]`,
+      )
     }
 
     let processChainConfig = processConfigChains->Js.Dict.unsafeGet(chainIdStr)
@@ -510,11 +527,23 @@ let makeCreateTestIndexer = (
         let chainKeys = chains->Js.Dict.keys
 
         switch chainKeys->Array.length {
-        | 0 => Js.Exn.raiseError("createTestIndexer requires exactly one chain to be defined")
+        | 0 =>
+          let availableChains =
+            config.chainMap
+            ->ChainMap.entries
+            ->Array.map(((chain, chainConfig)) =>
+              `${chain->ChainMap.Chain.toString} (${chainConfig.name})`
+            )
+            ->Js.Array2.joinWith(", ")
+          Js.Exn.raiseError(
+            `process() requires exactly one chain to be defined in the "chains" object. ` ++
+            `Available chains: [${availableChains}]`,
+          )
         | 1 => ()
         | n =>
           Js.Exn.raiseError(
-            `createTestIndexer does not support processing multiple chains at once. Found ${n->Int.toString} chains defined`,
+            `process() does not support processing multiple chains at once (found ${n->Int.toString}). ` ++
+            "Call process() separately for each chain.",
           )
         }
 

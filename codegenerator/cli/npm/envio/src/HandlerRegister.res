@@ -115,7 +115,9 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
     | Unordered => ()
     | Ordered =>
       Js.Exn.raiseError(
-        "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature. Or enable unordered multichain mode by removing `multichain: ordered` from the config.yaml file.",
+        "Block Handlers are not supported for ordered multichain mode. " ++
+        "To fix this, set `multichain: unordered` in your config.yaml, " ++
+        "or remove the `multichain` field (unordered is the default).",
       )
     }
 
