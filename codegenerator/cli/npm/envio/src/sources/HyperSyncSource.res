@@ -131,25 +131,13 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
 }
 
-let memoGetSelectionConfig = (~chain) => {
-  let cache = Utils.WeakMap.make()
-  selection =>
-    switch cache->Utils.WeakMap.get(selection) {
-    | Some(c) => c
-    | None => {
-        let c = selection->getSelectionConfig(~chain)
-        let _ = cache->Utils.WeakMap.set(selection, c)
-        c
-      }
-    }
-}
+let memoGetSelectionConfig = (~chain) =>
+  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
 
 type options = {
-  contracts: array<Internal.evmContractConfig>,
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventSignatures: array<string>,
-  shouldUseHypersyncClientDecoder: bool,
   eventRouter: EventRouter.t<Internal.evmEventConfig>,
   apiToken: option<string>,
   clientMaxRetries: int,
@@ -161,11 +149,9 @@ type options = {
 
 let make = (
   {
-    contracts,
     chain,
     endpointUrl,
     allEventSignatures,
-    shouldUseHypersyncClientDecoder,
     eventRouter,
     apiToken,
     clientMaxRetries,
@@ -205,7 +191,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       switch HyperSyncClient.Decoder.fromSignatures(allEventSignatures) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
+          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI",
         )
       | decoder =>
         if lowercaseAddresses {
@@ -245,11 +231,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     })
   }
 
-  let contractNameAbiMapping = Js.Dict.empty()
-  contracts->Belt.Array.forEach(contract => {
-    contractNameAbiMapping->Js.Dict.set(contract.name, contract.abi)
-  })
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -274,6 +255,11 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
+    Prometheus.SourceRequestCount.increment(
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~method="getLogs",
+    )
     let pageUnsafe = try await HyperSync.GetLogs.query(
       ~client,
       ~fromBlock,
@@ -375,6 +361,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~serverUrl=endpointUrl,
           ~apiToken,
           ~blockNumber=heighestBlockQueried,
+          ~sourceName=name,
+          ~chainId=chain->ChainMap.Chain.toChainId,
           ~logger,
         )->Promise.thenResolve(res =>
           switch res {
@@ -402,7 +390,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
     let handleDecodeFailure = (
       ~eventConfig: Internal.evmEventConfig,
-      ~decoder,
       ~logIndex,
       ~blockNumber,
       ~chainId,
@@ -419,72 +406,28 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
             "chainId": chainId,
             "blockNumber": blockNumber,
             "logIndex": logIndex,
-            "decoder": decoder,
+            "decoder": "hypersync-client",
           },
         )
         exn->ErrorHandling.mkLogAndRaise(~msg, ~logger)
       }
     }
-    if shouldUseHypersyncClientDecoder {
-      //Currently there are still issues with decoder for some cases so
-      //this can only be activated with a flag
 
-      //Parse page items into queue items
-      let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
-      | exception exn =>
-        exn->mkLogAndRaise(
-          ~msg="Failed to parse events using hypersync client, please double check your ABI.",
-        )
-      | parsedEvents => parsedEvents
-      }
+    //Parse page items into queue items
+    let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
+    | exception exn =>
+      exn->mkLogAndRaise(
+        ~msg="Failed to parse events using hypersync client, please double check your ABI.",
+      )
+    | parsedEvents => parsedEvents
+    }
 
-      pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
-        let {block, log} = item
-        let chainId = chain->ChainMap.Chain.toChainId
-        let topic0 = log.topics->Js.Array2.unsafe_get(0)
-        let maybeEventConfig =
-          eventRouter->EventRouter.get(
-            ~tag=EventRouter.getEvmEventId(
-              ~sighash=topic0->EvmTypes.Hex.toString,
-              ~topicCount=log.topics->Array.length,
-            ),
-            ~indexingContracts,
-            ~contractAddress=log.address,
-            ~blockNumber=block.number->Belt.Option.getUnsafe,
-          )
-        let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
-
-        switch (maybeEventConfig, maybeDecodedEvent) {
-        | (Some(eventConfig), Value(decoded)) =>
-          parsedQueueItems
-          ->Js.Array2.push(
-            makeEventBatchQueueItem(
-              item,
-              ~params=decoded->eventConfig.convertHyperSyncEventArgs,
-              ~eventConfig,
-            ),
-          )
-          ->ignore
-        | (Some(eventConfig), Null | Undefined) =>
-          handleDecodeFailure(
-            ~eventConfig,
-            ~decoder="hypersync-client",
-            ~logIndex=log.logIndex,
-            ~blockNumber=block.number->Belt.Option.getUnsafe,
-            ~chainId,
-            ~exn=UndefinedValue,
-          )
-        | (None, _) => () //ignore events that aren't registered
-        }
-      })
-    } else {
-      //Parse with viem -> slower than the HyperSyncClient
-      pageUnsafe.items->Array.forEach(item => {
-        let {block, log} = item
-        let chainId = chain->ChainMap.Chain.toChainId
-        let topic0 = log.topics->Js.Array2.unsafe_get(0)
-
-        switch eventRouter->EventRouter.get(
+    pageUnsafe.items->Belt.Array.forEachWithIndex((index, item) => {
+      let {block, log} = item
+      let chainId = chain->ChainMap.Chain.toChainId
+      let topic0 = log.topics->Utils.Array.firstUnsafe
+      let maybeEventConfig =
+        eventRouter->EventRouter.get(
           ~tag=EventRouter.getEvmEventId(
             ~sighash=topic0->EvmTypes.Hex.toString,
             ~topicCount=log.topics->Array.length,
@@ -492,31 +435,31 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~indexingContracts,
           ~contractAddress=log.address,
           ~blockNumber=block.number->Belt.Option.getUnsafe,
-        ) {
-        | Some(eventConfig) =>
-          switch contractNameAbiMapping->Viem.parseLogOrThrow(
-            ~contractName=eventConfig.contractName,
-            ~topics=log.topics,
-            ~data=log.data,
-          ) {
-          | exception exn =>
-            handleDecodeFailure(
-              ~eventConfig,
-              ~decoder="viem",
-              ~logIndex=log.logIndex,
-              ~blockNumber=block.number->Belt.Option.getUnsafe,
-              ~chainId,
-              ~exn,
-            )
-          | decodedEvent =>
-            parsedQueueItems
-            ->Js.Array2.push(makeEventBatchQueueItem(item, ~params=decodedEvent.args, ~eventConfig))
-            ->ignore
-          }
-        | None => () //Ignore events that aren't registered
-        }
-      })
-    }
+        )
+      let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
+
+      switch (maybeEventConfig, maybeDecodedEvent) {
+      | (Some(eventConfig), Value(decoded)) =>
+        parsedQueueItems
+        ->Js.Array2.push(
+          makeEventBatchQueueItem(
+            item,
+            ~params=decoded->eventConfig.convertHyperSyncEventArgs,
+            ~eventConfig,
+          ),
+        )
+        ->ignore
+      | (Some(eventConfig), Null | Undefined) =>
+        handleDecodeFailure(
+          ~eventConfig,
+          ~logIndex=log.logIndex,
+          ~blockNumber=block.number->Belt.Option.getUnsafe,
+          ~chainId,
+          ~exn=UndefinedValue,
+        )
+      | (None, _) => () //ignore events that aren't registered
+      }
+    })
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -554,6 +497,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~serverUrl=endpointUrl,
       ~apiToken,
       ~blockNumbers,
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
 
@@ -568,7 +513,12 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
-    getHeightOrThrow: async () =>
+    getHeightOrThrow: async () => {
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+      )
       switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>
@@ -578,9 +528,15 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         let _ = await Promise.make((_, _) => ())
         0
       | ErrorMessage(m) => Js.Exn.raiseError(m)
-      },
+      }
+    },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>
-      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight),
+      HyperSyncHeightStream.subscribe(
+        ~hyperSyncUrl=endpointUrl,
+        ~apiToken,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~onHeight,
+      ),
   }
 }

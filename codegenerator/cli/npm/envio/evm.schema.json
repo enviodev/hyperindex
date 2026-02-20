@@ -73,28 +73,6 @@
         "$ref": "#/$defs/Chain"
       }
     },
-    "multichain": {
-      "description": "Multichain mode: 'ordered' processes events across chains in order, 'unordered' processes chain events in order, but non-deterministically relatively to other chains (default: unordered)",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Multichain"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "event_decoder": {
-      "description": "The event decoder to use for the indexer (default: hypersync-client)",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/EventDecoder"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "rollback_on_reorg": {
       "description": "A flag to indicate if the indexer should rollback to the last known valid block on a reorg. This currently incurs a performance hit on historical sync and is recommended to turn this off while developing (default: true)",
       "type": [
@@ -318,17 +296,6 @@
           "format": "uint64",
           "minimum": 0
         },
-        "rpc_config": {
-          "description": "RPC configuration for utilizing as the chain's data-source. Typically optional for chains with HyperSync support, which is highly recommended. HyperSync dramatically enhances performance, providing up to a 1000x speed boost over traditional RPC.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RpcConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "rpc": {
           "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
           "anyOf": [
@@ -391,21 +358,45 @@
         "start_block"
       ]
     },
-    "RpcConfig": {
+    "RpcSelection": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/Rpc"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Rpc"
+          }
+        }
+      ]
+    },
+    "Rpc": {
       "type": "object",
       "properties": {
         "url": {
-          "description": "URL of the RPC endpoint. Can be a single URL or an array of URLs. If multiple URLs are provided, the first one will be used as the primary RPC endpoint and the rest will be used as fallbacks.",
+          "description": "The RPC endpoint URL.",
+          "type": "string"
+        },
+        "for": {
+          "description": "Determines if this RPC is for historical sync, real-time chain indexing, or as a fallback. If not specified, defaults to \"fallback\" when HyperSync is available for the chain, or \"sync\" otherwise.",
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/For"
             },
             {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
+              "type": "null"
             }
+          ]
+        },
+        "ws": {
+          "description": "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block header notifications via eth_subscribe(\"newHeads\"). Provides lower latency than HTTP polling for detecting new blocks.",
+          "type": [
+            "string",
+            "null"
           ]
         },
         "initial_block_interval": {
@@ -469,107 +460,20 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "polling_interval": {
+          "description": "How frequently (in milliseconds) to check for new blocks in realtime. Default is 1000ms. Note: Setting this higher than block time does not reduce RPC usage as every block is still fetched to check for reorgs.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         }
       },
       "additionalProperties": false,
       "required": [
         "url"
-      ]
-    },
-    "RpcSelection": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "$ref": "#/$defs/Rpc"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Rpc"
-          }
-        }
-      ]
-    },
-    "Rpc": {
-      "type": "object",
-      "properties": {
-        "url": {
-          "description": "The RPC endpoint URL.",
-          "type": "string"
-        },
-        "for": {
-          "description": "Determines if this RPC is for historical sync, real-time chain indexing, or as a fallback.",
-          "$ref": "#/$defs/For"
-        },
-        "initial_block_interval": {
-          "description": "The starting interval in range of blocks per query",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        },
-        "backoff_multiplicative": {
-          "description": "After an RPC error, how much to scale back the number of blocks requested at once",
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
-        },
-        "acceleration_additive": {
-          "description": "Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        },
-        "interval_ceiling": {
-          "description": "Do not further increase the block interval past this limit",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        },
-        "backoff_millis": {
-          "description": "After an error, how long to wait before retrying",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        },
-        "fallback_stall_timeout": {
-          "description": "If a fallback RPC is provided, the amount of time in ms to wait before kicking off the next provider",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        },
-        "query_timeout_millis": {
-          "description": "How long to wait before cancelling an RPC request",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "url",
-        "for"
       ]
     },
     "For": {
@@ -680,20 +584,6 @@
             ]
           }
         }
-      ]
-    },
-    "Multichain": {
-      "type": "string",
-      "enum": [
-        "ordered",
-        "unordered"
-      ]
-    },
-    "EventDecoder": {
-      "type": "string",
-      "enum": [
-        "viem",
-        "hypersync-client"
       ]
     },
     "AddressFormat": {

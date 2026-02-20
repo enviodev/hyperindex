@@ -1,9 +1,8 @@
 let main = async () => {
   try {
     await Main.start(
-      ~registerAllHandlers=Generated.registerAllHandlers,
-      ~makeGeneratedConfig=Generated.makeGeneratedConfig,
-      ~persistence=Generated.codegenPersistence,
+      ~makeGeneratedConfig=Indexer.Generated.makeGeneratedConfig,
+      ~persistence=Indexer.Generated.codegenPersistence,
     )
   } catch {
   | e => {

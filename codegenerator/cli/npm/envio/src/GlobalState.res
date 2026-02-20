@@ -75,7 +75,6 @@ let make = (
 }
 
 let getId = self => self.id
-let incrementId = self => {...self, id: self.id + 1}
 let setChainManager = (self, chainManager) => {
   ...self,
   chainManager,
@@ -159,8 +158,7 @@ let updateChainMetadataTable = (
     chainsData->Js.Dict.set(
       cf.chainConfig.id->Belt.Int.toString,
       {
-        blockHeight: cf.fetchState.knownHeight,
-        firstEventBlockNumber: cf.firstEventBlockNumber->Js.Null.fromOption,
+        firstEventBlockNumber: cf.fetchState.firstEventBlock->Js.Null.fromOption,
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
@@ -226,9 +224,13 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
           ...cf,
           // Since we process per chain always in order,
           // we need to calculate it once, by using the first item in a batch
-          firstEventBlockNumber: switch cf.firstEventBlockNumber {
-          | Some(_) => cf.firstEventBlockNumber
-          | None => batch->Batch.findFirstEventBlockNumber(~chainId=chain->ChainMap.Chain.toChainId)
+          fetchState: switch cf.fetchState.firstEventBlock {
+          | Some(_) => cf.fetchState
+          | None =>
+            switch batch->Batch.findFirstEventBlockNumber(~chainId=chain->ChainMap.Chain.toChainId) {
+            | Some(_) as firstEventBlock => {...cf.fetchState, firstEventBlock}
+            | None => cf.fetchState
+            }
           },
           committedProgressBlockNumber: chainAfterBatch.progressBlockNumber,
           numEventsProcessed: chainAfterBatch.totalEventsProcessed,
@@ -365,7 +367,6 @@ let validatePartitionQueryResponse = (
       ~numEvents=parsedQueueItems->Array.length,
       ~numAddresses=query.addressesByContractName->FetchState.addressesByContractNameCount,
       ~queryName=switch query {
-      | {target: Merge(_)} => `Merge Query`
       | {selection: {dependsOnAddresses: false}} => `Wildcard Query`
       | {selection: {dependsOnAddresses: true}} => `Normal Query`
       },
@@ -434,8 +435,17 @@ let validatePartitionQueryResponse = (
       }
       (
         {
-          ...nextState->incrementId,
-          chainManager,
+          ...nextState,
+          id: nextState.id + 1,
+          chainManager: {
+            ...chainManager,
+            chainFetchers: chainManager.chainFetchers->ChainMap.map(chainFetcher => {
+              ...chainFetcher,
+              // TODO: It's not optimal to abort pending queries for all chains,
+              // this is how it always worked, but we should consider a better approach.
+              fetchState: chainFetcher.fetchState->FetchState.resetPendingQueries,
+            }),
+          },
           rollbackState: ReorgDetected({
             chain,
             blockNumber: reorgDetectedBlockNumber,
@@ -459,15 +469,13 @@ let submitPartitionQueryResponse = (
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
 
   let updatedChainFetcher =
-    chainFetcher
-    ->ChainFetcher.handleQueryResult(
+    chainFetcher->ChainFetcher.handleQueryResult(
       ~query,
       ~latestFetchedBlock,
       ~newItems,
       ~newItemsWithDcs,
       ~knownHeight,
     )
-    ->Utils.unwrapResultExn
 
   let updatedChainFetcher = {
     ...updatedChainFetcher,

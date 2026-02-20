@@ -26,7 +26,7 @@ pub fn is_valid_folder_name(name: &str) -> bool {
 pub fn is_valid_foldername_inquire_validator(name: &str) -> Result<Validation, CustomUserError> {
     if !is_valid_folder_name(name) {
         Ok(Validation::Invalid(
-            "EE400: Invalid folder name. The folder name cannot contain any of the following \
+            "Invalid folder name. The folder name cannot contain any of the following \
              special characters: / \\ : * ? \" < > |"
                 .into(),
         ))
@@ -43,7 +43,7 @@ pub fn is_directory_new_validator(directory: &str) -> Result<Validation, CustomU
     if !is_directory_new(directory) {
         Ok(Validation::Invalid(
             format!(
-                "EE401: Directory '{}' already exists. Please use a new directory.",
+                "Directory '{}' already exists. Please use a new directory.",
                 directory
             )
             .into(),

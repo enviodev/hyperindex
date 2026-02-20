@@ -2,21 +2,17 @@ open RescriptMocha
 
 let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
 
-let mockEthersLog = (
+let mockLog = (
   ~transactionHash="0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-): Ethers.log => {
+): Rpc.GetLogs.log => {
   blockNumber: 123456,
   blockHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-  removed: Some(false),
+  removed: false,
   address: Address.Evm.fromStringOrThrow("0x1234567890abcdef1234567890abcdef12345678"),
   data: "0xdeadbeefdeadbeefdeadbeefdeadbeef",
   topics: [
-    EvmTypes.Hex.fromStringUnsafe(
-      "0xd78ad95fa46c994b6551d0da85fc275fe613dbe680204dd5837f03aa2f863b9b",
-    ),
-    EvmTypes.Hex.fromStringUnsafe(
-      "0x0000000000000000000000000000000000000000000000000000000000000000",
-    ),
+    "0xd78ad95fa46c994b6551d0da85fc275fe613dbe680204dd5837f03aa2f863b9b",
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
   ],
   transactionHash,
   transactionIndex: 1,
@@ -28,12 +24,10 @@ describe("RpcSource - name", () => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
-      contracts: [],
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       allEventSignatures: [],
-      shouldUseHypersyncClientDecoder: false,
       lowercaseAddresses: false,
     })
     Assert.equal(source.name, "RPC (eth.rpc.hypersync.xyz)")
@@ -45,12 +39,10 @@ describe("RpcSource - getHeightOrThrow", () => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
-      contracts: [],
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       allEventSignatures: ["a", "b", "c"],
-      shouldUseHypersyncClientDecoder: true,
       lowercaseAddresses: false,
     })
     let height = await source.getHeightOrThrow()
@@ -60,15 +52,17 @@ describe("RpcSource - getHeightOrThrow", () => {
 })
 
 describe("RpcSource - getEventTransactionOrThrow", () => {
-  let neverGetTransactionFields = _ => Assert.fail("The getTransactionFields should not be called")
+  let neverGetTransactionJson = _ => Assert.fail("getTransactionJson should not be called")
+  let neverGetReceiptJson = _ => Assert.fail("getReceiptJson should not be called")
 
   it("Panics with invalid schema", () => {
     Assert.throws(
       () => {
-        RpcSource.makeThrowingGetEventTransaction(~getTransactionFields=neverGetTransactionFields)(
-          mockEthersLog(),
-          ~transactionSchema=S.string,
-        )
+        RpcSource.makeThrowingGetEventTransaction(
+          ~getTransactionJson=neverGetTransactionJson,
+          ~getReceiptJson=neverGetReceiptJson,
+          ~lowercaseAddresses=false,
+        )(mockLog(), ~transactionSchema=S.string)
       },
       ~error={
         "message": "Unexpected internal error: transactionSchema is not an object",
@@ -80,10 +74,12 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     "Returns empty object when empty field selection. Doesn't make a transaction request",
     async () => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-        ~getTransactionFields=neverGetTransactionFields,
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
       )
       Assert.deepEqual(
-        await mockEthersLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
+        await mockLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
         %raw(`{}`),
       )
     },
@@ -91,10 +87,12 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it("Works with a single transactionIndex field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -110,10 +108,12 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it("Works with a single hash field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -129,10 +129,12 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it("Works with a only transactionIndex & hash field", async () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -149,10 +151,12 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
     // In different fields order in the schema
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
     )
     Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
+      await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
@@ -168,90 +172,72 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
   })
 
-  Async.it("Queries transaction with a non-log field (with real Ethers.provider)", async () => {
+  Async.it("Queries transaction fields from raw JSON (with real RPC)", async () => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
     let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
     let client = Rest.client(rpcUrl)
-    let getTransactionFields = Ethers.JsonRpcProvider.makeGetTransactionFields(
-      ~getTransactionByHash=async transactionHash =>
-        switch await Rpc.GetTransactionByHash.route->Rest.fetch(transactionHash, ~client) {
-        | Some(tx) => tx
-        | None => Js.Exn.raiseError(`Transaction not found for hash: ${transactionHash}`)
+
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=async txHash =>
+        switch await Rpc.GetTransactionByHash.rawRoute->Rest.fetch(txHash, ~client) {
+        | Some(json) => json
+        | None => Js.Exn.raiseError(`Transaction not found for hash: ${txHash}`)
+        },
+      ~getReceiptJson=async txHash =>
+        switch await Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(txHash, ~client) {
+        | Some(json) => json
+        | None => Js.Exn.raiseError(`Receipt not found for hash: ${txHash}`)
         },
       ~lowercaseAddresses=false,
     )
-
-    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields,
-    )
     Assert.deepEqual(
-      await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
+      await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
             {
               "hash": s.matches(S.string),
               "transactionIndex": s.matches(S.int),
-              "from": s.matches(S.option(Address.schema)),
-              "to": s.matches(S.option(Address.schema)),
+              "from": s.matches(Address.schema),
+              "to": s.matches(Address.schema),
               "gas": s.matches(BigInt.nativeSchema),
-              "gasPrice": s.matches(S.option(BigInt.nativeSchema)),
-              "maxPriorityFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
-              "maxFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
-              // "cumulativeGasUsed": s.matches(BigInt.nativeSchema), // --- Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint
-              // "effectiveGasPrice": s.matches(BigInt.nativeSchema), // --- Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint
-              // "gasUsed": s.matches(BigInt.nativeSchema), // --- Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint
+              "gasPrice": s.matches(BigInt.nativeSchema),
+              "maxPriorityFeePerGas": s.matches(BigInt.nativeSchema),
+              "maxFeePerGas": s.matches(BigInt.nativeSchema),
               "input": s.matches(S.string),
               "nonce": s.matches(BigInt.nativeSchema),
               "value": s.matches(BigInt.nativeSchema),
-              "v": s.matches(S.option(S.string)),
-              "r": s.matches(S.option(S.string)),
-              "s": s.matches(S.option(S.string)),
-              "yParity": s.matches(S.option(S.string)),
-              "contractAddress": s.matches(S.option(Address.schema)),
-              // "logsBloom": s.matches(S.string), // --- Invalid transaction field "logsBloom" found in the RPC response. Error: Expected String, received undefined
-              "root": s.matches(S.option(S.string)),
-              "status": s.matches(S.option(S.int)),
-              "chainId": s.matches(S.option(S.int)),
-              "maxFeePerBlobGas": s.matches(S.option(BigInt.nativeSchema)),
-              "blobVersionedHashes": s.matches(S.option(S.array(S.string))),
-              "kind": s.matches(S.option(S.int)),
-              "l1Fee": s.matches(S.option(BigInt.nativeSchema)),
-              "l1GasPrice": s.matches(S.option(BigInt.nativeSchema)),
-              "l1GasUsed": s.matches(S.option(BigInt.nativeSchema)),
-              "l1FeeScalar": s.matches(S.option(S.float)),
-              "gasUsedForL1": s.matches(S.option(BigInt.nativeSchema)),
+              "v": s.matches(S.string),
+              "r": s.matches(S.string),
+              "s": s.matches(S.string),
+              "yParity": s.matches(S.string),
+              // Receipt fields
+              "gasUsed": s.matches(BigInt.nativeSchema),
+              "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+              "status": s.matches(S.int),
             },
         ),
       ),
       {
         "hash": testTransactionHash,
         "transactionIndex": 1,
-        "from": Some("0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow),
-        "to": Some("0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.Evm.fromStringOrThrow),
-        "gasPrice": Some(17699339493n),
+        "from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
+        "to": "0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.Evm.fromStringOrThrow,
+        "gasPrice": 17699339493n,
         "gas": 21000n,
-        "maxPriorityFeePerGas": Some(0n),
-        "maxFeePerGas": Some(17699339493n),
+        "maxPriorityFeePerGas": 0n,
+        "maxFeePerGas": 17699339493n,
         "input": "0x",
         "nonce": 1722147n,
         "value": 34302998902926621n,
-        "r": Some("0xb73e53731ff8484f3c30c2850328f0ad7ca5a8dd8681d201ba52777aaf972f87"),
-        "s": Some("0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a"),
-        "v": Some("0x1"),
-        "contractAddress": None,
-        "root": None,
-        "status": None,
-        "yParity": Some("0x1"),
-        "chainId": None, // This is stripped by the RPC schema, since not needed
-        "maxFeePerBlobGas": None,
-        "blobVersionedHashes": None,
-        "kind": None,
-        "l1Fee": None,
-        "l1GasPrice": None,
-        "l1GasUsed": None,
-        "l1FeeScalar": None,
-        "gasUsedForL1": None,
+        "r": "0xb73e53731ff8484f3c30c2850328f0ad7ca5a8dd8681d201ba52777aaf972f87",
+        "s": "0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a",
+        "v": "0x1",
+        "yParity": "0x1",
+        // Receipt fields
+        "gasUsed": 21000n,
+        "effectiveGasPrice": 17699339493n,
+        "status": 1,
       },
     )
   })
@@ -263,54 +249,328 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       let testTransactionHash = "0x245134326b7fecdcb7e0ed0a6cf090fc8881a63420ecd329ef645686b85647ed"
 
       let client = Rest.client("https://api.testnet.abs.xyz")
-      let transaction =
-        await Rpc.GetTransactionByHash.route->Rest.fetch(testTransactionHash, ~client)
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=async txHash =>
+          switch await Rpc.GetTransactionByHash.rawRoute->Rest.fetch(txHash, ~client) {
+          | Some(json) => json
+          | None => Js.Exn.raiseError(`Transaction not found for hash: ${txHash}`)
+          },
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=true,
+      )
 
-      // Transaction should be fetched successfully
-      Assert.ok(transaction->Belt.Option.isSome, ~message="Transaction should be fetched")
-      let tx = transaction->Belt.Option.getUnsafe
-
-      tx->Utils.Dict.unsafeDeleteUndefinedFieldsInPlace
-
-      // Verify all transaction fields using a single comparison
-      // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity)
+      // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity).
+      // Per-field parsing handles this — absent fields are simply not included.
       Assert.deepEqual(
-        tx,
+        await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "hash": s.matches(S.string),
+                "from": s.matches(Address.schema),
+                "to": s.matches(Address.schema),
+                "gas": s.matches(BigInt.nativeSchema),
+                "gasPrice": s.matches(BigInt.nativeSchema),
+                "nonce": s.matches(BigInt.nativeSchema),
+                "value": s.matches(BigInt.nativeSchema),
+                "type": s.matches(S.int),
+                "maxFeePerGas": s.matches(BigInt.nativeSchema),
+                "maxPriorityFeePerGas": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
         {
-          hash: testTransactionHash,
-          from: "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
-          to: "0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"->Address.unsafeFromString,
-          gas: 1189904n,
-          gasPrice: 25000000n,
-          input: "0xfe939afc000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000061",
-          nonce: 662n,
-          transactionIndex: 0,
-          value: 0n,
-          type_: 113, // 0x71 = ZKSync EIP-712
-          maxFeePerGas: 25000000n,
-          maxPriorityFeePerGas: 0n,
+          "hash": testTransactionHash,
+          "from": "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
+          "to": "0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"->Address.unsafeFromString,
+          "gas": 1189904n,
+          "gasPrice": 25000000n,
+          "nonce": 662n,
+          "value": 0n,
+          "type": 113, // 0x71 = ZKSync EIP-712
+          "maxFeePerGas": 25000000n,
+          "maxPriorityFeePerGas": 0n,
         },
       )
     },
   )
 
-  Async.it("Error with a value not matching the schema", async () => {
-    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
-    )
-    Assert.throws(
-      () => {
-        mockEthersLog()->getEventTransactionOrThrow(
+  // Issue #931: Contract creation transactions have null `to` field.
+  // Per-field parsing handles this — null fields are simply not included in the result.
+  Async.it(
+    "Contract creation transaction with null `to` field should parse successfully",
+    async () => {
+      // Mock a contract creation tx where `to` is null
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(
+            %raw(`{"from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5", "to": null, "gas": "0x5208"}`),
+          ),
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
               {
-                "hash": s.matches(S.int),
+                "from": s.matches(Address.schema),
+                "gas": s.matches(BigInt.nativeSchema),
               },
           ),
-        )
-      },
-      ~error={
-        "message": `Invalid transaction field "hash" found in the RPC response. Error: Expected int32, received "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef"`,
+        ),
+        {
+          "from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
+          "gas": 21000n,
+        },
+      )
+    },
+  )
+
+  // gasUsed, cumulativeGasUsed, and effectiveGasPrice are receipt-only fields.
+  // Only the receipt JSON is fetched — transaction JSON is not needed.
+  Async.it(
+    "Fetches gasUsed from receipt only (no transaction call)",
+    async () => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "gasUsed": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"gasUsed": 21000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches cumulativeGasUsed from receipt only (no transaction call)",
+    async () => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"cumulativeGasUsed": "0x7a120"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "cumulativeGasUsed": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"cumulativeGasUsed": 500000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches effectiveGasPrice from receipt only (no transaction call)",
+    async () => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"effectiveGasPrice": "0x41ef67ce5"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"effectiveGasPrice": 17699339493n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches from both transaction and receipt when fields from both are needed",
+    async () => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(%raw(`{"gas": "0x5208", "value": "0x3e8"}`)),
+        ~getReceiptJson=_ =>
+          Promise.resolve(
+            %raw(`{"gasUsed": "0x5208", "effectiveGasPrice": "0x41ef67ce5", "status": "0x1"}`),
+          ),
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "hash": s.matches(S.string),
+                "gas": s.matches(BigInt.nativeSchema),
+                "gasUsed": s.matches(BigInt.nativeSchema),
+                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
+                "status": s.matches(S.int),
+              },
+          ),
+        ),
+        {
+          "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
+          "gas": 21000n,
+          "gasUsed": 21000n,
+          "effectiveGasPrice": 17699339493n,
+          "status": 1,
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "Transaction-only fields don't call getReceiptJson",
+    async () => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(%raw(`{"gas": "0x5208", "input": "0xdeadbeef"}`)),
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "gas": s.matches(BigInt.nativeSchema),
+                "input": s.matches(S.string),
+              },
+          ),
+        ),
+        {
+          "gas": 21000n,
+          "input": "0xdeadbeef",
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "Unknown extra fields in JSON don't cause failures",
+    async () => {
+      // The RPC response has many extra fields (blockHash, blockNumber, chainId, etc.)
+      // that the user didn't request. These should be silently ignored.
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(
+            %raw(`{
+              "gas": "0x5208",
+              "blockHash": "0xabc",
+              "blockNumber": "0x1",
+              "chainId": "0x1",
+              "unknownField": "some value",
+              "anotherUnknown": 42
+            }`),
+          ),
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "gas": s.matches(BigInt.nativeSchema),
+              },
+          ),
+        ),
+        {"gas": 21000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches l1FeeScalar from receipt (decimal string, not hex)",
+    async () => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"l1FeeScalar": "0.684"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      Assert.deepEqual(
+        await mockLog()->getEventTransactionOrThrow(
+          ~transactionSchema=S.schema(
+            s =>
+              {
+                "l1FeeScalar": s.matches(S.float),
+              },
+          ),
+        ),
+        {"l1FeeScalar": 0.684},
+      )
+    },
+  )
+
+  Async.it("Error with a value not matching the field schema", async () => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=_ => Promise.resolve(%raw(`{"gas": "not-a-hex-value"}`)),
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
+    )
+    try {
+      let _ = await mockLog()->getEventTransactionOrThrow(
+        ~transactionSchema=S.schema(
+          s =>
+            {
+              "gas": s.matches(BigInt.nativeSchema),
+            },
+        ),
+      )
+      Assert.fail("Should have thrown")
+    } catch {
+    | Js.Exn.Error(e) =>
+      Assert.equal(
+        e->Js.Exn.message->Belt.Option.getExn,
+        `Invalid transaction field "gas" found in the RPC response. Error: The string is not valid hex`,
+      )
+    }
+  })
+
+  Async.it("Address fields are normalized with lowercaseAddresses=true", async () => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=_ =>
+        Promise.resolve(
+          %raw(`{"from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5", "contractAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"}`),
+        ),
+      ~lowercaseAddresses=true,
+    )
+
+    let result = await mockLog()->getEventTransactionOrThrow(
+      ~transactionSchema=S.schema(
+        s =>
+          {
+            "from": s.matches(Address.schema),
+            "contractAddress": s.matches(Address.schema),
+          },
+      ),
+    )
+    Assert.deepEqual(
+      result,
+      {
+        "from": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"->Address.unsafeFromString,
+        "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"->Address.unsafeFromString,
       },
     )
   })
@@ -610,5 +870,21 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
     )
 
     Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((500, true)))
+  })
+
+  it("Should handle Rpc.JsonRpcError with block range limit", () => {
+    let error = Rpc.JsonRpcError({
+      code: -32000,
+      message: "eth_getLogs is limited to a 1000 blocks range",
+    })
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
+  })
+
+  it("Should handle Rpc.JsonRpcError with suggested range", () => {
+    let error = Rpc.JsonRpcError({
+      code: -32602,
+      message: "query exceeds max results 20000, retry with the range 6000000-6000509",
+    })
+    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((510, false)))
   })
 })

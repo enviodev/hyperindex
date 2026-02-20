@@ -1,1 +1,300 @@
-{{indexer_code}}
+@@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
+
+//*************
+//***ENTITIES**
+//*************
+@genType.as("Id")
+type id = string
+
+@genType
+type contractRegistrations = {
+  log: Envio.logger,
+  // TODO: only add contracts we've registered for the event in the config
+  {{#each codegen_contracts as |contract| }}
+  add{{contract.name.capitalized}}: (Address.t) => unit,
+  {{/each}}
+}
+
+//*************
+//**CONTRACTS**
+//*************
+
+module Transaction = {
+  @genType
+  type t = {{field_selection.transaction_type}}
+
+  let schema = {{field_selection.transaction_schema}}
+}
+
+module Block = {
+  @genType
+  type t = {{field_selection.block_type}}
+
+  let schema = {{field_selection.block_schema}}
+}
+
+{{!-- For internal usage. The type and schema which agreage
+  all possible event-specific and global field selection --}}
+module AggregatedBlock = {
+  @genType
+  type t = {{aggregated_field_selection.block_type}}
+}
+module AggregatedTransaction = {
+  @genType
+  type t = {{aggregated_field_selection.transaction_type}}
+}
+
+@genType.as("EventLog")
+type eventLog<'params> = Internal.genericEvent<'params, Block.t, Transaction.t>
+
+module SingleOrMultiple: {
+  @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
+  type t<'a>
+  let normalizeOrThrow: (t<'a>, ~nestedArrayDepth: int=?) => array<'a>
+  let single: 'a => t<'a>
+  let multiple: array<'a> => t<'a>
+} = {
+  type t<'a> = Js.Json.t
+
+  external single: 'a => t<'a> = "%identity"
+  external multiple: array<'a> => t<'a> = "%identity"
+  external castMultiple: t<'a> => array<'a> = "%identity"
+  external castSingle: t<'a> => 'a = "%identity"
+
+  exception AmbiguousEmptyNestedArray
+
+  let rec isMultiple = (t: t<'a>, ~nestedArrayDepth): bool =>
+    switch t->Js.Json.decodeArray {
+    | None => false
+    | Some(_arr) if nestedArrayDepth == 0 => true
+    | Some([]) if nestedArrayDepth > 0 =>
+      AmbiguousEmptyNestedArray->ErrorHandling.mkLogAndRaise(
+        ~msg="The given empty array could be interperated as a flat array (value) or nested array. Since it's ambiguous,
+        please pass in a nested empty array if the intention is to provide an empty array as a value",
+      )
+    | Some(arr) => arr->Utils.Array.firstUnsafe->isMultiple(~nestedArrayDepth=nestedArrayDepth - 1)
+    }
+
+  let normalizeOrThrow = (t: t<'a>, ~nestedArrayDepth=0): array<'a> => {
+    if t->isMultiple(~nestedArrayDepth) {
+      t->castMultiple
+    } else {
+      [t->castSingle]
+    }
+  }
+}
+
+module HandlerTypes = {
+  @genType
+  type args<'eventArgs, 'context> = {
+    event: eventLog<'eventArgs>,
+    context: 'context,
+  }
+
+  @genType
+  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<eventLog<'eventArgs>, contractRegistrations>
+  @genType
+  type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
+
+  @genType
+  type eventConfig<'eventFilters> = Internal.eventOptions<'eventFilters>
+}
+
+module type Event = {
+  type event
+  let contractName: string
+  let name: string
+  type eventFilters
+}
+
+@genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
+type fnWithEventConfig<'fn, 'eventConfig> = ('fn, ~eventConfig: 'eventConfig=?) => unit
+
+type handlerWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
+  Internal.genericHandler<'eventArgs>,
+  HandlerTypes.eventConfig<'eventFilters>,
+>
+
+@genType
+type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
+  HandlerTypes.contractRegister<'eventArgs>,
+  HandlerTypes.eventConfig<'eventFilters>,
+>
+
+{{{indexer_code}}}
+
+module MakeRegister = (Event: Event) => {
+  let contractRegister: fnWithEventConfig<
+    Internal.genericContractRegister<
+      Internal.genericContractRegisterArgs<Event.event, contractRegistrations>,
+    >,
+    HandlerTypes.eventConfig<Event.eventFilters>,
+  > = (contractRegister, ~eventConfig=?) =>
+    HandlerRegister.setContractRegister(
+      ~contractName=Event.contractName,
+      ~eventName=Event.name,
+      contractRegister,
+      ~eventOptions=eventConfig,
+    )
+
+  let handler: fnWithEventConfig<
+    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext>>,
+    HandlerTypes.eventConfig<Event.eventFilters>,
+  > = (handler, ~eventConfig=?) => {
+    HandlerRegister.setHandler(
+      ~contractName=Event.contractName,
+      ~eventName=Event.name,
+      handler->(
+        Utils.magic: Internal.genericHandler<
+          Internal.genericHandlerArgs<Event.event, handlerContext>,
+        > => Internal.genericHandler<
+          Internal.genericHandlerArgs<Event.event, Internal.handlerContext>,
+        >
+      ),
+      ~eventOptions=eventConfig,
+    )
+  }
+}
+
+{{#each codegen_contracts as | contract |}}
+@genType
+module {{contract.name.capitalized}} = {
+{{contract.module_code}}
+let contractName = "{{contract.name.capitalized}}"
+{{#each contract.codegen_events as | event |}}
+
+module {{event.name}}Event = {
+{{event.module_code}}
+}
+module {{event.name}} = {
+  include {{event.name}}Event
+  include MakeRegister({{event.name}}Event)
+}
+{{/each}}
+}
+
+{{/each}}
+
+module Generated = {
+let makeGeneratedConfig = () => {
+  // Source config is now in internal.config.json, sources created lazily by ChainFetcher
+  let codegenChains = [
+    {{#each chain_configs as | chain_config |}}
+    {
+      let contracts = [
+        {{#each chain_config.codegen_contracts as | contract |}}
+        {
+          Config.name: "{{contract.name.capitalized}}",
+          addresses: [
+            {{#each contract.addresses as | address |}}
+            "{{address}}",
+            {{/each}}
+          ],
+          events: [
+            {{#each contract.events as | event |}}
+            ({{contract.name.capitalized}}.{{event.name}}.register() :> Internal.eventConfig),
+            {{/each}}
+          ],
+          startBlock: {{#if contract.start_block}}Some({{contract.start_block}}){{else}}None{{/if}},
+        },
+        {{/each}}
+      ]
+      {
+        Config.id: {{chain_config.network_config.id}},
+        contracts,
+      }
+    },
+    {{/each}}
+  ]
+
+  Config.fromPublic(
+    %raw(`internalConfigJson`),
+    ~codegenChains,
+  )
+}
+
+// Config without handler registration - used by tests, migrations, etc.
+let configWithoutRegistrations = makeGeneratedConfig()
+let allEntities = configWithoutRegistrations.allEntities
+
+let initialSql = PgStorage.makeClient()
+let storagePgSchema = Env.Db.publicSchema
+let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
+  PgStorage.make(
+    ~sql,
+    ~pgSchema,
+    ~pgHost=Env.Db.host,
+    ~pgUser=Env.Db.user,
+    ~pgPort=Env.Db.port,
+    ~pgDatabase=Env.Db.database,
+    ~pgPassword=Env.Db.password,
+    ~sink=?{
+      switch Env.ClickHouseSink.host {
+      | Some(host) => Some(Sink.makeClickHouse(~host, ~database=Env.ClickHouseSink.database, ~username=Env.ClickHouseSink.username, ~password=Env.ClickHouseSink.password))
+      | None => None
+      }
+    },
+    ~onInitialize=?{
+      if isHasuraEnabled {
+        Some(
+          () => {
+            Hasura.trackDatabase(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~userEntities=configWithoutRegistrations.userEntities,
+              ~responseLimit=Env.Hasura.responseLimit,
+              ~schema=Schema.make(allEntities->Belt.Array.map(e => e.table)),
+              ~aggregateEntities=Env.Hasura.aggregateEntities,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Utils.prettifyExn,
+                `Error tracking tables`,
+              )->Promise.resolve
+            })
+          },
+        )
+      } else {
+        None
+      }
+    },
+    ~onNewTables=?{
+      if isHasuraEnabled {
+        Some(
+          (~tableNames) => {
+            Hasura.trackTables(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema=storagePgSchema,
+              ~tableNames,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Utils.prettifyExn,
+                `Error tracking new tables`,
+              )->Promise.resolve
+            })
+          },
+        )
+      } else {
+        None
+      }
+    },
+    ~isHasuraEnabled,
+  )
+}
+
+let codegenPersistence = Persistence.make(
+  ~userEntities=configWithoutRegistrations.userEntities,
+  ~allEnums=configWithoutRegistrations.allEnums,
+  ~storage=makeStorage(~sql=initialSql),
+)
+
+}
+
+{{{generated_top_level_bindings}}}

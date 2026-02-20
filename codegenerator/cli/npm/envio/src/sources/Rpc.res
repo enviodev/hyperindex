@@ -1,3 +1,6 @@
+type rpcError = {code: int, message: string}
+exception JsonRpcError(rpcError)
+
 let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
   let idSchema = S.literal(1)
   let versionSchema = S.literal("2.0")
@@ -20,6 +23,23 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
   })
 }
 
+let jsonRpcFetcher: Rest.ApiFetcher.t = async args => {
+  let response = await Rest.ApiFetcher.default(args)
+  let data: {..} = response.data->Obj.magic
+  switch data["error"]->Js.Nullable.toOption {
+  | Some(error) =>
+    raise(
+      JsonRpcError({
+        code: error["code"],
+        message: error["message"],
+      }),
+    )
+  | None => response
+  }
+}
+
+let makeClient = url => Rest.client(url, ~fetcher=jsonRpcFetcher)
+
 type hex = string
 let makeHexSchema = fromStr =>
   S.string->S.transform(s => {
@@ -34,6 +54,18 @@ let makeHexSchema = fromStr =>
 let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)
 external number: string => int = "Number"
 let hexIntSchema: S.schema<int> = makeHexSchema(v => v->number->Some)
+
+external parseFloat: string => float = "Number"
+let decimalFloatSchema: S.schema<float> = S.string->S.transform(s => {
+  parser: str => {
+    let v = parseFloat(str)
+    if Js.Float.isNaN(v) {
+      s.fail("The string is not a valid decimal number")
+    } else {
+      v
+    }
+  },
+})
 
 module GetLogs = {
   @unboxed
@@ -77,7 +109,7 @@ module GetLogs = {
   type param = {
     fromBlock: int,
     toBlock: int,
-    address: array<Address.t>,
+    address?: array<Address.t>,
     topics: topicQuery,
     // blockHash?: string,
   }
@@ -85,10 +117,12 @@ module GetLogs = {
   let paramsSchema = S.object((s): param => {
     fromBlock: s.field("fromBlock", hexIntSchema),
     toBlock: s.field("toBlock", hexIntSchema),
-    address: s.field("address", S.array(Address.schema)),
+    address: ?s.field("address", S.option(S.array(Address.schema))),
     topics: s.field("topics", topicQuerySchema),
     // blockHash: ?s.field("blockHash", S.option(S.string)),
   })
+
+  let fullParamsSchema = S.tuple1(paramsSchema)
 
   type log = {
     address: Address.t,
@@ -114,7 +148,9 @@ module GetLogs = {
     removed: s.field("removed", S.bool),
   })
 
-  let route = makeRpcRoute("eth_getLogs", S.tuple1(paramsSchema), S.array(logSchema))
+  let resultSchema = S.array(logSchema)
+
+  let route = makeRpcRoute("eth_getLogs", fullParamsSchema, resultSchema)
 }
 
 module GetBlockByNumber = {
@@ -125,7 +161,7 @@ module GetBlockByNumber = {
     gasUsed: bigint,
     hash: hex,
     logsBloom: hex,
-    miner: Address.t,
+    mutable miner: Address.t,
     mixHash: option<hex>,
     nonce: option<bigint>,
     number: int,
@@ -164,15 +200,19 @@ module GetBlockByNumber = {
     uncles: s.field("uncles", S.null(S.array(S.string))),
   })
 
+  let paramsSchema = S.tuple(s =>
+    {
+      "blockNumber": s.item(0, hexIntSchema),
+      "includeTransactions": s.item(1, S.bool),
+    }
+  )
+
+  let resultSchema = S.null(blockSchema)
+
   let route = makeRpcRoute(
     "eth_getBlockByNumber",
-    S.tuple(s =>
-      {
-        "blockNumber": s.item(0, hexIntSchema),
-        "includeTransactions": s.item(1, S.bool),
-      }
-    ),
-    S.null(blockSchema),
+    paramsSchema,
+    resultSchema,
   )
 }
 
@@ -181,44 +221,28 @@ module GetBlockHeight = {
 }
 
 module GetTransactionByHash = {
-  let transactionSchema = S.object((s): Internal.evmTransactionFields => {
-    // We already know the data so ignore the fields
-    // blockHash: ?s.field("blockHash", S.option(S.string)),
-    // blockNumber: ?s.field("blockNumber", S.option(hexIntSchema)),
-    // chainId: ?s.field("chainId", S.option(hexIntSchema)),
-    from: ?s.field("from", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
-    to: ?s.field("to", S.option(S.string->(Utils.magic: S.t<string> => S.t<Address.t>))),
-    gas: ?s.field("gas", S.option(hexBigintSchema)),
-    gasPrice: ?s.field("gasPrice", S.option(hexBigintSchema)),
-    hash: ?s.field("hash", S.option(S.string)),
-    input: ?s.field("input", S.option(S.string)),
-    nonce: ?s.field("nonce", S.option(hexBigintSchema)),
-    transactionIndex: ?s.field("transactionIndex", S.option(hexIntSchema)),
-    value: ?s.field("value", S.option(hexBigintSchema)),
-    type_: ?s.field("type", S.option(hexIntSchema)),
-    // Signature fields - optional for ZKSync EIP-712 compatibility
-    v: ?s.field("v", S.option(S.string)),
-    r: ?s.field("r", S.option(S.string)),
-    s: ?s.field("s", S.option(S.string)),
-    yParity: ?s.field("yParity", S.option(S.string)),
-    // EIP-1559 fields
-    maxPriorityFeePerGas: ?s.field("maxPriorityFeePerGas", S.option(hexBigintSchema)),
-    maxFeePerGas: ?s.field("maxFeePerGas", S.option(hexBigintSchema)),
-    // EIP-4844 blob fields
-    maxFeePerBlobGas: ?s.field("maxFeePerBlobGas", S.option(hexBigintSchema)),
-    blobVersionedHashes: ?s.field("blobVersionedHashes", S.option(S.array(S.string))),
-    // TODO: Fields to add:
-    // pub access_list: Option<Vec<AccessList>>,
-    // pub authorization_list: Option<Vec<Authorization>>,
-    // // OP stack fields
-    // pub deposit_receipt_version: Option<Quantity>,
-    // pub mint: Option<Quantity>,
-    // pub source_hash: Option<Hash>,
-  })
-
-  let route = makeRpcRoute(
+  let rawRoute = makeRpcRoute(
     "eth_getTransactionByHash",
     S.tuple1(S.string),
-    S.null(transactionSchema),
+    S.null(S.json(~validate=false)),
+  )
+}
+
+module GetTransactionReceipt = {
+  let rawRoute = makeRpcRoute(
+    "eth_getTransactionReceipt",
+    S.tuple1(S.string),
+    S.null(S.json(~validate=false)),
+  )
+}
+
+let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {
+  await GetLogs.route->Rest.fetch(param, ~client)
+}
+
+let getBlock = async (~client: Rest.client, ~blockNumber: int) => {
+  await GetBlockByNumber.route->Rest.fetch(
+    {"blockNumber": blockNumber, "includeTransactions": false},
+    ~client,
   )
 }

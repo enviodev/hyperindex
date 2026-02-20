@@ -26,11 +26,19 @@ type onBlockOptions<'chain> = {
   endBlock?: int,
 }
 
-@genType
-type whereOperations<'entity, 'fieldType> = {
-  eq: 'fieldType => promise<array<'entity>>,
-  gt: 'fieldType => promise<array<'entity>>,
-  lt: 'fieldType => promise<array<'entity>>,
+type whereOperator<'fieldType> = {
+  /** Matches entities where the field equals the given value. */
+  _eq?: 'fieldType,
+  /** Matches entities where the field is strictly greater than the given value. */
+  _gt?: 'fieldType,
+  /** Matches entities where the field is strictly less than the given value. */
+  _lt?: 'fieldType,
+  /** Matches entities where the field is greater than or equal to the given value. */
+  _gte?: 'fieldType,
+  /** Matches entities where the field is less than or equal to the given value. */
+  _lte?: 'fieldType,
+  /** Matches entities where the field equals any of the given values. */
+  _in?: array<'fieldType>,
 }
 
 @genType.import(("./Types.ts", "Logger"))

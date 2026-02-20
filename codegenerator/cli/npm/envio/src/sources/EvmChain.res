@@ -4,6 +4,7 @@ type rpc = {
   url: string,
   sourceFor: Source.sourceFor,
   syncConfig?: Config.sourceSyncOptions,
+  ws?: string,
 }
 
 let getSyncConfig = (
@@ -15,6 +16,7 @@ let getSyncConfig = (
     ?backoffMillis,
     ?queryTimeoutMillis,
     ?fallbackStallTimeout,
+    ?pollingInterval,
   }: Config.sourceSyncOptions,
 ): Config.sourceSync => {
   let queryTimeoutMillis = queryTimeoutMillis->Option.getWithDefault(20_000)
@@ -39,6 +41,8 @@ let getSyncConfig = (
     // How long to wait before cancelling an RPC request
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getWithDefault(queryTimeoutMillis / 2),
+    // How frequently to check for new blocks in realtime (default: 1000ms)
+    pollingInterval: pollingInterval->Option.getWithDefault(1000),
   }
 }
 
@@ -47,7 +51,6 @@ let makeSources = (
   ~contracts: array<Internal.evmContractConfig>,
   ~hyperSync,
   ~allEventSignatures,
-  ~shouldUseHypersyncClientDecoder,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
@@ -60,11 +63,9 @@ let makeSources = (
   | Some(endpointUrl) => [
       HyperSyncSource.make({
         chain,
-        contracts,
         endpointUrl,
         allEventSignatures,
         eventRouter,
-        shouldUseHypersyncClientDecoder,
         apiToken: Env.envioApiToken,
         clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
@@ -75,20 +76,18 @@ let makeSources = (
     ]
   | _ => []
   }
-  rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor}) => {
-    let _ = sources->Js.Array2.push(
-      RpcSource.make({
-        chain,
-        sourceFor,
-        contracts,
-        syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
-        url,
-        eventRouter,
-        allEventSignatures,
-        shouldUseHypersyncClientDecoder,
-        lowercaseAddresses,
-      }),
-    )
+  rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+    let source = RpcSource.make({
+      chain,
+      sourceFor,
+      syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
+      url,
+      eventRouter,
+      allEventSignatures,
+      lowercaseAddresses,
+      ?ws,
+    })
+    let _ = sources->Js.Array2.push(source)
   })
 
   sources

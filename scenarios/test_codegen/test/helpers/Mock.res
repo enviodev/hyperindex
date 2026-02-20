@@ -2,30 +2,35 @@ open Belt
 
 type chainId = Indexer.chainId
 
+let config = Indexer.Generated.configWithoutRegistrations
+
+let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
+  config.userEntitiesByName
+  ->Js.Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
+  ->Option.getExn
+
 module InMemoryStore = {
-  let setEntity = (inMemoryStore, ~entityMod, entity) => {
+  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable =
-      inMemoryStore->InMemoryStore.getInMemTable(
-        ~entityConfig=entityMod->Entities.entityModToInternal,
-      )
-    let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
+      inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+    let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
       Set({
-        entityId: entity->Entities.getEntityId,
+        entityId: (entity: Internal.entity).id,
         checkpointId: 0.,
         entity,
       }),
-      ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
+      ~shouldSaveHistory=config->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
     )
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
-    entities->Js.Array2.forEach(((entityMod, items)) => {
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    entities->Js.Array2.forEach(((entityConfig, items)) => {
       items->Js.Array2.forEach(entity => {
-        inMemoryStore->setEntity(~entityMod, entity)
+        inMemoryStore->setEntity(~entityConfig, entity)
       })
     })
     inMemoryStore
@@ -213,7 +218,7 @@ module Storage = {
 
   let toPersistence = (storageMock: t) => {
     {
-      ...Generated.codegenPersistence,
+      ...Indexer.Generated.codegenPersistence,
       storage: storageMock.storage,
       storageStatus: Ready({
         cleanRun: false,
@@ -226,6 +231,12 @@ module Storage = {
   }
 }
 
+// Aliases to access the generated Indexer module after the local `module Indexer` shadows it
+type eventLog<'a> = Indexer.eventLog<'a>
+type handlerContext = Indexer.handlerContext
+type contractRegister<'a> = Indexer.HandlerTypes.contractRegister<'a>
+module Transaction = Indexer.Transaction
+
 module Indexer = {
   type metric = {
     value: string,
@@ -235,10 +246,9 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
-    query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
-    queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<Change.t<'entity>>,
-    >,
+    query: 'entity. Indexer.Entities.name<'entity> => promise<array<'entity>>,
+    queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
+    queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
@@ -246,7 +256,7 @@ module Indexer = {
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
-  type chainConfig = {chain: chainId, sources: array<Source.t>, startBlock?: int}
+  type chainConfig = {chain: chainId, sourceConfig: Config.sourceConfig, startBlock?: int}
 
   let rec make = async (
     ~chains: array<chainConfig>,
@@ -266,10 +276,10 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await Generated.registerAllHandlers()
+    let registrations = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
 
     let config = {
-      let config = Generated.makeGeneratedConfig()
+      let config = Indexer.Generated.makeGeneratedConfig()
 
       let chainMap =
         chains
@@ -280,7 +290,7 @@ module Indexer = {
             chain,
             {
               ...originalChainConfig,
-              sources: chainConfig.sources,
+              sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getWithDefault(
                 originalChainConfig.startBlock,
               ),
@@ -301,9 +311,9 @@ module Indexer = {
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let storage = Indexer.Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
-      ...Generated.codegenPersistence,
+      ...Indexer.Generated.codegenPersistence,
       storageStatus: Persistence.Unknown,
       storage,
     }
@@ -372,31 +382,31 @@ module Indexer = {
           resolve()
         })
       },
-      query: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
+      query: (type entity, name: Indexer.Entities.name<entity>) => {
+        let ec = entityConfig(name)
         sql
         ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
         )
         ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
+          items->S.parseOrThrow(ec.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
-      queryHistory: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
+      queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
+        let ec = entityConfig(name)
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
-            ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
+            ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
           ),
         )
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(
             S.array(
               S.union([
-                PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
+                PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
                 S.object((s): Change.t<'entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                   Delete({
@@ -414,6 +424,16 @@ module Indexer = {
         ->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         )
+      },
+      queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(entityConfig.rowsSchema)
+        })
+        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryCheckpoints: () => {
         sql
@@ -466,6 +486,10 @@ module Indexer = {
 }
 
 module Source = {
+  module CallPayload = {
+    @get external addresses: {..} => dict<array<Address.t>> = "addresses"
+  }
+
   type method = [
     | #getBlockHashes
     | #getHeightOrThrow
@@ -476,10 +500,22 @@ module Source = {
   type itemMock = {
     blockNumber: int,
     logIndex: int,
-    handler?: Internal.genericHandlerArgs<Types.eventLog<unknown>, Types.handlerContext> => promise<
+    handler?: Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<
       unit,
     >,
-    contractRegister?: Types.HandlerTypes.contractRegister<unit>,
+    contractRegister?: contractRegister<unit>,
+  }
+
+  type getItemsOrThrowCall = {
+    payload: {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string},
+    resolve: (
+      array<itemMock>,
+      ~latestFetchedBlockNumber: int=?,
+      ~latestFetchedBlockHash: string=?,
+      ~knownHeight: int=?,
+      ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ) => unit,
+    reject: 'exn. 'exn => unit,
   }
 
   type t = {
@@ -489,15 +525,16 @@ module Source = {
     getHeightOrThrowCalls: array<bool>,
     resolveGetHeightOrThrow: int => unit,
     rejectGetHeightOrThrow: 'exn. 'exn => unit,
-    getItemsOrThrowCalls: array<{"fromBlock": int, "toBlock": option<int>, "retry": int}>,
+    getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+    // TODO: Remove in favor of getItemsOrThrowCalls
     resolveGetItemsOrThrow: (
       array<itemMock>,
+      ~resolveAt: [#first | #all | #last]=?,
       ~latestFetchedBlockNumber: int=?,
       ~latestFetchedBlockHash: string=?,
       ~knownHeight: int=?,
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
-    rejectGetItemsOrThrow: 'exn. 'exn => unit,
     getBlockHashesCalls: array<array<int>>,
     resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
     // Height subscription mocking
@@ -520,14 +557,39 @@ module Source = {
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
     let getItemsOrThrowCalls = []
-    let getItemsOrThrowResolveFns = []
-    let getItemsOrThrowRejectFns = []
     let getBlockHashesCalls = []
     let getBlockHashesResolveFns = []
     // Height subscription state
     let heightSubscriptionCalls = []
     let heightSubscriptionCallbacks: array<int => unit> = []
     let heightSubscriptionUnsubscribed = ref(false)
+
+    // With the function we keep only the pending calls,
+    // and remove the resolved ones automatically.
+    let keepOnlyPendingCalls = (~array, ~fn) => {
+      Promise.make((resolve, reject) => {
+        let callRef = ref(%raw(`null`))
+        callRef :=
+          fn(
+            ~resolve=arg => {
+              resolve(arg)
+              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              if indexOf !== -1 {
+                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+              }
+            },
+            ~reject=arg => {
+              reject(arg)
+              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              if indexOf !== -1 {
+                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+              }
+            },
+          )
+        array->Js.Array2.push(callRef.contents)->ignore
+      })
+    }
+
     {
       getHeightOrThrowCalls,
       resolveGetHeightOrThrow: height => {
@@ -542,27 +604,31 @@ module Source = {
       getItemsOrThrowCalls,
       resolveGetItemsOrThrow: (
         items,
+        ~resolveAt=#all,
         ~latestFetchedBlockNumber=?,
         ~latestFetchedBlockHash=?,
         ~knownHeight=?,
         ~prevRangeLastBlock=?,
       ) => {
-        if getItemsOrThrowResolveFns->Utils.Array.isEmpty {
-          Js.Exn.raiseError("getItemsOrThrowResolveFns is empty")
+        let calls = switch resolveAt {
+        | #first => getItemsOrThrowCalls->Js.Array2.slice(~start=0, ~end_=1)
+        | #all => getItemsOrThrowCalls->Utils.Array.copy
+        | #last => getItemsOrThrowCalls->Js.Array2.sliceFrom(getItemsOrThrowCalls->Array.length - 1)
         }
-        getItemsOrThrowResolveFns->Array.forEach(resolve =>
-          resolve({
-            "items": items,
-            "latestFetchedBlockNumber": latestFetchedBlockNumber,
-            "latestFetchedBlockHash": latestFetchedBlockHash,
-            "prevRangeLastBlock": prevRangeLastBlock,
-            "knownHeight": knownHeight,
-          })
-        )
-        getItemsOrThrowResolveFns->Utils.Array.clearInPlace
-      },
-      rejectGetItemsOrThrow: exn => {
-        getItemsOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
+
+        switch calls {
+        | [] => Js.Exn.raiseError("getItemsOrThrowCalls is empty")
+        | calls =>
+          calls->Array.forEach(call =>
+            call.resolve(
+              items,
+              ~latestFetchedBlockNumber?,
+              ~latestFetchedBlockHash?,
+              ~knownHeight?,
+              ~prevRangeLastBlock?,
+            )
+          )
+        }
       },
       getBlockHashesCalls,
       resolveGetBlockHashes: blockHashes => {
@@ -605,41 +671,47 @@ module Source = {
           getItemsOrThrow: implement(#getItemsOrThrow, (
             ~fromBlock,
             ~toBlock,
-            ~addressesByContractName as _,
+            ~addressesByContractName as _addressesByContractName,
             ~indexingContracts as _,
             ~knownHeight,
-            ~partitionId as _,
+            ~partitionId,
             ~selection as _,
             ~retry,
             ~logger as _,
           ) => {
-            getItemsOrThrowCalls
-            ->Js.Array2.push({
-              "fromBlock": fromBlock,
-              "toBlock": toBlock,
-              "retry": retry,
-            })
-            ->ignore
-            Promise.make((resolve, reject) => {
-              getItemsOrThrowResolveFns
-              ->Js.Array2.push(
-                data => {
+            keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
+              let payload = {
+                "fromBlock": fromBlock,
+                "toBlock": toBlock,
+                "retry": retry,
+                "p": partitionId,
+              }
+              let _ = %raw(`Object.defineProperty(payload, 'addresses', { value: _addressesByContractName })`)
+              {
+                payload,
+                resolve: (
+                  items,
+                  ~latestFetchedBlockNumber=?,
+                  ~latestFetchedBlockHash=?,
+                  ~knownHeight=knownHeight,
+                  ~prevRangeLastBlock=?,
+                ) => {
                   let latestFetchedBlockNumber =
-                    data["latestFetchedBlockNumber"]->Option.getWithDefault(
+                    latestFetchedBlockNumber->Option.getWithDefault(
                       toBlock->Option.getWithDefault(fromBlock),
                     )
 
                   resolve({
-                    Source.knownHeight: data["knownHeight"]->Option.getWithDefault(knownHeight),
+                    Source.knownHeight,
                     reorgGuard: {
                       rangeLastBlock: {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: switch data["latestFetchedBlockHash"] {
+                        blockHash: switch latestFetchedBlockHash {
                         | Some(latestFetchedBlockHash) => latestFetchedBlockHash
                         | None => `0x${latestFetchedBlockNumber->Int.toString}`
                         },
                       },
-                      prevRangeLastBlock: switch data["prevRangeLastBlock"] {
+                      prevRangeLastBlock: switch prevRangeLastBlock {
                       | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
                       | None =>
                         if fromBlock > 0 {
@@ -652,7 +724,7 @@ module Source = {
                         }
                       },
                     },
-                    parsedQueueItems: data["items"]->Array.map(
+                    parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
                           eventConfig: ({
@@ -676,8 +748,8 @@ module Source = {
                               )->(
                                 Utils.magic: (
                                   Internal.genericHandlerArgs<
-                                    Types.eventLog<unknown>,
-                                    Types.handlerContext,
+                                    eventLog<unknown>,
+                                    handlerContext,
                                   > => promise<unit>
                                 ) => option<Internal.handler>
                               )
@@ -686,7 +758,7 @@ module Source = {
                             },
                             contractRegister: item.contractRegister->(
                               Utils.magic: option<
-                                Types.HandlerTypes.contractRegister<unit>,
+                                contractRegister<unit>,
                               > => option<Internal.contractRegister>
                             ),
                             paramsRawEventSchema: S.literal(%raw(`null`))
@@ -724,9 +796,8 @@ module Source = {
                     },
                   })
                 },
-              )
-              ->ignore
-              getItemsOrThrowRejectFns->Js.Array2.push(reject)->ignore
+                reject: reject->Utils.magic,
+              }
             })
           }),
           createHeightSubscription: ?switch methods->Js.Array2.includes(#createHeightSubscription) {
@@ -763,11 +834,10 @@ module Helper = {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    let expectedGetItemsCall1 = {"fromBlock": 0, "toBlock": Some(100), "retry": 0}
-
     Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
-      [expectedGetItemsCall1],
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      // fromBlock 1 since it's in the config.yaml start_block is 1
+      [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}],
       ~message="Should request items until reorg threshold",
     )
     sourceMock.resolveGetItemsOrThrow([])
@@ -785,10 +855,10 @@ let mockRawEventRow: InternalTable.RawEvents.t = {
   logIndex: 10,
   transactionFields: S.reverseConvertToJsonOrThrow(
     {
-      Types.Transaction.transactionIndex: 20,
+      Transaction.transactionIndex: 20,
       hash: "0x1234567890abcdef",
     },
-    Types.Transaction.schema,
+    Transaction.schema,
   ),
   srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
   blockHash: "0x9876543210fedcba9876543210fedcba987654321",

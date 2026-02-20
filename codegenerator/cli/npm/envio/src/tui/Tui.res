@@ -10,7 +10,6 @@ module ChainLine = {
     ~progressBlock,
     ~bufferBlock,
     ~sourceBlock,
-    ~firstEventBlock,
     ~startBlock,
     ~endBlock,
     ~poweredByHyperSync,
@@ -25,8 +24,6 @@ module ChainLine = {
       | Some(endBlock) => Pervasives.min(sourceBlock, endBlock)
       | None => sourceBlock
       }
-      let firstEventBlock = firstEventBlock->Option.getWithDefault(startBlock)
-
       let progressBlockStr = progressBlock->TuiData.formatLocaleString
       let toBlockStr = toBlock->TuiData.formatLocaleString
       let eventsStr = eventsProcessed->TuiData.formatLocaleString
@@ -48,9 +45,9 @@ module ChainLine = {
           </Box>
           <BufferedProgressBar
             barWidth={chainsWidth - headerWidth}
-            loaded={progressBlock - firstEventBlock}
-            buffered={bufferBlock - firstEventBlock}
-            outOf={toBlock - firstEventBlock}
+            loaded={progressBlock - startBlock}
+            buffered={bufferBlock - startBlock}
+            outOf={toBlock - startBlock}
             loadingColor={Secondary}
           />
         </Box>
@@ -126,50 +123,36 @@ module App = {
             ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
             : cf.fetchState.knownHeight
 
+        let firstEventBlock = cf.fetchState.firstEventBlock
         let progress: TuiData.progress = if hasProcessedToEndblock {
           // If the endblock has been reached then set the progress to synced.
           // if there's chains that have no events in the block range start->end,
-          // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
+          // it's possible there are no events in that block  range (ie firstEventBlock = None)
           // This ensures TUI still displays synced in this case
-          let {
-            committedProgressBlockNumber,
-            timestampCaughtUpToHeadOrEndblock,
-            numEventsProcessed,
-            firstEventBlockNumber,
-          } = cf
-
           Synced({
-            firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
-            latestProcessedBlock: committedProgressBlockNumber,
-            timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
+            firstEventBlockNumber: firstEventBlock->Option.getWithDefault(0),
+            latestProcessedBlock: cf.committedProgressBlockNumber,
+            timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
               Js.Date.now()->Js.Date.fromFloat,
             ),
             numEventsProcessed,
           })
         } else {
-          switch cf {
-          | {
-              committedProgressBlockNumber,
-              timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
-              firstEventBlockNumber: Some(firstEventBlockNumber),
-            } =>
+          switch (firstEventBlock, cf.timestampCaughtUpToHeadOrEndblock) {
+          | (Some(firstEventBlockNumber), Some(timestampCaughtUpToHeadOrEndblock)) =>
             Synced({
               firstEventBlockNumber,
-              latestProcessedBlock: committedProgressBlockNumber,
+              latestProcessedBlock: cf.committedProgressBlockNumber,
               timestampCaughtUpToHeadOrEndblock,
               numEventsProcessed,
             })
-          | {
-              committedProgressBlockNumber,
-              timestampCaughtUpToHeadOrEndblock: None,
-              firstEventBlockNumber: Some(firstEventBlockNumber),
-            } =>
+          | (Some(firstEventBlockNumber), None) =>
             Syncing({
               firstEventBlockNumber,
-              latestProcessedBlock: committedProgressBlockNumber,
+              latestProcessedBlock: cf.committedProgressBlockNumber,
               numEventsProcessed,
             })
-          | {firstEventBlockNumber: None} => SearchingForEvents
+          | (None, _) => SearchingForEvents
           }
         }
 
@@ -181,12 +164,12 @@ module App = {
             numBatchesFetched,
             eventsProcessed: numEventsProcessed,
             chainId: cf.chainConfig.id->Int.toString,
-            progressBlock: cf.committedProgressBlockNumber === -1
-              ? None
+            progressBlock: cf.committedProgressBlockNumber < cf.fetchState.startBlock
+              ? Some(cf.fetchState.startBlock)
               : Some(cf.committedProgressBlockNumber),
             bufferBlock: Some(latestFetchedBlockNumber),
             sourceBlock: Some(cf.fetchState.knownHeight),
-            firstEventBlockNumber: cf.firstEventBlockNumber,
+            firstEventBlockNumber: cf.fetchState.firstEventBlock,
             startBlock: cf.fetchState.startBlock,
             endBlock: cf.fetchState.endBlock,
             poweredByHyperSync: (
@@ -228,7 +211,6 @@ module App = {
           startBlock={chainData.startBlock}
           endBlock={chainData.endBlock}
           stdoutColumns={stdoutColumns}
-          firstEventBlock={chainData.firstEventBlockNumber}
           poweredByHyperSync={chainData.poweredByHyperSync}
           eventsProcessed={chainData.eventsProcessed}
         />

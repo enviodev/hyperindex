@@ -23,6 +23,20 @@ type testIndexerState = {
   mutable processChanges: array<unknown>,
 }
 
+// Cast Internal.entity back to DynamicContractRegistry.t
+external castFromDcRegistry: Internal.entity => InternalTable.DynamicContractRegistry.t =
+  "%identity"
+
+// Convert DynamicContractRegistry.t to Internal.indexingContract
+let toIndexingContract = (
+  dc: InternalTable.DynamicContractRegistry.t,
+): Internal.indexingContract => {
+  address: dc.contractAddress,
+  contractName: dc.contractName,
+  startBlock: dc.registeringEventBlockNumber,
+  registrationBlock: Some(dc.registeringEventBlockNumber),
+}
+
 let handleLoadByIds = (
   state: testIndexerState,
   ~tableName: string,
@@ -201,14 +215,30 @@ let handleWriteBatch = (
       entityChanges
       ->Js.Dict.entries
       ->Array.forEach(((entityName, {sets, deleted})) => {
-        let entityObj: dict<unknown> = Js.Dict.empty()
-        if sets->Array.length > 0 {
-          entityObj->Js.Dict.set("sets", sets->Utils.magic)
+        // Transform dynamic_contract_registry to addresses with simplified structure
+        if entityName === InternalTable.DynamicContractRegistry.name {
+          let entityObj: dict<unknown> = Js.Dict.empty()
+          if sets->Array.length > 0 {
+            // Transform sets to simplified {address, contract} objects
+            let simplifiedSets =
+              sets->Array.map(entity => {
+                let dc = entity->Utils.magic->castFromDcRegistry
+                {"address": dc.contractAddress, "contract": dc.contractName}
+              })
+            entityObj->Js.Dict.set("sets", simplifiedSets->Utils.magic)
+          }
+          // Note: deleted is not relevant for addresses since we use address string directly
+          change->Js.Dict.set("addresses", entityObj->Utils.magic)
+        } else {
+          let entityObj: dict<unknown> = Js.Dict.empty()
+          if sets->Array.length > 0 {
+            entityObj->Js.Dict.set("sets", sets->Utils.magic)
+          }
+          if deleted->Array.length > 0 {
+            entityObj->Js.Dict.set("deleted", deleted->Utils.magic)
+          }
+          change->Js.Dict.set(entityName, entityObj->Utils.magic)
         }
-        if deleted->Array.length > 0 {
-          entityObj->Js.Dict.set("deleted", deleted->Utils.magic)
-        }
-        change->Js.Dict.set(entityName, entityObj->Utils.magic)
       })
     | None => ()
     }
@@ -220,6 +250,7 @@ let handleWriteBatch = (
 let makeInitialState = (
   ~config: Config.t,
   ~processConfigChains: Js.Dict.t<chainConfig>,
+  ~dynamicContractsByChain: dict<array<Internal.indexingContract>>,
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Js.Dict.keys
   let chains = chainKeys->Array.map(chainIdStr => {
@@ -231,6 +262,10 @@ let makeInitialState = (
     }
 
     let processChainConfig = processConfigChains->Js.Dict.unsafeGet(chainIdStr)
+    let dynamicContracts =
+      dynamicContractsByChain
+      ->Js.Dict.get(chainIdStr)
+      ->Option.getWithDefault([])
     {
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,
@@ -241,7 +276,7 @@ let makeInitialState = (
       numEventsProcessed: 0,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
-      dynamicContracts: [],
+      dynamicContracts,
     }
   })
 
@@ -289,6 +324,51 @@ let validateBlockRange = (
   }
 }
 
+// Entity operations for direct manipulation outside of handlers
+let makeEntityGet = (
+  ~state: testIndexerState,
+  ~entityConfig: Internal.entityConfig,
+): (string => promise<option<Internal.entity>>) => {
+  entityId => {
+    if state.processInProgress {
+      Js.Exn.raiseError(
+        `Cannot call ${entityConfig.name}.get() while indexer.process() is running. ` ++
+        "Wait for process() to complete before accessing entities directly.",
+      )
+    }
+    let entityDict =
+      state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
+    Promise.resolve(entityDict->Js.Dict.get(entityId))
+  }
+}
+
+let makeEntitySet = (
+  ~state: testIndexerState,
+  ~entityConfig: Internal.entityConfig,
+): (Internal.entity => unit) => {
+  entity => {
+    if state.processInProgress {
+      Js.Exn.raiseError(
+        `Cannot call ${entityConfig.name}.set() while indexer.process() is running. ` ++
+        "Wait for process() to complete before modifying entities directly.",
+      )
+    }
+    let entityDict = switch state.entities->Js.Dict.get(entityConfig.name) {
+    | Some(dict) => dict
+    | None =>
+      let dict = Js.Dict.empty()
+      state.entities->Js.Dict.set(entityConfig.name, dict)
+      dict
+    }
+    entityDict->Js.Dict.set(entity.id, entity)
+  }
+}
+
+type entityOps = {
+  get: string => promise<option<Internal.entity>>,
+  set: Internal.entity => unit,
+}
+
 let makeCreateTestIndexer = (
   ~config: Config.t,
   ~workerPath: string,
@@ -308,8 +388,116 @@ let makeCreateTestIndexer = (
       entityConfigs,
       processChanges: [],
     }
-    {
-      process: processConfig => {
+
+    // Build entity operations for each user entity
+    let entityOpsDict: Js.Dict.t<entityOps> = Js.Dict.empty()
+    allEntities->Array.forEach(entityConfig => {
+      // Only create ops for user entities (not internal tables like dynamic_contract_registry)
+      if entityConfig.name !== InternalTable.DynamicContractRegistry.name {
+        entityOpsDict->Js.Dict.set(
+          entityConfig.name,
+          {
+            get: makeEntityGet(~state, ~entityConfig),
+            set: makeEntitySet(~state, ~entityConfig),
+          },
+        )
+      }
+    })
+
+    // Build chain info from config (similar to Main.getGlobalIndexer but static)
+    let chainIds = []
+    let chains = Utils.Object.createNullObject()
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainIdStr = chainConfig.id->Int.toString
+      chainIds->Js.Array2.push(chainConfig.id)->ignore
+
+      let chainObj = Utils.Object.createNullObject()
+      chainObj
+      ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
+      ->Utils.Object.definePropertyWithValue(
+        "startBlock",
+        {enumerable: true, value: chainConfig.startBlock},
+      )
+      ->Utils.Object.definePropertyWithValue(
+        "endBlock",
+        {enumerable: true, value: chainConfig.endBlock},
+      )
+      ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
+      ->Utils.Object.definePropertyWithValue("isLive", {enumerable: true, value: false})
+      ->ignore
+
+      // Add contracts to chain object
+      chainConfig.contracts->Array.forEach(contract => {
+        let contractObj = Utils.Object.createNullObject()
+        contractObj
+        ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
+        ->Utils.Object.definePropertyWithValue("abi", {enumerable: true, value: contract.abi})
+        ->Utils.Object.defineProperty(
+          "addresses",
+          {
+            enumerable: true,
+            get: () => {
+              if state.processInProgress {
+                Js.Exn.raiseError(
+                  `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++
+                  "Wait for process() to complete before reading contract addresses.",
+                )
+              }
+              // Start with static config addresses
+              let addresses = contract.addresses->Array.copy
+              // Add accumulated dynamic contract addresses
+              switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+              | Some(dcDict) =>
+                dcDict
+                ->Js.Dict.values
+                ->Array.forEach(entity => {
+                  let dc = entity->castFromDcRegistry
+                  if dc.contractName === contract.name && dc.chainId === chainConfig.id {
+                    addresses->Array.push(dc.contractAddress)->ignore
+                  }
+                })
+              | None => ()
+              }
+              addresses
+            },
+          },
+        )
+        ->ignore
+
+        chainObj
+        ->Utils.Object.definePropertyWithValue(contract.name, {enumerable: true, value: contractObj})
+        ->ignore
+      })
+
+      chains
+      ->Utils.Object.definePropertyWithValue(chainIdStr, {enumerable: true, value: chainObj})
+      ->ignore
+
+      if chainConfig.name !== chainIdStr {
+        chains
+        ->Utils.Object.definePropertyWithValue(
+          chainConfig.name,
+          {enumerable: false, value: chainObj},
+        )
+        ->ignore
+      }
+    })
+
+    // Build the result object with process + entity operations + chain info
+    let result: Js.Dict.t<unknown> = Js.Dict.empty()
+    result->Js.Dict.set("chainIds", chainIds->(Utils.magic: array<int> => unknown))
+    result->Js.Dict.set("chains", chains->(Utils.magic: {..} => unknown))
+    entityOpsDict
+    ->Js.Dict.entries
+    ->Array.forEach(((name, ops)) => {
+      result->Js.Dict.set(name, ops->(Utils.magic: entityOps => unknown))
+    })
+
+    result->Js.Dict.set(
+      "process",
+      (processConfig => {
         // Check if already processing
         if state.processInProgress {
           Js.Exn.raiseError(
@@ -344,8 +532,33 @@ let makeCreateTestIndexer = (
         // Reset processChanges for this run
         state.processChanges = []
 
+        // Extract dynamic contracts from state.entities for each chain
+        let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Js.Dict.empty()
+        switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+        | Some(dcDict) =>
+          dcDict
+          ->Js.Dict.values
+          ->Array.forEach(entity => {
+            let dc = entity->castFromDcRegistry
+            let chainIdStr = dc.chainId->Int.toString
+            let contracts = switch dynamicContractsByChain->Js.Dict.get(chainIdStr) {
+            | Some(arr) => arr
+            | None =>
+              let arr = []
+              dynamicContractsByChain->Js.Dict.set(chainIdStr, arr)
+              arr
+            }
+            contracts->Array.push(dc->toIndexingContract)->ignore
+          })
+        | None => ()
+        }
+
         // Create initialState from processConfig chains
-        let initialState = makeInitialState(~config, ~processConfigChains=chains)
+        let initialState = makeInitialState(
+          ~config,
+          ~processConfigChains=chains,
+          ~dynamicContractsByChain,
+        )
 
         Promise.make((resolve, reject) => {
           // Include initialState in workerData
@@ -431,8 +644,10 @@ let makeCreateTestIndexer = (
             }
           })
         })
-      },
-    }
+      })->(Utils.magic: ('a => promise<processResult>) => unknown),
+    )
+
+    result->(Utils.magic: Js.Dict.t<unknown> => t<'processConfig>)
   }
 }
 
@@ -442,9 +657,7 @@ type workerData = {
 }
 
 let initTestWorker = (
-  ~registerAllHandlers: unit => promise<EventRegister.registrations>,
   ~makeGeneratedConfig: unit => Config.t,
-  ~makePersistence: (~storage: Persistence.storage) => Persistence.t,
 ) => {
   if NodeJs.WorkerThreads.isMainThread {
     Js.Exn.raiseError("initTestWorker must be called from a worker thread")
@@ -461,7 +674,12 @@ let initTestWorker = (
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
-    let persistence = makePersistence(~storage)
+    let config = makeGeneratedConfig()
+    let persistence = Persistence.make(
+      ~userEntities=config.userEntities,
+      ~allEnums=config.allEnums,
+      ~storage,
+    )
 
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
@@ -469,7 +687,7 @@ let initTestWorker = (
     | Some(_) => ()
     }
 
-    Main.start(~registerAllHandlers, ~makeGeneratedConfig, ~persistence, ~isTest=true)->ignore
+    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true)->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

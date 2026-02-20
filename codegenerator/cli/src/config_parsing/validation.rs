@@ -1,7 +1,5 @@
-use super::{
-    chain_helpers,
-    human_config::{self, evm::HumanConfig},
-};
+// use super::chain_helpers;
+use super::human_config::{self, evm::HumanConfig};
 use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
@@ -92,7 +90,7 @@ pub fn validate_names_valid_rescript(
     let detected_reserved_words = check_reserved_words(names_from_config);
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "EE102: The config contains reserved words for {} names: {}. They are used for the \
+            "The config contains reserved words for {} names: {}. They are used for the \
              generated code and must be valid identifiers, containing only alphanumeric \
              characters and underscores.",
             part_of_config,
@@ -112,7 +110,7 @@ pub fn validate_names_valid_rescript(
     }
     if !invalid_names.is_empty() {
         return Err(anyhow!(
-            "EE111: The config contains invalid characters for {} names: {}. They are used for \
+            "The config contains invalid characters for {} names: {}. They are used for \
              the generated code and must be valid identifiers, containing only alphanumeric \
              characters and underscores.",
             part_of_config,
@@ -130,32 +128,32 @@ pub fn validate_names_valid_rescript(
 impl human_config::evm::Chain {
     pub fn validate_finite_endblock_networks(
         &self,
-        human_config: &human_config::evm::HumanConfig,
+        _human_config: &human_config::evm::HumanConfig,
     ) -> anyhow::Result<()> {
-        let is_ordered_multichain_mode =
-            matches!(human_config.multichain, Some(human_config::evm::Multichain::Ordered));
-        let is_multichain_indexer = human_config.chains.len() > 1;
-        if is_ordered_multichain_mode && is_multichain_indexer {
-            let make_err = |finite_end_block: u64| {
-                Err(anyhow!(
-                    "Chain {} has a finite end block of {}. Please set an end_block that is \
-                     less than or equal to the finite end block in your config or set \
-                     \"multichain\" to \"unordered\". Your multichain indexer will \
-                     otherwise be stuck when it reaches the end of this chain.",
-                    self.id,
-                    finite_end_block
-                ))
-            };
-            if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
-                match (self.end_block, network.get_finite_end_block()) {
-                    (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
-                        return make_err(finite_end_block)
-                    }
-                    (None, Some(finite_end_block)) => return make_err(finite_end_block),
-                    _ => (),
-                }
-            }
-        }
+        // let is_ordered_multichain_mode =
+        //     matches!(human_config.multichain, Some(human_config::evm::Multichain::Ordered));
+        // let is_multichain_indexer = human_config.chains.len() > 1;
+        // if is_ordered_multichain_mode && is_multichain_indexer {
+        //     let make_err = |finite_end_block: u64| {
+        //         Err(anyhow!(
+        //             "Chain {} has a finite end block of {}. Please set an end_block that is \
+        //              less than or equal to the finite end block in your config or set \
+        //              \"multichain\" to \"unordered\". Your multichain indexer will \
+        //              otherwise be stuck when it reaches the end of this chain.",
+        //             self.id,
+        //             finite_end_block
+        //         ))
+        //     };
+        //     if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
+        //         match (self.end_block, network.get_finite_end_block()) {
+        //             (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
+        //                 return make_err(finite_end_block)
+        //             }
+        //             (None, Some(finite_end_block)) => return make_err(finite_end_block),
+        //             _ => (),
+        //         }
+        //     }
+        // }
         Ok(())
     }
 
@@ -163,7 +161,7 @@ impl human_config::evm::Chain {
         if let Some(network_endblock) = self.end_block {
             if network_endblock < self.start_block {
                 return Err(anyhow!(
-                    "EE110: The config file has an endBlock that is less than the startBlock for \
+                    "The config file has an endBlock that is less than the startBlock for \
                      network id: {}. The endBlock must be greater than the startBlock.",
                     &self.id.to_string()
                 ));
@@ -196,7 +194,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
             for contract_address in contract.address.clone().into_iter() {
                 if !is_valid_ethereum_address(&contract_address) {
                     return Err(anyhow!(
-                        "EE100: One of the contract addresses in the config file isn't valid",
+                        "One of the contract addresses in the config file isn't valid",
                     ));
                 }
             }
@@ -205,7 +203,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     // Checking that contract names are non-unique
     if !are_contract_names_unique(&contract_names) {
         return Err(anyhow!(
-            "EE101: Duplicate contract names detected. All contract names must be unique across all networks, and are case-insensitive. \
+            "Duplicate contract names detected. All contract names must be unique across all networks, and are case-insensitive. \
      For multichain indexing, consider using a global contract definition. More information is available at: https://docs.envio.dev/docs/HyperIndex/multichain-indexing",
         ));
     }
@@ -415,7 +413,7 @@ mod tests {
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "EE102: The config contains reserved words for contract names: \"module\", \"this\". \
+            "The config contains reserved words for contract names: \"module\", \"this\". \
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
@@ -437,7 +435,7 @@ mod tests {
         );
         assert_eq!(
             invalid_names.unwrap_err().to_string(),
-            "EE111: The config contains invalid characters for contract names: \
+            "The config contains invalid characters for contract names: \
              \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". \
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."

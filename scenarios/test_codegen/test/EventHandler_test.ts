@@ -9,6 +9,7 @@ import {
   type EvmChainName,
   type FuelChainId,
   type SvmChainId,
+  type TestIndexer,
 } from "generated";
 import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -635,6 +636,48 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  it("createTestIndexer has chain info", () => {
+    const testIndexer = createTestIndexer();
+
+    // TestIndexer should expose chainIds and chains like the Indexer
+    assert.deepEqual(testIndexer.chainIds, [1, 100, 137, 1337]);
+    assert.deepEqual(Object.keys(testIndexer.chains), ["1", "100", "137", "1337"]);
+
+    // Chain by ID
+    const chain = testIndexer.chains[1];
+    assert.deepEqual(chain.id, 1);
+    assert.deepEqual(chain.name, "ethereumMainnet");
+    assert.deepEqual(chain.startBlock, 1);
+    assert.deepEqual(chain.endBlock, undefined);
+    assert.deepEqual(chain.isLive, false);
+
+    // Chain by name (non-enumerable alias)
+    assert.deepEqual(testIndexer.chains[1], testIndexer.chains.ethereumMainnet);
+
+    // Contract info on chain
+    assert.deepEqual(chain.Noop.name, "Noop");
+    assert.ok(Array.isArray(chain.Noop.abi));
+    assert.deepEqual(chain.Noop.addresses, [
+      "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3",
+    ]);
+  });
+
+  it("TestIndexer contract addresses throws during processing", () => {
+    const testIndexer = createTestIndexer();
+
+    // Start processing (don't await)
+    testIndexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    assert.throws(() => testIndexer.chains[1].Noop.addresses, {
+      message:
+        "Cannot access Noop.addresses while indexer.process() is running. Wait for process() to complete before reading contract addresses.",
+    });
+  });
+
   it("createTestIndexer works", async () => {
     const indexer = createTestIndexer();
 
@@ -753,5 +796,137 @@ describe("Use Envio test framework to test event handlers", () => {
           "Invalid block range for chain 1: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer().",
       }
     );
+  });
+
+  it("TestIndexer result type is properly typed", async () => {
+    const testIndexer = createTestIndexer();
+
+    // Verify TestIndexer type matches createTestIndexer return type
+    expectType<TypeEqual<typeof testIndexer, TestIndexer>>(true);
+
+    // Verify chain info types
+    expectType<TypeEqual<typeof testIndexer.chainIds, readonly (1 | 100 | 137 | 1337)[]>>(true);
+    expectType<TypeEqual<typeof testIndexer.chains[1]["isLive"], boolean>>(true);
+    expectType<TypeEqual<typeof testIndexer.chains[1]["id"], 1>>(true);
+
+    const result = await testIndexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    const change = result.changes[0];
+    if (change) {
+      // Verify change has expected metadata fields
+      expectType<TypeEqual<typeof change.block, number>>(true);
+      expectType<TypeEqual<typeof change.chainId, number>>(true);
+      expectType<TypeEqual<typeof change.eventsProcessed, number>>(true);
+      expectType<TypeEqual<typeof change.blockHash, string | undefined>>(true);
+
+      // Verify entity changes have expected structure
+      const userChange = change.User;
+      if (userChange) {
+        expectType<
+          TypeEqual<typeof userChange.sets, readonly User[] | undefined>
+        >(true);
+        expectType<
+          TypeEqual<typeof userChange.deleted, readonly string[] | undefined>
+        >(true);
+      }
+    }
+  });
+
+  it("TestIndexer.Entity.set stores entity and .get retrieves it", async () => {
+    const indexer = createTestIndexer();
+
+    const user: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    // Set entity
+    indexer.User.set(user);
+
+    // Get entity
+    const retrieved = await indexer.User.get("test-user-1");
+    assert.deepEqual(retrieved, user);
+  });
+
+  it("TestIndexer.Entity.get returns undefined for non-existent entity", async () => {
+    const indexer = createTestIndexer();
+
+    const retrieved = await indexer.User.get("non-existent");
+    assert.strictEqual(retrieved, undefined);
+  });
+
+  it("TestIndexer.Entity.set overwrites existing entity", async () => {
+    const indexer = createTestIndexer();
+
+    const user1: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    const user2: User = {
+      id: "test-user-1",
+      address: "0x5678",
+      updatesCountOnUserForTesting: 10,
+      gravatar_id: "gravatar-1",
+      accountType: "ADMIN",
+    };
+
+    indexer.User.set(user1);
+    indexer.User.set(user2);
+
+    const retrieved = await indexer.User.get("test-user-1");
+    assert.deepEqual(retrieved, user2);
+  });
+
+  it("TestIndexer.Entity.get throws when called during processing", () => {
+    const indexer = createTestIndexer();
+
+    // Start processing (don't await - we're testing the error during processing)
+    indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // The error is thrown synchronously when calling get during processing
+    assert.throws(() => indexer.User.get("test-user-1"), {
+      message:
+        "Cannot call User.get() while indexer.process() is running. Wait for process() to complete before accessing entities directly.",
+    });
+  });
+
+  it("TestIndexer.Entity.set throws when called during processing", () => {
+    const indexer = createTestIndexer();
+
+    const user: User = {
+      id: "test-user-1",
+      address: "0x1234",
+      updatesCountOnUserForTesting: 5,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+
+    // Start processing (don't await - we're testing the error during processing)
+    indexer.process({
+      chains: {
+        1: { startBlock: 1, endBlock: 100 },
+      },
+    });
+
+    // Try to call set during processing
+    assert.throws(() => indexer.User.set(user), {
+      message:
+        "Cannot call User.set() while indexer.process() is running. Wait for process() to complete before modifying entities directly.",
+    });
   });
 });

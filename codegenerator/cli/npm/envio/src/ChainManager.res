@@ -11,32 +11,22 @@ type t = {
 // A chain is in reorg threshold when progressBlockNumber > sourceBlockNumber - maxReorgDepth.
 // This matches the logic in InternalTable.Checkpoints.makeGetReorgCheckpointsQuery.
 let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~maxReorgDepth) => {
-  maxReorgDepth > 0 && progressBlockNumber > sourceBlockNumber - maxReorgDepth
+  maxReorgDepth > 0 &&
+  sourceBlockNumber > 0 &&
+  progressBlockNumber > sourceBlockNumber - maxReorgDepth
 }
 
-let calculateTargetBufferSize = (~activeChainsCount, ~config: Config.t) => {
-  let targetBatchesInBuffer = 3
+let calculateTargetBufferSize = (~activeChainsCount) => {
   switch Env.targetBufferSize {
   | Some(size) => size
   | None =>
-    config.batchSize * (activeChainsCount > targetBatchesInBuffer ? 1 : targetBatchesInBuffer)
-  }
-}
-
-let makeFromConfig = (~config: Config.t, ~registrations): t => {
-  let targetBufferSize = calculateTargetBufferSize(
-    ~activeChainsCount=config.chainMap->ChainMap.size,
-    ~config,
-  )
-  let chainFetchers =
-    config.chainMap->ChainMap.map(
-      ChainFetcher.makeFromConfig(_, ~config, ~registrations, ~targetBufferSize),
-    )
-  {
-    committedCheckpointId: 0.,
-    chainFetchers,
-    multichain: config.multichain,
-    isInReorgThreshold: false,
+    switch activeChainsCount {
+    | 1 => 50_000
+    | 2 => 30_000
+    | 3 => 20_000
+    | 4 => 15_000
+    | _ => 10_000
+    }
   }
 }
 
@@ -60,7 +50,6 @@ let makeFromDbState = async (
 
   let targetBufferSize = calculateTargetBufferSize(
     ~activeChainsCount=initialState.chains->Array.length,
-    ~config,
   )
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)

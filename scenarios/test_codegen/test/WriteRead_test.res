@@ -11,7 +11,7 @@ describe("Write/read tests", () => {
   Async.it("Test writing and reading entities with special cases", async () => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
-      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~saveFullHistory=true,
       ~enableHasura=true,
     )
@@ -26,7 +26,7 @@ describe("Write/read tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    let entityWithAllTypes: Entities.EntityWithAllTypes.t = {
+    let entityWithAllTypes: Indexer.Entities.EntityWithAllTypes.t = {
       id: "1",
       string: "string",
       optString: Some("optString"),
@@ -56,7 +56,7 @@ describe("Write/read tests", () => {
       enumField: ADMIN,
       optEnumField: Some(ADMIN),
     }
-    let entityWithAllNonArrayTypes: Entities.EntityWithAllNonArrayTypes.t = {
+    let entityWithAllNonArrayTypes: Indexer.Entities.EntityWithAllNonArrayTypes.t = {
       id: "1",
       string: "string",
       optString: Some("optString"),
@@ -98,11 +98,11 @@ describe("Write/read tests", () => {
     await indexerMock.getBatchWritePromise()
 
     Assert.deepEqual(
-      await indexerMock.query(module(Entities.EntityWithAllTypes)),
+      await indexerMock.query(EntityWithAllTypes),
       [entityWithAllTypes],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(module(Entities.EntityWithAllTypes)),
+      await indexerMock.queryHistory(EntityWithAllTypes),
       [
         Set({
           checkpointId: 1.,
@@ -112,11 +112,11 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.query(module(Entities.EntityWithAllNonArrayTypes)),
+      await indexerMock.query(EntityWithAllNonArrayTypes),
       [entityWithAllNonArrayTypes],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(module(Entities.EntityWithAllNonArrayTypes)),
+      await indexerMock.queryHistory(EntityWithAllNonArrayTypes),
       [
         Set({
           checkpointId: 1.,
@@ -127,9 +127,7 @@ describe("Write/read tests", () => {
     )
 
     Assert.deepEqual(
-      await indexerMock.query(
-        module(Entities.EntityWith63LenghtName______________________________________one),
-      ),
+      await indexerMock.query(EntityWith63LenghtName______________________________________one),
       [
         {
           id: "1",
@@ -137,9 +135,7 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(
-        module(Entities.EntityWith63LenghtName______________________________________one),
-      ),
+      await indexerMock.queryHistory(EntityWith63LenghtName______________________________________one),
       [
         Set({
           checkpointId: 1.,
@@ -151,9 +147,7 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.query(
-        module(Entities.EntityWith63LenghtName______________________________________two),
-      ),
+      await indexerMock.query(EntityWith63LenghtName______________________________________two),
       [
         {
           id: "2",
@@ -161,9 +155,7 @@ describe("Write/read tests", () => {
       ],
     )
     Assert.deepEqual(
-      await indexerMock.queryHistory(
-        module(Entities.EntityWith63LenghtName______________________________________two),
-      ),
+      await indexerMock.queryHistory(EntityWith63LenghtName______________________________________two),
       [
         Set({
           checkpointId: 1.,
@@ -201,7 +193,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   Async.it("Test getWhere queries with eq and gt operators", async () => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
-      ~chains=[{chain: #1337, sources: [sourceMock.source]}],
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
     )
     await Utils.delay(0)
 
@@ -216,6 +208,14 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let whereTokenIdGt49Test = ref([])
     let whereTokenIdLt50Test = ref([])
     let whereTokenIdLt51Test = ref([])
+    let whereTokenIdGte50Test = ref([])
+    let whereTokenIdGte51Test = ref([])
+    let whereTokenIdLte50Test = ref([])
+    let whereTokenIdLte49Test = ref([])
+    let whereInOwnerTest = ref([])
+    let whereInTokenIdTest = ref([])
+    let whereInTokenIdNoMatchTest = ref([])
+    let whereInTokenIdEmptyTest = ref([])
 
     let testUserId = "test-user-1"
     let testCollectionId = "test-collection-1"
@@ -250,13 +250,32 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
             owner_id: testUserId,
           })
 
+          context.token.set({
+            id: "token-2",
+            tokenId: BigInt.fromInt(60),
+            collection_id: testCollectionId,
+            owner_id: testUserId,
+          })
+
           // Execute getWhere queries
-          whereEqOwnerTest := (await context.token.getWhere.owner_id.eq(testUserId))
-          whereEqTokenIdTest := (await context.token.getWhere.tokenId.eq(BigInt.fromInt(50)))
-          whereTokenIdGt50Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(50)))
-          whereTokenIdGt49Test := (await context.token.getWhere.tokenId.gt(BigInt.fromInt(49)))
-          whereTokenIdLt50Test := (await context.token.getWhere.tokenId.lt(BigInt.fromInt(50)))
-          whereTokenIdLt51Test := (await context.token.getWhere.tokenId.lt(BigInt.fromInt(51)))
+          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
+          whereEqTokenIdTest := (await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
+          whereTokenIdGt50Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
+          whereTokenIdGt49Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
+          whereTokenIdLt50Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
+          whereTokenIdLt51Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
+
+          // Execute _gte and _lte queries
+          whereTokenIdGte50Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
+          whereTokenIdGte51Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
+          whereTokenIdLte50Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
+          whereTokenIdLte49Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
+
+          // Execute _in queries
+          whereInOwnerTest := (await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
+          whereInTokenIdTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]}}))
+          whereInTokenIdNoMatchTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}))
+          whereInTokenIdEmptyTest := (await context.token.getWhere({tokenId: {_in: []}}))
         },
       },
     ])
@@ -265,7 +284,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     // Assert getWhere results
     Assert.equal(
       whereEqOwnerTest.contents->Array.length,
-      1,
+      2,
       ~message="should have successfully loaded values on where eq owner_id query",
     )
     Assert.equal(
@@ -275,23 +294,69 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     )
     Assert.equal(
       whereTokenIdGt50Test.contents->Array.length,
-      0,
-      ~message="Shouldn't have any value with tokenId > 50",
+      1,
+      ~message="Should have one token with tokenId > 50",
     )
-    Assert.deepEqual(
-      whereEqTokenIdTest.contents,
-      whereTokenIdGt49Test.contents,
-      ~message="Where gt 49 and eq 50 should return the same result",
+    Assert.equal(
+      whereTokenIdGt49Test.contents->Array.length,
+      2,
+      ~message="Should have two tokens with tokenId > 49",
     )
     Assert.equal(
       whereTokenIdLt50Test.contents->Array.length,
       0,
       ~message="Shouldn't have any value with tokenId < 50",
     )
-    Assert.deepEqual(
-      whereEqTokenIdTest.contents,
-      whereTokenIdLt51Test.contents,
-      ~message="Where lt 51 and eq 50 should return the same result",
+    Assert.equal(
+      whereTokenIdLt51Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId < 51",
+    )
+
+    // Assert _gte results
+    Assert.equal(
+      whereTokenIdGte50Test.contents->Array.length,
+      2,
+      ~message="Should have two tokens with tokenId >= 50 (50 and 60)",
+    )
+    Assert.equal(
+      whereTokenIdGte51Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId >= 51 (only 60)",
+    )
+
+    // Assert _lte results
+    Assert.equal(
+      whereTokenIdLte50Test.contents->Array.length,
+      1,
+      ~message="Should have one token with tokenId <= 50",
+    )
+    Assert.equal(
+      whereTokenIdLte49Test.contents->Array.length,
+      0,
+      ~message="Shouldn't have any value with tokenId <= 49",
+    )
+
+    // Assert _in results
+    Assert.equal(
+      whereInOwnerTest.contents->Array.length,
+      2,
+      ~message="_in on owner should return both tokens owned by testUserId",
+    )
+    Assert.equal(
+      whereInTokenIdTest.contents->Array.length,
+      2,
+      ~message="_in on tokenId with [50, 60] should return both tokens",
+    )
+    Assert.equal(
+      whereInTokenIdNoMatchTest.contents->Array.length,
+      0,
+      ~message="_in on tokenId with [999] should return no tokens",
+    )
+    Assert.equal(
+      whereInTokenIdEmptyTest.contents->Array.length,
+      0,
+      ~message="_in on tokenId with empty array should return no tokens",
     )
 
     // Test deletion and index cleanup
@@ -303,7 +368,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           context.token.deleteUnsafe("token-1")
 
           // Execute getWhere query after deletion
-          whereEqOwnerTest := (await context.token.getWhere.owner_id.eq(testUserId))
+          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
         },
       },
     ])
@@ -311,8 +376,8 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
 
     Assert.equal(
       whereEqOwnerTest.contents->Array.length,
-      0,
-      ~message="should have removed index on deleted token",
+      1,
+      ~message="should have removed index on deleted token, leaving one token",
     )
   })
 })

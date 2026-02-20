@@ -15,7 +15,6 @@ type t = {
   isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
-  firstEventBlockNumber: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
@@ -28,10 +27,10 @@ let make = (
   ~dynamicContracts: array<Internal.indexingContract>,
   ~startBlock,
   ~endBlock,
-  ~firstEventBlockNumber,
+  ~firstEventBlock=None,
   ~progressBlockNumber,
   ~config: Config.t,
-  ~registrations: EventRegister.registrations,
+  ~registrations: HandlerRegister.registrations,
   ~targetBufferSize,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
@@ -149,7 +148,7 @@ let make = (
     registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
   switch onBlockConfigs {
   | Some(onBlockConfigs) =>
-    // TODO: Move it to the EventRegister module
+    // TODO: Move it to the HandlerRegister module
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
       if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
@@ -186,6 +185,7 @@ let make = (
       Env.indexingBlockLag->Option.getWithDefault(0),
     ),
     ~onBlockConfigs?,
+    ~firstEventBlock,
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
@@ -196,11 +196,54 @@ let make = (
     }
   })
 
+  // Create sources lazily here - this is where API token validation happens
+  let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+  let lowercaseAddresses = config.lowercaseAddresses
+  let sources = switch chainConfig.sourceConfig {
+  | Config.EvmSourceConfig({hypersync, rpcs}) =>
+    // Build Internal.evmContractConfig from contracts for EvmChain.makeSources
+    let evmContracts: array<Internal.evmContractConfig> = chainConfig.contracts->Array.map((
+      contract
+    ): Internal.evmContractConfig => {
+      name: contract.name,
+      abi: contract.abi,
+      events: contract.events->(
+        Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
+      ),
+    })
+    // Collect all event signatures from contracts
+    let allEventSignatures =
+      chainConfig.contracts->Array.flatMap(contract => contract.eventSignatures)
+    // Convert rpcs to EvmChain.rpc format
+    let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
+      let syncConfig = rpc.syncConfig
+      let ws = rpc.ws
+      {
+        url: rpc.url,
+        sourceFor: rpc.sourceFor,
+        ?syncConfig,
+        ?ws,
+      }
+    })
+    EvmChain.makeSources(
+      ~chain,
+      ~contracts=evmContracts,
+      ~hyperSync=hypersync,
+      ~allEventSignatures,
+      ~rpcs=evmRpcs,
+      ~lowercaseAddresses,
+    )
+  | Config.FuelSourceConfig({hypersync}) => [HyperFuelSource.make({chain, endpointUrl: hypersync})]
+  | Config.SvmSourceConfig({rpc}) => [Svm.makeRPCSource(~chain, ~rpc)]
+  // For tests: use ready-to-use sources directly
+  | Config.CustomSources(sources) => sources
+  }
+
   {
     logger,
     chainConfig,
     sourceManager: SourceManager.make(
-      ~sources=chainConfig.sources,
+      ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
     ),
     reorgDetection: ReorgDetection.make(
@@ -215,7 +258,6 @@ let make = (
     ),
     isProgressAtHead: false,
     fetchState,
-    firstEventBlockNumber,
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
@@ -223,7 +265,13 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~targetBufferSize) => {
+let makeFromConfig = (
+  chainConfig: Config.chain,
+  ~config,
+  ~registrations,
+  ~targetBufferSize,
+  ~knownHeight,
+) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
   make(
@@ -234,7 +282,6 @@ let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~targe
     ~endBlock=chainConfig.endBlock,
     ~reorgCheckpoints=[],
     ~maxReorgDepth=chainConfig.maxReorgDepth,
-    ~firstEventBlockNumber=None,
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
@@ -243,6 +290,7 @@ let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~targe
     ~logger,
     ~dynamicContracts=[],
     ~isInReorgThreshold=false,
+    ~knownHeight,
   )
 }
 
@@ -278,7 +326,7 @@ let makeFromDbState = async (
     ~registrations,
     ~reorgCheckpoints,
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
-    ~firstEventBlockNumber=resumedChainState.firstEventBlockNumber,
+    ~firstEventBlock=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
       ? None
@@ -405,12 +453,12 @@ let handleQueryResult = (
   | _ => chainFetcher.fetchState->FetchState.registerDynamicContracts(newItemsWithDcs)
   }
 
-  fs
-  ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-  ->Result.map(fs => {
+  {
     ...chainFetcher,
-    fetchState: fs->FetchState.updateKnownHeight(~knownHeight),
-  })
+    fetchState: fs
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.updateKnownHeight(~knownHeight),
+  }
 }
 
 /**

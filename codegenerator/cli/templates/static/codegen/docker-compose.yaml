@@ -5,7 +5,7 @@ services:
     ports:
       - "${ENVIO_PG_PORT:-5433}:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - envio-postgres-data:/var/lib/postgresql
     environment:
       POSTGRES_PASSWORD: ${ENVIO_PG_PASSWORD:-testing}
       POSTGRES_USER: ${ENVIO_PG_USER:-postgres}
@@ -27,8 +27,7 @@ services:
       # HASURA_GRAPHQL_METADATA_DIR: /hasura-metadata
       HASURA_GRAPHQL_DATABASE_URL: postgres://${ENVIO_PG_USER:-postgres}:${ENVIO_PG_PASSWORD:-testing}@envio-postgres:5432/${ENVIO_PG_DATABASE:-envio-dev}
       HASURA_GRAPHQL_ENABLE_CONSOLE: ${HASURA_GRAPHQL_ENABLE_CONSOLE:-true} # can make this default to false once we are further in our development.
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES:
-        startup, http-log, webhook-log, websocket-log,
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log,
         query-log
       HASURA_GRAPHQL_NO_OF_RETRIES: 10
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}
@@ -46,7 +45,8 @@ services:
     networks:
       - my-proxy-net
 volumes:
-  db_data:
+  envio-postgres-data:
+    name: envio-postgres-data
 networks:
   my-proxy-net:
     name: local_test_network

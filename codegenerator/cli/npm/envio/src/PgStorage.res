@@ -19,7 +19,7 @@ let makeClient = () => {
           : Some(_str => ())
       ),
       transform: {undefined: Null},
-      max: 2,
+      max: Env.Db.maxConnections,
       // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
     },
   )
@@ -31,13 +31,39 @@ let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
+let directionToSql = (direction: Table.indexFieldDirection) =>
+  switch direction {
+  | Asc => ""
+  | Desc => " DESC"
+  }
+
+let directionToIndexName = (direction: Table.indexFieldDirection) =>
+  switch direction {
+  | Asc => ""
+  | Desc => "_desc"
+  }
+
+let makeCreateCompositeIndexQuery = (~tableName, ~indexFields: array<Table.compositeIndexField>, ~pgSchema) => {
+  let indexName =
+    tableName ++
+    "_" ++
+    indexFields
+    ->Js.Array2.map(f => f.fieldName ++ directionToIndexName(f.direction))
+    ->Js.Array2.joinWith("_")
+  let index =
+    indexFields
+    ->Belt.Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
+    ->Js.Array2.joinWith(", ")
+  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
+}
+
 let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
   open Belt
   let tableName = table.tableName
   let createIndex = indexField =>
     makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
   let createCompositeIndex = indexFields => {
-    makeCreateIndexQuery(~tableName, ~indexFields, ~pgSchema)
+    makeCreateCompositeIndexQuery(~tableName, ~indexFields, ~pgSchema)
   }
 
   let singleIndices = table->Table.getSingleIndices
@@ -933,6 +959,7 @@ let rec writeBatch = async (
                 ): InternalTable.Chains.progressedChain => {
                   chainId: chainAfterBatch.fetchState.chainId,
                   progressBlockNumber: chainAfterBatch.progressBlockNumber,
+                  sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
                   totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
                 }),
               ),

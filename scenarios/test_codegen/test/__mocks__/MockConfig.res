@@ -5,28 +5,31 @@ let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
 let contracts = [
   {
     Config.name: "Gravatar",
-    abi: Types.Gravatar.abi,
+    abi: Indexer.Gravatar.abi,
     addresses: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow],
     events: [
-      (Types.Gravatar.TestEvent.register() :> Internal.eventConfig),
-      (Types.Gravatar.NewGravatar.register() :> Internal.eventConfig),
-      (Types.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
+      (Indexer.Gravatar.TestEvent.register() :> Internal.eventConfig),
+      (Indexer.Gravatar.NewGravatar.register() :> Internal.eventConfig),
+      (Indexer.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
     ],
     startBlock: None,
+    eventSignatures: [],
   },
   {
     name: "NftFactory",
-    abi: Types.NftFactory.abi,
+    abi: Indexer.NftFactory.abi,
     addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow],
-    events: [(Types.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
+    events: [(Indexer.NftFactory.SimpleNftCreated.register() :> Internal.eventConfig)],
     startBlock: None,
+    eventSignatures: [],
   },
   {
     name: "SimpleNft",
-    abi: Types.SimpleNft.abi,
+    abi: Indexer.SimpleNft.abi,
     addresses: [],
-    events: [(Types.SimpleNft.Transfer.register() :> Internal.eventConfig)],
+    events: [(Indexer.SimpleNft.Transfer.register() :> Internal.eventConfig)],
     startBlock: None,
+    eventSignatures: [],
   },
 ]
 
@@ -44,10 +47,9 @@ let mockChainConfig: Config.chain = {
   maxReorgDepth: 200,
   startBlock: 1,
   contracts,
-  sources: [
+  sourceConfig: Config.CustomSources([
     RpcSource.make({
       chain: chain1337,
-      contracts: evmContracts,
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({
         initialBlockInterval: 10000,
@@ -62,9 +64,8 @@ let mockChainConfig: Config.chain = {
       eventRouter: evmContracts
       ->Belt.Array.flatMap(contract => contract.events)
       ->EventRouter.fromEvmEventModsOrThrow(~chain=chain1337),
-      shouldUseHypersyncClientDecoder: false,
       lowercaseAddresses: false,
       allEventSignatures: [],
     }),
-  ],
+  ]),
 }

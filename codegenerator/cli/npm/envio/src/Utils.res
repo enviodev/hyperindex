@@ -95,6 +95,17 @@ module Dict = {
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 
+  let getOrInsertEmptyDict = (dict, key) => {
+    switch dict->dangerouslyGetNonOption(key) {
+    | Some(d) => d
+    | None => {
+        let d = Js.Dict.empty()
+        dict->Js.Dict.set(key, d)
+        d
+      }
+    }
+  }
+
   @get_index
   /**
     It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
@@ -216,7 +227,7 @@ module Dict = {
 module Math = {
   let minOptInt = (a, b) =>
     switch (a, b) {
-    | (Some(a), Some(b)) => Pervasives.min(a, b)->Some
+    | (Some(a), Some(b)) => Some(a < b ? a : b)
     | (Some(a), None) => Some(a)
     | (None, Some(b)) => Some(b)
     | (None, None) => None
@@ -347,8 +358,10 @@ Helper to check if a value exists in an array
   }
 
   let last = (arr: array<'a>): option<'a> => arr->Belt.Array.get(arr->Array.length - 1)
+  let first = (arr: array<'a>): option<'a> => arr->Belt.Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Belt.Array.getUnsafe(arr->Array.length - 1)
+  let firstUnsafe = (arr: array<'a>): 'a => arr->Js.Array2.unsafe_get(0)
 
   let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
     let rec loop = (index: int) => {
@@ -433,6 +446,28 @@ String.replaceAll("the cat and the dog", "the", "this") == "this cat and this do
 */
   @send
   external replaceAll: (string, string, string) => string = "replaceAll"
+}
+
+module Url = {
+  /**
+  Extracts the hostname from a URL string.
+  Returns None if the URL doesn't have a valid http:// or https:// protocol.
+  */
+  let getHostFromUrl = (url: string) => {
+    // Regular expression requiring protocol and capturing hostname
+    // - (https?:\/\/) : Required http:// or https:// (capturing group)
+    // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
+    // - .* : Match rest of the string
+    let regex = %re("/https?:\/\/([^\/?]+).*/")
+    switch Js.Re.exec_(regex, url) {
+    | Some(result) =>
+      switch Js.Re.captures(result)->Belt.Array.get(1) {
+      | Some(host) => host->Js.Nullable.toOption
+      | None => None
+      }
+    | None => None
+    }
+  }
 }
 
 module Result = {
@@ -573,6 +608,13 @@ module Set = {
 
   external toArray: t<'a> => array<'a> = "Array.from"
 
+  @send
+  external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
+
+  let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
+    return new Set([...set, value])
+  }`)
+
   /*
    * Iteration methods
    */
@@ -615,6 +657,19 @@ module WeakMap = {
   @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
+
+  let memoize = (fn: 'k => 'v): ('k => 'v) => {
+    let cache = make()
+    key =>
+      switch cache->get(key) {
+      | Some(v) => v
+      | None => {
+          let v = fn(key)
+          let _ = cache->set(key, v)
+          v
+        }
+      }
+  }
 }
 
 module Map = {

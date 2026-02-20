@@ -5,7 +5,7 @@
   "scripts": {
     "build": "rescript",
     "watch": "rescript -w",
-    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --exit 'test/**/*.{ts,res.mjs}' --ignore 'test/fixtures/**'",
+    "mocha": "NODE_OPTIONS='--no-warnings --import tsx' mocha --timeout 30000 --reporter-option maxDiffSize=65536 --exit 'test/**/*.{ts,res.mjs}' --ignore 'test/fixtures/**'",
     "test": "rescript && tsc --noEmit && pnpm mocha",
     "test-coverage": "rescript && nyc mocha",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
@@ -28,7 +28,6 @@
     "@types/node": "^24.10.1",
     "chai": "^4.3.7",
     "chai-as-promised": "^7.1.1",
-    "ethers": "^6.4.0",
     "tsx": "4.21.0",
     "mocha": "^10.2.0",
     "nyc": "^15.1.0",
@@ -39,7 +38,6 @@
   "dependencies": {
     "bignumber.js": "^9.1.2",
     "helpers": "workspace:*",
-    "rescript-nodejs": "16.0.0",
     "typescript": "5.9.3",
     "ts-expect": "1.3.0",
     "viem": "2.21.0",

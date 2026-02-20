@@ -1,13 +1,13 @@
 open RescriptMocha
 
-let _ = await Generated.registerAllHandlers()
+let _ = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
 
 // Test types:
-let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Types.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
+let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
 
 describe("Test eventFilters", () => {
   it("Supports multichain filters", () => {
-    let eventConfig = Types.EventFiltersTest.Transfer.register()
+    let eventConfig = Indexer.EventFiltersTest.Transfer.register()
 
     Assert.deepEqual(
       eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
@@ -50,7 +50,7 @@ describe("Test eventFilters", () => {
   })
 
   it("Supports filter depending on addresses", () => {
-    let eventConfig = Types.EventFiltersTest.WildcardWithAddress.register()
+    let eventConfig = Indexer.EventFiltersTest.WildcardWithAddress.register()
 
     Assert.deepEqual(
       switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {
@@ -95,7 +95,7 @@ describe("Test eventFilters", () => {
   })
 
   it("Empty filters should fallback to normal topic selection with only topic0", () => {
-    let eventConfig = Types.EventFiltersTest.EmptyFiltersArray.register()
+    let eventConfig = Indexer.EventFiltersTest.EmptyFiltersArray.register()
 
     Assert.deepEqual(
       eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
@@ -114,7 +114,7 @@ describe("Test eventFilters", () => {
   })
 
   it("Fails on filter with excess field", () => {
-    let eventConfig = Types.EventFiltersTest.WithExcessField.register()
+    let eventConfig = Indexer.EventFiltersTest.WithExcessField.register()
 
     Assert.throws(
       () => {

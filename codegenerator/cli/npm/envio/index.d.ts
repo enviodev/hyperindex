@@ -18,6 +18,36 @@ export type { EffectCaller, Address } from "./src/Types.ts";
 /** Utility type to expand/flatten complex types for better IDE display. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 
+/**
+ * Operator for filtering entity fields in getWhere queries.
+ * Only fields with `@index` in the schema can be queried at runtime.
+ */
+export type WhereOperator<T> = {
+  /** Matches entities where the field equals the given value. */
+  readonly _eq?: T;
+  /** Matches entities where the field is greater than the given value. */
+  readonly _gt?: T;
+  /** Matches entities where the field is less than the given value. */
+  readonly _lt?: T;
+  /** Matches entities where the field is greater than or equal to the given value. */
+  readonly _gte?: T;
+  /** Matches entities where the field is less than or equal to the given value. */
+  readonly _lte?: T;
+  /** Matches entities where the field equals any of the given values. */
+  readonly _in?: readonly T[];
+};
+
+/**
+ * Constructs a getWhere filter type from an entity type.
+ * Each field can be filtered using {@link WhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`).
+ *
+ * Note: only fields with `@index` in the schema can be queried at runtime.
+ * Attempting to filter on a non-indexed field will throw a descriptive error.
+ */
+export type GetWhereFilter<E> = {
+  [K in keyof E]?: WhereOperator<E[K]>;
+};
+
 import type {
   effect as Effect,
   effectArgs as EffectArgs,
@@ -193,8 +223,6 @@ type IndexerConfig = {
     contracts?: Record<string, EvmContractConfig>;
     /** Address format (default: "checksum"). */
     addressFormat?: "lowercase" | "checksum";
-    /** Event decoder (default: "hypersync"). */
-    eventDecoder?: "hypersync" | "viem";
   };
   /** Fuel ecosystem configuration. */
   fuel?: {
@@ -351,6 +379,7 @@ type IndexerConfigTypes = {
     contracts?: Record<string, {}>;
   };
   svm?: { chains: Record<string, { id: number }> };
+  entities?: Record<string, object>;
 };
 
 // Helper: Check if ecosystem is configured in a given config
@@ -499,11 +528,54 @@ export type TestIndexerChainConfig = {
   endBlock: number;
 };
 
-/** Progress returned after processing blocks with the test indexer. */
-export type TestIndexerProcessResult = {
-  /** Changes happened during the processing. */
-  changes: unknown[];
+/** Entity change value containing sets and/or deleted IDs. */
+type EntityChangeValue<Entity> = {
+  /** Entities that were created or updated. */
+  readonly sets?: readonly Entity[];
+  /** IDs of entities that were deleted. */
+  readonly deleted?: readonly string[];
 };
+
+/** A dynamic contract address registration. */
+type AddressRegistration = {
+  /** The contract address. */
+  readonly address: Address;
+  /** The contract name. */
+  readonly contract: string;
+};
+
+/** Extract entities from config. */
+type ConfigEntities<Config extends IndexerConfigTypes> =
+  Config["entities"] extends Record<string, object> ? Config["entities"] : {};
+
+/** Entity operations available on test indexer for direct entity manipulation. */
+type EntityOps<Entity> = {
+  /** Get an entity by ID. Returns undefined if not found. */
+  readonly get: (id: string) => Promise<Entity | undefined>;
+  /** Set (create or update) an entity. */
+  readonly set: (entity: Entity) => void;
+};
+
+/** A single change representing entity modifications at a specific block. */
+type EntityChange<Config extends IndexerConfigTypes> = {
+  /** The block where the changes occurred. */
+  readonly block: number;
+  /** The block hash (if available). */
+  readonly blockHash?: string;
+  /** The chain ID. */
+  readonly chainId: number;
+  /** Number of events processed in this block. */
+  readonly eventsProcessed: number;
+  /** Dynamic contract address registrations for this block. */
+  readonly addresses?: {
+    readonly sets?: readonly AddressRegistration[];
+  };
+} & {
+  readonly [K in keyof ConfigEntities<Config>]?: EntityChangeValue<
+    ConfigEntities<Config>[K]
+  >;
+};
+
 
 // Helper to extract chain IDs from config for test indexer
 type TestIndexerChainIds<Config extends IndexerConfigTypes> =
@@ -543,5 +615,15 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
   /** Process blocks for the specified chains and return progress with checkpoints and changes. */
   process: (
     config: Prettify<TestIndexerProcessConfig<Config>>
-  ) => Promise<TestIndexerProcessResult>;
+  ) => Promise<{
+    /** Changes happened during the processing. */
+    readonly changes: readonly EntityChange<Config>[];
+  }>;
+} & (EcosystemCount<Config> extends 1
+  ? SingleEcosystemChains<Config>
+  : MultiEcosystemChains<Config>) & {
+  /** Entity operations for direct manipulation outside of handlers. */
+  readonly [K in keyof ConfigEntities<Config>]: EntityOps<
+    ConfigEntities<Config>[K]
+  >;
 };

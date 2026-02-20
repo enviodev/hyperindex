@@ -1,5 +1,6 @@
 ---
 source: cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2425
 expression: project_template.envio_dts_code
 ---
 export type EvmChains = {
@@ -11,3 +12,22 @@ export type EvmContracts = {
 export type FuelChains = {};
 export type FuelContracts = {};
 export type SvmChains = {};
+export type Enums = {
+  "Status": "ACTIVE" | "INACTIVE";
+};
+export type Entities = {
+  "EmptyEntity": {
+    readonly "id": string;
+    readonly "emptyField": string;
+    readonly "status": Enums["Status"];
+    readonly "optionalStatus": Enums["Status"] | undefined;
+    readonly "related_id": string;
+    readonly "optionalRelated_id": string | undefined;
+    readonly "tags": readonly string[];
+    readonly "optionalTags": readonly string[] | undefined;
+  };
+  "RelatedEntity": {
+    readonly "id": string;
+    readonly "name": string;
+  };
+};

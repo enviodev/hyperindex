@@ -22,8 +22,16 @@ module InitApi = {
     let rpcNetworks = []
     config.chainMap
     ->ChainMap.values
-    ->Array.forEach(({sources, id}) => {
-      switch sources->Js.Array2.some(s => s.poweredByHyperSync) {
+    ->Array.forEach(({sourceConfig, id}) => {
+      // Check if chain uses HyperSync based on sourceConfig
+      let usesHyperSync = switch sourceConfig {
+      | Config.EvmSourceConfig({hypersync: Some(_)}) => true
+      | Config.EvmSourceConfig({hypersync: None}) => false
+      | Config.FuelSourceConfig(_) => true // Fuel always uses HyperFuel
+      | Config.SvmSourceConfig(_) => false
+      | Config.CustomSources(sources) => sources->Array.some(s => s.poweredByHyperSync)
+      }
+      switch usesHyperSync {
       | true => hyperSyncNetworks
       | false => rpcNetworks
       }

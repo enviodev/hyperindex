@@ -39,7 +39,7 @@ type evmTransactionFields = {
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
-  l1FeeScalar?: int,
+  l1FeeScalar?: float,
   gasUsedForL1?: bigint,
 }
 
@@ -147,6 +147,7 @@ type fuelEventKind =
   | Burn
   | Transfer
   | Call
+@genType.opaque
 type fuelEventConfig = {
   ...eventConfig,
   kind: fuelEventKind,
@@ -168,6 +169,7 @@ type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
+@genType.opaque
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,

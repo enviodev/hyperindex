@@ -150,7 +150,7 @@
 //     try {
 //       let _ = await storage.initialize(
 //         ~chainConfigs=[],
-//         ~entities=[module(TestEntity)->Entities.entityModToInternal],
+//         ~entities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
 //         ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //       )
 //     } catch {
@@ -562,7 +562,7 @@
 //       )
 //       let _ = await storage.initialize(
 //         ~chainConfigs=[],
-//         ~entities=[module(TestEntity)->Entities.entityModToInternal],
+//         ~entities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
 //         ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //       )
 
@@ -623,7 +623,7 @@
 //         safeBlockNumber: 9,
 //         safeBlockTimestamp: 9 * 5,
 //       }),
-//       ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
+//       ~entityConfig=module(TestEntity)->Indexer.Entities.entityModToInternal,
 //     )
 
 //     let expectedDiff: array<EntityHistory.historyRow<Internal.entity>> = [
@@ -657,7 +657,7 @@
 //           blockNumber: 9,
 //           logIndex: 0,
 //         },
-//         ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+//         ~allEntities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
 //       )
 
 //       let historyItems = {
@@ -709,7 +709,7 @@
 //     // }
 
 //     let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
-//       ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
+//       ~entityName=(module(TestEntity)->Indexer.Entities.entityModToInternal).name,
 //       ~pgSchema=Env.Db.publicSchema,
 //       ~safeReorgBlocks={
 //         chainIds: [Mocks.GnosisBug.chain_id],
@@ -746,7 +746,7 @@
 //       )
 //       let _ = await storage.initialize(
 //         ~chainConfigs=[],
-//         ~entities=[module(TestEntity)->Entities.entityModToInternal],
+//         ~entities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
 //         ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //       )
 
@@ -789,7 +789,7 @@
 //   Async.it("Returns expected diff for ordered multichain mode", async () => {
 //     let orderdMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
 //       Mocks.Chain1.orderedMultichainArg,
-//       ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
+//       ~entityConfig=module(TestEntity)->Indexer.Entities.entityModToInternal,
 //     ) catch {
 //     | exn =>
 //       Js.log2("getRollbackDiff exn", exn)
@@ -828,7 +828,7 @@
 //   Async.it("Returns expected diff for unordered multichain mode", async () => {
 //     let unorderedMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
 //       Mocks.Chain1.unorderedMultichainArg,
-//       ~entityConfig=module(TestEntity)->Entities.entityModToInternal,
+//       ~entityConfig=module(TestEntity)->Indexer.Entities.entityModToInternal,
 //     ) catch {
 //     | exn =>
 //       Js.log2("getRollbackDiff exn", exn)
@@ -856,7 +856,7 @@
 //       await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
 //         ~isUnorderedMultichainMode=false,
 //         ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
-//         ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+//         ~allEntities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
 //       )
 
 //     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
@@ -877,7 +877,7 @@
 //       await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
 //         ~isUnorderedMultichainMode=true,
 //         ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
-//         ~allEntities=[module(TestEntity)->Entities.entityModToInternal],
+//         ~allEntities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
 //       )
 
 //     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
@@ -895,7 +895,7 @@
 
 //   Async.it("Prunes history correctly with items in reorg threshold", async () => {
 //     let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
-//       ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
+//       ~entityName=(module(TestEntity)->Indexer.Entities.entityModToInternal).name,
 //       ~pgSchema=Env.Db.publicSchema,
 //       ~safeReorgBlocks={
 //         chainIds: [1, 2],
@@ -928,7 +928,7 @@
 
 //   Async.it("Prunes history correctly with items in reorg threshold", async () => {
 //     let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
-//       ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
+//       ~entityName=(module(TestEntity)->Indexer.Entities.entityModToInternal).name,
 //       ~pgSchema=Env.Db.publicSchema,
 //       ~safeReorgBlocks={
 //         chainIds: [1, 2],
@@ -959,7 +959,7 @@
 
 //   Async.it("Prunes history correctly with no items in reorg threshold", async () => {
 //     let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
-//       ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
+//       ~entityName=(module(TestEntity)->Indexer.Entities.entityModToInternal).name,
 //       ~pgSchema=Env.Db.publicSchema,
 //       ~safeReorgBlocks={
 //         chainIds: [1, 2],
@@ -988,7 +988,7 @@
 //       ~pgPort=Env.Db.port,
 //     )
 //     let _ = await storage.initialize(
-//       ~entities=[module(TestEntity)->Entities.entityModToInternal],
+//       ~entities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
 //       ~chainConfigs=[],
 //       ~enums=[Persistence.entityHistoryActionEnumConfig->Table.fromGenericEnumConfig],
 //     )
@@ -1033,7 +1033,7 @@
 
 //     try {
 //       let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
-//         ~entityName=(module(TestEntity)->Entities.entityModToInternal).name,
+//         ~entityName=(module(TestEntity)->Indexer.Entities.entityModToInternal).name,
 //         ~pgSchema=Env.Db.publicSchema,
 //         ~safeReorgBlocks={
 //           chainIds: [1],

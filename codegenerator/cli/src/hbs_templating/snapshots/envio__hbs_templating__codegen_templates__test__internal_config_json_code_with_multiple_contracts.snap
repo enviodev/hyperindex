@@ -3,28 +3,96 @@ source: cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.internal_config_json_code
 ---
 {
+  "version": "0.0.1-dev",
   "name": "config2",
   "description": "Gravatar for Ethereum",
   "evm": {
     "chains": {
       "2": {
         "id": 2,
-        "startBlock": 0
+        "startBlock": 0,
+        "rpcs": [
+          {
+            "url": "https://eth.com",
+            "for": "sync",
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
+          },
+          {
+            "url": "https://eth.com/fallback",
+            "for": "sync",
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
+          }
+        ]
       },
       "ethereumMainnet": {
         "id": 1,
-        "startBlock": 0
+        "startBlock": 0,
+        "rpcs": [
+          {
+            "url": "https://eth.com",
+            "for": "sync",
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
+          }
+        ]
       }
     },
     "contracts": {
       "Contract1": {
-        "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}]
+        "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
+        "handler": "./src/EventHandler.js",
+        "events": [
+          {
+            "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          },
+          {
+            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          }
+        ]
       },
       "Contract2": {
-        "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}]
+        "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
+        "handler": "./src/EventHandler.js",
+        "events": [
+          {
+            "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          },
+          {
+            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+          }
+        ]
       }
     },
-    "addressFormat": "checksum",
-    "eventDecoder": "hypersync"
-  }
+    "addressFormat": "checksum"
+  },
+  "enums": {},
+  "entities": [
+    {
+      "name": "EmptyEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "emptyField",
+          "type": "string"
+        }
+      ]
+    }
+  ]
 }

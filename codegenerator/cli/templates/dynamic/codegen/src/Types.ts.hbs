@@ -2,9 +2,8 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller } from "envio";
-import type * as Entities from "./db/Entities.gen.ts";
-import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains } from "../envio.d.ts";
+import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter } from "envio";
+import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities } from "../envio.d.ts";
 
 // Utility type to check if an object type is empty
 type IsEmptyObject<T> = keyof T extends never ? true : false;
@@ -50,7 +49,7 @@ export type SvmChainId = IsEmptyObject<SvmChains> extends true
   : SvmChains[keyof SvmChains]["id"];
 
 // Construct config type from generated types
-type Config = (IsEmptyObject<EvmChains> extends true
+type IndexerConfigTypes = (IsEmptyObject<EvmChains> extends true
   ? {}
   : {
       evm: { chains: EvmChains; contracts: EvmContracts };
@@ -64,10 +63,10 @@ type Config = (IsEmptyObject<EvmChains> extends true
     ? {}
     : {
         svm: { chains: SvmChains };
-      });
+      }) & { entities: Entities };
 
 /** The indexer type. */
-export type Indexer = IndexerFromConfig<Config>;
+export type Indexer = IndexerFromConfig<IndexerConfigTypes>;
 
 export type ChainId = IsEmptyObject<EvmChains> extends false
   ? EvmChains[keyof EvmChains]["id"]
@@ -84,7 +83,7 @@ import type {
 } from "envio";
 
 /** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
-export type TestIndexer = TestIndexerFromConfig<Config>;
+export type TestIndexer = TestIndexerFromConfig<IndexerConfigTypes>;
 
 export type HandlerContext = {
   /**
@@ -121,22 +120,27 @@ export type HandlerContext = {
      * Load the entity {{entity.name.original}} from the storage by ID.
      * If the entity is not found, returns undefined.
      */
-    readonly get: (id: string) => Promise<Entities.{{entity.name.capitalized}}_t | undefined>,
+    readonly get: (id: string) => Promise<Entities["{{entity.name.capitalized}}"] | undefined>,
     /**
      * Load the entity {{entity.name.original}} from the storage by ID.
      * If the entity is not found, throws an error.
      */
-    readonly getOrThrow: (id: string, message?: string) => Promise<Entities.{{entity.name.capitalized}}_t>,
-    readonly getWhere: Entities.{{entity.name.capitalized}}_indexedFieldOperations,
+    readonly getOrThrow: (id: string, message?: string) => Promise<Entities["{{entity.name.capitalized}}"]>,
+    /**
+     * Load entities {{entity.name.original}} matching the given filter.
+     * Supports Hasura-style operators: _eq, _gt, _lt, _gte, _lte, _in.
+     * Currently only one filter field with one operator is supported per call.
+     */
+    readonly getWhere: (filter: GetWhereFilter<Entities["{{entity.name.capitalized}}"]>) => Promise<Entities["{{entity.name.capitalized}}"][]>,
     /**
      * Returns the entity {{entity.name.original}} from the storage by ID.
      * If the entity is not found, creates it using provided parameters and returns it.
      */
-    readonly getOrCreate: (entity: Entities.{{entity.name.capitalized}}_t) => Promise<Entities.{{entity.name.capitalized}}_t>,
+    readonly getOrCreate: (entity: Entities["{{entity.name.capitalized}}"]) => Promise<Entities["{{entity.name.capitalized}}"]>,
     /**
      * Set the entity {{entity.name.original}} in the storage.
      */
-    readonly set: (entity: Entities.{{entity.name.capitalized}}_t) => void,
+    readonly set: (entity: Entities["{{entity.name.capitalized}}"]) => void,
     /**
      * Delete the entity {{entity.name.original}} from the storage.
      *
@@ -148,5 +152,5 @@ export type HandlerContext = {
 };
 
 {{#each entities as | entity |}}
-export type {{entity.name.capitalized}} = Entities.{{entity.name.capitalized}}_t;
+export type {{entity.name.capitalized}} = Entities["{{entity.name.capitalized}}"];
 {{/each}}

@@ -9,7 +9,7 @@ let deleteAllTables: unit => promise<unit> = async () => {
       GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
     END $$;`
 
-  await Generated.codegenPersistence.storage.executeUnsafe(query)->Promise.ignoreValue
+  await Indexer.Generated.codegenPersistence.storage.executeUnsafe(query)->Promise.ignoreValue
 }
 
 type t
@@ -23,9 +23,9 @@ let runUpMigrations = async (
   // Reset is used for db-setup
   ~reset=false,
 ) => {
-  let config = Generated.configWithoutRegistrations
+  let config = Indexer.Generated.configWithoutRegistrations
   let exitCode = try {
-    await Generated.codegenPersistence->Persistence.init(
+    await Indexer.Generated.codegenPersistence->Persistence.init(
       ~reset,
       ~chainConfigs=config.chainMap->ChainMap.values,
     )
@@ -44,7 +44,7 @@ let runDownMigrations = async (~shouldExit) => {
   await deleteAllTables()->Promise.catch(err => {
     exitCode := Failure
     err
-    ->ErrorHandling.make(~msg="EE804: Error dropping entity tables")
+    ->ErrorHandling.make(~msg="Error dropping entity tables")
     ->ErrorHandling.log
     Promise.resolve()
   })

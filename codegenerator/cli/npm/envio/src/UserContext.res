@@ -74,69 +74,125 @@ type entityContextParams = {
   entityConfig: Internal.entityConfig,
 }
 
-let getWhereTraps: Utils.Proxy.traps<entityContextParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let entityConfig = params.entityConfig
-    if prop->Js.typeof !== "string" {
-      Js.Exn.raiseError(
-        `Invalid context.${entityConfig.name}.getWhere access by a non-string property.`,
+let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<unknown>>) => {
+  let entityConfig = params.entityConfig
+  let filterKeys = filter->Js.Dict.keys
+
+  if filterKeys->Array.length === 0 {
+    Js.Exn.raiseError(
+      `Empty filter passed to context.${entityConfig.name}.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
+    )
+  }
+  if filterKeys->Array.length > 1 {
+    Js.Exn.raiseError(
+      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Js.Array2.joinWith(", ")}.`,
+    )
+  }
+
+  let dbFieldName = filterKeys->Js.Array2.unsafe_get(0)
+  let operatorObj = filter->Js.Dict.unsafeGet(dbFieldName)
+  let operatorKeys = operatorObj->Js.Dict.keys
+
+  if operatorKeys->Array.length === 0 {
+    Js.Exn.raiseError(
+      `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
+    )
+  }
+  if operatorKeys->Array.length > 1 {
+    Js.Exn.raiseError(
+      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Js.Array2.joinWith(", ")}.`,
+    )
+  }
+
+  let operatorKey = operatorKeys->Js.Array2.unsafe_get(0)
+
+  let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
+  | None =>
+    Js.Exn.raiseError(
+      `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
+    )
+  | Some(DerivedFrom(_)) =>
+    Js.Exn.raiseError(
+      `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
+    )
+  | Some(Field({isIndex: false, linkedEntity: None})) =>
+    Js.Exn.raiseError(
+      `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
+    )
+  | Some(Field({fieldSchema})) => fieldSchema
+  }
+
+  if operatorKey === "_in" {
+    let fieldValues =
+      operatorObj
+      ->Js.Dict.unsafeGet(operatorKey)
+      ->(Utils.magic: unknown => array<unknown>)
+
+    fieldValues
+    ->Js.Array2.map(fieldValue =>
+      LoadLayer.loadByField(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~operator=Eq,
+        ~entityConfig,
+        ~fieldName=dbFieldName,
+        ~fieldValueSchema=fieldSchema,
+        ~inMemoryStore=params.inMemoryStore,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~fieldValue,
       )
-    } else {
-      let dbFieldName = prop->(Utils.magic: unknown => string)
-      switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
-      | None =>
-        Js.Exn.raiseError(
-          `Invalid context.${entityConfig.name}.getWhere.${dbFieldName} - the field doesn't exist. ${codegenHelpMessage}`,
-        )
-      | Some(field) =>
-        let fieldValueSchema = switch field {
-        | Field({fieldSchema}) => fieldSchema
-        | DerivedFrom(_) => S.string->S.toUnknown
-        }
-        {
-          Envio.eq: fieldValue =>
-            LoadLayer.loadByField(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~operator=Eq,
-              ~entityConfig,
-              ~fieldName=dbFieldName,
-              ~fieldValueSchema,
-              ~inMemoryStore=params.inMemoryStore,
-              ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~fieldValue,
-            ),
-          gt: fieldValue =>
-            LoadLayer.loadByField(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~operator=Gt,
-              ~entityConfig,
-              ~fieldName=dbFieldName,
-              ~fieldValueSchema,
-              ~inMemoryStore=params.inMemoryStore,
-              ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~fieldValue,
-            ),
-          lt: fieldValue =>
-            LoadLayer.loadByField(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~operator=Lt,
-              ~entityConfig,
-              ~fieldName=dbFieldName,
-              ~fieldValueSchema,
-              ~inMemoryStore=params.inMemoryStore,
-              ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~fieldValue,
-            ),
-        }->Utils.magic
-      }
+    )
+    ->Promise.all
+    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+  } else if operatorKey === "_gte" || operatorKey === "_lte" {
+    // _gte and _lte are composed from Eq + Gt/Lt
+    let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
+    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+
+    let loadWithOperator = operator =>
+      LoadLayer.loadByField(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~operator,
+        ~entityConfig,
+        ~fieldName=dbFieldName,
+        ~fieldValueSchema=fieldSchema,
+        ~inMemoryStore=params.inMemoryStore,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~fieldValue,
+      )
+
+    [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
+    ->Promise.all
+    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+  } else {
+    let operator: TableIndices.Operator.t = switch operatorKey {
+    | "_eq" => Eq
+    | "_gt" => Gt
+    | "_lt" => Lt
+    | _ =>
+      Js.Exn.raiseError(
+        `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
+      )
     }
-  },
+
+    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+
+    LoadLayer.loadByField(
+      ~loadManager=params.loadManager,
+      ~persistence=params.persistence,
+      ~operator,
+      ~entityConfig,
+      ~fieldName=dbFieldName,
+      ~fieldValueSchema=fieldSchema,
+      ~inMemoryStore=params.inMemoryStore,
+      ~shouldGroup=params.isPreload,
+      ~item=params.item,
+      ~fieldValue,
+    )
+  }
 }
 
 let noopSet = (_entity: Internal.entity) => ()
@@ -175,7 +231,8 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~entityId,
           )
       )->Utils.magic
-    | "getWhere" => params->Utils.Proxy.make(getWhereTraps)->Utils.magic
+    | "getWhere" =>
+      ((filter) => getWhereHandler(params, filter->(Utils.magic: unknown => Js.Dict.t<Js.Dict.t<unknown>>)))->Utils.magic
     | "getOrThrow" =>
       (
         (entityId, ~message=?) =>
