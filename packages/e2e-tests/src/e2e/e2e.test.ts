@@ -31,27 +31,9 @@ describe("E2E: Indexer with GraphQL", () => {
       adminSecret: config.hasuraAdminSecret,
     });
 
-    // Setup: run codegen and install generated deps
-    console.log("Running codegen...");
-    const codegenResult = await runCommand(config.envioBin, ["codegen"], {
-      cwd: PROJECT_DIR,
-      timeout: 60_000,
-    });
-    if (codegenResult.exitCode !== 0) {
-      throw new Error(`Codegen failed: ${codegenResult.stderr}`);
-    }
-
-    console.log("Installing dependencies...");
-    const installResult = await runCommand("pnpm", ["install", "--no-frozen-lockfile"], {
-      cwd: PROJECT_DIR,
-      timeout: 120_000,
-    });
-    if (installResult.exitCode !== 0) {
-      throw new Error(`Install failed: ${installResult.stderr}`);
-    }
-
     await killProcessOnPort(config.indexerPort);
 
+    // envio dev handles codegen, pnpm install, rescript build, migrations, and indexer start
     indexerProcess = startBackground(config.envioBin, ["dev"], {
       cwd: PROJECT_DIR,
       env: {

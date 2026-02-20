@@ -108,7 +108,7 @@ pub mod codegen {
         .await?;
         execute_command(
             "pnpm",
-            vec!["install", "--prefer-offline"],
+            vec!["install", "--no-frozen-lockfile", "--prefer-offline"],
             &project_paths.project_root,
         )
         .await
