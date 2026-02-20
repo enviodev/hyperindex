@@ -21,13 +21,6 @@
     "mocha": "10.2.0"
   },
   "dependencies": {
-    "@fuel-ts/address": "0.96.1",
-    "@fuel-ts/crypto": "0.96.1",
-    "@fuel-ts/errors": "0.96.1",
-    "@fuel-ts/hasher": "0.96.1",
-    "@fuel-ts/math": "0.96.1",
-    "@fuel-ts/utils": "0.96.1",
-    "bignumber.js": "9.1.2",
     "chai": "4.3.10",
     "envio": "file:../../codegenerator/cli/npm/envio",
     "rescript-schema": "9.3.4",
