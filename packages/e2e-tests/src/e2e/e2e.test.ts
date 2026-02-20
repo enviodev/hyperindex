@@ -2,11 +2,9 @@
  * E2E Indexer Test
  *
  * Tests the full indexer flow with database:
- * 1. Use erc20_multichain_factory scenario
- * 2. Start indexer with pnpm dev
+ * 1. Start `envio dev` in background
+ * 2. Wait for "All chains are caught up to end blocks" in stdout
  * 3. Verify GraphQL queries return expected data
- *
- * Requires Postgres and Hasura to be running (via docker-compose or CI services)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -14,21 +12,14 @@ import { ChildProcess } from "child_process";
 import { config } from "../config.js";
 import {
   startBackground,
+  waitForOutput,
   killProcessOnPort,
   runCommand,
 } from "../utils/process.js";
-import { waitForIndexer, waitForHasura } from "../utils/health.js";
 import { GraphQLClient } from "../utils/graphql.js";
 import path from "path";
 
-// Use dedicated e2e_test scenario
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
-
-// Get envio binary path
-const ENVIO_BIN = path.join(
-  config.rootDir,
-  "codegenerator/target/release/envio"
-);
 
 describe("E2E: Indexer with GraphQL", () => {
   let indexerProcess: ChildProcess | null = null;
@@ -40,20 +31,9 @@ describe("E2E: Indexer with GraphQL", () => {
       adminSecret: config.hasuraAdminSecret,
     });
 
-    // Ensure Hasura is ready (should be started by CI or docker-compose)
-    const hasuraHealth = await waitForHasura(config.hasuraPort, 60);
-    if (!hasuraHealth.success) {
-      throw new Error(
-        `Hasura not available at port ${config.hasuraPort}. ` +
-          "Make sure docker-compose is running or CI services are configured."
-      );
-    }
-
-    // Kill any existing indexer on the port
     await killProcessOnPort(config.indexerPort);
 
-    // Start the indexer
-    indexerProcess = startBackground("pnpm", ["dev"], {
+    indexerProcess = startBackground(config.envioBin, ["dev"], {
       cwd: PROJECT_DIR,
       env: {
         TUI_OFF: "true",
@@ -61,78 +41,48 @@ describe("E2E: Indexer with GraphQL", () => {
       },
     });
 
-    // Wait for indexer to be healthy
-    const indexerHealth = await waitForIndexer(
-      config.indexerPort,
-      config.timeouts.indexerStartup / 1000
+    await waitForOutput(
+      indexerProcess,
+      "All chains are caught up to end blocks",
+      120_000
     );
 
-    if (!indexerHealth.success) {
-      throw new Error(
-        `Indexer health check failed after ${indexerHealth.attempts} attempts`
-      );
-    }
-  }, config.timeouts.indexerStartup + 30000);
+    // Kill immediately so envio dev doesn't tear down docker before tests query it.
+    // The "Exiting with success" → process.exit(0) path runs docker compose down.
+    indexerProcess.kill("SIGKILL");
+    indexerProcess = null;
+  }, 120_000);
 
   afterAll(async () => {
-    // Stop the indexer
     if (indexerProcess) {
       indexerProcess.kill("SIGTERM");
       indexerProcess = null;
     }
-
     await killProcessOnPort(config.indexerPort);
-
-    // Clean up docker
-    await runCommand(ENVIO_BIN, ["stop"], {
+    await runCommand(config.envioBin, ["stop"], {
       cwd: PROJECT_DIR,
       timeout: 30000,
     }).catch(() => {});
-  });
+  }, 30_000);
 
-  it("should have _meta populated", async () => {
-    interface MetaResponse {
-      _meta: Array<{
-        chainId: number;
-        progressBlock: number;
-        eventsProcessed: number;
-        isReady: boolean;
-        startBlock: number;
-      }>;
-    }
-
-    const result = await graphql.poll<MetaResponse>({
-      query: `
-        {
-          _meta {
-            chainId
-            progressBlock
-            eventsProcessed
-            bufferBlock
-            firstEventBlock
-            sourceBlock
-            readyAt
-            isReady
-            startBlock
-            endBlock
-          }
-        }
-      `,
-      validate: (data) => {
-        return data._meta && data._meta.length > 0;
-      },
-      maxAttempts: config.retry.maxPollAttempts,
-      timeoutMs: config.timeouts.test,
+  it("should have _meta with isReady true", async () => {
+    // Chain metadata uses a throttled DB write, so poll briefly
+    const result = await graphql.poll<{
+      _meta: Array<{ chainId: number; isReady: boolean }>;
+    }>({
+      query: `{ _meta { chainId isReady } }`,
+      validate: (data) =>
+        data._meta?.length > 0 && data._meta.every((m) => m.isReady),
+      maxAttempts: 10,
+      timeoutMs: 5_000,
     });
 
     expect(result.success).toBe(true);
-    expect(result.data?._meta).toBeDefined();
-    expect(result.data?._meta.length).toBeGreaterThan(0);
-    expect(result.data?._meta[0].chainId).toBe(1);
+    expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
   it("should have Transfer entities indexed", async () => {
-    interface TransferResponse {
+    const result = await graphql.poll<{
       Transfer: Array<{
         id: string;
         from: string;
@@ -141,57 +91,33 @@ describe("E2E: Indexer with GraphQL", () => {
         blockNumber: number;
         transactionHash: string;
       }>;
-    }
-
-    const result = await graphql.poll<TransferResponse>({
-      query: `
-        {
-          Transfer(limit: 10) {
-            id
-            from
-            to
-            value
-            blockNumber
-            transactionHash
-          }
+    }>({
+      query: `{
+        Transfer(limit: 10) {
+          id from to value blockNumber transactionHash
         }
-      `,
-      validate: (data) => {
-        return data.Transfer && data.Transfer.length > 0;
-      },
-      maxAttempts: config.retry.maxPollAttempts,
-      timeoutMs: config.timeouts.test,
+      }`,
+      validate: (data) => data.Transfer?.length > 0,
+      maxAttempts: 10,
+      timeoutMs: 5_000,
     });
 
     expect(result.success).toBe(true);
-    expect(result.data?.Transfer).toBeDefined();
-    expect(result.data?.Transfer.length).toBeGreaterThan(0);
-    // Verify Transfer entity structure
     const transfer = result.data?.Transfer[0];
-    expect(transfer?.id).toBeDefined();
-    expect(transfer?.from).toBeDefined();
-    expect(transfer?.to).toBeDefined();
-    expect(transfer?.blockNumber).toBeGreaterThanOrEqual(0);
+    expect(transfer).toMatchObject({
+      id: expect.any(String),
+      from: expect.any(String),
+      to: expect.any(String),
+      blockNumber: expect.any(Number),
+      transactionHash: expect.any(String),
+    });
   });
 
   it("should be able to query GraphQL schema", async () => {
-    const result = await graphql.poll({
-      query: `
-        {
-          __schema {
-            queryType {
-              name
-            }
-          }
-        }
-      `,
-      validate: (data: { __schema: { queryType: { name: string } } }) => {
-        return data.__schema?.queryType?.name === "query_root";
-      },
-      maxAttempts: 10,
-      timeoutMs: 30000,
-    });
+    const result = await graphql.query<{
+      __schema: { queryType: { name: string } };
+    }>(`{ __schema { queryType { name } } }`);
 
-    expect(result.success).toBe(true);
+    expect(result.data?.__schema.queryType.name).toBe("query_root");
   });
 });

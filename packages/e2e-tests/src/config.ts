@@ -3,13 +3,72 @@
  */
 
 import path from "path";
+import fs from "fs";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** Load key=value pairs from a .env file into process.env (no overwrite) */
+function loadEnvFile(filePath: string) {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // .env file is optional
+  }
+}
+
+const rootDir = path.resolve(__dirname, "../../..");
+loadEnvFile(path.join(rootDir, ".env"));
+
+/**
+ * Resolve the envio binary path.
+ * Priority: ENVIO_BIN env var → local debug binary → `envio` on PATH (CI).
+ */
+function resolveEnvioBin(): string {
+  if (process.env.ENVIO_BIN) {
+    return process.env.ENVIO_BIN;
+  }
+
+  const localBin = path.join(rootDir, "codegenerator/target/debug/envio");
+  if (fs.existsSync(localBin)) {
+    return localBin;
+  }
+
+  try {
+    const whichResult = execSync("which envio", { encoding: "utf-8" }).trim();
+    if (whichResult) return whichResult;
+  } catch {
+    // not on PATH
+  }
+
+  throw new Error(
+    "envio binary not found. Either:\n" +
+      "  - Set ENVIO_BIN env var\n" +
+      "  - Run `cargo build` in codegenerator/cli first\n" +
+      "  - Add envio to PATH"
+  );
+}
+
+const envioBin = resolveEnvioBin();
+
 export const config = {
   /** Root directory of the hyperindex project */
-  rootDir: path.resolve(__dirname, "../../.."),
+  rootDir,
+
+  /** Resolved path to the envio binary */
+  envioBin,
 
   /** Scenarios directory */
   get scenariosDir() {

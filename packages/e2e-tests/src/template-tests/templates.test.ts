@@ -16,13 +16,8 @@ import os from "os";
 interface TemplateConfig {
   name: string;
   initArgs: string[];
+  hasTests?: boolean;
 }
-
-// Get envio binary path
-const ENVIO_BIN = path.join(
-  config.rootDir,
-  "codegenerator/target/release/envio"
-);
 
 // All available templates to test (TypeScript only)
 const TEMPLATES: TemplateConfig[] = [
@@ -30,28 +25,32 @@ const TEMPLATES: TemplateConfig[] = [
   {
     name: "evm-greeter",
     initArgs: ["template", "-t", "greeter", "-l", "typescript"],
+    hasTests: true,
   },
   {
     name: "evm-erc20",
     initArgs: ["template", "-t", "erc20", "-l", "typescript"],
+    hasTests: true,
   },
   {
     name: "evm-factory",
     initArgs: ["template", "-t", "feature-factory", "-l", "typescript"],
+    hasTests: true,
   },
   // Fuel Templates
   {
     name: "fuel-greeter",
     initArgs: ["fuel", "template", "-t", "greeter", "-l", "typescript"],
+    hasTests: true,
   },
-  // SVM Templates
+  // SVM Templates (no test file in template)
   {
     name: "svm-block-handler",
     initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
   },
 ];
 
-describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
+describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
   let projectDir: string;
 
   beforeAll(async () => {
@@ -72,11 +71,11 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
   it("initializes successfully", async () => {
     const apiToken = process.env.ENVIO_API_TOKEN ?? "";
     const result = await runCommand(
-      ENVIO_BIN,
+      config.envioBin,
       ["init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
       {
         cwd: projectDir,
-        timeout: config.timeouts.install, // init can be slow due to template generation
+        timeout: config.timeouts.install,
       }
     );
 
@@ -100,7 +99,7 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
   });
 
   it("runs codegen successfully", async () => {
-    const result = await runCommand(ENVIO_BIN, ["codegen"], {
+    const result = await runCommand(config.envioBin, ["codegen"], {
       cwd: projectDir,
       timeout: config.timeouts.codegen,
     });
@@ -111,7 +110,7 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs }) => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("runs tests successfully", async () => {
+  it.skipIf(!hasTests)("runs tests successfully", async () => {
     const result = await runCommand("pnpm", ["test"], {
       cwd: projectDir,
       timeout: config.timeouts.test,
