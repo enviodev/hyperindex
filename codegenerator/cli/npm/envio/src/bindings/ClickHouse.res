@@ -124,7 +124,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
       | DerivedFrom(_) => () // Skip derived fields
       }
     })
-    dict->Utils.magic
+    dict->(Utils.magic: Js.Dict.t<unknown> => Internal.entity)
   })
 }
 

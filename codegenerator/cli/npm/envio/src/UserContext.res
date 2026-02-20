@@ -230,9 +230,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~item=params.item,
             ~entityId,
           )
-      )->Utils.magic
+      )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
     | "getWhere" =>
-      ((filter) => getWhereHandler(params, filter->(Utils.magic: unknown => Js.Dict.t<Js.Dict.t<unknown>>)))->Utils.magic
+      ((filter) => getWhereHandler(params, filter->(Utils.magic: unknown => Js.Dict.t<Js.Dict.t<unknown>>)))->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
     | "getOrThrow" =>
       (
         (entityId, ~message=?) =>
@@ -255,7 +255,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               )
             }
           })
-      )->Utils.magic
+      )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
     | "getOrCreate" =>
       (
         (entity: Internal.entity) =>
@@ -276,8 +276,8 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               }
             }
           })
-      )->Utils.magic
-    | "set" => set->Utils.magic
+      )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+    | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
     | "deleteUnsafe" =>
       if params.isPreload {
         noopDeleteUnsafe
@@ -293,7 +293,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldSaveHistory=params.shouldSaveHistory,
           )
         }
-      }->Utils.magic
+      }->(Utils.magic: (string => unit) => unknown)
     | _ => Js.Exn.raiseError(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
     }
   },
@@ -309,7 +309,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     }
     switch prop {
     | "log" =>
-      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->Utils.magic
+      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->(Utils.magic: Envio.logger => unknown)
     | "effect" =>
       initEffect((params :> contextParams))->(
         Utils.magic: (
@@ -317,10 +317,10 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         ) => unknown
       )
 
-    | "isPreload" => params.isPreload->Utils.magic
+    | "isPreload" => params.isPreload->(Utils.magic: bool => unknown)
     | "chain" =>
       let chainId = params.item->Internal.getItemChainId
-      params.chains->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Utils.magic
+      params.chains->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->(Utils.magic: option<Internal.chainInfo> => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
@@ -338,7 +338,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           entityConfig,
         }
         ->Utils.Proxy.make(entityTraps)
-        ->Utils.magic
+        ->(Utils.magic: entityContextParams => unknown)
       | None =>
         Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
       }
@@ -347,7 +347,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
 }
 
 let getHandlerContext = (params: contextParams): Internal.handlerContext => {
-  params->Utils.Proxy.make(handlerTraps)->Utils.magic
+  params->Utils.Proxy.make(handlerTraps)->(Utils.magic: contextParams => Internal.handlerContext)
 }
 
 // Contract register context creation
@@ -367,7 +367,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
       )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
     }
     switch prop {
-    | "log" => params.item->Logging.getUserLogger->Utils.magic
+    | "log" => params.item->Logging.getUserLogger->(Utils.magic: Envio.logger => unknown)
     | _ =>
       // Use the pre-built mapping for efficient lookup
       switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(
@@ -391,7 +391,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
             params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
           }
 
-          addFunction->Utils.magic
+          addFunction->(Utils.magic: (Address.t => unit) => unknown)
         }
       | None =>
         Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
@@ -403,7 +403,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
 let getContractRegisterContext = (params: contractRegisterParams) => {
   params
   ->Utils.Proxy.make(contractRegisterTraps)
-  ->Utils.magic
+  ->(Utils.magic: contractRegisterParams => Internal.contractRegisterContext)
 }
 
 let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {

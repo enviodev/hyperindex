@@ -90,7 +90,7 @@ let make = (
         ).getEventFiltersOrThrow
 
         // Check for non-evm chains
-        if getEventFiltersOrThrow->Utils.magic {
+        if getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool) {
           switch getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)) {
           | Static([]) => true
           | _ => false

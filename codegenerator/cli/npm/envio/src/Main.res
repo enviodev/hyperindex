@@ -170,7 +170,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->ignore
   indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
 
-  indexer->Utils.magic
+  indexer->(Utils.magic: 'a => 'indexer)
 }
 
 let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
