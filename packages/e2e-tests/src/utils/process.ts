@@ -51,6 +51,16 @@ export async function runCommand(
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let killEscalationId: ReturnType<typeof setTimeout> | null = null;
+
+    const clearTimers = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (killEscalationId) clearTimeout(killEscalationId);
+      timeoutId = null;
+      killEscalationId = null;
+    };
 
     child.stdout?.on("data", (data) => {
       const s = data.toString();
@@ -64,15 +74,27 @@ export async function runCommand(
       process.stderr.write(s);
     });
 
-    const timeoutId = options.timeout
-      ? setTimeout(() => {
-          child.kill("SIGTERM");
-          reject(new Error(`Command timed out after ${options.timeout}ms`));
-        }, options.timeout)
-      : null;
+    if (options.timeout) {
+      timeoutId = setTimeout(() => {
+        if (settled) return;
+        // First attempt graceful shutdown
+        child.kill("SIGTERM");
+        // Escalate to SIGKILL after 2 seconds if still running
+        killEscalationId = setTimeout(() => {
+          if (!settled) {
+            child.kill("SIGKILL");
+          }
+        }, 2000);
+        settled = true;
+        clearTimers();
+        reject(new Error(`Command "${command}" timed out after ${options.timeout}ms`));
+      }, options.timeout);
+    }
 
     child.on("close", (code) => {
-      if (timeoutId) clearTimeout(timeoutId);
+      if (settled) return;
+      settled = true;
+      clearTimers();
       resolve({
         exitCode: code ?? 1,
         stdout,
@@ -81,7 +103,9 @@ export async function runCommand(
     });
 
     child.on("error", (err) => {
-      if (timeoutId) clearTimeout(timeoutId);
+      if (settled) return;
+      settled = true;
+      clearTimers();
       reject(err);
     });
   });
