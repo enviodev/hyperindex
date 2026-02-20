@@ -1,4 +1,4 @@
-name: Build & Test
+name: Test
 
 on:
   pull_request:
@@ -65,9 +65,9 @@ jobs:
         working-directory: packages/e2e-tests
         run: pnpm test:templates
 
-  # Build, cargo tests, scenario tests, and E2E test
+  # Cargo tests, scenario tests, and E2E test
   # Requires DB services (postgres + hasura)
-  build-and-test:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -103,17 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dorny/paths-filter@v3
-        id: changes
-        with:
-          filters: |
-            testChanges:
-              - "codegenerator/**"
-              - "scenarios/**"
-              - "packages/e2e-tests/**"
-
       - name: Setup rust cache
-        if: steps.changes.outputs.testChanges == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -128,12 +118,10 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - uses: pnpm/action-setup@v3
-        if: steps.changes.outputs.testChanges == 'true'
         with:
           version: "8.9"
 
       - name: Setup pnpm cache
-        if: steps.changes.outputs.testChanges == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.local/share/pnpm/store
@@ -142,31 +130,25 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Setup Node.js
-        if: steps.changes.outputs.testChanges == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22.10.0
 
       - name: Cargo Build
-        if: steps.changes.outputs.testChanges == 'true'
         working-directory: codegenerator
         run: cargo build --release --verbose
 
       - name: Cargo Tests
-        if: steps.changes.outputs.testChanges == 'true'
         working-directory: codegenerator
         run: cargo test --no-default-features --verbose
 
       - name: Add envio to PATH
-        if: steps.changes.outputs.testChanges == 'true'
         run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
 
       - name: Install dependencies
-        if: steps.changes.outputs.testChanges == 'true'
         run: pnpm install
 
       - name: Wait for Hasura
-        if: steps.changes.outputs.testChanges == 'true'
         run: |
           for i in {1..60}; do
             if curl -sSf http://localhost:8080/healthz >/dev/null; then
@@ -175,21 +157,18 @@ jobs:
 
       # Scenario tests
       - name: test_codegen
-        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/test_codegen
         run: |
           pnpm codegen
           pnpm test
 
       - name: erc20_multichain_factory
-        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/erc20_multichain_factory
         run: |
           pnpm codegen
           pnpm test
 
       - name: fuel_test
-        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/fuel_test
         run: |
           pnpm codegen
@@ -197,7 +176,6 @@ jobs:
 
       # E2E test
       - name: Run E2E test
-        if: steps.changes.outputs.testChanges == 'true'
         working-directory: packages/e2e-tests
         run: pnpm test:e2e
 
@@ -206,5 +184,5 @@ jobs:
         if: failure() && github.ref == 'refs/heads/main'
         with:
           severity: error
-          details: "Build & Test Failed on main!"
+          details: "Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
