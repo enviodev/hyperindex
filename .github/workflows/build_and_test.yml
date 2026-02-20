@@ -177,23 +177,24 @@ jobs:
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
 
-      # Scenario tests
+      # Scenario tests - use envio binary from PATH directly,
+      # since pnpm codegen resolves through local-bin.mjs which fails in workspace context
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
-          pnpm codegen
+          envio codegen
           pnpm test
 
       - name: erc20_multichain_factory
         working-directory: scenarios/erc20_multichain_factory
         run: |
-          pnpm codegen
+          envio codegen
           pnpm test
 
       - name: fuel_test
         working-directory: scenarios/fuel_test
         run: |
-          pnpm codegen
+          envio codegen
           pnpm test
 
       - name: Test Failure Notification
