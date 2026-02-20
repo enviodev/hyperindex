@@ -1259,11 +1259,25 @@ impl Contract {
         events: Vec<Event>,
         abi: Abi,
     ) -> Result<Self> {
-        // TODO: Validatate that all event names are unique
-        validate_names_valid_rescript(
-            &events.iter().map(|e| e.name.clone()).collect(),
-            "event".to_string(),
-        )?;
+        let event_names: Vec<String> = events.iter().map(|e| e.name.clone()).collect();
+
+        // Validate that all event names are unique
+        let mut seen_event_names: HashSet<String> = HashSet::new();
+        let duplicate_event_names: Vec<String> = event_names
+            .iter()
+            .filter(|n| !seen_event_names.insert(n.to_string()))
+            .cloned()
+            .collect();
+        if !duplicate_event_names.is_empty() {
+            return Err(anyhow!(
+                "Contract '{}' has duplicate event names: {}. All event names within a \
+                 contract must be unique.",
+                name,
+                duplicate_event_names.join(", ")
+            ));
+        }
+
+        validate_names_valid_rescript(&event_names, "event".to_string())?;
 
         Ok(Self {
             name,

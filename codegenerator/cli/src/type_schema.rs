@@ -8,6 +8,7 @@ use itertools::Itertools;
 use serde::Serialize;
 use std::{collections::HashSet, fmt::Display};
 
+#[derive(Debug)]
 pub struct TypeDeclMulti(Vec<TypeDecl>);
 
 #[derive(Debug, PartialEq, Clone)]
@@ -17,15 +18,29 @@ pub enum SchemaMode {
 }
 
 impl TypeDeclMulti {
-    pub fn new(type_declarations: Vec<TypeDecl>) -> Self {
-        // TODO: validation
-        //no duplicates,
-        //all named types accounted for? (maybe don't want this)
-        //at least 1 decl
-        Self(type_declarations)
+    pub fn new(type_declarations: Vec<TypeDecl>) -> Result<Self> {
+        if type_declarations.is_empty() {
+            return Err(anyhow!("Type declarations must not be empty"));
+        }
+
+        let mut seen_names: HashSet<String> = HashSet::new();
+        let mut duplicate_names: Vec<String> = vec![];
+        for decl in &type_declarations {
+            if !seen_names.insert(decl.name.clone()) {
+                duplicate_names.push(decl.name.clone());
+            }
+        }
+        if !duplicate_names.is_empty() {
+            return Err(anyhow!(
+                "Duplicate type declaration names: {}",
+                duplicate_names.join(", ")
+            ));
+        }
+
+        Ok(Self(type_declarations))
     }
 
-    pub fn to_rescript_schema(&self, mode: &SchemaMode) -> String {
+    pub fn to_rescript_schema(&self, mode: &SchemaMode) -> Result<String> {
         let mut sorted: Vec<TypeDecl> = vec![];
         let mut registered: HashSet<String> = HashSet::new();
 
@@ -38,21 +53,48 @@ impl TypeDeclMulti {
             })
             .collect();
 
+        // Collect all declared names so we can distinguish between
+        // external dependencies and missing/cyclic internal ones
+        let all_declared_names: HashSet<String> =
+            type_decls_with_deps.iter().map(|(d, _)| d.name.clone()).collect();
+
         // Not the most optimised algorithm, but it's simple and works:
         // Iterate over the type declarations and add them to
-        // the sorted list if all their dependencies already added - repeat
-        while sorted.len() < type_decls_with_deps.len() {
+        // the sorted list if all their dependencies already added - repeat.
+        // Detect lack of progress to avoid infinite loops from cycles or
+        // missing internal dependencies.
+        loop {
+            if sorted.len() >= type_decls_with_deps.len() {
+                break;
+            }
+
+            let prev_len = sorted.len();
             for (decl, deps) in &type_decls_with_deps {
                 if !registered.contains(&decl.name)
-                    && deps.iter().all(|dep| registered.contains(dep))
+                    && deps.iter().all(|dep| {
+                        registered.contains(dep) || !all_declared_names.contains(dep)
+                    })
                 {
                     sorted.push(decl.clone());
                     registered.insert(decl.name.clone());
                 }
             }
+
+            if sorted.len() == prev_len {
+                // No progress was made - there's a dependency cycle
+                let unresolved: Vec<String> = type_decls_with_deps
+                    .iter()
+                    .filter(|(decl, _)| !registered.contains(&decl.name))
+                    .map(|(decl, _)| decl.name.clone())
+                    .collect();
+                return Err(anyhow!(
+                    "Cyclic dependency detected among type declarations: {}",
+                    unresolved.join(", ")
+                ));
+            }
         }
 
-        sorted
+        Ok(sorted
             .iter()
             .map(|decl| {
                 format!(
@@ -62,7 +104,7 @@ impl TypeDeclMulti {
                 )
             })
             .collect::<Vec<String>>()
-            .join("\n")
+            .join("\n"))
     }
 
     fn to_string_internal(&self) -> String {
@@ -110,14 +152,27 @@ pub struct TypeDecl {
 }
 
 impl TypeDecl {
-    pub fn new(name: String, type_expr: TypeExpr, parameters: Vec<String>) -> Self {
-        // TODO: name validation
-        //validate unique parameters
-        Self {
+    pub fn new(name: String, type_expr: TypeExpr, parameters: Vec<String>) -> Result<Self> {
+        let mut seen_params: HashSet<String> = HashSet::new();
+        let mut duplicate_params: Vec<String> = vec![];
+        for param in &parameters {
+            if !seen_params.insert(param.clone()) {
+                duplicate_params.push(param.clone());
+            }
+        }
+        if !duplicate_params.is_empty() {
+            return Err(anyhow!(
+                "Type declaration '{}' has duplicate parameters: {}",
+                name,
+                duplicate_params.join(", ")
+            ));
+        }
+
+        Ok(Self {
             name,
             type_expr,
             parameters,
-        }
+        })
     }
 
     fn get_tag_string_if_expr_is_variant(&self) -> String {
@@ -966,7 +1021,8 @@ mod tests {
                 ),
             ]),
             vec![],
-        );
+        )
+        .unwrap();
 
         let expected = r#"type myRecord = {@as("reservedWord") reservedWord_: myCustomType, myOptBool: option<bool>}"#.to_string();
 
@@ -986,7 +1042,8 @@ mod tests {
                 RecordField::new("dashed-field".to_string(), TypeIdent::Bool),
             ]),
             vec![],
-        );
+        )
+        .unwrap();
 
         let expected = r#"type myRecord = {@as("module") module_: bool, @as("") _: bool, @as("1") _1: bool, @as("Capitalized") capitalized: bool, dashed-field: bool}"#.to_string();
 
@@ -1008,15 +1065,17 @@ mod tests {
                 RecordField::new("fieldB".to_string(), TypeIdent::Bool),
             ]),
             vec![],
-        );
+        )
+        .unwrap();
 
         let type_decl_2 = TypeDecl::new(
             "myCustomType".to_string(),
             TypeExpr::Identifier(TypeIdent::Bool),
             vec![],
-        );
+        )
+        .unwrap();
 
-        let type_decl_multi = TypeDeclMulti::new(vec![type_decl_1, type_decl_2]);
+        let type_decl_multi = TypeDeclMulti::new(vec![type_decl_1, type_decl_2]).unwrap();
 
         let expected = "/*Silence warning of label defined in multiple \
                         types*/\n@@warning(\"-30\")\ntype rec myRecord = {fieldA: myCustomType, \
@@ -1052,7 +1111,8 @@ mod tests {
                 ),
             ]),
             vec!["a".to_string(), "b".to_string()],
-        );
+        )
+        .unwrap();
 
         let expected = r#"type myRecord<'a, 'b> = {fieldA: myCustomType, fieldB: myGenericType<myCustomType, 'a>, fieldC: 'b}"#.to_string();
 
@@ -1085,7 +1145,8 @@ mod tests {
                 ),
             ]),
             vec!["a".to_string(), "b".to_string()],
-        );
+        )
+        .unwrap();
 
         let expected = r#"@tag("case") type myVariant<'a, 'b> = | ConstrA({payload: myCustomType}) | ConstrB({payload: myGenericType<myCustomType, 'a>}) | ConstrC({payload: 'b})"#.to_string();
 
@@ -1108,13 +1169,15 @@ mod tests {
                 ),
             ]),
             vec!["a".to_string()],
-        );
+        )
+        .unwrap();
 
         let type_decl_2 = TypeDecl::new(
             "myCustomType".to_string(),
             TypeExpr::Identifier(TypeIdent::Bool),
             vec![],
-        );
+        )
+        .unwrap();
 
         let type_decl_3 = TypeDecl::new(
             "myVariant2".to_string(),
@@ -1123,10 +1186,11 @@ mod tests {
                 TypeIdent::Bool,
             )]),
             vec![],
-        );
+        )
+        .unwrap();
 
         let type_decl_multi =
-            TypeDeclMulti::new(vec![type_decl_1, type_decl_2, type_decl_3]);
+            TypeDeclMulti::new(vec![type_decl_1, type_decl_2, type_decl_3]).unwrap();
 
         let expected = "/*Silence warning of label defined in multiple \
                         types*/\n@@warning(\"-30\")\n@tag(\"case\") type rec myVariant<'a> = | \
@@ -1274,5 +1338,112 @@ mod tests {
             TypeExpr::Identifier(TypeIdent::Int).to_ts_type_string(),
             "number"
         );
+    }
+
+    // Validation tests
+
+    #[test]
+    fn test_type_decl_multi_rejects_empty() {
+        let result = TypeDeclMulti::new(vec![]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must not be empty")
+        );
+    }
+
+    #[test]
+    fn test_type_decl_multi_rejects_duplicate_names() {
+        let decl_1 = TypeDecl::new(
+            "myType".to_string(),
+            TypeExpr::Identifier(TypeIdent::Bool),
+            vec![],
+        )
+        .unwrap();
+        let decl_2 = TypeDecl::new(
+            "myType".to_string(),
+            TypeExpr::Identifier(TypeIdent::Int),
+            vec![],
+        )
+        .unwrap();
+
+        let result = TypeDeclMulti::new(vec![decl_1, decl_2]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Duplicate type declaration names")
+        );
+    }
+
+    #[test]
+    fn test_type_decl_rejects_duplicate_parameters() {
+        let result = TypeDecl::new(
+            "myType".to_string(),
+            TypeExpr::Identifier(TypeIdent::Bool),
+            vec!["a".to_string(), "b".to_string(), "a".to_string()],
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate parameters")
+        );
+    }
+
+    #[test]
+    fn test_topological_sort_detects_cycles() {
+        // Type A depends on B, and B depends on A - a cycle
+        let decl_a = TypeDecl::new(
+            "typeA".to_string(),
+            TypeExpr::Identifier(TypeIdent::TypeApplication {
+                name: "typeB".to_string(),
+                type_params: vec![],
+            }),
+            vec![],
+        )
+        .unwrap();
+        let decl_b = TypeDecl::new(
+            "typeB".to_string(),
+            TypeExpr::Identifier(TypeIdent::TypeApplication {
+                name: "typeA".to_string(),
+                type_params: vec![],
+            }),
+            vec![],
+        )
+        .unwrap();
+
+        let multi = TypeDeclMulti::new(vec![decl_a, decl_b]).unwrap();
+        let result = multi.to_rescript_schema(&SchemaMode::ForDb);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cyclic dependency")
+        );
+    }
+
+    #[test]
+    fn test_topological_sort_handles_external_deps() {
+        // Type that depends on an external type not in the declarations
+        // should succeed (external deps are not tracked)
+        let decl = TypeDecl::new(
+            "myType".to_string(),
+            TypeExpr::Identifier(TypeIdent::TypeApplication {
+                name: "ExternalType".to_string(),
+                type_params: vec![],
+            }),
+            vec![],
+        )
+        .unwrap();
+
+        let multi = TypeDeclMulti::new(vec![decl]).unwrap();
+        let result = multi.to_rescript_schema(&SchemaMode::ForDb);
+        assert!(result.is_ok());
     }
 }

@@ -997,6 +997,13 @@ let eventSignatures = [{}]
                     contract.name
                 ))?;
 
+                let abi_type_schema = all_abi_type_declarations
+                    .to_rescript_schema(&SchemaMode::ForDb)
+                    .context(format!(
+                        "Failed generating schema for the '{}' contract ABI types",
+                        contract.name
+                    ))?;
+
                 format!(
                   "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
                    relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}\n{chain_id_type_code}",
@@ -1004,7 +1011,7 @@ let eventSignatures = [{}]
                   // we need to remember that abi might contain ` and we should escape it
                   abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations,
-                    all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
+                    abi_type_schema
                 )
             }
         };
