@@ -9,8 +9,7 @@ it("Handles event with a custom field selection (in TS)", async () => {
   // Initializing the mock database
   const mockDbInitial = MockDb.createMockDb();
 
-  // Every time use different hash to make sure the test data isn't stale
-  let hash = "0x" + Math.random() * 10 ** 18;
+  let hash = "0xabc123def456789012345678901234567890abcd";
 
   const event = Gravatar.CustomSelection.createMockEvent({
     mockEventData: {

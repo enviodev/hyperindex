@@ -31,8 +31,7 @@ Async.it("Handles event with a custom field selection (in ReScript)", async () =
   // Initializing the mock database
   let mockDbInitial = MockDb.createMockDb()
 
-  // Every time use different hash to make sure the test data isn't stale
-  let hash = "0x" ++ Js.Math.random_int(0, 10000000)->Js.Int.toString
+  let hash = "0xabc123def456789012345678901234567890abcd"
 
   let event = Gravatar.CustomSelection.createMockEvent({
     mockEventData: {
