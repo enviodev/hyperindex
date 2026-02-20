@@ -65,7 +65,33 @@ jobs:
         working-directory: packages/e2e-tests
         run: pnpm test:templates
 
-  # Cargo tests and scenario tests
+  # Cargo unit tests - no DB required
+  cargo-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cargo Test
+        working-directory: codegenerator
+        run: cargo test --no-default-features
+
+  # Scenario integration tests
   # Requires DB services (postgres + hasura)
   scenarios-test:
     runs-on: ubuntu-latest
@@ -136,11 +162,7 @@ jobs:
 
       - name: Cargo Build
         working-directory: codegenerator
-        run: cargo build --release --verbose
-
-      - name: Cargo Tests
-        working-directory: codegenerator
-        run: cargo test --no-default-features --verbose
+        run: cargo build --release
 
       - name: Add envio to PATH
         run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
