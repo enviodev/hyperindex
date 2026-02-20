@@ -268,14 +268,13 @@ impl GraphQLEnum {
     }
 
     fn check_duplicate_values(self) -> anyhow::Result<Self> {
-        let mut value_set: HashSet<String> = self.values.clone().into_iter().collect();
-
-        let duplicate_values = self
+        let mut seen = HashSet::with_capacity(self.values.len());
+        let duplicate_values: Vec<&str> = self
             .values
-            .clone()
-            .into_iter()
-            .filter(|value| value_set.insert(value.clone()))
-            .collect::<Vec<_>>();
+            .iter()
+            .filter(|value| !seen.insert(value.as_str()))
+            .map(|v| v.as_str())
+            .collect();
 
         if !duplicate_values.is_empty() {
             Err(anyhow!(
@@ -289,11 +288,11 @@ impl GraphQLEnum {
     }
 
     fn check_valid_postgres_name(self) -> anyhow::Result<Self> {
-        let values_to_check = [vec![self.name.clone()], self.values.clone()].concat();
-        let invalid_names = values_to_check
-            .into_iter()
+        let invalid_names: Vec<&str> = std::iter::once(&self.name)
+            .chain(self.values.iter())
             .filter(|v| !is_valid_postgres_db_name(v))
-            .collect::<Vec<_>>();
+            .map(|v| v.as_str())
+            .collect();
 
         if !invalid_names.is_empty() {
             Err(anyhow!(

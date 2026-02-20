@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use core::fmt;
 use itertools::Itertools;
 use serde::Serialize;
-use std::{collections::HashSet, fmt::Display};
+use std::{collections::HashMap, fmt::Display};
 
 pub struct TypeDeclMulti(Vec<TypeDecl>);
 
@@ -26,35 +26,47 @@ impl TypeDeclMulti {
     }
 
     pub fn to_rescript_schema(&self, mode: &SchemaMode) -> String {
-        let mut sorted: Vec<TypeDecl> = vec![];
-        let mut registered: HashSet<String> = HashSet::new();
+        let decls = &self.0;
+        let n = decls.len();
 
-        let type_decls_with_deps: Vec<(TypeDecl, Vec<String>)> = self
-            .0
+        // Build index from name -> position for O(1) lookups
+        let name_to_idx: HashMap<&str, usize> = decls
             .iter()
-            .map(|decl| {
-                let deps = decl.type_expr.dependencies();
-                (decl.clone(), deps)
-            })
+            .enumerate()
+            .map(|(i, decl)| (decl.name.as_str(), i))
             .collect();
 
-        // Not the most optimised algorithm, but it's simple and works:
-        // Iterate over the type declarations and add them to
-        // the sorted list if all their dependencies already added - repeat
-        while sorted.len() < type_decls_with_deps.len() {
-            for (decl, deps) in &type_decls_with_deps {
-                if !registered.contains(&decl.name)
-                    && deps.iter().all(|dep| registered.contains(dep))
-                {
-                    sorted.push(decl.clone());
-                    registered.insert(decl.name.clone());
+        // Compute dependencies as indices and in-degree for Kahn's algorithm
+        let mut in_degree = vec![0u32; n];
+        let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+        for (i, decl) in decls.iter().enumerate() {
+            for dep_name in decl.type_expr.dependencies() {
+                if let Some(&dep_idx) = name_to_idx.get(dep_name.as_str()) {
+                    dependents[dep_idx].push(i);
+                    in_degree[i] += 1;
                 }
             }
         }
 
-        sorted
+        // Kahn's algorithm: start with nodes that have no dependencies
+        let mut queue: Vec<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
+        let mut sorted_indices: Vec<usize> = Vec::with_capacity(n);
+
+        while let Some(idx) = queue.pop() {
+            sorted_indices.push(idx);
+            for &dependent in &dependents[idx] {
+                in_degree[dependent] -= 1;
+                if in_degree[dependent] == 0 {
+                    queue.push(dependent);
+                }
+            }
+        }
+
+        sorted_indices
             .iter()
-            .map(|decl| {
+            .map(|&i| {
+                let decl = &decls[i];
                 format!(
                     "let {}Schema = {}",
                     decl.name,

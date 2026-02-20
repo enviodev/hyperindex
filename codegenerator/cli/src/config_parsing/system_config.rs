@@ -33,6 +33,7 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Component, Path, PathBuf},
+    sync::LazyLock,
 };
 
 type ContractNameKey = String;
@@ -105,6 +106,10 @@ impl EnvState {
 mod interpolation {
     use anyhow::{anyhow, Result};
     use regex::{Captures, Regex};
+    use std::sync::LazyLock;
+
+    static CONFIG_VAR_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\$\{([^}]*)\}").unwrap());
 
     #[derive(PartialEq)]
     enum InterpolationResult {
@@ -161,8 +166,7 @@ mod interpolation {
         let mut invalid_vars = Vec::new();
 
         // If we don't have `[^}]` and simpley use `.` in the regex, it will match the last `}` and the rest of the string until the last `}`
-        let re = Regex::new(r"\$\{([^}]*)\}").unwrap();
-        let config_string = re.replace_all(&config_string, |caps: &Captures| {
+        let config_string = CONFIG_VAR_RE.replace_all(&config_string, |caps: &Captures| {
             let name = &caps[1];
             let (name, interpolation_result) = parse_capture(name);
             if interpolation_result == InterpolationResult::InvalidName {
@@ -371,13 +375,16 @@ DefaultForMissingAndEmpty with empty env and empty default: ""
     }
 }
 
+static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\d+\.\d+\.\d+(-(rc|alpha)\.\d+)?$")
+        .expect("version regex pattern should be valid regex")
+});
+
 //Validates version name (3 digits separated by period ".")
 //Returns false if there are any additional chars as this should imply
 //it is a dev release version or an unstable release
 fn is_valid_release_version_number(version: &str) -> bool {
-    let re_version_pattern = Regex::new(r"^\d+\.\d+\.\d+(-(rc|alpha)\.\d+)?$")
-        .expect("version regex pattern should be valid regex");
-    re_version_pattern.is_match(version) || version.contains("-main-")
+    VERSION_RE.is_match(version) || version.contains("-main-")
 }
 
 pub fn get_envio_version() -> Result<String> {
