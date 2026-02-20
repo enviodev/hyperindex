@@ -1,4 +1,4 @@
-name: Build & Test Scenario
+name: Build & Test
 
 on:
   pull_request:
@@ -6,36 +6,84 @@ on:
     branches:
       - main
 
-defaults:
-  run:
-    working-directory: codegenerator
-
 env:
   CARGO_TERM_COLOR: always
   ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
 jobs:
-  build_and_test:
+  # Template tests - verify envio templates can be initialized and built
+  # No DB required, can run in parallel with other jobs
+  template-tests:
     runs-on: ubuntu-latest
-    # Service containers to run with `container-job`
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: "8.9"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.10.0
+
+      - name: Build envio CLI
+        working-directory: codegenerator
+        run: cargo build --release
+
+      - name: Add envio to PATH
+        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run template tests
+        working-directory: packages/e2e-tests
+        run: pnpm test:templates
+
+  # Build, cargo tests, scenario tests, and E2E test
+  # Requires DB services (postgres + hasura)
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     services:
-      # Label used to access the service container
       postgres:
-        # Docker Hub image
         image: postgres:16
-        # Provide the password for postgres
         env:
           POSTGRES_PASSWORD: testing
           POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
-        # Set health checks to wait until postgres has started
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
-          # Maps tcp port 5432 on service container to the host port of 5433 which envio will use.
           - 5433:5432
 
       hasura:
@@ -54,17 +102,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: dorny/paths-filter@v3
         id: changes
         with:
           filters: |
             testChanges:
               - "codegenerator/**"
-              - "scenarios/test_codegen/**"
+              - "scenarios/**"
+              - "packages/e2e-tests/**"
 
       - name: Setup rust cache
         if: steps.changes.outputs.testChanges == 'true'
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/git
@@ -72,55 +122,24 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            # using both of these paths to hedge bets on which is correct.
             ./codegenerator/target
-            ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
             ${{ runner.os }}-cargo-
-
-      # - name: Cache (hardhat) Solidity
-      #   if: steps.changes.outputs.testChanges == 'true'
-      #   id: cache-hardhat-solidity
-      #   uses: actions/cache@v3
-      #   with:
-      #     path: ~/.cache/hardhat-nodejs
-      #     key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}
-      #       ${{ runner.os }}-solidity-hardhat-
 
       - uses: pnpm/action-setup@v3
         if: steps.changes.outputs.testChanges == 'true'
         with:
-          version: 8.9
+          version: "8.9"
 
-      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+      - name: Setup pnpm cache
         if: steps.changes.outputs.testChanges == 'true'
-        id: pnpm-cache
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-
-      - uses: actions/cache@v3
-        if: steps.changes.outputs.testChanges == 'true'
-        name: Setup pnpm cache
+        uses: actions/cache@v4
         with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          path: ~/.local/share/pnpm/store
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          # updating the pnmp-lock.yaml in the test_codegen folder has strange side effects in this test, look to make this more robust
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }} 
             ${{ runner.os }}-pnpm-store-
-
-      - name: Cargo Build
-        if: steps.changes.outputs.testChanges == 'true'
-        run: cargo build --verbose
-
-      - name: Cargo Tests
-        if: steps.changes.outputs.testChanges == 'true'
-        run: cargo test --no-default-features --verbose
 
       - name: Setup Node.js
         if: steps.changes.outputs.testChanges == 'true'
@@ -128,51 +147,64 @@ jobs:
         with:
           node-version: 22.10.0
 
-      - name: test_codegen build
+      - name: Cargo Build
         if: steps.changes.outputs.testChanges == 'true'
-        working-directory: scenarios/test_codegen
-        run: |
-          pnpm install
-          pnpm codegen
-          pnpm build
+        working-directory: codegenerator
+        run: cargo build --release --verbose
+
+      - name: Cargo Tests
+        if: steps.changes.outputs.testChanges == 'true'
+        working-directory: codegenerator
+        run: cargo test --no-default-features --verbose
+
+      - name: Add envio to PATH
+        if: steps.changes.outputs.testChanges == 'true'
+        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        if: steps.changes.outputs.testChanges == 'true'
+        run: pnpm install
 
       - name: Wait for Hasura
         if: steps.changes.outputs.testChanges == 'true'
-        shell: bash
         run: |
           for i in {1..60}; do
             if curl -sSf http://localhost:8080/healthz >/dev/null; then
               echo "Hasura is up"; exit 0; fi; sleep 1; done
-          echo "Hasura did not become ready in time"; exit 1
+          echo "Hasura did not become ready"; exit 1
 
-      - name: test_codegen test
+      # Scenario tests
+      - name: test_codegen
         if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/test_codegen
         run: |
-          pnpm test
-
-      - name: erc20_multichain_factory build
-        if: steps.changes.outputs.testChanges == 'true'
-        working-directory: scenarios/erc20_multichain_factory
-        run: |
-          pnpm install
           pnpm codegen
-          pnpm build
+          pnpm test
 
-      - name: erc20_multichain_factory test
+      - name: erc20_multichain_factory
         if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/erc20_multichain_factory
         run: |
+          pnpm codegen
           pnpm test
 
-      - name: fuel_test build
+      - name: fuel_test
         if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/fuel_test
         run: |
           pnpm codegen
-
-      - name: fuel_test test
-        if: steps.changes.outputs.testChanges == 'true'
-        working-directory: scenarios/fuel_test
-        run: |
           pnpm test
+
+      # E2E test
+      - name: Run E2E test
+        if: steps.changes.outputs.testChanges == 'true'
+        working-directory: packages/e2e-tests
+        run: pnpm test:e2e
+
+      - name: Test Failure Notification
+        uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
+        if: failure() && github.ref == 'refs/heads/main'
+        with:
+          severity: error
+          details: "Build & Test Failed on main!"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
