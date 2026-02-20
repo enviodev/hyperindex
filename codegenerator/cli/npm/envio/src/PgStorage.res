@@ -527,14 +527,14 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
     | S.Raised(_) as exn =>
       raise(
         Persistence.StorageError({
-          message: `Failed to convert items for table "${table.tableName}"`,
+          message: `Failed to convert ${items->Array.length->Belt.Int.toString} items for table "${table.tableName}"`,
           reason: exn,
         }),
       )
     | exn =>
       raise(
         Persistence.StorageError({
-          message: `Failed to insert items into table "${table.tableName}"`,
+          message: `Failed to insert ${items->Array.length->Belt.Int.toString} items into table "${table.tableName}"`,
           reason: exn->Utils.prettifyExn,
         }),
       )
@@ -650,7 +650,7 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
   | exception exn =>
     raise(
       Persistence.StorageError({
-        message: `Failed deleting "${table.tableName}" from storage by ids`,
+        message: `Failed deleting ${ids->Array.length->Belt.Int.toString} ids from "${table.tableName}"`,
         reason: exn,
       }),
     )
@@ -733,6 +733,18 @@ let rec writeBatch = async (
 ) => {
   try {
     let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
+
+    let isRetry = escapeTables->Belt.Option.isSome
+    if !isRetry {
+      Logging.trace({
+        "msg": "Writing batch to storage",
+        "rawEventsCount": rawEvents->Array.length,
+        "entitiesCount": updatedEntities->Js.Array2.length,
+        "effectsCacheCount": updatedEffectsCache->Array.length,
+        "hasRollback": rollbackTargetCheckpointId->Belt.Option.isSome,
+        "saveHistory": shouldSaveHistory,
+      })
+    }
 
     let specificError = ref(None)
 
@@ -1018,6 +1030,10 @@ let rec writeBatch = async (
     }
   } catch {
   | PgEncodingError({table}) =>
+    Logging.warn({
+      "msg": "Invalid UTF-8 encoding detected in batch write, retrying with escaped data",
+      "table": table.tableName,
+    })
     let escapeTables = switch escapeTables {
     | Some(set) => set
     | None => Utils.Set.make()
