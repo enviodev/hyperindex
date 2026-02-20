@@ -48,6 +48,9 @@ schemars = { version = "1.0.0-alpha.2", features = ["preserve_order"] }
 convert_case = "0.6.0"
 dotenvy = { git = "https://github.com/enviodev/dotenvy", rev = "e2da110668572cf2d67178f192eb1fc285224040" }
 
+[features]
+integration_tests = []
+
 [dev-dependencies]
 tempdir = "0.3"
 paste = "1.0.12"

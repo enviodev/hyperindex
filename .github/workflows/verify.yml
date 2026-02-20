@@ -1,0 +1,303 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+
+jobs:
+  # Template tests - verify envio templates can be initialized and built
+  # No DB required, can run in parallel with other jobs
+  template-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: "8.9"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.10.0
+
+      - name: Build envio CLI
+        working-directory: codegenerator
+        run: cargo build --release
+
+      - name: Add envio to PATH
+        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run template tests
+        working-directory: packages/e2e-tests
+        run: pnpm test:templates
+
+  # Cargo unit tests - no DB required
+  cargo-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cargo Test
+        working-directory: codegenerator
+        run: cargo test --no-default-features
+
+  # Scenario integration tests
+  # Requires DB services (postgres + hasura)
+  scenarios-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      hasura:
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: "8.9"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.10.0
+
+      - name: Cargo Build
+        working-directory: codegenerator
+        run: cargo build --release
+
+      - name: Add envio to PATH
+        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Wait for Hasura
+        run: |
+          for i in {1..60}; do
+            if curl -sSf http://localhost:8080/healthz >/dev/null; then
+              echo "Hasura is up"; exit 0; fi; sleep 1; done
+          echo "Hasura did not become ready"; exit 1
+
+      # Scenario tests - use envio binary from PATH directly,
+      # since pnpm codegen resolves through local-bin.mjs which fails in workspace context
+      - name: test_codegen
+        working-directory: scenarios/test_codegen
+        run: |
+          envio codegen
+          pnpm test
+
+      - name: erc20_multichain_factory
+        working-directory: scenarios/erc20_multichain_factory
+        run: |
+          envio codegen
+          pnpm test
+
+      - name: fuel_test
+        working-directory: scenarios/fuel_test
+        run: |
+          envio codegen
+          pnpm test
+
+      - name: Test Failure Notification
+        uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
+        if: failure() && github.ref == 'refs/heads/main'
+        with:
+          severity: error
+          details: "Tests Failed on main!"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+
+  # E2E test - runs envio dev with a real indexer scenario
+  e2e-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      hasura:
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: "8.9"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.10.0
+
+      - name: Build envio CLI
+        working-directory: codegenerator
+        run: cargo build --release
+
+      - name: Add envio to PATH
+        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Wait for Hasura
+        run: |
+          for i in {1..60}; do
+            if curl -sSf http://localhost:8080/healthz >/dev/null; then
+              echo "Hasura is up"; exit 0; fi; sleep 1; done
+          echo "Hasura did not become ready"; exit 1
+
+      - name: Run E2E test
+        working-directory: packages/e2e-tests
+        run: pnpm test:e2e
+
+      - name: E2E Test Failure Notification
+        uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
+        if: failure() && github.ref == 'refs/heads/main'
+        with:
+          severity: error
+          details: "E2E Tests Failed on main!"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}

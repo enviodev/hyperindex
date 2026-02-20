@@ -76,8 +76,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
                 commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
             }
-            const SHOULD_OPEN_HASURA: bool = false;
-            commands::start::start_indexer(&config, SHOULD_OPEN_HASURA).await?;
+            commands::start::start_indexer(&config).await?;
         }
 
         CommandType::Local(local_commands) => {

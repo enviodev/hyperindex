@@ -1,0 +1,4 @@
+packages:
+  - "packages/*"
+  - "scenarios/*"
+  - "scenarios/*/generated"

@@ -36,14 +36,14 @@ const noopEffect = createEffect(
   async ({ context, input }) => {
     expectType<TypeEqual<typeof input, undefined>>(true);
     expectType<TypeEqual<typeof noopEffect, Effect<undefined, undefined>>>(
-      true
+      true,
     );
     const result = await context.effect(noopEffect, undefined);
     expectType<TypeEqual<typeof result, undefined>>(true);
     // @ts-expect-error
     await context.effect(noopEffect, "foo");
     return undefined;
-  }
+  },
 );
 const getFiles = createEffect(
   {
@@ -88,7 +88,7 @@ const getFiles = createEffect(
       >
     >(true);
     return "foo";
-  }
+  },
 );
 const getBalance = createEffect(
   {
@@ -114,7 +114,7 @@ const getBalance = createEffect(
       context.log.info(
         `Balance of ${address}${
           blockNumber ? ` at block ${blockNumber}` : ""
-        }: ${balance}`
+        }: ${balance}`,
       );
 
       return BigDecimal(balance.toString());
@@ -123,7 +123,7 @@ const getBalance = createEffect(
       // Return 0 on error to prevent processing failures
       return BigDecimal(0);
     }
-  }
+  },
 );
 expectType<
   TypeEqual<
@@ -235,7 +235,7 @@ SimpleNft.Transfer.handler(async ({ event, context }) => {
       context.User.get(event.params.to),
       context.NftCollection.get(event.srcAddress),
       context.Token.get(
-        event.srcAddress.concat("-").concat(event.params.tokenId.toString())
+        event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
       ),
     ]);
 
@@ -257,7 +257,7 @@ SimpleNft.Transfer.handler(async ({ event, context }) => {
     }
   } else {
     console.log(
-      "Issue with events emitted, unregistered NFT collection transfer"
+      "Issue with events emitted, unregistered NFT collection transfer",
     );
     return;
   }
@@ -441,8 +441,8 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
           deepEqual(
             error,
             new Error(
-              `Impossible to access context.addSimpleNft after the contract register is resolved. Make sure you didn't miss an await in the handler.`
-            )
+              `Impossible to access context.addSimpleNft after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
+            ),
           );
         }
       }, 0);
@@ -452,7 +452,7 @@ Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
         setTimeout(() => {
           context.addSimpleNft(event.params.contract);
           resolve();
-        }, 0)
+        }, 0),
       );
     case "syncRegistration":
       context.addSimpleNft(event.params.contract);
@@ -483,7 +483,7 @@ const testEffectWithCache = createEffect(
     deepEqual(
       Object.keys(context),
       ["effect", "cache"],
-      "Logger is on prototype and not included in Object.keys"
+      "Logger is on prototype and not included in Object.keys",
     );
     deepEqual(context.cache, true);
     expectType<
@@ -498,7 +498,7 @@ const testEffectWithCache = createEffect(
     >(true);
 
     return `test-${input.id}`;
-  }
+  },
 );
 
 const throwingEffect = createEffect(
@@ -513,7 +513,7 @@ const throwingEffect = createEffect(
   },
   async (_) => {
     throw new Error("Error from effect");
-  }
+  },
 );
 
 let getOrThrowInLoaderCount = 0;
@@ -527,14 +527,14 @@ Gravatar.FactoryEvent.handler(async ({ event, context }) => {
           getOrThrowInLoaderCount++;
           await context.User.getOrThrow(
             "0",
-            "This should fail, but silently ignored on the first loader run."
+            "This should fail, but silently ignored on the first loader run.",
           );
           break;
         }
         case 1: {
           await context.User.getOrThrow(
             "0",
-            "Second loader failure should abort processing"
+            "Second loader failure should abort processing",
           );
           break;
         }
@@ -666,7 +666,7 @@ Gravatar.FactoryEvent.handler(async ({ event, context }) => {
           gravatar_id: undefined,
           accountType: "USER",
         },
-        "Note how address is 'existing' and not '0x'"
+        "Note how address is 'existing' and not '0x'",
       );
       break;
     }
@@ -755,5 +755,5 @@ EventFiltersTest.FilterTestEvent.handler(
         addr: ["0x000"],
       };
     },
-  }
+  },
 );

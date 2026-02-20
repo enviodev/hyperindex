@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/evm.schema.json
+name: e2e_test
+description: E2E test indexer
+field_selection:
+  transaction_fields:
+    - "hash"
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 10861674
+    end_block: 10861774
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
