@@ -31,6 +31,34 @@ describe("E2E: Indexer with GraphQL", () => {
       adminSecret: config.hasuraAdminSecret,
     });
 
+    // Setup: run codegen, install deps, and build
+    console.log("Running codegen...");
+    const codegenResult = await runCommand(config.envioBin, ["codegen"], {
+      cwd: PROJECT_DIR,
+      timeout: 60_000,
+    });
+    if (codegenResult.exitCode !== 0) {
+      throw new Error(`Codegen failed: ${codegenResult.stderr}`);
+    }
+
+    console.log("Installing dependencies...");
+    const installResult = await runCommand("pnpm", ["install", "--no-frozen-lockfile"], {
+      cwd: PROJECT_DIR,
+      timeout: 120_000,
+    });
+    if (installResult.exitCode !== 0) {
+      throw new Error(`Install failed: ${installResult.stderr}`);
+    }
+
+    console.log("Building...");
+    const buildResult = await runCommand("pnpm", ["build"], {
+      cwd: PROJECT_DIR,
+      timeout: 60_000,
+    });
+    if (buildResult.exitCode !== 0) {
+      throw new Error(`Build failed: ${buildResult.stderr}\n${buildResult.stdout}`);
+    }
+
     await killProcessOnPort(config.indexerPort);
 
     indexerProcess = startBackground(config.envioBin, ["dev"], {
@@ -51,7 +79,7 @@ describe("E2E: Indexer with GraphQL", () => {
     // The "Exiting with success" → process.exit(0) path runs docker compose down.
     indexerProcess.kill("SIGKILL");
     indexerProcess = null;
-  }, 120_000);
+  }, 300_000); // 5 min for codegen + install + build + indexer startup
 
   afterAll(async () => {
     if (indexerProcess) {

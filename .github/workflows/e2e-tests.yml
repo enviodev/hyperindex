@@ -68,7 +68,7 @@ jobs:
   # E2E test - full indexer test with database
   e2e-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -142,13 +142,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Build e2e_test scenario
-        working-directory: scenarios/e2e_test
-        run: |
-          envio codegen
-          pnpm install --no-frozen-lockfile
-          pnpm build
 
       - name: Wait for Hasura
         run: |
