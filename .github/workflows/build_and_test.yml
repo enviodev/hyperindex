@@ -1,4 +1,4 @@
-name: Test
+name: Verify
 
 on:
   pull_request:
@@ -67,7 +67,7 @@ jobs:
 
   # Cargo tests and scenario tests
   # Requires DB services (postgres + hasura)
-  test:
+  scenarios-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
