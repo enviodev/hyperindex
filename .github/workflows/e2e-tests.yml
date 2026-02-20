@@ -147,6 +147,7 @@ jobs:
         working-directory: scenarios/e2e_test
         run: |
           envio codegen
+          pnpm install --no-frozen-lockfile
           pnpm build
 
       - name: Wait for Hasura
