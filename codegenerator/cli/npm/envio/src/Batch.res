@@ -149,11 +149,15 @@ let getProgressedChainsById = {
         fetchState.chainId->Int.toString,
       ) {
       | Some(batchSize) =>
+        // Slice of a sorted buffer preserves order
         let leftItems = fetchState.buffer->Js.Array2.sliceFrom(batchSize)
         getChainAfterBatchIfProgressed(
           ~chainBeforeBatch,
           ~batchSize,
-          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
+          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(
+            ~mutItems=leftItems,
+            ~isSorted=true,
+          ),
           ~progressBlockNumberAfterBatch,
         )
       // Skip not affected chains

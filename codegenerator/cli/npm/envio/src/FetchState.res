@@ -539,6 +539,53 @@ let compareBufferItem = (a: Internal.item, b: Internal.item) => {
   }
 }
 
+/**
+Merges two sorted item arrays into one sorted array in O(n+m).
+The `incoming` array is sorted first to handle potentially unsorted source data.
+Much faster than concat + sort for the common case where existing buffer is large.
+*/
+let mergeSortedBuffers = (existing: array<Internal.item>, incoming: array<Internal.item>) => {
+  let incomingLen = incoming->Array.length
+  if incomingLen === 0 {
+    existing
+  } else {
+    // Sort incoming items first (usually small) to handle potentially unsorted source data
+    let _ = incoming->Js.Array2.sortInPlaceWith(compareBufferItem)
+    let existingLen = existing->Array.length
+    if existingLen === 0 {
+      incoming
+    } else {
+      let result = Belt.Array.makeUninitializedUnsafe(existingLen + incomingLen)
+      let i = ref(0)
+      let j = ref(0)
+      let k = ref(0)
+      while i.contents < existingLen && j.contents < incomingLen {
+        let a = existing->Belt.Array.getUnsafe(i.contents)
+        let b = incoming->Belt.Array.getUnsafe(j.contents)
+        if compareBufferItem(a, b) <= 0 {
+          result->Belt.Array.setUnsafe(k.contents, a)
+          i := i.contents + 1
+        } else {
+          result->Belt.Array.setUnsafe(k.contents, b)
+          j := j.contents + 1
+        }
+        k := k.contents + 1
+      }
+      while i.contents < existingLen {
+        result->Belt.Array.setUnsafe(k.contents, existing->Belt.Array.getUnsafe(i.contents))
+        i := i.contents + 1
+        k := k.contents + 1
+      }
+      while j.contents < incomingLen {
+        result->Belt.Array.setUnsafe(k.contents, incoming->Belt.Array.getUnsafe(j.contents))
+        j := j.contents + 1
+        k := k.contents + 1
+      }
+      result
+    }
+  }
+}
+
 // Some big number which should be bigger than any log index
 let blockItemLogIndex = 16777216
 
@@ -553,10 +600,14 @@ let updateInternal = (
   ~optimizedPartitions=fetchState.optimizedPartitions,
   ~indexingContracts=fetchState.indexingContracts,
   ~mutItems=?,
+  // When true, the caller guarantees mutItems is already sorted.
+  // The sort is then skipped unless onBlock items are interleaved.
+  ~isSorted=false,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
 ): t => {
   let mutItemsRef = ref(mutItems)
+  let onBlockItemsAdded = ref(false)
 
   let latestOnBlockBlockNumber = switch fetchState.onBlockConfigs {
   | [] => knownHeight
@@ -628,6 +679,7 @@ let updateInternal = (
         }
       }
 
+      onBlockItemsAdded := newItemsCounter.contents > 0
       latestOnBlockBlockNumber.contents
     }
   }
@@ -646,9 +698,11 @@ let updateInternal = (
     blockLag,
     knownHeight,
     buffer: switch mutItemsRef.contents {
-    // Theoretically it could be faster to asume that
-    // the items are sorted, but there are cases
-    // when the data source returns them unsorted
+    // Skip sort when caller pre-sorted (e.g. merge, slice, filter)
+    // and no onBlock items were interleaved
+    | Some(mutItems) if isSorted && !onBlockItemsAdded.contents => mutItems
+    // There are cases when the data source returns items unsorted,
+    // so sort when not guaranteed sorted or when onBlock items were added
     | Some(mutItems) => mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)
     | None => fetchState.buffer
     },
@@ -1153,9 +1207,12 @@ let handleQueryResult = (
     ~mutItems=?{
       switch newItems {
       | [] => None
-      | _ => Some(fetchState.buffer->Array.concat(newItems))
+      // Use merge instead of concat+sort: O(n+m) vs O((n+m)*log(n+m)).
+      // The existing buffer is always sorted; incoming items are sorted inside mergeSortedBuffers.
+      | _ => Some(mergeSortedBuffers(fetchState.buffer, newItems))
       }
     },
+    ~isSorted=true,
   )
 }
 
@@ -1746,6 +1803,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   }->updateInternal(
     ~optimizedPartitions,
     ~indexingContracts,
+    // Array.keep preserves order, so the result is already sorted
     ~mutItems=fetchState.buffer->Array.keep(item =>
       switch item {
       | Event({blockNumber})
@@ -1753,6 +1811,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
       } <=
       targetBlockNumber
     ),
+    ~isSorted=true,
   )
 }
 
