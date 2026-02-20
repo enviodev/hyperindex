@@ -16,6 +16,14 @@ pub enum SchemaMode {
     ForFieldSelection,
 }
 
+/// Controls whether default values are emitted in ReScript or
+/// TypeScript/JavaScript syntax. Used by `TypeIdent::get_default_value`.
+#[derive(Debug, PartialEq, Clone)]
+pub enum DefaultValueMode {
+    Rescript,
+    NonRescript,
+}
+
 impl TypeDeclMulti {
     pub fn new(type_declarations: Vec<TypeDecl>) -> Self {
         // TODO: validation
@@ -641,97 +649,77 @@ impl TypeIdent {
     }
 
     pub fn get_default_value_rescript(&self) -> String {
-        match self {
-            Self::Unit => "()".to_string(),
-            Self::Int => "0".to_string(),
-            Self::Unknown => "%raw(`undefined`)".to_string(),
-            Self::Float => "0.0".to_string(),
-            Self::BigInt => "0n".to_string(),
-            Self::Json => "%raw(`{}`)".to_string(),
-            Self::BigDecimal => "BigDecimal.zero".to_string(),
-            Self::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
-            Self::String => "\"foo\"".to_string(),
-            Self::ID => "\"my_id\"".to_string(),
-            Self::Bool => "false".to_string(),
-            Self::Timestamp => "Js.Date.fromFloat(0.)".to_string(),
-            Self::Array(_) => "[]".to_string(),
-            Self::Option(_) => "None".to_string(),
-            Self::SchemaEnum(enum_name) => {
-                format!("Enums.{}.default", &enum_name.capitalized)
-            }
-            Self::Tuple(inner_types) => {
-                let inner_types_str = inner_types
-                    .iter()
-                    .map(|inner_type| inner_type.get_default_value_rescript())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                format!("({})", inner_types_str)
-            }
-            // TODO: ensure these are defined
-            Self::GenericParam(name) => {
-                format!("{name}Default")
-            }
-            Self::TypeApplication { name, type_params } if type_params.is_empty() => {
-                format!("{name}Default")
-            }
-            Self::TypeApplication {
-                name,
-                type_params: params,
-            } => {
-                let generics_defaults = params
-                    .iter()
-                    .filter_map(|p| {
-                        if let Self::GenericParam(_) = p {
-                            Some(p.get_default_value_rescript())
-                        } else {
-                            None
-                        }
-                    })
-                    .join(", ");
-
-                let param_defaults_joined = params
-                    .iter()
-                    .map(|p| p.get_default_value_rescript())
-                    .join(", ");
-
-                let default_composed = format!("make{name}Default({param_defaults_joined})");
-                if generics_defaults.is_empty() {
-                    default_composed
-                } else {
-                    //if some parameters are generic return a function that takes schemas of those
-                    //parameters
-                    format!("({generics_defaults}) => {default_composed}")
-                }
-            }
-        }
+        self.get_default_value(&DefaultValueMode::Rescript)
     }
 
     pub fn get_default_value_non_rescript(&self) -> String {
+        self.get_default_value(&DefaultValueMode::NonRescript)
+    }
+
+    pub fn get_default_value(&self, mode: &DefaultValueMode) -> String {
+        use DefaultValueMode::*;
         match self {
-            Self::Unit | Self::Unknown => "undefined".to_string(),
-            Self::Int | Self::Float => "0".to_string(),
-            Self::Json => "{}".to_string(),
+            Self::Unit => match mode {
+                Rescript => "()",
+                NonRescript => "undefined",
+            }
+            .to_string(),
+            Self::Unknown => match mode {
+                Rescript => "%raw(`undefined`)",
+                NonRescript => "undefined",
+            }
+            .to_string(),
+            Self::Int => "0".to_string(),
+            Self::Float => match mode {
+                Rescript => "0.0",
+                NonRescript => "0",
+            }
+            .to_string(),
             Self::BigInt => "0n".to_string(),
-            Self::BigDecimal => "// default value not required since BigDecimal doesn't exist on \
-                                 contracts for contract import"
-                .to_string(),
-            Self::Address => "Addresses.defaultAddress".to_string(),
+            Self::Json => match mode {
+                Rescript => "%raw(`{}`)",
+                NonRescript => "{}",
+            }
+            .to_string(),
+            Self::BigDecimal => match mode {
+                Rescript => "BigDecimal.zero".to_string(),
+                NonRescript => "// default value not required since BigDecimal doesn't exist on \
+                                contracts for contract import"
+                    .to_string(),
+            },
+            Self::Address => match mode {
+                Rescript => "TestHelpers_MockAddresses.defaultAddress",
+                NonRescript => "Addresses.defaultAddress",
+            }
+            .to_string(),
             Self::String => "\"foo\"".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
-            Self::Timestamp => "new Date(0)".to_string(),
-            Self::Array(_) => "[]".to_string(),
-            Self::Option(_) => "null".to_string(),
-            Self::SchemaEnum(enum_name) => {
-                format!("{}Default", &enum_name.uncapitalized)
+            Self::Timestamp => match mode {
+                Rescript => "Js.Date.fromFloat(0.)",
+                NonRescript => "new Date(0)",
             }
+            .to_string(),
+            Self::Array(_) => "[]".to_string(),
+            Self::Option(_) => match mode {
+                Rescript => "None",
+                NonRescript => "null",
+            }
+            .to_string(),
+            Self::SchemaEnum(enum_name) => match mode {
+                Rescript => format!("Enums.{}.default", &enum_name.capitalized),
+                NonRescript => format!("{}Default", &enum_name.uncapitalized),
+            },
             Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
-                    .map(|inner_type| inner_type.get_default_value_non_rescript())
+                    .map(|inner_type| inner_type.get_default_value(mode))
+                    .collect::<Vec<String>>()
                     .join(", ");
-                format!("[{}]", inner_types_str)
+                match mode {
+                    Rescript => format!("({})", inner_types_str),
+                    NonRescript => format!("[{}]", inner_types_str),
+                }
             }
             // TODO: ensure these are defined
             Self::GenericParam(name) => {
@@ -748,17 +736,15 @@ impl TypeIdent {
                     .iter()
                     .filter_map(|p| {
                         if let Self::GenericParam(_) = p {
-                            Some(p.get_default_value_non_rescript())
+                            Some(p.get_default_value(mode))
                         } else {
                             None
                         }
                     })
                     .join(", ");
 
-                let param_defaults_joined = params
-                    .iter()
-                    .map(|p| p.get_default_value_non_rescript())
-                    .join(", ");
+                let param_defaults_joined =
+                    params.iter().map(|p| p.get_default_value(mode)).join(", ");
 
                 let default_composed = format!("make{name}Default({param_defaults_joined})");
                 if generics_defaults.is_empty() {
