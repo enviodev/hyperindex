@@ -3,6 +3,7 @@
 "use strict";
 
 import { spawnSync } from "child_process";
+import { existsSync } from "fs";
 import path from "path";
 
 /**
@@ -45,7 +46,7 @@ function runLocalEnvio() {
     envioVersion = pnpmList[0].dependencies["envio"].version;
   } catch (e) {
     throw new Error(
-      `Failed to get envio version from pnpm list envio --json output. Error: ${e.message}. Pnpm list: ${pnpmList}`
+      `Failed to get envio version from pnpm list envio --json output. Error: ${e.message}`
     );
   }
 
@@ -61,14 +62,21 @@ function runLocalEnvio() {
   // because it's stored in the global .pnpm and we can't get a path to binary using it.
   const relativeLocalEnvioPath = envioVersion.replace("file:", "");
 
+  // Validate the path doesn't contain traversal sequences before using it
+  const manifestPath = path.resolve(
+    root,
+    relativeLocalEnvioPath,
+    "../../Cargo.toml"
+  );
+  if (!existsSync(manifestPath)) {
+    throw new Error(
+      `Cargo.toml not found at resolved path. Ensure the envio file: dependency in package.json points to a valid local checkout.`
+    );
+  }
+
   const processResult = spawnSync(
     "cargo",
-    [
-      "run",
-      "--manifest-path",
-      path.join(relativeLocalEnvioPath, "../../Cargo.toml"),
-      ...args,
-    ],
+    ["run", "--manifest-path", manifestPath, ...args],
     { stdio: "inherit" }
   );
   process.exit(processResult.status ?? 0);
