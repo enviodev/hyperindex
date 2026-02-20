@@ -77,16 +77,16 @@ export async function runCommand(
     if (options.timeout) {
       timeoutId = setTimeout(() => {
         if (settled) return;
+        settled = true;
         // First attempt graceful shutdown
         child.kill("SIGTERM");
         // Escalate to SIGKILL after 2 seconds if still running
         killEscalationId = setTimeout(() => {
-          if (!settled) {
-            child.kill("SIGKILL");
-          }
+          child.kill("SIGKILL");
         }, 2000);
-        settled = true;
-        clearTimers();
+        // Only clear timeoutId, keep killEscalationId alive
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = null;
         reject(new Error(`Command "${command}" timed out after ${options.timeout}ms`));
       }, options.timeout);
     }

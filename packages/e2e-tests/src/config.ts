@@ -41,9 +41,12 @@ function resolveEnvioBin(): string {
     return process.env.ENVIO_BIN;
   }
 
-  const localBin = path.join(rootDir, "codegenerator/target/debug/envio");
-  if (fs.existsSync(localBin)) {
-    return localBin;
+  // Check release first (CI builds --release), then debug (local dev)
+  for (const profile of ["release", "debug"]) {
+    const bin = path.join(rootDir, `codegenerator/target/${profile}/envio`);
+    if (fs.existsSync(bin)) {
+      return bin;
+    }
   }
 
   try {

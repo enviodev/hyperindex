@@ -135,6 +135,3 @@ export class GraphQLClient {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-// Default client instance
-export const graphql = new GraphQLClient();
