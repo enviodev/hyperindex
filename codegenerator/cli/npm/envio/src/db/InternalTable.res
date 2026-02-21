@@ -218,40 +218,85 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
 
   let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
 
-  let makeProgressFieldsUpdateQuery = (~pgSchema) => {
-    let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
-      let fieldName = (field :> string)
-      let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
-    })
+  // Single UNNEST-based UPDATE for batch chain progress: 1 query instead of N
+  let makeProgressFieldsUnnestUpdateQuery = (~pgSchema) => {
+    `UPDATE "${pgSchema}"."${table.tableName}" AS c
+SET "${(#progress_block: progressFields :> string)}" = u.progress_block,
+    "${(#events_processed: progressFields :> string)}" = u.events_processed,
+    "${(#source_block: progressFields :> string)}" = u.source_block
+FROM (SELECT * FROM UNNEST($1::${(Integer: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[])
+  AS t(id, progress_block, events_processed, source_block)) AS u
+WHERE c."${(#id: field :> string)}" = u.id;`
+  }
 
-    `UPDATE "${pgSchema}"."${table.tableName}"
-SET ${setClauses->Js.Array2.joinWith(",\n    ")}
-WHERE "id" = $1;`
+  // Single UNNEST-based UPDATE for batch chain meta: 1 query instead of N
+  let makeMetaFieldsUnnestUpdateQuery = (~pgSchema) => {
+    `UPDATE "${pgSchema}"."${table.tableName}" AS c
+SET "${(#buffer_block: field :> string)}" = u.buffer_block,
+    "${(#first_event_block: field :> string)}" = u.first_event_block,
+    "${(#ready_at: field :> string)}" = u.ready_at,
+    "${(#_is_hyper_sync: field :> string)}" = u.is_hyper_sync,
+    "${(#_num_batches_fetched: field :> string)}" = u.num_batches_fetched
+FROM (SELECT * FROM UNNEST($1::${(Integer: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(TimestampWithTimezone: Postgres.columnType :> string)}[],$5::${(Boolean: Postgres.columnType :> string)}[],$6::${(Integer: Postgres.columnType :> string)}[])
+  AS t(id, buffer_block, first_event_block, ready_at, is_hyper_sync, num_batches_fetched)) AS u
+WHERE c."${(#id: field :> string)}" = u.id;`
   }
 
   let setMeta = (sql, ~pgSchema, ~chainsData: dict<metaFields>) => {
-    let query = makeMetaFieldsUpdateQuery(~pgSchema)
+    let query = makeMetaFieldsUnnestUpdateQuery(~pgSchema)
 
-    let promises = []
+    let ids = []
+    let bufferBlocks = []
+    let firstEventBlocks = []
+    let readyAts = []
+    let isHyperSyncs = []
+    let numBatchesFetcheds = []
 
     chainsData->Utils.Dict.forEachWithKey((data, chainId) => {
-      let params = []
-
-      // Push id first (for WHERE clause)
-      params->Js.Array2.push(chainId->(Utils.magic: string => unknown))->ignore
-
-      // Then push all updateable field values (for SET clause)
-      metaFields->Js.Array2.forEach(field => {
-        let value =
-          data->(Utils.magic: metaFields => dict<unknown>)->Js.Dict.unsafeGet((field :> string))
-        params->Js.Array2.push(value)->ignore
-      })
-
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      ids->Js.Array2.push(chainId->(Utils.magic: string => unknown))->ignore
+      bufferBlocks
+      ->Js.Array2.push(
+        data
+        ->(Utils.magic: metaFields => dict<unknown>)
+        ->Js.Dict.unsafeGet((#buffer_block: field :> string)),
+      )
+      ->ignore
+      firstEventBlocks
+      ->Js.Array2.push(
+        data
+        ->(Utils.magic: metaFields => dict<unknown>)
+        ->Js.Dict.unsafeGet((#first_event_block: field :> string)),
+      )
+      ->ignore
+      readyAts
+      ->Js.Array2.push(
+        data
+        ->(Utils.magic: metaFields => dict<unknown>)
+        ->Js.Dict.unsafeGet((#ready_at: field :> string)),
+      )
+      ->ignore
+      isHyperSyncs
+      ->Js.Array2.push(
+        data
+        ->(Utils.magic: metaFields => dict<unknown>)
+        ->Js.Dict.unsafeGet((#_is_hyper_sync: field :> string)),
+      )
+      ->ignore
+      numBatchesFetcheds
+      ->Js.Array2.push(
+        data
+        ->(Utils.magic: metaFields => dict<unknown>)
+        ->Js.Dict.unsafeGet((#_num_batches_fetched: field :> string)),
+      )
+      ->ignore
     })
 
-    Promise.all(promises)
+    sql
+    ->Postgres.preparedUnsafe(
+      query,
+      (ids, bufferBlocks, firstEventBlocks, readyAts, isHyperSyncs, numBatchesFetcheds)->Obj.magic,
+    )
+    ->Promise.thenResolve(_ => [])
   }
 
   type progressedChain = {
@@ -262,33 +307,28 @@ WHERE "id" = $1;`
   }
 
   let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
-    let query = makeProgressFieldsUpdateQuery(~pgSchema)
+    let query = makeProgressFieldsUnnestUpdateQuery(~pgSchema)
 
-    let promises = []
+    let ids = []
+    let progressBlocks = []
+    let eventsProcesseds = []
+    let sourceBlocks = []
 
     progressedChains->Js.Array2.forEach(data => {
-      let params = []
-
-      // Push id first (for WHERE clause)
-      params->Js.Array2.push(data.chainId->(Utils.magic: int => unknown))->ignore
-
-      // Then push all updateable field values (for SET clause)
-      progressFields->Js.Array2.forEach(field => {
-        params
-        ->Js.Array2.push(
-          switch field {
-          | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
-          | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
-          | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
-          },
-        )
-        ->ignore
-      })
-
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      ids->Js.Array2.push(data.chainId->(Utils.magic: int => unknown))->ignore
+      progressBlocks->Js.Array2.push(data.progressBlockNumber->(Utils.magic: int => unknown))->ignore
+      eventsProcesseds
+      ->Js.Array2.push(data.totalEventsProcessed->(Utils.magic: int => unknown))
+      ->ignore
+      sourceBlocks->Js.Array2.push(data.sourceBlockNumber->(Utils.magic: int => unknown))->ignore
     })
 
-    Promise.all(promises)->Promise.ignoreValue
+    sql
+    ->Postgres.preparedUnsafe(
+      query,
+      (ids, progressBlocks, eventsProcesseds, sourceBlocks)->Obj.magic,
+    )
+    ->Promise.ignoreValue
   }
 }
 
@@ -338,6 +378,14 @@ module Checkpoints = {
 
   let table = mkTable(
     "envio_checkpoints",
+    ~compositeIndices=[
+      // Speeds up reorg checkpoint queries and rollback target lookups
+      // which filter on chain_id and block_number
+      [
+        {fieldName: (#chain_id: field :> string), direction: Asc},
+        {fieldName: (#block_number: field :> string), direction: Asc},
+      ],
+    ],
     ~fields=[
       mkField((#id: field :> string), Int32, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),

@@ -20,6 +20,9 @@ let makeClient = () => {
       ),
       transform: {undefined: Null},
       max: Env.Db.maxConnections,
+      // The code only uses unsafe/preparedUnsafe (not tagged template literals),
+      // so postgres.js type introspection from pg_type is unnecessary overhead.
+      fetchTypes: false,
       // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
     },
   )
