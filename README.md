@@ -1,1 +1,1 @@
-packages/envio-rust/README.md
+packages/cli/README.md
