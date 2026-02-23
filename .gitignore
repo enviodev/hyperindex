@@ -16,4 +16,8 @@ scenarios/**/*.gen.ts
 scenarios/**/lib/*
 scenarios/**/node_modules/*
 
+# ReScript build artifacts under codegenerator
+codegenerator/cli/npm/envio/lib/bs/
+codegenerator/cli/npm/envio/src/**/*.res.mjs
+
 rescript.lock
