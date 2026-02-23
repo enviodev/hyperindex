@@ -271,6 +271,8 @@ pub mod fuel {
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
+                        max_reorg_depth: None,
+                        block_lag: None,
                         contracts: Some(
                             contracts
                                 .iter()

@@ -195,9 +195,9 @@ struct InternalChainConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     end_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_reorg_depth: Option<i32>,
+    max_reorg_depth: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    block_lag: Option<i32>,
+    block_lag: Option<u32>,
     // EVM/Fuel-specific source config (hypersync/hyperfuel endpoint)
     #[serde(skip_serializing_if = "Option::is_none")]
     hypersync: Option<String>,
@@ -1043,7 +1043,7 @@ pub struct PerNetworkContractTemplate {
 
 impl PerNetworkContractTemplate {
     fn from_config_network_contract(
-        network_contract: &system_config::NetworkContract,
+        network_contract: &system_config::ChainContract,
         config: &SystemConfig,
     ) -> anyhow::Result<Self> {
         let contract = network_contract
@@ -1070,14 +1070,14 @@ type EthAddress = String;
 #[derive(Debug, Serialize, PartialEq, Clone, Default)]
 struct NetworkTemplate {
     pub id: u64,
-    max_reorg_depth: Option<i32>,
-    block_lag: Option<i32>,
+    max_reorg_depth: Option<u32>,
+    block_lag: Option<u32>,
     start_block: u64,
     end_block: Option<u64>,
 }
 
 impl NetworkTemplate {
-    fn from_config_network(network: &system_config::Network) -> Self {
+    fn from_config_network(network: &system_config::Chain) -> Self {
         NetworkTemplate {
             id: network.id,
             max_reorg_depth: network.max_reorg_depth,
@@ -1096,7 +1096,7 @@ pub struct NetworkConfigTemplate {
 
 impl NetworkConfigTemplate {
     fn from_config_network(
-        network: &system_config::Network,
+        network: &system_config::Chain,
         config: &SystemConfig,
     ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
