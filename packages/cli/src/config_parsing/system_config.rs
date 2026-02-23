@@ -875,7 +875,7 @@ impl SystemConfig {
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: None,
-                        block_lag: None,
+                        block_lag: network.block_lag,
                         sync_source,
                         contracts: vec![],
                     };

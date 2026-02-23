@@ -721,6 +721,12 @@ pub mod svm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The slot number at which the indexer should terminate.")]
         pub end_block: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The number of blocks behind the chain head that the indexer should lag. \
+                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+        )]
+        pub block_lag: Option<u32>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
