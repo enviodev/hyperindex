@@ -609,7 +609,7 @@ describe("E2E tests", () => {
             }),
           ),
         )
-      | _ => panic("should have called getItemsOrThrow on primary source")
+      | _ => Js.Exn.raiseError("should have called getItemsOrThrow on primary source")
       }
 
       await Utils.delay(0)
@@ -620,7 +620,7 @@ describe("E2E tests", () => {
       | [call] =>
         // Resolve the fallback source successfully
         call.resolve([], ~latestFetchedBlockNumber=100)
-      | _ => panic("fallback source should be called after primary fails with invalid data")
+      | _ => Js.Exn.raiseError("fallback source should be called after primary fails with invalid data")
       }
 
       await indexerMock.getBatchWritePromise()
@@ -966,7 +966,7 @@ describe("E2E tests", () => {
             // Verify p1 throws with correct error message
             try {
               let _ = await p1
-              panic("p1 should have thrown an error")
+              Js.Exn.raiseError("p1 should have thrown an error")
             } catch {
             | exn =>
               t.expect(
@@ -1122,7 +1122,7 @@ describe("E2E tests", () => {
     | [chunk1, chunk2, _, _] =>
       chunk1.resolve([], ~latestFetchedBlockNumber=1340)
       chunk2.resolve([], ~latestFetchedBlockNumber=1880)
-    | _ => panic("Expected 4 chunks")
+    | _ => Js.Exn.raiseError("Expected 4 chunks")
     }
     await indexerMock.getBatchWritePromise()
 
@@ -1287,7 +1287,7 @@ describe("E2E tests", () => {
           {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
         ],
       )
-    | _ => panic("Expected 4 chunks")
+    | _ => Js.Exn.raiseError("Expected 4 chunks")
     }
   })
 

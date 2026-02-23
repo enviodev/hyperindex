@@ -1520,7 +1520,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let query = switch nextQuery {
     | Ready([q]) => q
-    | _ => panic("Failed to extract query")
+    | _ => Js.Exn.raiseError("Failed to extract query")
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -1640,7 +1640,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let query = switch nextQuery {
     | Ready([q]) => q
-    | _ => panic("Failed to extract query")
+    | _ => Js.Exn.raiseError("Failed to extract query")
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -1743,7 +1743,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let queries = switch fetchStateWithDcs->getNextQuery {
     | Ready(queries) => queries
-    | _ => panic("Failed to extract query. The getNextQuery should be idempotent")
+    | _ => Js.Exn.raiseError("Failed to extract query. The getNextQuery should be idempotent")
     }
 
     fetchStateWithDcs->FetchState.startFetchingQueries(~queries)
@@ -1886,7 +1886,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let queries = switch fetchState->getNextQuery {
     | Ready(queries) => queries
-    | _ => panic("Failed to extract query. The getNextQuery should be idempotent")
+    | _ => Js.Exn.raiseError("Failed to extract query. The getNextQuery should be idempotent")
     }
 
     let p2Query = queries->Array.getUnsafe(0)
@@ -1926,7 +1926,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let queries = switch fetchStateWithResponse1->getNextQuery {
     | Ready(queries) => queries
-    | _ => panic("Failed to extract query. The getNextQuery should be idempotent")
+    | _ => Js.Exn.raiseError("Failed to extract query. The getNextQuery should be idempotent")
     }
     fetchStateWithResponse1->FetchState.startFetchingQueries(~queries)
 
@@ -2721,7 +2721,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       let queries = switch fetchStateWithDcA->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready(queries) => queries
-      | _ => panic("Expected Ready queries")
+      | _ => Js.Exn.raiseError("Expected Ready queries")
       }
 
       t.expect(queries).toEqual([
@@ -2751,7 +2751,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       let queries = switch fetchStateWithDcB->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready(queries) => queries
-      | _ => panic("Expected Ready queries")
+      | _ => Js.Exn.raiseError("Expected Ready queries")
       }
       let partition2Query = {
         ...queries->Array.getUnsafe(0),
@@ -3241,7 +3241,7 @@ describe("FetchState buffer overflow prevention", () => {
           q.toBlock,
           ~message="Should limit endBlock to maxQueryBlockNumber (15) when both endBlock and maxQueryBlockNumber are present",
         ).toBe(Some(15))
-      | _ => panic("Expected Ready query when buffer limiting is active")
+      | _ => Js.Exn.raiseError("Expected Ready query when buffer limiting is active")
       }
 
       // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
@@ -3252,7 +3252,7 @@ describe("FetchState buffer overflow prevention", () => {
           q.toBlock,
           ~message="Should set endBlock to maxQueryBlockNumber (15) when no endBlock was specified",
         ).toBe(Some(15))
-      | _ => panic("Expected Ready query when buffer limiting is active")
+      | _ => Js.Exn.raiseError("Expected Ready query when buffer limiting is active")
       }
 
       // Test case 3: Small queue, no buffer limiting -> Should use Head target
@@ -3281,7 +3281,7 @@ describe("FetchState buffer overflow prevention", () => {
           q.toBlock,
           ~message="Should use None when buffer is not limited",
         ).toBe(None)
-      | _ => panic("Expected Ready query")
+      | _ => Js.Exn.raiseError("Expected Ready query")
       }
     },
   )
@@ -3403,7 +3403,7 @@ describe("Stale query response should not overwrite block range", () => {
       // -- Query 1: uncapped query from block 0 --
       let q1 = switch fetchState->getNextQuery {
       | Ready([q]) => q
-      | _ => panic("Expected a single query")
+      | _ => Js.Exn.raiseError("Expected a single query")
       }
       fetchState->FetchState.startFetchingQueries(~queries=[q1])
 
@@ -3435,7 +3435,7 @@ describe("Stale query response should not overwrite block range", () => {
       // -- Query 2: uncapped query from block 501 --
       let q2 = switch fs1->getNextQuery {
       | Ready([q]) => q
-      | _ => panic("Expected a single query for second round")
+      | _ => Js.Exn.raiseError("Expected a single query for second round")
       }
       fs1->FetchState.startFetchingQueries(~queries=[q2])
 
@@ -3465,7 +3465,7 @@ describe("Stale query response should not overwrite block range", () => {
       // -- Query 3: get two chunk queries in parallel --
       let (chunkA, chunkB) = switch fs2->getNextQuery(~concurrencyLimit=2) {
       | Ready([a, b]) => (a, b)
-      | _ => panic("Expected two chunk queries")
+      | _ => Js.Exn.raiseError("Expected two chunk queries")
       }
 
       t.expect(

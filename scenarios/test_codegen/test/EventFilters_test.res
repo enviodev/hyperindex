@@ -56,7 +56,7 @@ describe("Test eventFilters", () => {
 
     t.expect(
       switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {
-      | Static(_) => panic("Should be dynamic")
+      | Static(_) => Js.Exn.raiseError("Should be dynamic")
       | Dynamic(fn) =>
         fn([
           "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"->Address.unsafeFromString,

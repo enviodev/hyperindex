@@ -204,13 +204,13 @@ describe("SourceManager fetchNext", () => {
   }
 
   let neverWaitForNewBlock = async (~knownHeight as _) =>
-    panic("The waitForNewBlock shouldn't be called for the test")
+    Js.Exn.raiseError("The waitForNewBlock shouldn't be called for the test")
 
   let neverOnNewBlock = (~knownHeight as _) =>
-    panic("The onNewBlock shouldn't be called for the test")
+    Js.Exn.raiseError("The onNewBlock shouldn't be called for the test")
 
   let neverExecutePartitionQuery = _ =>
-    panic("The executeQuery shouldn't be called for the test")
+    Js.Exn.raiseError("The executeQuery shouldn't be called for the test")
 
   let source: Source.t = Mock.Source.make([]).source
 
@@ -1328,7 +1328,7 @@ describe("SourceManager.executeQuery", () => {
     sourceMock.getItemsOrThrowCalls->Js.Array2.forEach(call => call.reject(error))
     try {
       let _ = await p
-      panic("Should not have resolved")
+      Js.Exn.raiseError("Should not have resolved")
     } catch {
     | Js.Exn.Error(e) =>
       t.expect(
@@ -1382,7 +1382,7 @@ describe("SourceManager.executeQuery", () => {
         )
         call.resolve([])
       }
-    | _ => panic("Should have a new call after the microtask")
+    | _ => Js.Exn.raiseError("Should have a new call after the microtask")
     }
 
     t.expect((await p).parsedQueueItems).toEqual([])
@@ -1444,7 +1444,7 @@ describe("SourceManager.executeQuery", () => {
               ),
             )
           }
-        | _ => panic("Should have one pending call to sourceMock1")
+        | _ => Js.Exn.raiseError("Should have one pending call to sourceMock1")
         }
 
         // Wait for microtask, so the rejection is caught
@@ -1473,7 +1473,7 @@ describe("SourceManager.executeQuery", () => {
             ),
           )
         }
-      | _ => panic("Should have one pending call to sourceMock0")
+      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock0")
       }
 
       await Promise.resolve() // Wait for microtask, so the rejection is caught
@@ -1497,7 +1497,7 @@ describe("SourceManager.executeQuery", () => {
             ),
           )
         }
-      | _ => panic("Should have one pending call to sourceMock0")
+      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock0")
       }
 
       await Promise.resolve()
@@ -1534,7 +1534,7 @@ but we still attempt the fallback source if it was the initial active source.
           call.resolve([])
           t.expect((await p).parsedQueueItems).toEqual([])
         }
-      | _ => panic("Should have one pending call to sourceMock1")
+      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock1")
       }
     },
   )

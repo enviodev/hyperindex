@@ -52,8 +52,8 @@ describe("RpcSource - getHeightOrThrow", () => {
 })
 
 describe("RpcSource - getEventTransactionOrThrow", () => {
-  let neverGetTransactionJson = _ => panic("getTransactionJson should not be called")
-  let neverGetReceiptJson = _ => panic("getReceiptJson should not be called")
+  let neverGetTransactionJson = _ => Js.Exn.raiseError("getTransactionJson should not be called")
+  let neverGetReceiptJson = _ => Js.Exn.raiseError("getReceiptJson should not be called")
 
   it("Panics with invalid schema", t => {
     t.expect(
@@ -549,7 +549,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       )
-      panic("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Js.Exn.Error(e) =>
       t.expect(
@@ -687,7 +687,7 @@ describe("RpcSource - getSelectionConfig", () => {
         dependsOnAddresses: true,
         eventConfigs: [],
       }->RpcSource.getSelectionConfig(~chain)
-      panic("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
       t.expect(
@@ -695,7 +695,7 @@ describe("RpcSource - getSelectionConfig", () => {
       ).toBe(
         "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
       )
-    | _ => panic("Should have thrown UnsupportedSelection")
+    | _ => Js.Exn.raiseError("Should have thrown UnsupportedSelection")
     }
   })
 
@@ -708,7 +708,7 @@ describe("RpcSource - getSelectionConfig", () => {
           (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
         ],
       }->RpcSource.getSelectionConfig(~chain)
-      panic("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
       t.expect(
@@ -716,7 +716,7 @@ describe("RpcSource - getSelectionConfig", () => {
       ).toBe(
         "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
       )
-    | _ => panic("Should have thrown UnsupportedSelection")
+    | _ => Js.Exn.raiseError("Should have thrown UnsupportedSelection")
     }
   })
 })
