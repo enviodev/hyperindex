@@ -833,8 +833,7 @@ impl SystemConfig {
                         id: network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
-                        max_reorg_depth: network.max_reorg_depth
-                            .or_else(|| get_max_reorg_depth_from_id(network.id)),
+                        max_reorg_depth: network.max_reorg_depth,
                         block_lag: network.block_lag,
                         sync_source,
                         contracts,
