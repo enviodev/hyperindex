@@ -19,7 +19,7 @@
     "rescript-schema": "9.3.4"
   },
   "devDependencies": {
-    "vitest": "^3.0.0"
+    "vitest": "4.0.18"
   },
   "optionalDependencies": {
     "generated": "./generated"
