@@ -98,22 +98,22 @@ external describe_skip: (string, unit => unit) => unit = "skip"
 // ============================================================================
 
 @module("vitest")
-external it: (string, unit => unit) => unit = "it"
+external it: (string, testContext => unit) => unit = "it"
 
 @module("vitest") @scope("it")
-external it_only: (string, unit => unit) => unit = "only"
+external it_only: (string, testContext => unit) => unit = "only"
 
 @module("vitest") @scope("it")
-external it_skip: (string, unit => unit) => unit = "skip"
+external it_skip: (string, testContext => unit) => unit = "skip"
 
 @module("vitest")
-external test: (string, unit => unit) => unit = "test"
+external test: (string, testContext => unit) => unit = "test"
 
 @module("vitest") @scope("test")
-external test_only: (string, unit => unit) => unit = "only"
+external test_only: (string, testContext => unit) => unit = "only"
 
 @module("vitest") @scope("test")
-external test_skip: (string, unit => unit) => unit = "skip"
+external test_skip: (string, testContext => unit) => unit = "skip"
 
 // ============================================================================
 // Setup and Teardown
@@ -137,22 +137,22 @@ external afterEach: (unit => unit) => unit = "afterEach"
 
 module Async = {
   @module("vitest")
-  external it: (string, unit => promise<unit>) => unit = "it"
+  external it: (string, testContext => promise<unit>) => unit = "it"
 
   @module("vitest") @scope("it")
-  external it_only: (string, unit => promise<unit>) => unit = "only"
+  external it_only: (string, testContext => promise<unit>) => unit = "only"
 
   @module("vitest") @scope("it")
-  external it_skip: (string, unit => promise<unit>) => unit = "skip"
+  external it_skip: (string, testContext => promise<unit>) => unit = "skip"
 
   @module("vitest")
-  external test: (string, unit => promise<unit>) => unit = "test"
+  external test: (string, testContext => promise<unit>) => unit = "test"
 
   @module("vitest") @scope("test")
-  external test_only: (string, unit => promise<unit>) => unit = "only"
+  external test_only: (string, testContext => promise<unit>) => unit = "only"
 
   @module("vitest") @scope("test")
-  external test_skip: (string, unit => promise<unit>) => unit = "skip"
+  external test_skip: (string, testContext => promise<unit>) => unit = "skip"
 
   @module("vitest")
   external beforeAll: (unit => promise<unit>) => unit = "beforeAll"

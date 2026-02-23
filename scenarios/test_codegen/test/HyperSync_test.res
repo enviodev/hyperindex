@@ -3,7 +3,7 @@ open Vitest
 let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
 
 describe_skip("Test Hyperliquid broken transaction response", () => {
-  Async.it("should handle broken transaction response", async () => {
+  Async.it("should handle broken transaction response", async _t => {
     let page = await HyperSync.GetLogs.query(
       ~client=HyperSyncClient.make(
         ~url="https://645749.hypersync.xyz",

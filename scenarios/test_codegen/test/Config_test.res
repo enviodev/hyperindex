@@ -1,7 +1,7 @@
 open Vitest
 
 describe("Config.fromPublic", () => {
-  it("resolves ABI for lowercase contract name in internal config", () => {
+  it("resolves ABI for lowercase contract name in internal config", t => {
     // Internal config JSON with a lowercase contract name key ("greeter")
     let publicConfigJson: Js.Json.t = %raw(`{
       "version": "0.0.1-dev",
@@ -45,16 +45,15 @@ describe("Config.fromPublic", () => {
 
     let chain = config.chainMap->ChainMap.values->Js.Array2.unsafe_get(0)
     let contracts = chain.contracts
-    Assert.equal(contracts->Array.length, 1, ~message="Should have one contract")
+    t.expect(contracts->Array.length, ~message="Should have one contract").toBe(1)
     let contract = contracts->Js.Array2.unsafe_get(0)
-    Assert.equal(
+    t.expect(
       contract.name,
-      "Greeter",
       ~message="Contract name should be the capitalized version from codegen",
-    )
+    ).toBe("Greeter")
   })
 
-  it("works with already-capitalized contract name", () => {
+  it("works with already-capitalized contract name", t => {
     let publicConfigJson: Js.Json.t = %raw(`{
       "version": "0.0.1-dev",
       "name": "test",
@@ -94,12 +93,11 @@ describe("Config.fromPublic", () => {
 
     let chain = config.chainMap->ChainMap.values->Js.Array2.unsafe_get(0)
     let contracts = chain.contracts
-    Assert.equal(contracts->Array.length, 1, ~message="Should have one contract")
+    t.expect(contracts->Array.length, ~message="Should have one contract").toBe(1)
     let contract = contracts->Js.Array2.unsafe_get(0)
-    Assert.equal(
+    t.expect(
       contract.name,
-      "Greeter",
       ~message="Contract name should remain Greeter",
-    )
+    ).toBe("Greeter")
   })
 })

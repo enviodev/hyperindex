@@ -144,7 +144,7 @@ describe("ChainManager", () => {
   describe("createBatch", () => {
     it(
       "when processing through many randomly generated events on different queues, the grouping and ordering is correct",
-      () => {
+      t => {
         let (
           mockChainManager,
           numberOfMockEventsCreated,
@@ -183,12 +183,11 @@ describe("ChainManager", () => {
 
             let firstEventInBlock = items[0]->Option.getExn
 
-            Assert.equal(
+            t.expect(
               firstEventInBlock->EventUtils.getOrderedBatchItemComparator >
                 lastEvent->EventUtils.getOrderedBatchItemComparator,
-              true,
               ~message="Check that first event in this block group is AFTER the last event before this block group",
-            )
+            ).toBe(true)
 
             let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
               (chain, fetcher) => {
@@ -229,11 +228,10 @@ describe("ChainManager", () => {
             },
           )
 
-        Assert.equal(
+        t.expect(
           amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
-          numberOfMockEventsCreated,
           ~message="There were a different number of events created to what was recieved from the queues.",
-        )
+        ).toBe(numberOfMockEventsCreated)
       },
     )
   })

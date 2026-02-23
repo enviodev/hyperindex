@@ -3,7 +3,7 @@ open Vitest
 @module("viem") external parseAbi: array<string> => EvmTypes.Abi.t = "parseAbi"
 
 describe("decodeEventLogOrThrow", () => {
-  it("decodes event with args as an object", () => {
+  it("decodes event with args as an object", t => {
     let eventLog: Viem.eventLog = {
       {
         abi: parseAbi([
@@ -20,8 +20,7 @@ describe("decodeEventLogOrThrow", () => {
     }
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
 
-    Assert.deepEqual(
-      decodedEvent,
+    t.expect(decodedEvent).toEqual(
       {
         args: {
           "fee": 3000,
@@ -35,7 +34,7 @@ describe("decodeEventLogOrThrow", () => {
     )
   })
 
-  it("if there's a param without name, it decodes as an array, which we don't want", () => {
+  it("if there's a param without name, it decodes as an array, which we don't want", t => {
     let eventLog: Viem.eventLog = {
       {
         abi: parseAbi([
@@ -51,8 +50,7 @@ describe("decodeEventLogOrThrow", () => {
     }
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
 
-    Assert.deepEqual(
-      decodedEvent,
+    t.expect(decodedEvent).toEqual(
       {
         args: [
           "0x4200000000000000000000000000000000000006",

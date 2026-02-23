@@ -7,19 +7,21 @@ let undefined = (%raw(`undefined`): option<'a>)
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
+    ~t,
     ~sourceMock: Mock.Source.t,
     ~indexerMock: Mock.Indexer.t,
     ~firstHistoryCheckpointId=2.,
   ) => {
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+      ~message="Should enter reorg threshold and request now to the latest block",
+    ).toEqual(
       Some({
         "fromBlock": 101,
         "toBlock": None,
         "retry": 0,
         "p": "0",
       }),
-      ~message="Should enter reorg threshold and request now to the latest block",
     )
 
     sourceMock.resolveGetItemsOrThrow(
@@ -95,12 +97,14 @@ describe("E2E rollback tests", () => {
 
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
       )),
+      ~message="Should have two entities in the db",
+    ).toEqual(
       (
         [
           {
@@ -171,11 +175,11 @@ describe("E2E rollback tests", () => {
           }),
         ],
       ),
-      ~message="Should have two entities in the db",
     )
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+    ).toEqual(
       Some({
         "fromBlock": 103,
         "toBlock": None,
@@ -208,10 +212,11 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getBlockHashesCalls,
-      [[100]],
       ~message="Should have called getBlockHashes to find rollback depth",
+    ).toEqual(
+      [[100]],
     )
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
@@ -220,8 +225,10 @@ describe("E2E rollback tests", () => {
 
     await indexerMock.getRollbackReadyPromise()
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+      ~message="Should rollback fetch state",
+    ).toEqual(
       Some({
         "fromBlock": 101,
         "toBlock": None,
@@ -229,7 +236,6 @@ describe("E2E rollback tests", () => {
         // IDs reset on rollback, recreated partition starts at 0
         "p": "0",
       }),
-      ~message="Should rollback fetch state",
     )
     sourceMock.resolveGetItemsOrThrow([
       {
@@ -252,12 +258,14 @@ describe("E2E rollback tests", () => {
 
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
       )),
+      ~message="Should correctly rollback entities",
+    ).toEqual(
       (
         [
           {
@@ -297,13 +305,12 @@ describe("E2E rollback tests", () => {
           }),
         ],
       ),
-      ~message="Should correctly rollback entities",
     )
   }
 
   Async.it(
     "Should stay in reorg threshold on restart when progress is past threshold",
-    async () => {
+    async t => {
       let sourceMock1337 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -326,25 +333,27 @@ describe("E2E rollback tests", () => {
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
 
-      Assert.deepEqual(
+      t.expect(
         sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        ~message="Should enter reorg threshold and request now to the latest block",
+      ).toEqual(
         Some({
           "fromBlock": 101,
           "toBlock": None,
           "retry": 0,
           "p": "0",
         }),
-        ~message="Should enter reorg threshold and request now to the latest block",
       )
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_reorg_threshold"),
+      ).toEqual(
         [{value: "1", labels: Js.Dict.empty()}],
       )
 
@@ -360,54 +369,59 @@ describe("E2E rollback tests", () => {
 
       // After restart, we should still be in reorg threshold because
       // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_reorg_threshold"),
+      ).toEqual(
         [{value: "1", labels: Js.Dict.empty()}],
       )
 
       // After restart, both chains have knownHeight from sourceBlockNumber,
       // so they don't need to call getHeightOrThrow
-      Assert.deepEqual(
+      t.expect(
         sourceMock1337.getHeightOrThrowCalls->Array.length,
-        0,
         ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
+      ).toEqual(
+        0,
       )
 
       // Both chains are ready immediately, so chain 1337 should continue fetching
-      Assert.deepEqual(
+      t.expect(
         sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        ~message="Should continue indexing from where we left off",
+      ).toEqual(
         Some({
           "fromBlock": 111,
           "toBlock": None,
           "retry": 0,
           "p": "0",
         }),
-        ~message="Should continue indexing from where we left off",
       )
 
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
 
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        ~message="Continue normally inside of the reorg threshold",
+      ).toEqual(
         Some({
           "fromBlock": 201,
           "toBlock": None,
           "retry": 0,
           "p": "0",
         }),
-        ~message="Continue normally inside of the reorg threshold",
       )
 
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_reorg_threshold"),
+      ).toEqual(
         [{value: "1", labels: Js.Dict.empty()}],
       )
     },
   )
 
-  Async.it("Rollback of a single chain indexer", async () => {
+  Async.it("Rollback of a single chain indexer", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -422,13 +436,13 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
-    await testSingleChainRollback(~sourceMock, ~indexerMock)
+    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await testSingleChainRollback(~t, ~sourceMock, ~indexerMock)
   })
 
   Async.it(
     "Stores checkpoints inside of the reorg threshold for batches without items",
-    async () => {
+    async t => {
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -443,14 +457,16 @@ describe("E2E rollback tests", () => {
       )
       await Utils.delay(0)
 
-      await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+      await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
       sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
 
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.queryCheckpoints(),
+        ~message="Should have added a checkpoint even though there are no items in the batch",
+      ).toEqual(
         [
           {
             id: 2.,
@@ -460,12 +476,11 @@ describe("E2E rollback tests", () => {
             blockHash: Js.Null.Value("0x102"),
           },
         ],
-        ~message="Should have added a checkpoint even though there are no items in the batch",
       )
     },
   )
 
-  Async.it("Shouldn't detect reorg for rollbacked block", async () => {
+  Async.it("Shouldn't detect reorg for rollbacked block", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -480,7 +495,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
     await indexerMock.getBatchWritePromise()
@@ -496,10 +511,11 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getBlockHashesCalls,
-      [[100]],
       ~message="Should have called getBlockHashes to find rollback depth",
+    ).toEqual(
+      [[100]],
     )
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
@@ -507,8 +523,10 @@ describe("E2E rollback tests", () => {
     ])
 
     await indexerMock.getRollbackReadyPromise()
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      ~message="Should rollback fetch state and re-request items",
+    ).toEqual(
       [
         {
           "fromBlock": 101,
@@ -518,7 +536,6 @@ describe("E2E rollback tests", () => {
           "p": "0",
         },
       ],
-      ~message="Should rollback fetch state and re-request items",
     )
 
     sourceMock.resolveGetItemsOrThrow(
@@ -528,8 +545,10 @@ describe("E2E rollback tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryCheckpoints(),
+      ~message="Should update the checkpoint without retriggering a reorg",
+    ).toEqual(
       [
         {
           id: 4.,
@@ -539,13 +558,12 @@ describe("E2E rollback tests", () => {
           blockHash: Js.Null.Value("0x102-reorged"),
         },
       ],
-      ~message="Should update the checkpoint without retriggering a reorg",
     )
   })
 
   Async.it(
     "Single chain rollback should also work for unordered multichain indexer when another chains are stale",
-    async () => {
+    async t => {
       let sourceMock1 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -569,11 +587,12 @@ describe("E2E rollback tests", () => {
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1),
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock2),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
       ))
 
       await testSingleChainRollback(
+        ~t,
         ~sourceMock=sourceMock1,
         ~indexerMock,
         ~firstHistoryCheckpointId=3.,
@@ -581,7 +600,7 @@ describe("E2E rollback tests", () => {
     },
   )
 
-  Async.it("Rollback Dynamic Contract", async () => {
+  Async.it("Rollback Dynamic Contract", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -596,7 +615,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     let calls = []
     let handler = async (
@@ -647,8 +666,10 @@ describe("E2E rollback tests", () => {
 
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
+      ~message=`Creates a new partition for DCs and queries it in parallel with the original partition without blocking`,
+    ).toEqual(
       (
         ["101-0"],
         [
@@ -669,12 +690,12 @@ describe("E2E rollback tests", () => {
           },
         ],
       ),
-      ~message=`Creates a new partition for DCs and queries it in parallel with the original partition without blocking`,
     )
-    Assert.deepEqual(
+    t.expect(
       await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
-      [],
       ~message="Shouldn't store dynamic contracts at this point",
+    ).toEqual(
+      [],
     )
 
     sourceMock.resolveGetItemsOrThrow(
@@ -689,8 +710,10 @@ describe("E2E rollback tests", () => {
       ~latestFetchedBlockNumber=102,
     )
     await indexerMock.getBatchWritePromise()
-    Assert.deepEqual(
+    t.expect(
       (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
+      ~message=`Should process the block 102 after DC partition finished fetching it`,
+    ).toEqual(
       (
         ["101-0", "102-0", "102-1", "102-2"],
         [
@@ -708,10 +731,11 @@ describe("E2E rollback tests", () => {
           },
         ],
       ),
-      ~message=`Should process the block 102 after DC partition finished fetching it`,
     )
-    Assert.deepEqual(
+    t.expect(
       await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
+      ~message="Added the processed dynamic contract to the db",
+    ).toEqual(
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
@@ -726,15 +750,15 @@ describe("E2E rollback tests", () => {
           contractName: "SimpleNft",
         },
       ],
-      ~message="Added the processed dynamic contract to the db",
     )
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
     await indexerMock.getBatchWritePromise()
-    Assert.deepEqual(
+    t.expect(
       (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
-      2,
       ~message="Should add the processed dynamic contracts to the db",
+    ).toEqual(
+      2,
     )
 
     // Should trigger rollback
@@ -749,10 +773,11 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getBlockHashesCalls,
-      [[100, 101, 102]],
       ~message="Should have called getBlockHashes to find rollback depth",
+    ).toEqual(
+      [[100, 101, 102]],
     )
     sourceMock.resolveGetBlockHashes([
       // The block 102 is untouched so we can rollback to it
@@ -765,8 +790,10 @@ describe("E2E rollback tests", () => {
 
     await indexerMock.getRollbackReadyPromise()
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      ~message="Should rollback fetch state and re-request items",
+    ).toEqual(
       [
         // Normal partition (recreated fresh, no chunking)
         {
@@ -783,7 +810,6 @@ describe("E2E rollback tests", () => {
           "p": "2",
         },
       ],
-      ~message="Should rollback fetch state and re-request items",
     )
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
@@ -791,11 +817,12 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
-    Assert.deepEqual(
+    t.expect(
       (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
-      2,
       ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
 This might be wrong after we start exposing a block hash for progress block.`,
+    ).toEqual(
+      2,
     )
 
     sourceMock.resolveGetItemsOrThrow(
@@ -812,8 +839,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
+      ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
+    ).toEqual(
       [
         {
           id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
@@ -828,18 +857,18 @@ This might be wrong after we start exposing a block hash for progress block.`,
           contractName: "SimpleNft",
         },
       ],
-      ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
     )
     // After the db rollback, both partitions continue from block 105 (no chunk history yet)
     let payloads = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
-    Assert.deepEqual(
+    t.expect(
       payloads->Js.Array2.map(p => (p["p"], p["fromBlock"], p["toBlock"])),
-      [("2", 105, None), ("0", 105, None)],
       ~message="Should correctly continue fetching from block 105 after rolling back the db",
+    ).toEqual(
+      [("2", 105, None), ("0", 105, None)],
     )
   })
 
-  Async.it("Rollback of unordered multichain indexer (single entity id change)", async () => {
+  Async.it("Rollback of unordered multichain indexer (single entity id change)", async t => {
     let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -863,8 +892,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await Utils.delay(0)
 
     let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
@@ -950,12 +979,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
     )
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
       )),
+      ~message=`Should create history rows and checkpoints`,
+    ).toEqual(
       (
         [
           {
@@ -1052,42 +1083,45 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
         ],
       ),
-      ~message=`Should create history rows and checkpoints`,
     )
 
-    Assert.deepEqual(
+    t.expect(
       {
         let metrics = await indexerMock.metric("envio_progress_events_count")
         // For some reason the test returns the metrics in different order
         metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
       },
+      ~message="Events count before rollback",
+    ).toEqual(
       [
         {value: "2", labels: Js.Dict.fromArray([("chainId", "100")])},
         {value: "4", labels: Js.Dict.fromArray([("chainId", "1337")])},
       ],
-      ~message="Events count before rollback",
     )
-    Assert.deepEqual(
+    t.expect(
       {
         let metrics = await indexerMock.metric("envio_progress_block_number")
         // For some reason the test returns the metrics in different order
         metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
       },
+      ~message="Progress block number before rollback",
+    ).toEqual(
       [
         {value: "106", labels: Js.Dict.fromArray([("chainId", "100")])},
         {value: "109", labels: Js.Dict.fromArray([("chainId", "1337")])},
       ],
-      ~message="Progress block number before rollback",
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_rollback_events_count"),
-      [{value: "0", labels: Js.Dict.empty()}],
       ~message="Rollbacked events count before rollback",
-    )
-    Assert.deepEqual(
-      await indexerMock.metric("envio_rollback_count"),
+    ).toEqual(
       [{value: "0", labels: Js.Dict.empty()}],
+    )
+    t.expect(
+      await indexerMock.metric("envio_rollback_count"),
       ~message="Rollbacks count before rollback",
+    ).toEqual(
+      [{value: "0", labels: Js.Dict.empty()}],
     )
 
     // Should trigger rollback
@@ -1102,10 +1136,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock1337.getBlockHashesCalls,
-      [[100, 103]],
       ~message="Should have called getBlockHashes to find rollback depth",
+    ).toEqual(
+      [[100, 103]],
     )
     sourceMock1337.resolveGetBlockHashes([
       // The block 103 is untouched so we can rollback to it
@@ -1119,38 +1154,44 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     await indexerMock.getRollbackReadyPromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_progress_events_count"),
+      ~message="Events count after rollback",
+    ).toEqual(
       [
         {value: "1", labels: Js.Dict.fromArray([("chainId", "100")])},
         {value: "2", labels: Js.Dict.fromArray([("chainId", "1337")])},
       ],
-      ~message="Events count after rollback",
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_progress_block_number"),
+      ~message="Progress block number after rollback",
+    ).toEqual(
       [
         {value: "105", labels: Js.Dict.fromArray([("chainId", "100")])},
         {value: "105", labels: Js.Dict.fromArray([("chainId", "1337")])},
       ],
-      ~message="Progress block number after rollback",
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_rollback_events_count"),
-      [{value: "3", labels: Js.Dict.empty()}],
       ~message="Rollbacked events count after rollback",
+    ).toEqual(
+      [{value: "3", labels: Js.Dict.empty()}],
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_rollback_count"),
-      [{value: "1", labels: Js.Dict.empty()}],
       ~message="Rollbacks count after rollback",
+    ).toEqual(
+      [{value: "1", labels: Js.Dict.empty()}],
     )
 
-    Assert.deepEqual(
+    t.expect(
       (
         sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
         sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
       ),
+      ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
+    ).toEqual(
       (
         // Chain 100: partition KEPT (lfb <= target), chunk history preserved
         [
@@ -1177,7 +1218,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
         ],
       ),
-      ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
     )
 
     sourceMock100.resolveGetItemsOrThrow(
@@ -1209,12 +1249,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
       )),
+    ).toEqual(
       (
         [
           {
@@ -1288,7 +1329,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
   // Fixes duplicate history bug before 2.31
   Async.it(
     "Rollback of unordered multichain indexer (single entity id change + another entity on non-reorg chain)",
-    async () => {
+    async t => {
       let sourceMock1337 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -1312,8 +1353,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1409,12 +1450,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
         )),
+        ~message=`Should create history rows and checkpoints`,
+      ).toEqual(
         (
           [
             {
@@ -1511,13 +1554,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             }),
           ],
         ),
-        ~message=`Should create history rows and checkpoints`,
       )
-      Assert.deepEqual(
+      t.expect(
         await Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
+        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
+      ).toEqual(
         (
           [
             {
@@ -1536,7 +1580,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
             }),
           ],
         ),
-        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
       )
 
       // Should trigger rollback
@@ -1551,10 +1594,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
       await Utils.delay(0)
 
-      Assert.deepEqual(
+      t.expect(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 103]],
         ~message="Should have called getBlockHashes to find rollback depth",
+      ).toEqual(
+        [[100, 103]],
       )
       sourceMock1337.resolveGetBlockHashes([
         // The block 103 is untouched so we can rollback to it
@@ -1568,11 +1612,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       await indexerMock.getRollbackReadyPromise()
 
-      Assert.deepEqual(
+      t.expect(
         (
           sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
           sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
+        ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
+      ).toEqual(
         (
           // Chain 1337: partition DELETED, recreated fresh (no chunking)
           Some({
@@ -1589,7 +1635,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
             "p": "0",
           }),
         ),
-        ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
       )
 
       // Set the same value as before rollback
@@ -1621,12 +1666,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
         )),
+      ).toEqual(
         (
           [
             {
@@ -1695,11 +1741,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
           ],
         ),
       )
-      Assert.deepEqual(
+      t.expect(
         await Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
+        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
+      ).toEqual(
         (
           [
             {
@@ -1718,14 +1766,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
             }),
           ],
         ),
-        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
       )
     },
   )
 
   Async.it(
     "Rollback of ordered multichain indexer (single entity id change + another entity on non-reorg chain)",
-    async () => {
+    async t => {
       let sourceMock1337 = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -1750,8 +1797,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1821,12 +1868,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
       sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#first)
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
         )),
+        ~message=`Should create multiple history rows:
+Sorted by timestamp and chain id`,
+      ).toEqual(
         (
           [
             {
@@ -1905,14 +1955,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             }),
           ],
         ),
-        ~message=`Should create multiple history rows:
-Sorted by timestamp and chain id`,
       )
-      Assert.deepEqual(
+      t.expect(
         await Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
+        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
+      ).toEqual(
         (
           [
             {
@@ -1931,24 +1981,25 @@ Sorted by timestamp and chain id`,
             }),
           ],
         ),
-        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
       )
 
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_progress_events_count"),
+        ~message="Events count before rollback",
+      ).toEqual(
         [
           {value: "2", labels: Js.Dict.fromArray([("chainId", "100")])},
           {value: "2", labels: Js.Dict.fromArray([("chainId", "1337")])},
         ],
-        ~message="Events count before rollback",
       )
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_progress_block_number"),
+        ~message="Progress block number before rollback",
+      ).toEqual(
         [
           {value: "104", labels: Js.Dict.fromArray([("chainId", "100")])},
           {value: "103", labels: Js.Dict.fromArray([("chainId", "1337")])},
         ],
-        ~message="Progress block number before rollback",
       )
 
       // Should trigger rollback
@@ -1963,10 +2014,11 @@ Sorted by timestamp and chain id`,
       await Utils.delay(0)
       await Utils.delay(0)
 
-      Assert.deepEqual(
+      t.expect(
         sourceMock1337.getBlockHashesCalls,
-        [[100, 102, 103]],
         ~message="Should have called getBlockHashes to find rollback depth",
+      ).toEqual(
+        [[100, 102, 103]],
       )
       sourceMock1337.resolveGetBlockHashes([
         // The block 102 is untouched so we can rollback to it
@@ -1981,28 +2033,32 @@ Sorted by timestamp and chain id`,
 
       await indexerMock.getRollbackReadyPromise()
 
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_progress_events_count"),
+        ~message="Events count after rollback",
+      ).toEqual(
         [
           {value: "0", labels: Js.Dict.fromArray([("chainId", "100")])},
           {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
         ],
-        ~message="Events count after rollback",
       )
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_progress_block_number"),
+        ~message="Progress block number after rollback",
+      ).toEqual(
         [
           {value: "102", labels: Js.Dict.fromArray([("chainId", "100")])},
           {value: "102", labels: Js.Dict.fromArray([("chainId", "1337")])},
         ],
-        ~message="Progress block number after rollback",
       )
 
-      Assert.deepEqual(
+      t.expect(
         (
           sourceMock1337.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
           sourceMock100.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.first,
         ),
+        ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
+      ).toEqual(
         (
           // Chain 1337: partition DELETED (lfb > target), recreated fresh
           Some({
@@ -2019,7 +2075,6 @@ Sorted by timestamp and chain id`,
             "p": "0",
           }),
         ),
-        ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
       )
 
       // Set the same value as before rollback
@@ -2049,12 +2104,13 @@ Sorted by timestamp and chain id`,
 
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
         )),
+      ).toEqual(
         (
           [
             {
@@ -2121,11 +2177,13 @@ Sorted by timestamp and chain id`,
           ],
         ),
       )
-      Assert.deepEqual(
+      t.expect(
         await Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
+        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
+      ).toEqual(
         (
           [
             {
@@ -2144,12 +2202,11 @@ Sorted by timestamp and chain id`,
             }),
           ],
         ),
-        ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
       )
     },
   )
 
-  Async.it("Double reorg should NOT cause negative event counter (regression test)", async () => {
+  Async.it("Double reorg should NOT cause negative event counter (regression test)", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -2164,7 +2221,7 @@ Sorted by timestamp and chain id`,
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()
@@ -2185,10 +2242,11 @@ Sorted by timestamp and chain id`,
     await indexerMock.getBatchWritePromise()
 
     // Check initial metrics - should have 3 events processed
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_progress_events_count"),
-      [{value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
       ~message="Should have 1 event processed initially",
+    ).toEqual(
+      [{value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
     )
 
     // Trigger first reorg
@@ -2202,10 +2260,11 @@ Sorted by timestamp and chain id`,
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getBlockHashesCalls,
-      [[100, 101]],
       ~message="Should have called getBlockHashes for first reorg",
+    ).toEqual(
+      [[100, 101]],
     )
 
     // Rollback to block 100 - blocks 101-103 are reorged
@@ -2217,10 +2276,11 @@ Sorted by timestamp and chain id`,
     await indexerMock.getRollbackReadyPromise()
 
     // Check metrics after first rollback - should have rolled back all 3 events
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_progress_events_count"),
-      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
       ~message="Should have 0 events after first rollback",
+    ).toEqual(
+      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
     )
 
     // Detects second reorg
@@ -2235,36 +2295,39 @@ Sorted by timestamp and chain id`,
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getBlockHashesCalls,
-      [[100, 101], [100]],
       ~message="Should have called getBlockHashes for second reorg",
+    ).toEqual(
+      [[100, 101], [100]],
     )
     // Rollback to block 100 - blocks 101-103 are reorged
     sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
     await indexerMock.getRollbackReadyPromise()
 
     // Check metrics after processing - should have 2 events
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_progress_events_count"),
-      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
       ~message="Shouldn't go to negative with the counter",
+    ).toEqual(
+      [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
     )
 
     // Process batch after rollback
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.query(SimpleEntity),
-      [],
       ~message="Should have all entities rolled back",
+    ).toEqual(
+      [],
     )
   })
 
   Async.it(
     "Should NOT be in reorg threshold on restart when DB is only initialized (sourceBlockNumber=0, progressBlockNumber=-1)",
-    async () => {
+    async t => {
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -2279,10 +2342,11 @@ Sorted by timestamp and chain id`,
         ],
       )
 
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_reorg_threshold"),
-        [{value: "0", labels: Js.Dict.empty()}],
         ~message="Should NOT be in reorg threshold when we just created the indexer",
+      ).toEqual(
+        [{value: "0", labels: Js.Dict.empty()}],
       )
 
       // Restart immediately without writing any batches
@@ -2290,15 +2354,16 @@ Sorted by timestamp and chain id`,
       let indexerMock = await indexerMock.restart()
       await Utils.delay(0)
 
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.metric("envio_reorg_threshold"),
-        [{value: "0", labels: Js.Dict.empty()}],
         ~message="Should NOT be in reorg threshold when sourceBlockNumber is 0 and DB just initialized",
+      ).toEqual(
+        [{value: "0", labels: Js.Dict.empty()}],
       )
     },
   )
 
-  Async.it("Should NOT have duplicate queries after rollback with chunked partitions", async () => {
+  Async.it("Should NOT have duplicate queries after rollback with chunked partitions", async t => {
     // 1. Setup mock source and indexer
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -2314,7 +2379,7 @@ Sorted by timestamp and chain id`,
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     // 3. Process 2 queries to build chunk history (3+ block ranges each)
     // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
@@ -2338,18 +2403,19 @@ Sorted by timestamp and chain id`,
     // fetchNextQuery is called twice (on response handling and batch write), so 4 chunks total
     switch sourceMock.getItemsOrThrowCalls {
     | [chunk1, chunk2, chunk3, chunk4] =>
-      Assert.deepEqual(
+      t.expect(
         (chunk1.payload, chunk2.payload, chunk3.payload, chunk4.payload),
+        ~message=`Should create 2 chunks per fetchNextQuery call.
+The 3-4 chunks are not really expected, but created since we call fetchNextQuery twice:
+- on response handling
+- on batch write finish`,
+      ).toEqual(
         (
           {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
           {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
           {"fromBlock": 119, "toBlock": Some(124), "retry": 0, "p": "0"},
           {"fromBlock": 125, "toBlock": Some(130), "retry": 0, "p": "0"},
         ),
-        ~message=`Should create 2 chunks per fetchNextQuery call.
-The 3-4 chunks are not really expected, but created since we call fetchNextQuery twice:
-- on response handling
-- on batch write finish`,
       )
 
       // 5. Resolve LAST chunk of first batch FIRST with PARTIAL range: 113-115 instead of 113-118
@@ -2362,8 +2428,10 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
 
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+        ~message="Should create gap-fill query for partial chunk range in same partition",
+      ).toEqual(
         [
           chunk3.payload,
           chunk4.payload,
@@ -2411,7 +2479,6 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
             "toBlock": Some(166),
           },
         ],
-        ~message="Should create gap-fill query for partial chunk range in same partition",
       )
 
     | _ => Assert.fail("Step 4 should have 4 chunks")
@@ -2429,10 +2496,11 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getBlockHashesCalls,
-      [[100, 103, 106, 112]],
       ~message="Should have called getBlockHashes to find rollback depth",
+    ).toEqual(
+      [[100, 103, 106, 112]],
     )
 
     // Rollback to block 112
@@ -2448,8 +2516,10 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
 
     await indexerMock.getRollbackReadyPromise()
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
+    ).toEqual(
       [
         // Partition recreated fresh (no chunk history), single unchunked query
         {
@@ -2459,13 +2529,12 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
           "p": "0",
         },
       ],
-      ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
     )
   })
 
   Async.it(
     "Should efficiently refetch only blocks after rollback target with chunked partitions",
-    async () => {
+    async t => {
       // Setup mock source and indexer
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -2481,7 +2550,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       )
       await Utils.delay(0)
 
-      await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+      await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
       // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
       switch sourceMock.getItemsOrThrowCalls {
@@ -2501,16 +2570,17 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       // Chunked queries: chunk1=107-112, chunk2=113-118
       // chunkRange=3, chunkSize=ceil(5.4)=6
       let calls = sourceMock.getItemsOrThrowCalls
-      Assert.ok(calls->Array.length >= 2, ~message="Should have at least 2 chunked queries")
+      t.expect(calls->Array.length >= 2, ~message="Should have at least 2 chunked queries").toBeTruthy()
       let chunk1 = calls->Array.getUnsafe(0)
       let chunk2 = calls->Array.getUnsafe(1)
-      Assert.deepEqual(
+      t.expect(
         (chunk1.payload, chunk2.payload),
+        ~message="Should create chunked queries",
+      ).toEqual(
         (
           {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
           {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
         ),
-        ~message="Should create chunked queries",
       )
 
       // Resolve chunk1 to half its range, chunk2 to half its range
@@ -2522,10 +2592,8 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       // Resolve chunk2's second half: continuation from 116+ resolves to 118
       // This stores a reorg checkpoint at block 118
       let continuationCall = sourceMock.getItemsOrThrowCalls->Array.getUnsafe(1)
-      Assert.ok(
-        continuationCall.payload["fromBlock"] >= 116,
-        ~message=`Continuation should start from >= 116, got ${continuationCall.payload["fromBlock"]->Int.toString}`,
-      )
+      t.expect(
+        continuationCall.payload["fromBlock"] >= 116, ~message=`Continuation should start from >= 116, got ${continuationCall.payload["fromBlock"]->Int.toString}`).toBeTruthy()
       continuationCall.resolve([], ~latestFetchedBlockNumber=118)
       await Utils.delay(0)
 
@@ -2542,10 +2610,11 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       await Utils.delay(0)
 
       // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 109, 112, 115]
-      Assert.deepEqual(
+      t.expect(
         sourceMock.getBlockHashesCalls,
-        [[100, 103, 106, 109, 112, 115]],
         ~message="Should have called getBlockHashes to find rollback depth",
+      ).toEqual(
+        [[100, 103, 106, 109, 112, 115]],
       )
 
       // All blocks up to 115 are valid -> rollback target = 115
@@ -2571,8 +2640,10 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       //   2. After rollback target (fromBlock=116)
       let queries = sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
 
-      Assert.deepEqual(
+      t.expect(
         queries,
+        ~message="First query should finish chunk1 range starting from block 110, Second query should start after rollback target at block 116",
+      ).toEqual(
         [
           {
             "fromBlock": 110,
@@ -2593,7 +2664,6 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
             "toBlock": Some(127),
           },
         ],
-        ~message="First query should finish chunk1 range starting from block 110, Second query should start after rollback target at block 116",
       )
     },
   )

@@ -8,7 +8,7 @@ let mockDate = (~year=2024, ~month=1, ~day=1) => {
 }
 
 describe("Write/read tests", () => {
-  Async.it("Test writing and reading entities with special cases", async () => {
+  Async.it("Test writing and reading entities with special cases", async t => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
@@ -17,10 +17,11 @@ describe("Write/read tests", () => {
     )
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getHeightOrThrowCalls->Array.length,
-      1,
       ~message="should have called getHeightOrThrow to get initial height",
+    ).toEqual(
+      1,
     )
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
@@ -97,12 +98,14 @@ describe("Write/read tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.query(EntityWithAllTypes),
+    ).toEqual(
       [entityWithAllTypes],
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryHistory(EntityWithAllTypes),
+    ).toEqual(
       [
         Set({
           checkpointId: 1.,
@@ -111,12 +114,14 @@ describe("Write/read tests", () => {
         }),
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.query(EntityWithAllNonArrayTypes),
+    ).toEqual(
       [entityWithAllNonArrayTypes],
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryHistory(EntityWithAllNonArrayTypes),
+    ).toEqual(
       [
         Set({
           checkpointId: 1.,
@@ -126,16 +131,18 @@ describe("Write/read tests", () => {
       ],
     )
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.query(EntityWith63LenghtName______________________________________one),
+    ).toEqual(
       [
         {
           id: "1",
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryHistory(EntityWith63LenghtName______________________________________one),
+    ).toEqual(
       [
         Set({
           checkpointId: 1.,
@@ -146,16 +153,18 @@ describe("Write/read tests", () => {
         }),
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.query(EntityWith63LenghtName______________________________________two),
+    ).toEqual(
       [
         {
           id: "2",
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryHistory(EntityWith63LenghtName______________________________________two),
+    ).toEqual(
       [
         Set({
           checkpointId: 1.,
@@ -167,13 +176,17 @@ describe("Write/read tests", () => {
       ],
     )
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.graphql(`query {
   EntityWithAllTypes {
     arrayOfBigInts
     arrayOfBigDecimals
   }
 }`),
+      ~message=`We internally turn NUMERIC[] to TEXT[] when Hasura is enabled,
+to workaround a bug, when the values returned as number[] instead of string[],
+breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/788`,
+    ).toEqual(
       {
         data: {
           "EntityWithAllTypes": [
@@ -184,13 +197,10 @@ describe("Write/read tests", () => {
           ],
         },
       },
-      ~message=`We internally turn NUMERIC[] to TEXT[] when Hasura is enabled,
-to workaround a bug, when the values returned as number[] instead of string[],
-breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/788`,
     )
   })
 
-  Async.it("Test getWhere queries with eq and gt operators", async () => {
+  Async.it("Test getWhere queries with eq and gt operators", async t => {
     let sourceMock = Mock.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await Mock.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
@@ -282,81 +292,95 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     await indexerMock.getBatchWritePromise()
 
     // Assert getWhere results
-    Assert.equal(
+    t.expect(
       whereEqOwnerTest.contents->Array.length,
-      2,
       ~message="should have successfully loaded values on where eq owner_id query",
-    )
-    Assert.equal(
-      whereEqTokenIdTest.contents->Array.length,
-      1,
-      ~message="should have successfully loaded values on where eq tokenId query",
-    )
-    Assert.equal(
-      whereTokenIdGt50Test.contents->Array.length,
-      1,
-      ~message="Should have one token with tokenId > 50",
-    )
-    Assert.equal(
-      whereTokenIdGt49Test.contents->Array.length,
+    ).toBe(
       2,
-      ~message="Should have two tokens with tokenId > 49",
     )
-    Assert.equal(
-      whereTokenIdLt50Test.contents->Array.length,
-      0,
-      ~message="Shouldn't have any value with tokenId < 50",
-    )
-    Assert.equal(
-      whereTokenIdLt51Test.contents->Array.length,
+    t.expect(
+      whereEqTokenIdTest.contents->Array.length,
+      ~message="should have successfully loaded values on where eq tokenId query",
+    ).toBe(
       1,
+    )
+    t.expect(
+      whereTokenIdGt50Test.contents->Array.length,
+      ~message="Should have one token with tokenId > 50",
+    ).toBe(
+      1,
+    )
+    t.expect(
+      whereTokenIdGt49Test.contents->Array.length,
+      ~message="Should have two tokens with tokenId > 49",
+    ).toBe(
+      2,
+    )
+    t.expect(
+      whereTokenIdLt50Test.contents->Array.length,
+      ~message="Shouldn't have any value with tokenId < 50",
+    ).toBe(
+      0,
+    )
+    t.expect(
+      whereTokenIdLt51Test.contents->Array.length,
       ~message="Should have one token with tokenId < 51",
+    ).toBe(
+      1,
     )
 
     // Assert _gte results
-    Assert.equal(
+    t.expect(
       whereTokenIdGte50Test.contents->Array.length,
-      2,
       ~message="Should have two tokens with tokenId >= 50 (50 and 60)",
+    ).toBe(
+      2,
     )
-    Assert.equal(
+    t.expect(
       whereTokenIdGte51Test.contents->Array.length,
-      1,
       ~message="Should have one token with tokenId >= 51 (only 60)",
+    ).toBe(
+      1,
     )
 
     // Assert _lte results
-    Assert.equal(
+    t.expect(
       whereTokenIdLte50Test.contents->Array.length,
-      1,
       ~message="Should have one token with tokenId <= 50",
+    ).toBe(
+      1,
     )
-    Assert.equal(
+    t.expect(
       whereTokenIdLte49Test.contents->Array.length,
-      0,
       ~message="Shouldn't have any value with tokenId <= 49",
+    ).toBe(
+      0,
     )
 
     // Assert _in results
-    Assert.equal(
+    t.expect(
       whereInOwnerTest.contents->Array.length,
-      2,
       ~message="_in on owner should return both tokens owned by testUserId",
-    )
-    Assert.equal(
-      whereInTokenIdTest.contents->Array.length,
+    ).toBe(
       2,
+    )
+    t.expect(
+      whereInTokenIdTest.contents->Array.length,
       ~message="_in on tokenId with [50, 60] should return both tokens",
+    ).toBe(
+      2,
     )
-    Assert.equal(
+    t.expect(
       whereInTokenIdNoMatchTest.contents->Array.length,
-      0,
       ~message="_in on tokenId with [999] should return no tokens",
-    )
-    Assert.equal(
-      whereInTokenIdEmptyTest.contents->Array.length,
+    ).toBe(
       0,
+    )
+    t.expect(
+      whereInTokenIdEmptyTest.contents->Array.length,
       ~message="_in on tokenId with empty array should return no tokens",
+    ).toBe(
+      0,
     )
 
     // Test deletion and index cleanup
@@ -374,10 +398,11 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     ])
     await indexerMock.getBatchWritePromise()
 
-    Assert.equal(
+    t.expect(
       whereEqOwnerTest.contents->Array.length,
-      1,
       ~message="should have removed index on deleted token, leaving one token",
+    ).toBe(
+      1,
     )
   })
 })

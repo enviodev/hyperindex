@@ -26,48 +26,48 @@ describe("Check that MockChainData works as expected", () => {
     accum->MockChainData.addBlock(~makeLogConstructors=next)
   })
 
-  it("Creates correct number of blocks", () => {
-    Assert.equal(
+  it("Creates correct number of blocks", t => {
+    t.expect(
       mockChainData.blocks->Array.length,
-      5,
       ~message="addBlock function created the incorrect number of blocks",
-    )
+    ).toBe(5)
   })
-  it("Has unique block hashes", () => {
+  it("Has unique block hashes", t => {
     let hasUniqueBlockHashes =
       mockChainData.blocks
       ->Array.map(block => block.blockHash)
       ->HashSet.String.fromArray
       ->HashSet.String.size == mockChainData.blocks->Array.length
 
-    Assert.equal(
+    t.expect(
       hasUniqueBlockHashes,
-      true,
       ~message="block hashes should be unique for each block",
-    )
+    ).toBe(true)
   })
 
-  it("Increments blocks and logs correctly", () => {
+  it("Increments blocks and logs correctly", t => {
     mockChainData.blocks
     ->Array.reduce(
       None,
       (accum, next) => {
-        Assert.equal(
+        t.expect(
           next.blockNumber,
+          ~message="Block numbers should increment",
+        ).toBe(
           accum->Option.mapWithDefault(
             0,
             ({MockChainData.blockNumber: blockNumber}) => blockNumber + 1,
           ),
-          ~message="Block numbers should increment",
         )
-        Assert.equal(
+        t.expect(
           next.blockTimestamp,
+          ~message="Block timestamp should increment by defined interval",
+        ).toBe(
           accum->Option.mapWithDefault(
             0,
             ({MockChainData.blockTimestamp: blockTimestamp}) =>
               blockTimestamp + mockChainData.blockTimestampInterval,
           ),
-          ~message="Block timestamp should increment by defined interval",
         )
 
         next.logs
@@ -75,11 +75,10 @@ describe("Check that MockChainData works as expected", () => {
           -1,
           (accum, next) => {
             let eventItem = next.item->Internal.castUnsafeEventItem
-            Assert.equal(
+            t.expect(
               eventItem.logIndex,
-              accum + 1,
               ~message="Log indexes should increment in each block",
-            )
+            ).toBe(accum + 1)
             eventItem.logIndex
           },
         )

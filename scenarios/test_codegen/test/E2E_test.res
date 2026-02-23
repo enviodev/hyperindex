@@ -6,7 +6,7 @@ open Vitest
 let undefined = (%raw(`undefined`): option<'a>)
 
 describe("E2E tests", () => {
-  Async.it("Currectly starts indexing from a non-zero start block", async () => {
+  Async.it("Currectly starts indexing from a non-zero start block", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -22,23 +22,21 @@ describe("E2E tests", () => {
     )
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getHeightOrThrowCalls->Array.length,
-      1,
       ~message="should have called getHeightOrThrow to get initial height",
-    )
+    ).toEqual(1)
     sourceMock.resolveGetHeightOrThrow(400)
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
-      [{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}],
       ~message="Should request items from start block to reorg threshold",
-    )
+    ).toEqual([{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}])
   })
 
-  Async.it("Correctly sets Prom metrics", async () => {
+  Async.it("Correctly sets Prom metrics", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -53,37 +51,32 @@ describe("E2E tests", () => {
     )
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "0", labels: Js.Dict.empty()}],
-    )
-    Assert.deepEqual(
+    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
+    t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
-      [{value: "0", labels: Js.Dict.empty()}],
-    )
+    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
 
-    await Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock)
+    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_reorg_threshold"),
-      [{value: "1", labels: Js.Dict.empty()}],
-    )
-    Assert.deepEqual(
+    ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+    t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
-      [{value: "0", labels: Js.Dict.empty()}],
-    )
+    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
 
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
-      [{value: "1", labels: Js.Dict.empty()}],
       ~message="should have set hyperindex_synced_to_head metric to 1",
-    )
+    ).toEqual([{value: "1", labels: Js.Dict.empty()}])
   })
 
-  Async.it("Shouldn't allow context access after hander is resolved", async () => {
+  Async.it("Shouldn't allow context access after hander is resolved", async t => {
     let errors = []
 
     let sourceMock = Mock.Source.make(
@@ -151,22 +144,22 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.query(SimpleEntity),
-      [{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}],
-    )
-    Assert.deepEqual(
+    ).toEqual([{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}])
+    t.expect(
       errors,
+      ~message="should have an error thrown during set",
+    ).toEqual(
       [
         Utils.Error.make(`Impossible to access context.addGravatar after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
         Utils.Error.make(`Impossible to access context.SimpleEntity after the handler is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
       ],
-      ~message="should have an error thrown during set",
     )
   })
 
   // A regression test for a bug introduced in 2.30.0
-  Async.it("Correct event ordering for ordered multichain indexer", async () => {
+  Async.it("Correct event ordering for ordered multichain indexer", async t => {
     let sourceMock1337 = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -192,8 +185,8 @@ describe("E2E tests", () => {
 
     // Test inside of reorg threshold, so we can check the history order
     let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~indexerMock, ~sourceMock=sourceMock100),
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
@@ -241,11 +234,12 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await Promise.all2((
         indexerMock.queryCheckpoints(),
         indexerMock.queryHistory(SimpleEntity),
       )),
+    ).toEqual(
       (
         [
           {
@@ -314,7 +308,7 @@ describe("E2E tests", () => {
     )
   })
 
-  Async.it("Track effects in prom metrics", async () => {
+  Async.it("Track effects in prom metrics", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -353,16 +347,14 @@ describe("E2E tests", () => {
       },
     )
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_calls_count"),
-      [],
       ~message="should have no effect calls in the beginning",
-    )
-    Assert.deepEqual(
+    ).toEqual([])
+    t.expect(
       await indexerMock.metric("envio_effect_cache_count"),
-      [],
       ~message="should have no effect cache in the beginning",
-    )
+    ).toEqual([])
 
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
@@ -373,8 +365,8 @@ describe("E2E tests", () => {
           blockNumber: 100,
           logIndex: 0,
           handler: async ({context}) => {
-            Assert.deepEqual(await context.effect(testEffect, "test"), "test-output")
-            Assert.deepEqual(await context.effect(testEffectWithCache, "test"), "test-output")
+            t.expect(await context.effect(testEffect, "test")).toEqual("test-output")
+            t.expect(await context.effect(testEffectWithCache, "test")).toEqual("test-output")
           },
         },
       ],
@@ -382,8 +374,10 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_calls_count"),
+      ~message="should increment effect calls count",
+    ).toEqual(
       [
         {
           value: "1",
@@ -394,46 +388,44 @@ describe("E2E tests", () => {
           labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
         },
       ],
-      ~message="should increment effect calls count",
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_cache_count"),
+      ~message="should increment effect cache count",
+    ).toEqual(
       [
         {
           value: "1",
           labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
         },
       ],
-      ~message="should increment effect cache count",
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_storage_load_count"),
-      [],
       ~message="Shouldn't load anything from storage at this point",
-    )
-    Assert.deepEqual(
+    ).toEqual([])
+    t.expect(
       await indexerMock.queryEffectCache("testEffectWithCache"),
-      [{"id": `"test"`, "output": %raw(`"test-output"`)}],
       ~message="should have the cache entry in db",
-    )
+    ).toEqual([{"id": `"test"`, "output": %raw(`"test-output"`)}])
 
     let indexerMock = await indexerMock.restart()
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_calls_count"),
-      [],
       ~message="Should reset the calls metric on restart",
-    )
-    Assert.deepEqual(
+    ).toEqual([])
+    t.expect(
       await indexerMock.metric("envio_effect_cache_count"),
+      ~message="should resume effect cache count on restart",
+    ).toEqual(
       [
         {
           value: "1",
           labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
         },
       ],
-      ~message="should resume effect cache count on restart",
     )
 
     sourceMock.resolveGetHeightOrThrow(300)
@@ -445,13 +437,12 @@ describe("E2E tests", () => {
           blockNumber: 101,
           logIndex: 0,
           handler: async ({context}) => {
-            Assert.deepEqual(
+            t.expect(
               await Promise.all2((
                 context.effect(testEffectWithCache, "test"),
                 context.effect(testEffectWithCache, "test-2"),
               )),
-              ("test-output", "test-2-output"),
-            )
+            ).toEqual(("test-output", "test-2-output"))
           },
         },
       ],
@@ -459,12 +450,14 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await Promise.all3((
         indexerMock.metric("envio_storage_load_where_size"),
         indexerMock.metric("envio_storage_load_size"),
         indexerMock.metric("envio_storage_load_count"),
       )),
+      ~message="Time to load cache from storage now",
+    ).toEqual(
       (
         [
           {
@@ -485,13 +478,14 @@ describe("E2E tests", () => {
           },
         ],
       ),
-      ~message="Time to load cache from storage now",
     )
-    Assert.deepEqual(
+    t.expect(
       await Promise.all2((
         indexerMock.metric("envio_effect_calls_count"),
         indexerMock.metric("envio_effect_cache_count"),
       )),
+      ~message="Should increment effect calls count and cache count",
+    ).toEqual(
       (
         [
           {
@@ -506,7 +500,6 @@ describe("E2E tests", () => {
           },
         ],
       ),
-      ~message="Should increment effect calls count and cache count",
     )
 
     let testEffectWithCacheV2 = Envio.createEffect(
@@ -533,13 +526,12 @@ describe("E2E tests", () => {
           blockNumber: 102,
           logIndex: 0,
           handler: async ({context}) => {
-            Assert.deepEqual(
+            t.expect(
               await Promise.all2((
                 context.effect(testEffectWithCacheV2, "test"),
                 context.effect(testEffectWithCacheV2, "test-2"),
               )),
-              ("test-output-v2", "test-2-output"),
-            )
+            ).toEqual(("test-output-v2", "test-2-output"))
           },
         },
       ],
@@ -547,29 +539,31 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryEffectCache("testEffectWithCache"),
+      ~message="Should invalidate loaded cache and store new one",
+    ).toEqual(
       [
         {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
         {"id": `"test"`, "output": %raw(`"test-output-v2"`)},
       ],
-      ~message="Should invalidate loaded cache and store new one",
     )
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_cache_count"),
+      ~message="Shouldn't increment on invalidation",
+    ).toEqual(
       [
         {
           value: "2",
           labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
         },
       ],
-      ~message="Shouldn't increment on invalidation",
     )
   })
 
   Async.it(
     "Should attempt fallback source when primary source fails with missing params",
-    async () => {
+    async t => {
       let sourceMockPrimary = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -592,11 +586,10 @@ describe("E2E tests", () => {
       await Utils.delay(0)
 
       // Resolve initial height request from primary source
-      Assert.deepEqual(
+      t.expect(
         sourceMockPrimary.getHeightOrThrowCalls->Array.length,
-        1,
         ~message="should have called getHeightOrThrow on primary source",
-      )
+      ).toEqual(1)
       sourceMockPrimary.resolveGetHeightOrThrow(300)
       await Utils.delay(0)
       await Utils.delay(0)
@@ -632,18 +625,17 @@ describe("E2E tests", () => {
 
       await indexerMock.getBatchWritePromise()
 
-      Assert.deepEqual(
+      t.expect(
         (
           sourceMockPrimary.getItemsOrThrowCalls->Array.length,
           sourceMockFallback.getItemsOrThrowCalls->Array.length,
         ),
-        (1, 0),
         ~message="Shouldn't switch to fallback source for the next query",
-      )
+      ).toEqual((1, 0))
     },
   )
 
-  Async.it("Effect rate limiting across multiple windows", async () => {
+  Async.it("Effect rate limiting across multiple windows", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -704,10 +696,9 @@ describe("E2E tests", () => {
             activeMetricDuringExecution := Some(activeMetric)
 
             let results = await resultsPromise
-            Assert.deepEqual(
+            t.expect(
               results,
-              ["1-output", "2-output", "3-output", "4-output", "5-output", "6-output"],
-            )
+            ).toEqual(["1-output", "2-output", "3-output", "4-output", "5-output", "6-output"])
           },
         },
       ],
@@ -717,34 +708,30 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     // All effects should complete successfully - verify via calls count metric
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_calls_count"),
-      [{value: "6", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
       ~message="should have called effect 6 times total",
-    )
+    ).toEqual([{value: "6", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
 
     // Check that we captured metrics during execution
     // With 2 calls per window and 6 total calls: 4 items queued, max 2 active
-    Assert.deepEqual(
+    t.expect(
       queueMetricDuringExecution.contents->Option.getExn,
-      [{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
       ~message="queue should have 4 items during execution",
-    )
-    Assert.deepEqual(
+    ).toEqual([{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    t.expect(
       activeMetricDuringExecution.contents->Option.getExn,
-      [{value: "2", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
       ~message="active calls should be at rate limit (2)",
-    )
+    ).toEqual([{value: "2", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
 
     // Final check - queue should be empty
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_queue_count"),
-      [{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}],
       ~message="queue should be empty after all windows complete",
-    )
+    ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
   })
 
-  Async.it("Effect rate limiting with single call per window", async () => {
+  Async.it("Effect rate limiting with single call per window", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -821,48 +808,44 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     // All 4 effects should complete successfully despite rate limiting
-    Assert.deepEqual(executionOrder->Array.length, 4, ~message="should have executed all 4 calls")
+    t.expect(executionOrder->Array.length, ~message="should have executed all 4 calls").toEqual(4)
 
     // Verify via calls count metric
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_calls_count"),
-      [{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
       ~message="should have called effect 4 times total",
-    )
+    ).toEqual([{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
 
     // Check that we captured metrics during execution
     // With 1 call per window and 4 total calls: 3 items queued, max 1 active
-    Assert.deepEqual(
+    t.expect(
       queueMetricDuringExecution.contents->Option.getExn,
-      [{value: "3", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
       ~message="queue should have 3 items during execution",
-    )
-    Assert.deepEqual(
+    ).toEqual([{value: "3", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
+    t.expect(
       activeMetricDuringExecution.contents->Option.getExn,
-      [{value: "1", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
       ~message="active calls should be at rate limit (1)",
-    )
+    ).toEqual([{value: "1", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
 
     // Check metrics after first window
     let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getExn
     let queueValue2 =
       queueMetric2->Array.get(0)->Option.map(m => m.value)->Option.getWithDefault("0")
-    Assert.ok(
+    t.expect(
       queueValue2 != "0" || executionOrder->Array.length == 4,
       ~message=`queue should have items or all should be done, queue: ${queueValue2}, executed: ${executionOrder
         ->Array.length
         ->Int.toString}`,
-    )
+    ).toBeTruthy()
 
     // Final check - queue should be empty
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.metric("envio_effect_queue_count"),
-      [{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}],
       ~message="queue should be empty after all batches complete",
-    )
+    ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
   })
 
-  Async.it("Effect cache can be disabled per-call via context.cache", async () => {
+  Async.it("Effect cache can be disabled per-call via context.cache", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -905,23 +888,20 @@ describe("E2E tests", () => {
           logIndex: 0,
           handler: async ({context}) => {
             // Call 1: Disable cache persistence for this specific call
-            Assert.deepEqual(
+            t.expect(
               await context.effect(testEffectWithCacheControl, "test1"),
-              "test1-output",
-            )
+            ).toEqual("test1-output")
 
             // Call 2: Same input as call 1, uses in-memory cache from call 1
             // Shouldn't do anything, since memoization
-            Assert.deepEqual(
+            t.expect(
               await context.effect(testEffectWithCacheControl, "test1"),
-              "test1-output",
-            )
+            ).toEqual("test1-output")
 
             // Call 3: Different input with default cache behavior (should cache in memory and DB)
-            Assert.deepEqual(
+            t.expect(
               await context.effect(testEffectWithCacheControl, "test2"),
-              "test2-output",
-            )
+            ).toEqual("test2-output")
           },
         },
       ],
@@ -929,20 +909,18 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    Assert.deepEqual(
+    t.expect(
       callCount.contents,
-      2,
       ~message="Effect should be called 2 times (test1 once with cache=false, test2 once)",
-    )
+    ).toEqual(2)
 
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryEffectCache("testEffectWithCacheControl"),
-      [{"id": `"test2"`, "output": %raw(`"test2-output"`)}],
       ~message="Should only have test2 in DB (test1 was called with cache=false and subsequent calls used in-memory cache)",
-    )
+    ).toEqual([{"id": `"test2"`, "output": %raw(`"test2-output"`)}])
   })
 
-  Async.it("Effect error in one call shouldn't cause other calls to fail", async () => {
+  Async.it("Effect error in one call shouldn't cause other calls to fail", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -991,15 +969,14 @@ describe("E2E tests", () => {
               Assert.fail("p1 should have thrown an error")
             } catch {
             | exn =>
-              Assert.deepEqual(
+              t.expect(
                 (exn->Utils.prettifyExn->Utils.magic)["message"],
-                "Effect intentionally failed",
                 ~message="p1 should throw with correct error message",
-              )
+              ).toEqual("Effect intentionally failed")
             }
 
             // p2 should succeed (bug: currently fails when p1 throws)
-            Assert.deepEqual(await p2, "shouldn't-fail-output", ~message="p2 should succeed")
+            t.expect(await p2, ~message="p2 should succeed").toEqual("shouldn't-fail-output")
           },
         },
       ],
@@ -1008,16 +985,15 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     // Verify that only p2's successful result was cached
-    Assert.deepEqual(
+    t.expect(
       await indexerMock.queryEffectCache("throwingEffect"),
-      [{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}],
       ~message="Should only cache p2's successful result, not p1's failed call",
-    )
+    ).toEqual([{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}])
   })
 
   Async.it(
     "Live source should not participate in initial height fetch but should after sync",
-    async () => {
+    async t => {
       // Create a Sync source (simulating HyperSync) and a Live source (simulating RPC for live)
       let syncSource = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -1043,16 +1019,14 @@ describe("E2E tests", () => {
       // During initial height fetch (knownHeight === 0),
       // only the Sync source should be queried, not the Live source.
       // This is important to allow HyperSync's smart block detection to work.
-      Assert.deepEqual(
+      t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
-        1,
         ~message="Sync source should be called for initial height",
-      )
-      Assert.deepEqual(
+      ).toEqual(1)
+      t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        0,
         ~message="Live source should NOT be called during initial height fetch",
-      )
+      ).toEqual(0)
 
       // Resolve the initial height and let the indexer start syncing
       syncSource.resolveGetHeightOrThrow(300)
@@ -1060,11 +1034,10 @@ describe("E2E tests", () => {
       await Utils.delay(0)
 
       // Sync source fetches items (enters reorg threshold at block 100)
-      Assert.deepEqual(
+      t.expect(
         syncSource.getItemsOrThrowCalls->Array.length,
-        1,
         ~message="Sync source should fetch items",
-      )
+      ).toEqual(1)
 
       // Resolve first batch (0-100) and continue until we reach the head
       syncSource.resolveGetItemsOrThrow([])
@@ -1081,20 +1054,18 @@ describe("E2E tests", () => {
       // Now the indexer should be at the head and will wait for new blocks.
       // At this point, knownHeight > 0, so Live source should participate in racing.
       // Both sources should race for the next height.
-      Assert.deepEqual(
+      t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Sync source should be called again for next height",
-      )
-      Assert.deepEqual(
+      ).toEqual(2)
+      t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        1,
         ~message="Live source should now participate in height racing after initial sync",
-      )
+      ).toEqual(1)
     },
   )
 
-  Async.it("Partition queries adjust ranges depending on responses", async () => {
+  Async.it("Partition queries adjust ranges depending on responses", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1115,34 +1086,33 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     // Step 2: Query 1 — resolve at block 500 (range=501)
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
       ~message="Step 2 should have initial query",
-    )
+    ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
     await indexerMock.getBatchWritePromise()
 
     // Step 3: Query 2 — resolve at block 800 (range=300)
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
       ~message="Step 3 should have follow-up query",
-    )
+    ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
     // Chunking activates: chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
     // 4 chunks of size 540
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      ~message="Should have 4 chunks of size 540",
+    ).toEqual(
       [
         {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
         {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
         {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
         {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
       ],
-      ~message="Should have 4 chunks of size 540",
     )
 
     // Phase A — chunks grow:
@@ -1163,12 +1133,12 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
         c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(972),
       )
-    Assert.ok(
+    t.expect(
       grownChunks->Array.length >= 2,
       ~message=`Chunks should have grown to size 972, found ${grownChunks
         ->Array.length
         ->Int.toString} such chunks`,
-    )
+    ).toBeTruthy()
 
     // Phase B — chunks shrink on partial response:
     // Resolve the first pending chunk (at queue front) at partial range so the
@@ -1184,15 +1154,15 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
         c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(180),
       )
-    Assert.ok(
+    t.expect(
       shrunkChunks->Array.length >= 2,
       ~message=`Chunks should have shrunk to size 180, found ${shrunkChunks
         ->Array.length
         ->Int.toString} such chunks`,
-    )
+    ).toBeTruthy()
   })
 
-  Async.it("Items from later chunk wait for earlier chunk to complete", async () => {
+  Async.it("Items from later chunk wait for earlier chunk to complete", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1211,31 +1181,30 @@ describe("E2E tests", () => {
     sourceMock.resolveGetHeightOrThrow(10_000)
     await Utils.delay(0)
     await Utils.delay(0)
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
       ~message="Should have initial query",
-    )
+    ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
     await indexerMock.getBatchWritePromise()
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
       ~message="Should have follow-up query",
-    )
+    ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
     // 4 chunks: (801,1340), (1341,1880), (1881,2420), (2421,2960)
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      ~message="Should have 4 chunks of size 540",
+    ).toEqual(
       [
         {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
         {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
         {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
         {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
       ],
-      ~message="Should have 4 chunks of size 540",
     )
     switch sourceMock.getItemsOrThrowCalls {
     | [chunk1, chunk2, _, _] =>
@@ -1255,24 +1224,24 @@ describe("E2E tests", () => {
 
       // Item at 1500 should NOT be in DB yet — chunk1 hasn't completed,
       // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.query(SimpleEntity),
-        [],
         ~message="Item at block 1500 should not be ready while chunk1 is pending",
-      )
+      ).toEqual([])
 
       // Step 2: Resolve chunk1 at HALF range (801-1070) with item at block 850.
       // Only chunk1's first half is consumed; chunk2 still blocked.
-      Assert.deepEqual(
+      t.expect(
         sourceMock.getItemsOrThrowCalls
         ->Js.Array2.map(c => c.payload)
         ->Js.Array2.slice(~start=0, ~end_=3),
+        ~message="After chunk2 resolved, chunk1/3/4 should remain pending",
+      ).toEqual(
         [
           {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
           {"fromBlock": 1881, "toBlock": Some(2420), "retry": 0, "p": "0"},
           {"fromBlock": 2421, "toBlock": Some(2960), "retry": 0, "p": "0"},
         ],
-        ~message="After chunk2 resolved, chunk1/3/4 should remain pending",
       )
       chunk1.resolve(
         [
@@ -1290,20 +1259,18 @@ describe("E2E tests", () => {
 
       // Only item-850 should be in DB — chunk1 didn't finish its full range,
       // so chunk2's item at 1500 is still beyond the buffer.
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.query(SimpleEntity),
-        [{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}],
         ~message="Only item-850 should be in DB after partial chunk1 resolve",
-      )
+      ).toEqual([{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}])
 
       // Step 3: A finishing query for the remainder of chunk1 (1071-1340) should exist.
       let finishingQuery =
         sourceMock.getItemsOrThrowCalls->Js.Array2.find(c => c.payload["fromBlock"] === 1071)
-      Assert.deepEqual(
+      t.expect(
         finishingQuery->Option.map(c => c.payload),
-        Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}),
         ~message="Should have a finishing query for the rest of chunk1",
-      )
+      ).toEqual(Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}))
 
       // Step 4: Resolve the finishing query — now chunk1's full range is consumed,
       // then chunk2 is consumed too. bufferBlockNumber advances to 1880.
@@ -1311,19 +1278,20 @@ describe("E2E tests", () => {
       await indexerMock.getBatchWritePromise()
 
       // Both items should now be in DB
-      Assert.deepEqual(
+      t.expect(
         await indexerMock.query(SimpleEntity),
+        ~message="Both items should be in DB after chunk1 fully completes",
+      ).toEqual(
         [
           {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
           {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
         ],
-        ~message="Both items should be in DB after chunk1 fully completes",
       )
     | _ => Assert.fail("Expected 4 chunks")
     }
   })
 
-  Async.it("Partition merging works for fetching partitions via mergeBlock", async () => {
+  Async.it("Partition merging works for fetching partitions via mergeBlock", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1343,11 +1311,10 @@ describe("E2E tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
-      [{"fromBlock": 1, "toBlock": Some(99800), "retry": 0, "p": "0"}],
       ~message="Step 1: initial query for partition 0",
-    )
+    ).toEqual([{"fromBlock": 1, "toBlock": Some(99800), "retry": 0, "p": "0"}])
 
     // Step 2: Register DC1 at block 5000, DC2 at block 25100
     // Gap = 25099 - 4999 = 20100 > tooFarBlockRange(20000) → separate partitions
@@ -1379,13 +1346,12 @@ describe("E2E tests", () => {
 
     // DC1 = partition "2" at lfb=4999, DC2 = partition "3" at lfb=25099
     // (partition "1" is created from splitting existing partition for the new dynamic contract)
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
       ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
-      [("2", 5000), ("3", 25100), ("0", 25101)],
       ~message="Step 2: queries for DC1(5000), DC2(25100), P0(25101)",
-    )
+    ).toEqual([("2", 5000), ("3", 25100), ("0", 25101)])
 
     // Step 3: Resolve DC2 at lfb=25600 (range=501, first chunk history entry)
     // Buffer block stays 4999 (DC1 is earliest) → no batch write
@@ -1398,13 +1364,12 @@ describe("E2E tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
       ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
-      [("2", 5000), ("0", 25101), ("3", 25601)],
       ~message="Step 3: DC2 new query from 25601",
-    )
+    ).toEqual([("2", 5000), ("0", 25101), ("3", 25601)])
 
     // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates
     // chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
@@ -1419,17 +1384,18 @@ describe("E2E tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      ~message="Step 4: DC2 has 2 chunks (25901-26440, 26441-26980)",
+    ).toEqual(
       [
         ("2", 5000, Some(99800)),
         ("0", 25101, Some(99800)),
         ("3", 25901, Some(26440)),
         ("3", 26441, Some(26980)),
       ],
-      ~message="Step 4: DC2 has 2 chunks (25901-26440, 26441-26980)",
     )
 
     // Step 5: Resolve DC1 at lfb=7000 → merge triggers
@@ -1452,10 +1418,12 @@ describe("E2E tests", () => {
     // P0("0"): still pending 25101→99800
     // New("4"): lfb=26980, both addresses, inherits minRange=300 from DC2 history
     //   → chunkSize=ceil(300*1.8)=540, chunks: 26981→27520, 27521→28060
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
+    ).toEqual(
       [
         ("2", 7001, Some(26980)),
         ("0", 25101, Some(99800)),
@@ -1464,7 +1432,6 @@ describe("E2E tests", () => {
         ("4", 26981, Some(27520)),
         ("4", 27521, Some(28060)),
       ],
-      ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     )
 
     // Verify merged partition "4" has both DC addresses
@@ -1473,10 +1440,9 @@ describe("E2E tests", () => {
       ->Js.Array2.find(c => c.payload["p"] === "4")
       ->Option.getExn
     let addresses = partition4Call.payload->Mock.Source.CallPayload.addresses
-    Assert.deepEqual(
+    t.expect(
       addresses->Js.Dict.unsafeGet("Gravatar")->Array.length,
-      2,
       ~message="Merged partition should have addresses from both DCs",
-    )
+    ).toEqual(2)
   })
 })

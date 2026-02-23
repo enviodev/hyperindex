@@ -27,7 +27,7 @@ type expectedGlobalBlockFields = {
 }
 
 // The same as for TS but in ReScript
-Async.it("Handles event with a custom field selection (in ReScript)", async () => {
+Async.it("Handles event with a custom field selection (in ReScript)", async t => {
   // Initializing the mock database
   let mockDbInitial = MockDb.createMockDb()
 
@@ -64,5 +64,5 @@ Async.it("Handles event with a custom field selection (in ReScript)", async () =
     mockDb: mockDbInitial,
   })
 
-  Assert.notEqual(updatedMockDb.entities.customSelectionTestPass.get(hash), None)
+  t.expect(updatedMockDb.entities.customSelectionTestPass.get(hash)).not.toBe(None)
 })

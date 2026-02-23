@@ -7,7 +7,7 @@ describe_skip("Rpc Test", () => {
 
   let client = Rest.client(rpcUrl)
 
-  Async.it("Executes single getBlockByNumber rpc call and parses response", async () => {
+  Async.it("Executes single getBlockByNumber rpc call and parses response", async t => {
     let maybeBlock = await Rpc.GetBlockByNumber.route->Rest.fetch(
       {
         "blockNumber": 1,
@@ -16,8 +16,9 @@ describe_skip("Rpc Test", () => {
       ~client,
     )
 
-    Assert.deepEqual(
+    t.expect(
       maybeBlock,
+    ).toEqual(
       Some({
         difficulty: Some(17171480576n),
         extraData: "0x476574682f76312e302e302f6c696e75782f676f312e342e32",
@@ -43,16 +44,16 @@ describe_skip("Rpc Test", () => {
     )
   })
 
-  Async.it("Gets block height from rpc", async () => {
+  Async.it("Gets block height from rpc", async t => {
     let height = await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
 
-    Assert.ok(
+    t.expect(
       height > 21244092,
       ~message=`Block height should be greater than 21244092. Received ${height->Int.toString}`,
-    )
+    ).toBeTruthy()
   })
 
-  Async.it("GetLogs rpc call wildcard call", async () => {
+  Async.it("GetLogs rpc call wildcard call", async t => {
     let logs = await Rpc.GetLogs.route->Rest.fetch(
       {
         fromBlock: 20742567,
@@ -63,10 +64,10 @@ describe_skip("Rpc Test", () => {
       ~client,
     )
 
-    Assert.deepEqual(logs->Array.length, 88, ~message="Should have 88 transfer logs")
+    t.expect(logs->Array.length, ~message="Should have 88 transfer logs").toEqual(88)
   })
 
-  Async.it("GetLogs rpc call with address", async () => {
+  Async.it("GetLogs rpc call with address", async t => {
     let logs = await Rpc.GetLogs.route->Rest.fetch(
       {
         fromBlock: 20742567,
@@ -77,8 +78,10 @@ describe_skip("Rpc Test", () => {
       ~client,
     )
 
-    Assert.deepEqual(
+    t.expect(
       logs,
+      ~message="Should have 1 transfer logs",
+    ).toEqual(
       [
         {
           address: "0xf57e7e7c23978c3caec3c3548e3d615c346e79ff"->Address.unsafeFromString,
@@ -96,7 +99,6 @@ describe_skip("Rpc Test", () => {
           transactionIndex: 101,
         },
       ],
-      ~message="Should have 1 transfer logs",
     )
   })
 })

@@ -10,7 +10,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     DbHelpers.runUpDownMigration()
   })
 
-  Async.it("be able to set and read entities with Timestamp from DB", async () => {
+  Async.it("be able to set and read entities with Timestamp from DB", async t => {
 
     let sql = PgStorage.makeClient()
     /// Setup DB
@@ -51,7 +51,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
 
     switch await handlerContext.entityWithTimestamp.get(testEntity.id) {
     | Some(entity) =>
-      Assert.deepEqual(entity.timestamp->Js.Date.toISOString, "1970-01-01T00:02:03.456Z")
+      t.expect(entity.timestamp->Js.Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")
     | None => Assert.fail("Entity should exist")
     }
   })

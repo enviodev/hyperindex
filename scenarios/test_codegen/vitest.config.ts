@@ -13,15 +13,16 @@ export default defineConfig({
       "test/integration-raw-events-test.ts",
       "test/topic-hashing-test.ts",
     ],
-    // Run tests sequentially to avoid database conflicts
+    // Run tests sequentially - both file-wide and test-wide
+    fileParallelism: false,
+    sequence: {
+      concurrent: false,
+    },
     pool: "forks",
     poolOptions: {
       forks: {
         singleFork: true,
       },
-    },
-    sequence: {
-      concurrent: false,
     },
     testTimeout: 30_000,
     hookTimeout: 30_000,

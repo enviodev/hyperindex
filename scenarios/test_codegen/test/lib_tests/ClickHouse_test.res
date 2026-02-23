@@ -1,7 +1,7 @@
 open Vitest
 
 describe("Test makeClickHouseEntitySchema", () => {
-  Async.it("Should serialize Date fields using getTime() instead of ISO string", async () => {
+  Async.it("Should serialize Date fields using getTime() instead of ISO string", async t => {
     let entityConfig = Mock.entityConfig(EntityWithAllTypes)
 
     // Create a schema using makeClickHouseEntitySchema
@@ -42,8 +42,10 @@ describe("Test makeClickHouseEntitySchema", () => {
       ->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity)
       ->S.reverseConvertToJsonOrThrow(clickHouseSchema)
 
-    Assert.deepEqual(
+    t.expect(
       serialized,
+      ~message="Entity should be serialized with timestamps as numbers",
+    ).toEqual(
       %raw(`{
           "id": "test-id",
           "string": "test",
@@ -70,7 +72,6 @@ describe("Test makeClickHouseEntitySchema", () => {
           "enumField": "ADMIN",
           "optEnumField": null
         }`),
-      ~message="Entity should be serialized with timestamps as numbers",
     )
   })
 })
@@ -79,7 +80,7 @@ describe("Test ClickHouse SQL generation functions", () => {
   describe("makeCreateCheckpointsTableQuery", () => {
     Async.it(
       "Should create SQL for checkpoints table",
-      async () => {
+      async t => {
         let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` (
@@ -92,7 +93,7 @@ describe("Test ClickHouse SQL generation functions", () => {
 ENGINE = MergeTree()
 ORDER BY (id)`
 
-        Assert.equal(query, expectedQuery, ~message="Checkpoints table SQL should match exactly")
+        t.expect(query, ~message="Checkpoints table SQL should match exactly").toBe(expectedQuery)
       },
     )
   })
@@ -100,7 +101,7 @@ ORDER BY (id)`
   describe("makeCreateHistoryTableQuery", () => {
     Async.it(
       "Should create SQL for A entity history table",
-      async () => {
+      async t => {
         let entityConfig = Mock.entityConfig(EntityWithAllTypes)
         let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
 
@@ -135,11 +136,10 @@ ORDER BY (id)`
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message="A entity history table SQL should match exactly",
-        )
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -147,7 +147,7 @@ ORDER BY (id, envio_checkpoint_id)`
   describe("makeCreateViewQuery", () => {
     Async.it(
       "Should create SQL for A entity view",
-      async () => {
+      async t => {
         let entity = Mock.entityConfig(EntityWithAllTypes)
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
@@ -162,7 +162,7 @@ FROM (
 )
 WHERE \`envio_change\` = 'SET'`
 
-        Assert.equal(query, expectedQuery, ~message="A entity view SQL should match exactly")
+        t.expect(query, ~message="A entity view SQL should match exactly").toBe(expectedQuery)
       },
     )
   })

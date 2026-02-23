@@ -1,7 +1,7 @@
 open Vitest
 
 describe("Throttler", () => {
-  Async.it("Schedules and throttles functions as expected", async () => {
+  Async.it("Schedules and throttles functions as expected", async t => {
     let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
     let actionsCalled = []
 
@@ -14,36 +14,38 @@ describe("Throttler", () => {
     )
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(3)->ignore)
 
-    Assert.deepEqual(actionsCalled, [1], ~message="Should have immediately called scheduled fn")
+    t.expect(actionsCalled, ~message="Should have immediately called scheduled fn").toEqual([1])
 
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=9)
-    Assert.deepEqual(actionsCalled, [1], ~message="Should still be called once after 9 ms")
+    t.expect(actionsCalled, ~message="Should still be called once after 9 ms").toEqual([1])
 
     // Should have a second call in 1 more millisecond. Wait 3 just in case
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=3)
-    Assert.deepEqual(
+    t.expect(
       actionsCalled,
-      [1, 3],
       ~message="Should have called latest scheduled fn after delay",
+    ).toEqual(
+      [1, 3],
     )
   })
 
-  Async.it("Does not continuously increase schedule time", async () => {
+  Async.it("Does not continuously increase schedule time", async t => {
     let throttler = Throttler.make(~intervalMillis=20, ~logger=Logging.getLogger())
     let actionsCalled = []
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=10)
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(2)->ignore)
-    Assert.deepEqual(actionsCalled, [1], ~message="Scheduler should still be waiting for interval")
+    t.expect(actionsCalled, ~message="Scheduler should still be waiting for interval").toEqual([1])
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=11)
-    Assert.deepEqual(
+    t.expect(
       actionsCalled,
-      [1, 2],
       ~message="Scheduler should have been called straight after the initial interval",
+    ).toEqual(
+      [1, 2],
     )
   })
 
-  Async.it("Does not run until previous task is finished", async () => {
+  Async.it("Does not run until previous task is finished", async t => {
     let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
     let actionsCalled = []
     throttler->Throttler.schedule(
@@ -59,27 +61,29 @@ describe("Throttler", () => {
       },
     )
 
-    Assert.deepEqual(actionsCalled, [], ~message="First task is still busy")
+    t.expect(actionsCalled, ~message="First task is still busy").toEqual([])
 
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=11)
-    Assert.deepEqual(
+    t.expect(
       actionsCalled,
-      [],
       ~message="Second task has not executed even though passed interval",
+    ).toEqual(
+      [],
     )
 
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=5)
 
-    Assert.deepEqual(
+    t.expect(
       actionsCalled,
-      [1, 2],
       ~message="Should have finished task one and execute task two immediately",
+    ).toEqual(
+      [1, 2],
     )
   })
 
   Async.it(
     "Does not immediately execute after a task has finished if below the interval",
-    async () => {
+    async t => {
       let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
       let actionsCalled = []
       throttler->Throttler.schedule(
@@ -94,19 +98,21 @@ describe("Throttler", () => {
         },
       )
 
-      Assert.deepEqual(actionsCalled, [], ~message="First task is still busy")
+      t.expect(actionsCalled, ~message="First task is still busy").toEqual([])
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=6)
-      Assert.deepEqual(
+      t.expect(
         actionsCalled,
-        [1],
         ~message="First action finished, second action waiting for interval",
+      ).toEqual(
+        [1],
       )
 
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=5)
-      Assert.deepEqual(
+      t.expect(
         actionsCalled,
-        [1, 2],
         ~message="Second action should have been called after the interval as passed",
+      ).toEqual(
+        [1, 2],
       )
     },
   )

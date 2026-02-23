@@ -6,11 +6,12 @@ let _ = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.config
 let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
 
 describe("Test eventFilters", () => {
-  it("Supports multichain filters", () => {
+  it("Supports multichain filters", t => {
     let eventConfig = Indexer.EventFiltersTest.Transfer.register()
 
-    Assert.deepEqual(
+    t.expect(
       eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
+    ).toEqual(
       Static([
         {
           topic0: [
@@ -40,19 +41,20 @@ describe("Test eventFilters", () => {
         },
       ]),
     )
-    Assert.equal(
+    t.expect(
       eventConfig.dependsOnAddresses,
-      false,
       ~message=`Even though event filter has a callback,
       dependsOnAddresses should be set to false.
       Otherwise the wildcard event won't fetch for contracts without addresses`,
+    ).toBe(
+      false,
     )
   })
 
-  it("Supports filter depending on addresses", () => {
+  it("Supports filter depending on addresses", t => {
     let eventConfig = Indexer.EventFiltersTest.WildcardWithAddress.register()
 
-    Assert.deepEqual(
+    t.expect(
       switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {
       | Static(_) => Assert.fail("Should be dynamic")
       | Dynamic(fn) =>
@@ -61,6 +63,7 @@ describe("Test eventFilters", () => {
           "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"->Address.unsafeFromString,
         ])
       },
+    ).toEqual(
       [
         {
           topic0: [
@@ -90,15 +93,16 @@ describe("Test eventFilters", () => {
         },
       ],
     )
-    Assert.equal(eventConfig.dependsOnAddresses, true)
-    Assert.equal(eventConfig.isWildcard, true)
+    t.expect(eventConfig.dependsOnAddresses).toBe(true)
+    t.expect(eventConfig.isWildcard).toBe(true)
   })
 
-  it("Empty filters should fallback to normal topic selection with only topic0", () => {
+  it("Empty filters should fallback to normal topic selection with only topic0", t => {
     let eventConfig = Indexer.EventFiltersTest.EmptyFiltersArray.register()
 
-    Assert.deepEqual(
+    t.expect(
       eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
+    ).toEqual(
       Static([
         {
           topic0: [
@@ -110,10 +114,10 @@ describe("Test eventFilters", () => {
         },
       ]),
     )
-    Assert.equal(eventConfig.dependsOnAddresses, false, ~message="foo")
+    t.expect(eventConfig.dependsOnAddresses, ~message="foo").toBe(false)
   })
 
-  it("Fails on filter with excess field", () => {
+  it("Fails on filter with excess field", _t => {
     let eventConfig = Indexer.EventFiltersTest.WithExcessField.register()
 
     Assert.throws(

@@ -16,20 +16,20 @@ describe("nullable encodes and decodes successfully", () => {
   let mock1raw = `{"optNumber":1}`
   let mock2raw = `{"optNumber":null}`
   let mock3raw = `{}`
-  it("flat encodes some type", () => {
-    Assert.deepEqual(mock1->S.reverseConvertToJsonStringOrThrow(testRecordSchema), mock1raw)
+  it("flat encodes some type", t => {
+    t.expect(mock1->S.reverseConvertToJsonStringOrThrow(testRecordSchema)).toEqual(mock1raw)
   })
-  it("encodes None as null", () => {
+  it("encodes None as null", t => {
     // TODO: Test if it's a problem not to send null
-    Assert.deepEqual(mock2->S.reverseConvertToJsonStringOrThrow(testRecordSchema), mock3raw)
+    t.expect(mock2->S.reverseConvertToJsonStringOrThrow(testRecordSchema)).toEqual(mock3raw)
   })
-  it("decodes null as None", () => {
-    Assert.deepEqual(mock2raw->S.parseJsonStringOrThrow(testRecordSchema), mock2)
+  it("decodes null as None", t => {
+    t.expect(mock2raw->S.parseJsonStringOrThrow(testRecordSchema)).toEqual(mock2)
   })
-  it("decodes undefined as None", () => {
-    Assert.deepEqual(mock3raw->S.parseJsonStringOrThrow(testRecordSchema), mock2)
+  it("decodes undefined as None", t => {
+    t.expect(mock3raw->S.parseJsonStringOrThrow(testRecordSchema)).toEqual(mock2)
   })
-  it("decodes val as Some", () => {
-    Assert.deepEqual(mock1raw->S.parseJsonStringOrThrow(testRecordSchema), mock1)
+  it("decodes val as Some", t => {
+    t.expect(mock1raw->S.parseJsonStringOrThrow(testRecordSchema)).toEqual(mock1)
   })
 })
