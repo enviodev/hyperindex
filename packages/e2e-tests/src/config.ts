@@ -43,7 +43,7 @@ function resolveEnvioBin(): string {
 
   // Check release first (CI builds --release), then debug (local dev)
   for (const profile of ["release", "debug"]) {
-    const bin = path.join(rootDir, `codegenerator/target/${profile}/envio`);
+    const bin = path.join(rootDir, `target/${profile}/envio`);
     if (fs.existsSync(bin)) {
       return bin;
     }
@@ -59,7 +59,7 @@ function resolveEnvioBin(): string {
   throw new Error(
     "envio binary not found. Either:\n" +
       "  - Set ENVIO_BIN env var\n" +
-      "  - Run `cargo build` in codegenerator/cli first\n" +
+      "  - Run `cargo build` in packages/cli first\n" +
       "  - Add envio to PATH"
   );
 }
@@ -80,7 +80,7 @@ export const config = {
 
   /** CLI templates directory */
   get templatesDir() {
-    return path.join(this.rootDir, "codegenerator/cli/templates");
+    return path.join(this.rootDir, "packages/cli/templates");
   },
 
   /** Default indexer port */

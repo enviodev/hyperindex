@@ -1,1 +1,1 @@
-codegenerator/cli/README.md
+packages/envio-rust/README.md
