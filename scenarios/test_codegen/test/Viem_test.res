@@ -51,15 +51,15 @@ describe("decodeEventLogOrThrow", () => {
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
 
     t.expect(decodedEvent).toEqual(
-      {
+      %raw(`{
         args: [
           "0x4200000000000000000000000000000000000006",
           "0x6D521550fc0E937CD3f4dB0B17Bbc256F5bFd140",
           "0x1CC744d0891457E16e94426EA4357662A9A9bA50",
-          "449",
+          449n,
         ],
         eventName: "PairCreated",
-      },
+      }`),
     )
     // We don't want that /|\ to be an array, so we need to output abi with the param names
   })
