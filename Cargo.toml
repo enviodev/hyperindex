@@ -1,3 +1,3 @@
 [workspace]
-members = ["packages/envio-rust"]
+members = ["packages/cli"]
 resolver = "2"

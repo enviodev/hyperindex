@@ -66,7 +66,7 @@ function runLocalEnvio() {
     [
       "run",
       "--manifest-path",
-      path.join(relativeLocalEnvioPath, "../envio-rust/Cargo.toml"),
+      path.join(relativeLocalEnvioPath, "../cli/Cargo.toml"),
       ...args,
     ],
     { stdio: "inherit" }

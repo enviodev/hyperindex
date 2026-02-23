@@ -59,7 +59,7 @@ function resolveEnvioBin(): string {
   throw new Error(
     "envio binary not found. Either:\n" +
       "  - Set ENVIO_BIN env var\n" +
-      "  - Run `cargo build` in packages/envio-rust first\n" +
+      "  - Run `cargo build` in packages/cli first\n" +
       "  - Add envio to PATH"
   );
 }
@@ -80,7 +80,7 @@ export const config = {
 
   /** CLI templates directory */
   get templatesDir() {
-    return path.join(this.rootDir, "packages/envio-rust/templates");
+    return path.join(this.rootDir, "packages/cli/templates");
   },
 
   /** Default indexer port */

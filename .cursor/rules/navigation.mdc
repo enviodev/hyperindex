@@ -11,14 +11,14 @@ alwaysApply: true
 
 ## Navigation
 
-- The Rust CLI lives in `packages/envio-rust`.
-  - Entry point: `packages/envio-rust/src/lib.rs`.
-  - Command dispatcher: `packages/envio-rust/src/commands.rs`.
+- The Rust CLI lives in `packages/cli`.
+  - Entry point: `packages/cli/src/lib.rs`.
+  - Command dispatcher: `packages/cli/src/commands.rs`.
 - Config parsing pipeline:
   - `human_config.rs` → reads user files & JSON schemas.
   - `system_config.rs` → converts to internal structs.
   - `hbs_templating/codegen_templates.rs` → feeds templates.
-- Templates live under `packages/envio-rust/templates`:
+- Templates live under `packages/cli/templates`:
   - `dynamic/` – Handlebars (.hbs)
   - `static/` – raw Rescript files copied verbatim.
 - Generated runtime (inside each project’s `generated/`):
@@ -34,7 +34,7 @@ alwaysApply: true
 Tips for navigation:
 
 - Start with module names (e.g., `Index.res`, `ChainManager.res`) and let fuzzy search resolve paths.
-- Runtime code lives in each project’s `generated/src`, but template versions (good for editing) are under `packages/envio-rust/templates/static/codegen/src` or `packages/envio-rust/templates/dynamic/codegen/src`.
+- Runtime code lives in each project’s `generated/src`, but template versions (good for editing) are under `packages/cli/templates/static/codegen/src` or `packages/cli/templates/dynamic/codegen/src`.
 - Config parsing & codegen lives in Rust. When tracking how a value reaches templates, follow `human_config.rs` → `system_config.rs` → `codegen_templates.rs`.
 - Prefer reading ReScript `.res` modules directly; compiled `.js` artifacts can be ignored.
 - When suggesting file edits to contributors, reference modules with `.res` extension but drop the long path (e.g., "edit `ChainFetcher.res`").

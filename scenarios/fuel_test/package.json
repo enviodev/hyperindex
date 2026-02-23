@@ -7,8 +7,8 @@
     "res:build": "rescript",
     "res:watch": "rescript -w",
     "mocha": "tsc --noEmit && node --import tsx/esm node_modules/mocha/bin/mocha.js --exit test/**/*.{ts,res.mjs}",
-    "codegen": "cargo run --manifest-path ../../packages/envio-rust/Cargo.toml -- codegen",
-    "dev": "cargo run --manifest-path ../../packages/envio-rust/Cargo.toml -- dev",
+    "codegen": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- codegen",
+    "dev": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- dev",
     "test": "rescript && pnpm mocha",
     "start": "envio start"
   },
