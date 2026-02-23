@@ -108,7 +108,7 @@ pub mod codegen {
         .await?;
         execute_command(
             "pnpm",
-            vec!["install", "--prefer-offline"],
+            vec!["install", "--no-frozen-lockfile", "--prefer-offline"],
             &project_paths.project_root,
         )
         .await
@@ -164,20 +164,7 @@ pub mod start {
     use anyhow::anyhow;
     use pathdiff::diff_paths;
 
-    pub async fn start_indexer(
-        config: &SystemConfig,
-        should_open_hasura: bool,
-    ) -> anyhow::Result<()> {
-        if should_open_hasura {
-            println!("Opening Hasura console at http://localhost:8080 ...");
-            if open::that_detached("http://localhost:8080").is_err() {
-                println!(
-                    "Unable to open http://localhost:8080 in your browser automatically for you. \
-                     You can open that link yourself to view hasura"
-                );
-            }
-        }
-
+    pub async fn start_indexer(config: &SystemConfig) -> anyhow::Result<()> {
         // Compute the relative path from project root to generated directory
         let relative_generated = diff_paths(
             &config.parsed_project_paths.generated,

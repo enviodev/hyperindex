@@ -67,15 +67,12 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     // if hasura healhz check returns not found assume docker isnt running and start it up {
     let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();
 
-    let should_open_hasura_console = if hasura_health_check_is_error {
+    if hasura_health_check_is_error {
         //Run docker commands to spin up container
         commands::docker::docker_compose_up_d(&config)
             .await
             .context("Failed running docker compose up after server liveness check")?;
-        true
-    } else {
-        false
-    };
+    }
 
     let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
 
@@ -121,7 +118,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
 
             println!("Starting indexer");
 
-            commands::start::start_indexer(&config, should_open_hasura_console)
+            commands::start::start_indexer(&config)
                 .await
                 .context("Failed running start on the indexer")?;
         }

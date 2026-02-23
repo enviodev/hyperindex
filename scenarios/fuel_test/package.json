@@ -6,7 +6,7 @@
     "res:clean": "rescript clean",
     "res:build": "rescript",
     "res:watch": "rescript -w",
-    "mocha": "tsc --noEmit && NODE_OPTIONS='--no-warnings --import tsx' mocha --exit test/**/*.{ts,res.mjs}",
+    "mocha": "tsc --noEmit && node --import tsx/esm node_modules/mocha/bin/mocha.js --exit test/**/*.{ts,res.mjs}",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- dev",
     "test": "rescript && pnpm mocha",
