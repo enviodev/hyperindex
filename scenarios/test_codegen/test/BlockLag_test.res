@@ -42,6 +42,13 @@ describe("E2E blockLag tests", () => {
       await Utils.delay(0)
 
       // After entering reorg threshold, blockLag is updated to chainConfig.blockLag=1.
+      // The indexer fetches from block 101 up to knownHeight - blockLag = 299.
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        Some({"fromBlock": 101, "toBlock": Some(299), "retry": 0, "p": "0"}),
+        ~message="Should request items from block 101 to 299 (knownHeight - blockLag)",
+      )
+
       // Resolve the pending fetch with items up to block 299 (knownHeight - blockLag).
       sourceMock.resolveGetItemsOrThrow(
         [
@@ -69,6 +76,13 @@ describe("E2E blockLag tests", () => {
       sourceMock.resolveGetHeightOrThrow(301)
       await Utils.delay(0)
       await Utils.delay(0)
+
+      // Should request from block 300 up to knownHeight - blockLag = 300.
+      Assert.deepEqual(
+        sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)->Utils.Array.last,
+        Some({"fromBlock": 300, "toBlock": Some(300), "retry": 0, "p": "0"}),
+        ~message="Should request items from block 300 to 300 (knownHeight 301 - blockLag 1)",
+      )
 
       // Advance chain height to 301 and resolve fetch up to block 300.
       sourceMock.resolveGetItemsOrThrow(
