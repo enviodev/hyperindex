@@ -1,10 +1,11 @@
-# yaml-language-server: $schema=../../npm/envio/evm.schema.json
-name: gravatar-with-required-entities
-schema: ../schemas/gravatar-schema.graphql
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: config3
+schema: ../schemas/schema.graphql
 description: Gravatar for Ethereum
 chains:
   - id: 1
     start_block: 0
+    rpc: https://fallback.eth.com//
     contracts:
       - name: Contract1
         abi_file_path: ../abis/Contract1.json

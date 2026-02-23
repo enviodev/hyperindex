@@ -12,7 +12,7 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
-    "envio": "file:../../codegenerator/cli/npm/envio"
+    "envio": "file:../../packages/envio"
   },
   "optionalDependencies": {
     "generated": "./generated"

@@ -1,12 +1,7 @@
-# yaml-language-server: $schema=../../npm/envio/evm.schema.json
-name: test-all-options
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: lowercase-contract-name
 schema: ../schemas/schema.graphql
-description: Test config with all options set
-handlers: custom/handlers
-full_batch_size: 1000
-rollback_on_reorg: false
-save_full_history: true
-raw_events: true
+description: Test config with lowercase contract name
 chains:
   - id: 1
     rpc:
@@ -18,10 +13,9 @@ chains:
       interval_ceiling: 10000
       backoff_millis: 5000
       query_timeout_millis: 20000
-      polling_interval: 2000
     start_block: 0
     contracts:
-      - name: Contract1
+      - name: contract1
         abi_file_path: ../abis/Contract1.json
         handler: ./src/EventHandler.js
         address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"

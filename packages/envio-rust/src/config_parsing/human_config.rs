@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn test_evm_config_schema() {
         let config_path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/evm.schema.json");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/evm.schema.json");
         let npm_schema: Schema =
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 
@@ -772,7 +772,7 @@ mod tests {
     #[test]
     fn test_fuel_config_schema() {
         let config_path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/fuel.schema.json");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/fuel.schema.json");
         let npm_schema: Schema =
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn test_svm_config_schema() {
         let config_path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/svm.schema.json");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/svm.schema.json");
         let npm_schema: Schema =
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 

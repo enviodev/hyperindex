@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../../npm/envio/fuel.schema.json
+# yaml-language-server: $schema=../../../envio/fuel.schema.json
 name: Fuel indexer
 ecosystem: fuel
 chains:

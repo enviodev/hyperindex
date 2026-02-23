@@ -389,9 +389,9 @@ pub fn get_envio_version() -> Result<String> {
     } else {
         // Else install the local version for development and testing
         match env::current_exe() {
-            // This should be something like "file:~/envio/hyperindex/codegenerator/target/debug/envio" or "file:.../target/debug/integration_tests"
+            // This should be something like "file:~/envio/hyperindex/target/debug/envio" or "file:.../target/debug/integration_tests"
             Ok(exe_path) => Ok(format!(
-                "file:{}/../../../cli/npm/envio",
+                "file:{}/../../../packages/envio",
                 exe_path.to_string_lossy()
             )),
             Err(e) => Err(anyhow!("failed to get current exe path: {e}")),

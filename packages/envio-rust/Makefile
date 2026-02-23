@@ -1,11 +1,11 @@
 # Target to update schemas
 update-schemas:
 	@echo "Updating schemas json schemas for evm human config..."
-	cargo run -- script print-config-json-schema evm > ./npm/envio/evm.schema.json
+	cargo run -- script print-config-json-schema evm > ../envio/evm.schema.json
 	@echo "Updating schemas json schemas for fuel human config..."
-	cargo run -- script print-config-json-schema fuel > ./npm/envio/fuel.schema.json
+	cargo run -- script print-config-json-schema fuel > ../envio/fuel.schema.json
 	@echo "Updating schemas json schemas for svm human config..."
-	cargo run -- script print-config-json-schema svm > ./npm/envio/svm.schema.json
+	cargo run -- script print-config-json-schema svm > ../envio/svm.schema.json
 
 # Target to update help
 update-help:

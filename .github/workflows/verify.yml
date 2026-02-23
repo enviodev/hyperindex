@@ -29,7 +29,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            ./codegenerator/target
+            ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -52,11 +52,10 @@ jobs:
           node-version: 22.10.0
 
       - name: Build envio CLI
-        working-directory: codegenerator
         run: cargo build --release
 
       - name: Add envio to PATH
-        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+        run: echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
 
       - name: Install dependencies
         run: pnpm install
@@ -82,17 +81,15 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            ./codegenerator/target
+            ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
       - name: Cargo Test
-        working-directory: codegenerator
         run: cargo test --no-default-features
 
       - name: Hypersync Health Test
-        working-directory: codegenerator
         run: cargo test --features integration_tests
 
   # Scenario integration tests
@@ -142,7 +139,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            ./codegenerator/target
+            ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -165,11 +162,10 @@ jobs:
           node-version: 22.10.0
 
       - name: Cargo Build
-        working-directory: codegenerator
         run: cargo build --release
 
       - name: Add envio to PATH
-        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+        run: echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
 
       - name: Install dependencies
         run: pnpm install
@@ -255,7 +251,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            ./codegenerator/target
+            ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -278,11 +274,10 @@ jobs:
           node-version: 22.10.0
 
       - name: Build envio CLI
-        working-directory: codegenerator
         run: cargo build --release
 
       - name: Add envio to PATH
-        run: echo "${{ github.workspace }}/codegenerator/target/release" >> $GITHUB_PATH
+        run: echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
 
       - name: Install dependencies
         run: pnpm install
