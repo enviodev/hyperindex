@@ -91,26 +91,20 @@ describe("SourceManager creation", () => {
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync0)
   })
 
-  it("Fails to create without sync sources", _t => {
-    Assert.throws(
+  it("Fails to create without sync sources", t => {
+    t.expect(
       () => {
         SourceManager.make(~sources=[], ~maxPartitionConcurrency=10)
       },
-      ~error={
-        "message": "Invalid configuration, no data-source for historical sync provided",
-      },
-    )
-    Assert.throws(
+    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
+    t.expect(
       () => {
         SourceManager.make(
           ~sources=[Mock.Source.make([], ~sourceFor=Fallback).source],
           ~maxPartitionConcurrency=10,
         )
       },
-      ~error={
-        "message": "Invalid configuration, no data-source for historical sync provided",
-      },
-    )
+    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
   })
 })
 
@@ -210,13 +204,13 @@ describe("SourceManager fetchNext", () => {
   }
 
   let neverWaitForNewBlock = async (~knownHeight as _) =>
-    Assert.fail("The waitForNewBlock shouldn't be called for the test")
+    panic("The waitForNewBlock shouldn't be called for the test")
 
   let neverOnNewBlock = (~knownHeight as _) =>
-    Assert.fail("The onNewBlock shouldn't be called for the test")
+    panic("The onNewBlock shouldn't be called for the test")
 
   let neverExecutePartitionQuery = _ =>
-    Assert.fail("The executeQuery shouldn't be called for the test")
+    panic("The executeQuery shouldn't be called for the test")
 
   let source: Source.t = Mock.Source.make([]).source
 
@@ -1321,7 +1315,7 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
-  Async.it("Rethrows unknown errors", async _t => {
+  Async.it("Rethrows unknown errors", async t => {
     let sourceMock = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
       ~sources=[sourceMock.source],
@@ -1332,7 +1326,15 @@ describe("SourceManager.executeQuery", () => {
       "message": "Something went wrong",
     }
     sourceMock.getItemsOrThrowCalls->Js.Array2.forEach(call => call.reject(error))
-    await Assert.rejects(() => p, ~error)
+    try {
+      let _ = await p
+      panic("Should not have resolved")
+    } catch {
+    | Js.Exn.Error(e) =>
+      t.expect(
+        e->Js.Exn.message,
+      ).toEqual(Some(error["message"]))
+    }
   })
 
   Async.it("Immediately retries with the suggested toBlock", async t => {
@@ -1380,7 +1382,7 @@ describe("SourceManager.executeQuery", () => {
         )
         call.resolve([])
       }
-    | _ => Assert.fail("Should have a new call after the microtask")
+    | _ => panic("Should have a new call after the microtask")
     }
 
     t.expect((await p).parsedQueueItems).toEqual([])
@@ -1442,7 +1444,7 @@ describe("SourceManager.executeQuery", () => {
               ),
             )
           }
-        | _ => Assert.fail("Should have one pending call to sourceMock1")
+        | _ => panic("Should have one pending call to sourceMock1")
         }
 
         // Wait for microtask, so the rejection is caught
@@ -1471,7 +1473,7 @@ describe("SourceManager.executeQuery", () => {
             ),
           )
         }
-      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      | _ => panic("Should have one pending call to sourceMock0")
       }
 
       await Promise.resolve() // Wait for microtask, so the rejection is caught
@@ -1495,7 +1497,7 @@ describe("SourceManager.executeQuery", () => {
             ),
           )
         }
-      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      | _ => panic("Should have one pending call to sourceMock0")
       }
 
       await Promise.resolve()
@@ -1532,7 +1534,7 @@ but we still attempt the fallback source if it was the initial active source.
           call.resolve([])
           t.expect((await p).parsedQueueItems).toEqual([])
         }
-      | _ => Assert.fail("Should have one pending call to sourceMock1")
+      | _ => panic("Should have one pending call to sourceMock1")
       }
     },
   )

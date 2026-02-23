@@ -44,7 +44,7 @@ describe("EventRouter", () => {
     )
   })
 
-  it("Fails on duplicate insertions", _t => {
+  it("Fails on duplicate insertions", t => {
     let router = EventRouter.empty()
 
     router->EventRouter.addOrThrow(
@@ -56,7 +56,7 @@ describe("EventRouter", () => {
       ~isWildcard=false,
     )
 
-    Assert.throws(
+    t.expect(
       () => {
         router->EventRouter.addOrThrow(
           "test-event-tag",
@@ -67,13 +67,10 @@ describe("EventRouter", () => {
           ~isWildcard=false,
         )
       },
-      ~error={
-        "message": "Duplicate event detected: Event1 for contract Contract1 on chain 1",
-      },
-    )
+    ).toThrowError("Duplicate event detected: Event1 for contract Contract1 on chain 1")
   })
 
-  it("Fails on duplicate wildcard insertions", _t => {
+  it("Fails on duplicate wildcard insertions", t => {
     let router = EventRouter.empty()
 
     router->EventRouter.addOrThrow(
@@ -85,7 +82,7 @@ describe("EventRouter", () => {
       ~isWildcard=true,
     )
 
-    Assert.throws(
+    t.expect(
       () => {
         router->EventRouter.addOrThrow(
           "test-event-tag",
@@ -96,10 +93,7 @@ describe("EventRouter", () => {
           ~isWildcard=true,
         )
       },
-      ~error={
-        "message": "Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1",
-      },
-    )
+    ).toThrowError("Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1")
   })
 
   it("get doesn't returns the correct eventMod without address in mapping if unique", t => {

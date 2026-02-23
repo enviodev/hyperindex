@@ -60,11 +60,11 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
 
     switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {
     | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("123.456")
-    | None => Assert.fail("testEntity1 should exist")
+    | None => panic("testEntity1 should exist")
     }
     switch await handlerContext.entityWithBigDecimal.get(testEntity2.id) {
     | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("654.321")
-    | None => Assert.fail("testEntity2 should exist")
+    | None => panic("testEntity2 should exist")
     }
   })
 })

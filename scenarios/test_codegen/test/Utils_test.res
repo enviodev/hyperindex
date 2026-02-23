@@ -120,15 +120,12 @@ describe("Hash", () => {
     t.expect(Utils.Hash.makeOrThrow(BigDecimal.fromString("123"))).toEqual(`"123"`)
   })
 
-  it("set", _t => {
-    Assert.throws(
+  it("set", t => {
+    t.expect(
       () => {
         Utils.Hash.makeOrThrow(Utils.Set.fromArray(["1", "2"]))
       },
-      ~error={
-        "message": `Failed to get hash for Set. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
-      },
-    )
+    ).toThrowError(`Failed to get hash for Set. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`)
   })
 
   it("symbol", t => {

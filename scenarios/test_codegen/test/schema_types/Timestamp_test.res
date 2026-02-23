@@ -52,7 +52,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     switch await handlerContext.entityWithTimestamp.get(testEntity.id) {
     | Some(entity) =>
       t.expect(entity.timestamp->Js.Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")
-    | None => Assert.fail("Entity should exist")
+    | None => panic("Entity should exist")
     }
   })
 })

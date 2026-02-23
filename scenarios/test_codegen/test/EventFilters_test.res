@@ -56,7 +56,7 @@ describe("Test eventFilters", () => {
 
     t.expect(
       switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {
-      | Static(_) => Assert.fail("Should be dynamic")
+      | Static(_) => panic("Should be dynamic")
       | Dynamic(fn) =>
         fn([
           "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"->Address.unsafeFromString,
@@ -117,16 +117,13 @@ describe("Test eventFilters", () => {
     t.expect(eventConfig.dependsOnAddresses, ~message="foo").toBe(false)
   })
 
-  it("Fails on filter with excess field", _t => {
+  it("Fails on filter with excess field", t => {
     let eventConfig = Indexer.EventFiltersTest.WithExcessField.register()
 
-    Assert.throws(
+    t.expect(
       () => {
         eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137))
       },
-      ~error={
-        "message": `Invalid event filters configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`,
-      },
-    )
+    ).toThrowError(`Invalid event filters configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
   })
 })

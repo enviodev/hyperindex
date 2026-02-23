@@ -52,11 +52,11 @@ describe("RpcSource - getHeightOrThrow", () => {
 })
 
 describe("RpcSource - getEventTransactionOrThrow", () => {
-  let neverGetTransactionJson = _ => Assert.fail("getTransactionJson should not be called")
-  let neverGetReceiptJson = _ => Assert.fail("getReceiptJson should not be called")
+  let neverGetTransactionJson = _ => panic("getTransactionJson should not be called")
+  let neverGetReceiptJson = _ => panic("getReceiptJson should not be called")
 
-  it("Panics with invalid schema", _t => {
-    Assert.throws(
+  it("Panics with invalid schema", t => {
+    t.expect(
       () => {
         RpcSource.makeThrowingGetEventTransaction(
           ~getTransactionJson=neverGetTransactionJson,
@@ -64,10 +64,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
           ~lowercaseAddresses=false,
         )(mockLog(), ~transactionSchema=S.string)
       },
-      ~error={
-        "message": "Unexpected internal error: transactionSchema is not an object",
-      },
-    )
+    ).toThrowError("Unexpected internal error: transactionSchema is not an object")
   })
 
   Async.it(
@@ -552,7 +549,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       )
-      Assert.fail("Should have thrown")
+      panic("Should have thrown")
     } catch {
     | Js.Exn.Error(e) =>
       t.expect(
@@ -690,7 +687,7 @@ describe("RpcSource - getSelectionConfig", () => {
         dependsOnAddresses: true,
         eventConfigs: [],
       }->RpcSource.getSelectionConfig(~chain)
-      Assert.fail("Should have thrown")
+      panic("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
       t.expect(
@@ -698,7 +695,7 @@ describe("RpcSource - getSelectionConfig", () => {
       ).toBe(
         "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
       )
-    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    | _ => panic("Should have thrown UnsupportedSelection")
     }
   })
 
@@ -711,7 +708,7 @@ describe("RpcSource - getSelectionConfig", () => {
           (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
         ],
       }->RpcSource.getSelectionConfig(~chain)
-      Assert.fail("Should have thrown")
+      panic("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
       t.expect(
@@ -719,7 +716,7 @@ describe("RpcSource - getSelectionConfig", () => {
       ).toBe(
         "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
       )
-    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    | _ => panic("Should have thrown UnsupportedSelection")
     }
   })
 })

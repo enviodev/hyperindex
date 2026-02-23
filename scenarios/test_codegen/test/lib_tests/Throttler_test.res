@@ -9,7 +9,7 @@ describe("Throttler", () => {
     throttler->Throttler.schedule(
       async () => {
         actionsCalled->Js.Array2.push(2)->ignore
-        Assert.fail("Should have throttled 2nd scheduled fn in favour of following")
+        panic("Should have throttled 2nd scheduled fn in favour of following")
       },
     )
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(3)->ignore)

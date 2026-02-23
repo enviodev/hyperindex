@@ -2385,7 +2385,7 @@ Sorted by timestamp and chain id`,
     // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
     switch sourceMock.getItemsOrThrowCalls {
     | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
-    | _ => Assert.fail("Step 3 should have a single pending call")
+    | _ => panic("Step 3 should have a single pending call")
     }
     await indexerMock.getBatchWritePromise()
 
@@ -2394,7 +2394,7 @@ Sorted by timestamp and chain id`,
     // A new query batch should be created with chunks
     switch sourceMock.getItemsOrThrowCalls {
     | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
-    | _ => Assert.fail("Step 3 should have a single pending call")
+    | _ => panic("Step 3 should have a single pending call")
     }
     await indexerMock.getBatchWritePromise()
 
@@ -2481,7 +2481,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
         ],
       )
 
-    | _ => Assert.fail("Step 4 should have 4 chunks")
+    | _ => panic("Step 4 should have 4 chunks")
     }
 
     // 8. Trigger rollback via reorg detection to block 116
@@ -2555,7 +2555,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
       switch sourceMock.getItemsOrThrowCalls {
       | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
-      | _ => Assert.fail("Should have a single pending call for query 1")
+      | _ => panic("Should have a single pending call for query 1")
       }
       await indexerMock.getBatchWritePromise()
 
@@ -2563,7 +2563,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       // After this, chunking will be enabled with chunkRange=min(3,3)=3
       switch sourceMock.getItemsOrThrowCalls {
       | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
-      | _ => Assert.fail("Should have a single pending call for query 2")
+      | _ => panic("Should have a single pending call for query 2")
       }
       await indexerMock.getBatchWritePromise()
 
