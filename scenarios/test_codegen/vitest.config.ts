@@ -19,11 +19,7 @@ export default defineConfig({
       concurrent: false,
     },
     pool: "forks",
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    maxWorkers: 1,
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],

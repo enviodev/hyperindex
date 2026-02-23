@@ -98,6 +98,13 @@ let isPendingRegistration = () => {
   }
 }
 
+let getFinishedRegistrations = () => {
+  switch activeRegistration.contents {
+  | Some(r) if r.finished => Some(r.registrations)
+  | _ => None
+  }
+}
+
 let onBlockOptionsSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
