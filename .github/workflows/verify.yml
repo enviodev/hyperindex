@@ -91,6 +91,10 @@ jobs:
         working-directory: codegenerator
         run: cargo test --no-default-features
 
+      - name: Hypersync Health Test
+        working-directory: codegenerator
+        run: cargo test --features integration_tests
+
   # Scenario integration tests
   # Requires DB services (postgres + hasura)
   scenarios-test:
