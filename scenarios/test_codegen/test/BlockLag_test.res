@@ -2,7 +2,7 @@ open RescriptMocha
 
 describe("E2E blockLag tests", () => {
   Async.it(
-    "Chain with blockLag=1 should not be marked as synced to head",
+    "Chain with blockLag=1 should be marked as synced to head when at knownHeight - blockLag",
     async () => {
       let sourceMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
@@ -61,12 +61,12 @@ describe("E2E blockLag tests", () => {
       )
       await indexerMock.getBatchWritePromise()
 
-      // With blockLag=1, progressBlockNumber=299 < knownHeight=300,
-      // so isProgressAtHead remains false and chain is NOT synced to head.
+      // With blockLag=1, progressBlockNumber=299 >= knownHeight(300) - blockLag(1) = 299,
+      // so isProgressAtHead is true and chain IS synced to head.
       Assert.deepEqual(
         await indexerMock.metric("hyperindex_synced_to_head"),
-        [{value: "0", labels: Js.Dict.empty()}],
-        ~message="Chain with blockLag=1 should NOT be synced to head because progress (299) < knownHeight (300)",
+        [{value: "1", labels: Js.Dict.empty()}],
+        ~message="Chain with blockLag=1 should be synced to head because progress (299) >= knownHeight (300) - blockLag (1)",
       )
 
       // Wait for next query dispatch
@@ -92,11 +92,11 @@ describe("E2E blockLag tests", () => {
       )
       await indexerMock.getBatchWritePromise()
 
-      // Still not synced: progressBlockNumber=300 < knownHeight=301
+      // Still synced: progressBlockNumber=300 >= knownHeight(301) - blockLag(1) = 300
       Assert.deepEqual(
         await indexerMock.metric("hyperindex_synced_to_head"),
-        [{value: "0", labels: Js.Dict.empty()}],
-        ~message="Chain with blockLag=1 should still NOT be synced after height advances",
+        [{value: "1", labels: Js.Dict.empty()}],
+        ~message="Chain with blockLag=1 should still be synced after height advances",
       )
     },
   )

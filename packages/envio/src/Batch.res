@@ -18,6 +18,7 @@ type chainBeforeBatch = {
   progressBlockNumber: int,
   sourceBlockNumber: int,
   totalEventsProcessed: int,
+  configuredBlockLag: int,
 }
 
 type t = {
@@ -113,7 +114,7 @@ let getProgressedChainsById = {
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed + batchSize,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
-            chainBeforeBatch.sourceBlockNumber,
+            chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.configuredBlockLag,
           }: chainAfterBatch
         ),
       )
