@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 open Belt
 
 describe("HyperFuelSource - getNormalRecieptsSelection", () => {
@@ -31,15 +31,16 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     Js.Dict.fromArray([(contractName1, [address1, address2]), (contractName2, [address3])])
   }
 
-  it("Receipts Selection with no contracts", () => {
+  it("Receipts Selection with no contracts", t => {
     let getNormalRecieptsSelection = mock(~contracts=[])
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [],
     )
   })
 
-  it("Receipts Selection with no events", () => {
+  it("Receipts Selection with no events", t => {
     let getNormalRecieptsSelection = mock(
       ~contracts=[
         {
@@ -48,13 +49,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [],
     )
   })
 
-  it("Receipts Selection with single non-wildcard log event", () => {
+  it("Receipts Selection with single non-wildcard log event", t => {
     let getNormalRecieptsSelection = mock(
       ~contracts=[
         {
@@ -79,8 +81,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [
         {
           rb: [1n],
@@ -94,7 +97,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
 
   it(
     "Receipts Selection with non-wildcard transfer event - catches both TRANSFER and TRANSFER_OUT receipts",
-    () => {
+    t => {
       let getNormalRecieptsSelection = mock(
         ~contracts=[
           {
@@ -133,8 +136,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           },
         ],
       )
-      Assert.deepEqual(
+      t.expect(
         getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+      ).toEqual(
         [
           {
             receiptType: [Transfer, TransferOut],
@@ -151,7 +155,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     },
   )
 
-  it("Receipts Selection with non-wildcard mint event", () => {
+  it("Receipts Selection with non-wildcard mint event", t => {
     let getNormalRecieptsSelection = mock(
       ~contracts=[
         {
@@ -190,8 +194,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [
         {
           receiptType: [Mint],
@@ -207,7 +212,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
   })
 
-  it("Receipts Selection with non-wildcard burn event", () => {
+  it("Receipts Selection with non-wildcard burn event", t => {
     let getNormalRecieptsSelection = mock(
       ~contracts=[
         {
@@ -246,8 +251,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [
         {
           receiptType: [Burn],
@@ -263,7 +269,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
   })
 
-  it("Receipts Selection with all possible events together", () => {
+  it("Receipts Selection with all possible events together", t => {
     let getNormalRecieptsSelection = mock(
       ~contracts=[
         {
@@ -383,8 +389,10 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+      ~message=`Note that non-wildcard events should be skipped`,
+    ).toEqual(
       [
         {
           receiptType: [Mint, Burn, Transfer, TransferOut],
@@ -409,12 +417,11 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           txStatus: [1],
         },
       ],
-      ~message=`Note that non-wildcard events should be skipped`,
     )
   })
 
-  it("Fails with non-wildcard Call event", () => {
-    Assert.throws(
+  it("Fails with non-wildcard Call event", t => {
+    t.expect(
       () => {
         mock(
           ~contracts=[
@@ -438,14 +445,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           ],
         )
       },
-      ~error={
-        "message": "Call receipt indexing currently supported only in wildcard mode",
-      },
+    ).toThrowError(
+      "Call receipt indexing currently supported only in wildcard mode",
     )
   })
 
-  it("Fails when contract has multiple mint events", () => {
-    Assert.throws(
+  it("Fails when contract has multiple mint events", t => {
+    t.expect(
       () => {
         mock(
           ~contracts=[
@@ -481,14 +487,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           ],
         )
       },
-      ~error={
-        "message": "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
-      },
+    ).toThrowError(
+      "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
     )
   })
 
-  it("Fails when contract has multiple burn events", () => {
-    Assert.throws(
+  it("Fails when contract has multiple burn events", t => {
+    t.expect(
       () => {
         mock(
           ~contracts=[
@@ -524,15 +529,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           ],
         )
       },
-      ~error={
-        "message": "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
-      },
+    ).toThrowError(
+      "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
     )
   })
 
   it(
     "Shouldn't fail with contracts having the same wildcard and non-wildcard event. This should be handled when we create FetchState",
-    () => {
+    t => {
       let getNormalRecieptsSelection = mock(
         ~contracts=[
           {
@@ -566,8 +570,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           },
         ],
       )
-      Assert.deepEqual(
+      t.expect(
         getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+      ).toEqual(
         [
           {
             receiptType: [Mint],
@@ -579,7 +584,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     },
   )
 
-  it("Works with wildcard mint and non-wildcard mint together in different contract", () => {
+  it("Works with wildcard mint and non-wildcard mint together in different contract", t => {
     let getNormalRecieptsSelection = mock(
       ~contracts=[
         {
@@ -618,8 +623,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [
         {
           receiptType: [Mint],
@@ -668,8 +674,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [
         {
           receiptType: [Mint],
@@ -680,7 +687,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
   })
 
-  it("Works with wildcard burn and non-wildcard burn together in different contract", () => {
+  it("Works with wildcard burn and non-wildcard burn together in different contract", t => {
     let getNormalRecieptsSelection = mock(
       ~contracts=[
         {
@@ -719,8 +726,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [
         {
           receiptType: [Burn],
@@ -769,8 +777,9 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
+    ).toEqual(
       [
         {
           receiptType: [Burn],
@@ -803,16 +812,17 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     selectionConfig.getRecieptsSelection(~addressesByContractName=Js.Dict.empty())
   }
 
-  it("Receipts Selection with no contracts", () => {
+  it("Receipts Selection with no contracts", t => {
     let wildcardReceiptsSelection = mock(~contracts=[])
-    Assert.deepEqual(
+    t.expect(
       wildcardReceiptsSelection,
-      [],
       ~message=`It should never happen, since the partition like this wouldn't exist`,
+    ).toEqual(
+      [],
     )
   })
 
-  it("Receipts Selection with no events", () => {
+  it("Receipts Selection with no events", t => {
     let wildcardReceiptsSelection = mock(
       ~contracts=[
         {
@@ -821,14 +831,15 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       wildcardReceiptsSelection,
-      [],
       ~message=`It should never happen, since the partition like this wouldn't exist`,
+    ).toEqual(
+      [],
     )
   })
 
-  it("Receipts Selection with all possible events together", () => {
+  it("Receipts Selection with all possible events together", t => {
     let wildcardReceiptsSelection = mock(
       ~contracts=[
         {
@@ -948,8 +959,10 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       wildcardReceiptsSelection,
+      ~message=`Note that wildcard events should be skipped`,
+    ).toEqual(
       [
         {
           receiptType: [Call],
@@ -961,11 +974,10 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
           txStatus: [1],
         },
       ],
-      ~message=`Note that wildcard events should be skipped`,
     )
   })
 
-  it("Works with wildcard mint and non-wildcard mint together in different contract", () => {
+  it("Works with wildcard mint and non-wildcard mint together in different contract", t => {
     let wildcardReceiptsSelection = mock(
       ~contracts=[
         {
@@ -1004,8 +1016,9 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       wildcardReceiptsSelection,
+    ).toEqual(
       [
         {
           receiptType: [Mint],
@@ -1015,7 +1028,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     )
   })
 
-  it("Receipts Selection with wildcard mint event", () => {
+  it("Receipts Selection with wildcard mint event", t => {
     let wildcardReceiptsSelection = mock(
       ~contracts=[
         {
@@ -1037,8 +1050,9 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       wildcardReceiptsSelection,
+    ).toEqual(
       [
         {
           receiptType: [Mint],
@@ -1048,7 +1062,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     )
   })
 
-  it("Receipts Selection with wildcard burn event", () => {
+  it("Receipts Selection with wildcard burn event", t => {
     let wildcardReceiptsSelection = mock(
       ~contracts=[
         {
@@ -1070,8 +1084,9 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       wildcardReceiptsSelection,
+    ).toEqual(
       [
         {
           receiptType: [Burn],
@@ -1081,7 +1096,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     )
   })
 
-  it("Receipts Selection with multiple wildcard log event", () => {
+  it("Receipts Selection with multiple wildcard log event", t => {
     let wildcardReceiptsSelection = mock(
       ~contracts=[
         {
@@ -1141,8 +1156,9 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    Assert.deepEqual(
+    t.expect(
       wildcardReceiptsSelection,
+    ).toEqual(
       [
         {
           rb: [1n, 2n, 3n],

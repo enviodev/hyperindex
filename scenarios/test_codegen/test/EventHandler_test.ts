@@ -1,5 +1,5 @@
 import assert from "assert";
-import { it } from "mocha";
+import { it, describe } from "vitest";
 import {
   TestHelpers,
   indexer,

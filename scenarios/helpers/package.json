@@ -16,7 +16,7 @@
   "dependencies": {
     "rescript": "12.1.0",
     "rescript-schema": "9.3.0-rescript12.0",
-    "envio": "file:../../codegenerator/cli/npm/envio"
+    "envio": "file:../../packages/envio"
   },
   "engines": {
     "node": ">=22.0.0"
