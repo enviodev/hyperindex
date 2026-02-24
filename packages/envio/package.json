@@ -20,9 +20,29 @@
     "url": "https://github.com/enviodev/hyperindex/issues"
   },
   "homepage": "https://envio.dev",
+  "keywords": [
+    "blockchain",
+    "indexer",
+    "ethereum",
+    "evm",
+    "fuel",
+    "solana",
+    "data",
+    "dapp"
+  ],
   "engines": {
     "node": ">=22.0.0"
   },
+  "files": [
+    "bin.js",
+    "evm.schema.json",
+    "fuel.schema.json",
+    "svm.schema.json",
+    "rescript.json",
+    "index.d.ts",
+    "index.js",
+    "src"
+  ],
   "dependencies": {
     "@clickhouse/client": "1.12.1",
     "@elastic/ecs-pino-format": "1.4.0",
@@ -47,14 +67,5 @@
     "ink-spinner": "5.0.0",
     "postgres": "3.4.8",
     "tsx": "4.21.0"
-  },
-  "files": [
-    "local-bin.mjs",
-    "evm.schema.json",
-    "fuel.schema.json",
-    "rescript.json",
-    "index.d.ts",
-    "index.js",
-    "src"
-  ]
+  }
 }
