@@ -1,6 +1,13 @@
 type t
 
-type options = {headers?: Js.Dict.t<string>}
+module Fetch = {
+  type args = {body?: unknown, headers?: dict<string>, method?: string, path?: string}
+  type t = (string, ~args: args) => promise<unknown>
+  // NOTE: don't try make the type t. Rescript 11 will curry the args which breaks
+  // keet the type inline. This is a workaround for now.
+  external fetch: (string, ~args: args) => promise<unknown> = "fetch"
+}
+type options = {fetch?: Fetch.t}
 
 @module("eventsource") @new
 external create: (~url: string, ~options: options=?) => t = "EventSource"
