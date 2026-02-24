@@ -488,7 +488,13 @@ pub mod evm {
             description = "The number of blocks from the head that the indexer should account for \
                            in case of reorgs."
         )]
-        pub max_reorg_depth: Option<i32>,
+        pub max_reorg_depth: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The number of blocks behind the chain head that the indexer should lag. \
+                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+        )]
+        pub block_lag: Option<u32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -626,6 +632,18 @@ pub mod fuel {
         #[schemars(description = "Optional HyperFuel Config for additional fine-tuning")]
         pub hyperfuel_config: Option<HyperfuelConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The number of blocks from the head that the indexer should account for \
+                           in case of reorgs."
+        )]
+        pub max_reorg_depth: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The number of blocks behind the chain head that the indexer should lag. \
+                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+        )]
+        pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "All the contracts that should be indexed on the given chain")]
         pub contracts: Option<Vec<ChainContract<ContractConfig>>>,
     }
@@ -703,6 +721,12 @@ pub mod svm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The slot number at which the indexer should terminate.")]
         pub end_block: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The number of blocks behind the chain head that the indexer should lag. \
+                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+        )]
+        pub block_lag: Option<u32>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -973,6 +997,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 start_block: 0,
                 end_block: None,
                 hyperfuel_config: None,
+                max_reorg_depth: None,
+                block_lag: None,
                 contracts: Some(vec![ChainContract {
                     name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
@@ -1045,6 +1071,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 rpc: None,
                 start_block: 2_000,
                 max_reorg_depth: None,
+                block_lag: None,
                 end_block: Some(2_000_000),
                 contracts: Some(vec![])
             },

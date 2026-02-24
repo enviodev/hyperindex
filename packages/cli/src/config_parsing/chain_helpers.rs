@@ -458,7 +458,7 @@ impl Network {
     }
 
     //TODO: research a sufficient threshold for all chains (some should be 0)
-    pub fn get_max_reorg_depth(&self) -> Option<i32> {
+    pub fn get_max_reorg_depth(&self) -> Option<u32> {
         match self {
             //Reorgs do not happen on these networks
             Network::ArbitrumTestnet
@@ -699,7 +699,7 @@ impl fmt::Display for NetworkWithExplorer {
     }
 }
 
-pub fn get_max_reorg_depth_from_id(id: u64) -> Option<i32> {
+pub fn get_max_reorg_depth_from_id(id: u64) -> Option<u32> {
     Network::from_network_id(id)
         .ok()
         .and_then(|n| n.get_max_reorg_depth())

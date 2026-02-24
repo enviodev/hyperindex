@@ -125,6 +125,7 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): B
       totalEventsProcessed: cf.numEventsProcessed,
       sourceBlockNumber: cf.fetchState.knownHeight,
       reorgDetection: cf.reorgDetection,
+      chainConfig: cf.chainConfig,
     }),
     ~multichain=chainManager.multichain,
     ~batchSizeTarget,

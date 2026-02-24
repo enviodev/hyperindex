@@ -228,6 +228,7 @@ describe("Test PgStorage SQL generation functions", () => {
               startBlock: 100,
               endBlock: 200,
               maxReorgDepth: 10,
+              blockLag: 0,
               contracts: [],
               sourceConfig: Config.CustomSources([]),
             },
@@ -236,6 +237,7 @@ describe("Test PgStorage SQL generation functions", () => {
               id: 137,
               startBlock: 0,
               maxReorgDepth: 200,
+              blockLag: 0,
               contracts: [],
               sourceConfig: Config.CustomSources([]),
             },
@@ -711,6 +713,7 @@ WHERE cp."block_hash" IS NOT NULL
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }
@@ -738,6 +741,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           id: 1,
           startBlock: 100,
           maxReorgDepth: 5,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }
@@ -766,6 +770,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }
@@ -775,6 +780,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           id: 42,
           startBlock: 500,
           maxReorgDepth: 0,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }

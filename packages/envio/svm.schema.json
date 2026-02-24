@@ -91,6 +91,15 @@
           ],
           "format": "uint64",
           "minimum": 0
+        },
+        "block_lag": {
+          "description": "The number of blocks behind the chain head that the indexer should lag. Useful for avoiding reorg issues by indexing slightly behind the tip.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         }
       },
       "additionalProperties": false,

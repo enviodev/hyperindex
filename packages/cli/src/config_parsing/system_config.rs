@@ -39,7 +39,7 @@ type ContractNameKey = String;
 type NetworkIdKey = u64;
 type EntityKey = String;
 type GraphqlEnumKey = String;
-type NetworkMap = HashMap<NetworkIdKey, Network>;
+type ChainMap = HashMap<NetworkIdKey, Chain>;
 type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
@@ -404,7 +404,7 @@ pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
-    pub chains: NetworkMap,
+    pub chains: ChainMap,
     pub contracts: ContractMap,
     pub multichain: human_config::evm::Multichain,
     pub rollback_on_reorg: bool,
@@ -483,8 +483,8 @@ impl SystemConfig {
         self.schema.enums.keys().cloned().collect()
     }
 
-    pub fn get_chains(&self) -> Vec<&Network> {
-        let mut chains: Vec<&Network> = self.chains.values().collect();
+    pub fn get_chains(&self) -> Vec<&Chain> {
+        let mut chains: Vec<&Chain> = self.chains.values().collect();
         chains.sort_by_key(|n| n.id);
         chains
     }
@@ -517,7 +517,7 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
-        let mut chains: NetworkMap = HashMap::new();
+        let mut chains: ChainMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
@@ -660,32 +660,33 @@ impl SystemConfig {
 
                     let sync_source = DataSource::from_evm_network_config(network.clone())?;
 
-                    let contracts: Vec<NetworkContract> = network
+                    let contracts: Vec<ChainContract> = network
                         .contracts
                         .as_ref()
                         .unwrap_or(&vec![])
                         .iter()
                         .cloned()
-                        .map(|c| NetworkContract {
+                        .map(|c| ChainContract {
                             name: c.name,
                             addresses: c.address.into(),
                             start_block: c.start_block,
                         })
                         .collect();
 
-                    let network = Network {
+                    let chain = Chain {
                         id: network.id,
                         max_reorg_depth: network
                             .max_reorg_depth
                             .or_else(|| get_max_reorg_depth_from_id(network.id)),
+                        block_lag: network.block_lag,
                         start_block: network.start_block,
                         end_block: network.end_block,
                         sync_source,
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut chains, network.id, network)
-                        .context("Failed inserting network at chains map")?;
+                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
+                        .context("Failed inserting chain at chains map")?;
                 }
 
                 let field_selection = FieldSelection::try_from_config_field_selection(
@@ -815,30 +816,31 @@ impl SystemConfig {
                         },
                     };
 
-                    let contracts: Vec<NetworkContract> = network
+                    let contracts: Vec<ChainContract> = network
                         .contracts
                         .as_ref()
                         .unwrap_or(&vec![])
                         .iter()
                         .cloned()
-                        .map(|c| NetworkContract {
+                        .map(|c| ChainContract {
                             name: c.name,
                             addresses: c.address.into(),
                             start_block: c.start_block,
                         })
                         .collect();
 
-                    let network = Network {
+                    let chain = Chain {
                         id: network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
-                        max_reorg_depth: None,
+                        max_reorg_depth: network.max_reorg_depth,
+                        block_lag: network.block_lag,
                         sync_source,
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut chains, network.id, network)
-                        .context("Failed inserting network at chains map")?;
+                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
+                        .context("Failed inserting chain at chains map")?;
                 }
 
                 Ok(SystemConfig {
@@ -867,17 +869,18 @@ impl SystemConfig {
                         rpc: network.rpc.clone(),
                     };
 
-                    let network = Network {
+                    let chain = Chain {
                         id: 0, //network.id,
                         start_block: network.start_block,
                         end_block: network.end_block,
                         max_reorg_depth: None,
+                        block_lag: network.block_lag,
                         sync_source,
                         contracts: vec![],
                     };
 
-                    unique_hashmap::try_insert(&mut chains, network.id, network)
-                        .context("Failed inserting network at chains map")?;
+                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
+                        .context("Failed inserting chain at chains map")?;
                 }
 
                 Ok(SystemConfig {
@@ -1122,23 +1125,24 @@ impl DataSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Network {
+pub struct Chain {
     pub id: u64,
     pub sync_source: DataSource,
     pub start_block: u64,
     pub end_block: Option<u64>,
-    pub max_reorg_depth: Option<i32>,
-    pub contracts: Vec<NetworkContract>,
+    pub max_reorg_depth: Option<u32>,
+    pub block_lag: Option<u32>,
+    pub contracts: Vec<ChainContract>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct NetworkContract {
+pub struct ChainContract {
     pub name: ContractNameKey,
     pub addresses: Vec<String>,
     pub start_block: Option<u64>,
 }
 
-impl NetworkContract {
+impl ChainContract {
     pub fn get_contract<'a>(&self, config: &'a SystemConfig) -> Result<&'a Contract> {
         config.get_contract(&self.name).ok_or_else(|| {
             anyhow!(
@@ -2177,6 +2181,7 @@ mod test {
             start_block: 0,
             end_block: None,
             max_reorg_depth: None,
+            block_lag: None,
             contracts: None,
         };
 
@@ -2257,6 +2262,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 max_reorg_depth: None,
+                block_lag: None,
                 contracts: None,
             }],
             rollback_on_reorg: None,
@@ -2304,6 +2310,7 @@ mod test {
                 start_block: 0,
                 end_block: None,
                 max_reorg_depth: None,
+                block_lag: None,
                 contracts: None,
             }],
             rollback_on_reorg: None,
