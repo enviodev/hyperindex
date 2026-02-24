@@ -125,7 +125,12 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): B
       totalEventsProcessed: cf.numEventsProcessed,
       sourceBlockNumber: cf.fetchState.knownHeight,
       reorgDetection: cf.reorgDetection,
-      configuredBlockLag: cf.chainConfig.blockLag,
+      // Only account for configured blockLag after entering reorg threshold
+      // or when reorg rollback is disabled (reorg threshold will never be entered)
+      configuredBlockLag: chainManager.isInReorgThreshold ||
+      !cf.reorgDetection.shouldRollbackOnReorg
+        ? cf.chainConfig.blockLag
+        : 0,
     }),
     ~multichain=chainManager.multichain,
     ~batchSizeTarget,
