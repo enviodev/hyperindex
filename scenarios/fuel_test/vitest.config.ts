@@ -12,5 +12,10 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     passWithNoTests: true,
+    server: {
+      deps: {
+        external: [/^(?!.*\.(test|spec)\.)(?!.*_test\.).*$/i],
+      },
+    },
   },
 });

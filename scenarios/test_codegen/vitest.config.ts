@@ -24,5 +24,10 @@ export default defineConfig({
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
     passWithNoTests: true,
+    server: {
+      deps: {
+        external: [/^(?!.*\.(test|spec)\.)(?!.*_test\.).*$/i],
+      },
+    },
   },
 });
