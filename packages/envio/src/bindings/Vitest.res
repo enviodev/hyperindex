@@ -101,6 +101,9 @@ module Async = {
   @module("vitest")
   external it: (string, testContext => promise<unit>) => unit = "it"
 
+  @module("vitest")
+  external itWithTimeout: (string, testContext => promise<unit>, int) => unit = "it"
+
   @module("vitest") @scope("it")
   external it_only: (string, testContext => promise<unit>) => unit = "only"
 
