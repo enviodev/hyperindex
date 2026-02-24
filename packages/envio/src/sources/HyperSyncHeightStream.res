@@ -40,10 +40,18 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     let es = EventSource.create(
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
-        headers: Js.Dict.fromArray([
-          ("Authorization", `Bearer ${apiToken}`),
-          ("User-Agent", userAgent),
-        ]),
+        fetch: (url, ~args) => {
+          EventSource.Fetch.fetch(
+            url,
+            ~args={
+              ...args,
+              headers: Js.Dict.fromArray([
+                ("Authorization", `Bearer ${apiToken}`),
+                ("User-Agent", userAgent),
+              ]),
+            },
+          )
+        },
       },
     )
 
@@ -74,13 +82,16 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
       switch event.data->Belt.Int.fromString {
       | Some(height) =>
         // Track the SSE height event
-        Prometheus.SourceRequestCount.increment(~sourceName="HyperSync", ~chainId, ~method="heightStream")
+        Prometheus.SourceRequestCount.increment(
+          ~sourceName="HyperSync",
+          ~chainId,
+          ~method="heightStream",
+        )
         // On a successful height event, update the timeout
         updateTimeoutId()
         // Call the callback with the new height
         onHeight(height)
-      | None =>
-        Logging.trace({"msg": "Height was not a number in event.data", "data": event.data})
+      | None => Logging.trace({"msg": "Height was not a number in event.data", "data": event.data})
       }
     })
   }
