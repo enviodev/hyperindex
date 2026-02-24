@@ -1,8 +1,9 @@
 name: Publish to NPM
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - "v*.*.*"
 
 jobs:
   # Determine npm tag from release tag name:
@@ -18,7 +19,7 @@ jobs:
       - name: Determine npm tag
         id: tag
         run: |
-          TAG="${{ github.event.release.tag_name }}"
+          TAG="${{ github.ref_name }}"
           VERSION=$(echo "$TAG" | sed 's/^v//')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
