@@ -4,14 +4,13 @@ export default defineConfig({
   test: {
     include: [
       "test/**/*_test*.{ts,res.mjs}",
-      "test/**/*-test*.ts",
     ],
     exclude: [
       "test/fixtures/**",
       "test/helpers/**",
       // Entirely commented-out test files
-      "test/integration-raw-events-test.ts",
-      "test/topic-hashing-test.ts",
+      "test/integration-raw-events_test.ts",
+      "test/topic-hashing_test.ts",
     ],
     // Run tests sequentially - both file-wide and test-wide
     fileParallelism: false,
@@ -26,7 +25,7 @@ export default defineConfig({
     passWithNoTests: true,
     server: {
       deps: {
-        external: [/^(?!.*\.(test|spec)\.)(?!.*[-_]test\.).*$/i],
+        external: [/^(?!.*\.(test|spec)\.)(?!.*_test\.).*$/i],
       },
     },
   },

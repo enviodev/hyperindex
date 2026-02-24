@@ -14,7 +14,7 @@ export default defineConfig({
     passWithNoTests: true,
     server: {
       deps: {
-        external: [/^(?!.*\.(test|spec)\.)(?!.*[-_]test\.).*$/i],
+        external: [/^(?!.*\.(test|spec)\.)(?!.*_test\.).*$/i],
       },
     },
   },
