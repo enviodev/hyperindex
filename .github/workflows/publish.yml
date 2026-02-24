@@ -92,6 +92,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
         run: |
           node -e "
             const fs = require('fs');
@@ -99,8 +100,8 @@ jobs:
             pkg.version = process.env.VERSION;
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          echo "Publishing $(node -p "require('./package.json').name")@${VERSION}"
-          pnpm publish --access public --no-git-checks
+          echo "Publishing $(node -p "require('./package.json').name")@${VERSION} with tag ${NPM_TAG}"
+          pnpm publish --access public --tag "$NPM_TAG" --no-git-checks
 
   # Publish the base envio package to npm
   publish-envio-package:
