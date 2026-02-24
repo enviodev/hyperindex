@@ -1,4 +1,4 @@
-// open RescriptMocha
+// open Vitest
 
 // //unsafe polymorphic toString binding for any type
 // @send external toStringUnsafe: 'a => string = "toString"

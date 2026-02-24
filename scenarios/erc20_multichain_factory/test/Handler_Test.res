@@ -1,9 +1,9 @@
-open RescriptMocha
+open Vitest
 open Belt
 open TestHelpers
 
 describe("e2e", () => {
-  Async.it("createTestIndexer works", async () => {
+  Async.it("createTestIndexer works", async t => {
     let testIndexer = Indexer.createTestIndexer()
 
     let result = await testIndexer.process({
@@ -15,12 +15,13 @@ describe("e2e", () => {
       },
     })
 
-    Assert.deepEqual(
+    t.expect(
       result,
+      ~message="Test Indexer should return the correct result",
+    ).toEqual(
       {
         changes: [],
       },
-      ~message="Test Indexer should return the correct result",
     )
   })
 })
@@ -51,7 +52,7 @@ describe("Transfers", () => {
 
   Async.it(
     "Transfer subtracts the from account balance and adds to the to account balance",
-    async () => {
+    async t => {
       //Create a mock Transfer event from userAddress1 to userAddress2
       let mockTransfer = ERC20.Transfer.createMockEvent({
         from: userAddress1,
@@ -74,10 +75,11 @@ describe("Transfers", () => {
         )->Option.map(a => a.balance)
 
       //Assert the expected balance
-      Assert.equal(
+      t.expect(
         account1Balance,
-        Some(BigInt.fromInt(2)),
         ~message="Should have subtracted transfer amount 3 from userAddress1 balance 5",
+      ).toBe(
+        Some(BigInt.fromInt(2)),
       )
 
       //Get the balance of userAddress2 after the transfer
@@ -89,10 +91,11 @@ describe("Transfers", () => {
           ),
         )->Option.map(a => a.balance)
       //Assert the expected balance
-      Assert.equal(
+      t.expect(
         Some(BigInt.fromInt(3)),
-        account2Balance,
         ~message="Should have added transfer amount 3 to userAddress2 balance 0",
+      ).toBe(
+        account2Balance,
       )
 
       let _ = await ERC20.Transfer.processEvent({
@@ -102,7 +105,7 @@ describe("Transfers", () => {
     },
   )
 
-  Async.it("Deletes Account", async () => {
+  Async.it("Deletes Account", async t => {
     //Create a mock Transfer event from userAddress1 to userAddress2
     let mockTransfer = ERC20.Transfer.createMockEvent({
       from: userAddress1,
@@ -128,7 +131,7 @@ describe("Transfers", () => {
     //Get the balance of userAddress1 after the transfer
     let accountsInDb = mockDbAfterDelete.entities.account.getAll()
     //Assert the expected balance
-    Assert.equal(accountsInDb->Array.length, 1, ~message="Should have delete account 1")
+    t.expect(accountsInDb->Array.length, ~message="Should have delete account 1").toBe(1)
 
     let _ = await ERC20.Transfer.processEvent({
       event: mockTransfer,

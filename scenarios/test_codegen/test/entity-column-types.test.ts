@@ -1,19 +1,15 @@
 import { runMigrationsNoLogs, createSql } from "./helpers/utils";
-import chai, { expect } from "chai";
-import chaiAsPromised from "chai-as-promised";
-
-// Enable Chai plugins
-chai.use(chaiAsPromised);
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 describe("Postgres Numeric Precision Entity Tester Migrations", () => {
   const sql = createSql();
 
-  before(async () => {
+  beforeAll(async () => {
     // Run migrations to set up the database
     await runMigrationsNoLogs();
   });
 
-  after(async () => {
+  afterAll(async () => {
     // Optionally, run migrations again to reset the database
     await runMigrationsNoLogs();
   });
@@ -153,11 +149,11 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
       const actualColumn = actualColumns.find(
         (col: any) => col.column_name === expectedColumn.column_name
       );
-      expect(actualColumn).to.exist;
-      expect(actualColumn).to.deep.include(expectedColumn);
+      expect(actualColumn).toBeDefined();
+      expect(actualColumn).toMatchObject(expectedColumn);
     });
 
     // Check that there are no extra columns
-    expect(actualColumns.length).to.equal(expectedColumns.length);
+    expect(actualColumns.length).toBe(expectedColumns.length);
   });
 });

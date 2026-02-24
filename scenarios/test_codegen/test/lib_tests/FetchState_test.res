@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 let chainId = 0
 let targetBufferSize = 5000
@@ -146,12 +146,10 @@ let makeIndexingContractsWithDynamics = (
 let undefined = (%raw(`undefined`): option<'a>)
 
 describe("FetchState.make", () => {
-  it("Creates FetchState with a single static address", () => {
+  it("Creates FetchState with a single static address", t => {
     let fetchState = makeInitial()
 
-    Assert.deepEqual(
-      fetchState,
-      {
+    t.expect(fetchState).toEqual({
         optimizedPartitions: FetchState.OptimizedPartitions.make(
           ~partitions=[
             {
@@ -187,12 +185,11 @@ describe("FetchState.make", () => {
         onBlockConfigs: [],
         knownHeight,
         firstEventBlock: None,
-      },
-    )
+      })
   })
 
-  it("Panics with nothing to fetch", () => {
-    Assert.throws(
+  it("Panics with nothing to fetch", t => {
+    t.expect(
       () => {
         FetchState.make(
           ~eventConfigs=[baseEventConfig],
@@ -205,16 +202,13 @@ describe("FetchState.make", () => {
           ~knownHeight,
         )
       },
-      ~error={
-        "message": "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
-      },
       ~message=`Should panic if there's nothing to fetch`,
-    )
+    ).toThrowError("Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.")
   })
 
   it(
     "Creates FetchState with static and dc addresses reaching the maxAddrInPartition limit",
-    () => {
+    t => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let fetchState = FetchState.make(
         ~eventConfigs=[baseEventConfig],
@@ -227,9 +221,10 @@ describe("FetchState.make", () => {
         ~knownHeight,
       )
 
-      Assert.deepEqual(
+      t.expect(
         fetchState,
-        {
+        ~message=`Should create only one partition`,
+      ).toEqual({
           optimizedPartitions: FetchState.OptimizedPartitions.make(
             ~partitions=[
               {
@@ -267,15 +262,13 @@ describe("FetchState.make", () => {
           onBlockConfigs: [],
           knownHeight,
           firstEventBlock: None,
-        },
-        ~message=`Should create only one partition`,
-      )
+        })
     },
   )
 
   it(
     "Creates FetchState with static addresses and dc addresses exceeding the maxAddrInPartition limit",
-    () => {
+    t => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let fetchState = FetchState.make(
         ~eventConfigs=[
@@ -291,9 +284,7 @@ describe("FetchState.make", () => {
         ~knownHeight,
       )
 
-      Assert.deepEqual(
-        fetchState,
-        {
+      t.expect(fetchState).toEqual({
           optimizedPartitions: FetchState.OptimizedPartitions.make(
             ~partitions=[
               {
@@ -344,21 +335,19 @@ describe("FetchState.make", () => {
           onBlockConfigs: [],
           knownHeight,
           firstEventBlock: None,
-        },
-      )
+        })
 
-      Assert.equal(
+      t.expect(
         (fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0")).selection,
-        (fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("1")).selection,
         ~message=`Selection should be the same instance for all partitions,
         so the WeakMap cache works correctly.`,
-      )
+      ).toBe((fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("1")).selection)
     },
   )
 
   it(
     "Creates FetchState with static and dc addresses exceeding the maxAddrInPartition limit",
-    () => {
+    t => {
       let dc1 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress3)
       let dc2 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress4)
       let fetchState = FetchState.make(
@@ -380,9 +369,7 @@ describe("FetchState.make", () => {
         ~knownHeight,
       )
 
-      Assert.deepEqual(
-        fetchState,
-        {
+      t.expect(fetchState).toEqual({
           optimizedPartitions: FetchState.OptimizedPartitions.make(
             ~partitions=[
               {
@@ -463,12 +450,11 @@ describe("FetchState.make", () => {
           onBlockConfigs: [],
           knownHeight,
           firstEventBlock: None,
-        },
-      )
+        })
     },
   )
 
-  it("Two static contracts with different names merge based on block distance", () => {
+  it("Two static contracts with different names merge based on block distance", t => {
     let contractAEventConfig = (Mock.evmEventConfig(
       ~id="0",
       ~contractName="ContractA",
@@ -506,21 +492,18 @@ describe("FetchState.make", () => {
     // Phase 1: ContractA partition (block -1), ContractB partition (block 19_998)
     // Phase 2: not too far, not filterByAddresses -> push ContractB addresses into ContractA partition
     let closePartitions = closeFetchState.optimizedPartitions
-    Assert.deepEqual(
+    t.expect(
       closePartitions.idsInAscOrder,
-      ["0"],
       ~message="Close startBlocks: should merge into a single partition (direct push)",
-    )
-    Assert.deepEqual(
+    ).toEqual(["0"])
+    t.expect(
       (closePartitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
-      Js.Dict.fromArray([("ContractA", [mockAddress0]), ("ContractB", [mockAddress1])]),
       ~message="Close startBlocks: single partition has both contracts' addresses",
-    )
-    Assert.deepEqual(
+    ).toEqual(Js.Dict.fromArray([("ContractA", [mockAddress0]), ("ContractB", [mockAddress1])]))
+    t.expect(
       (closePartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
-      None,
       ~message="Close startBlocks: no mergeBlock needed",
-    )
+    ).toEqual(None)
 
     // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
     let farFetchState = FetchState.make(
@@ -550,26 +533,23 @@ describe("FetchState.make", () => {
     // Phase 1: ContractA partition (block -1), ContractB partition (block 20_001)
     // Phase 2: too far -> mergeBlock on earlier, merge addresses into later
     let farPartitions = farFetchState.optimizedPartitions
-    Assert.deepEqual(
+    t.expect(
       farPartitions.idsInAscOrder,
-      ["0", "1"],
       ~message="Far startBlocks: should have 2 partitions with mergeBlock on earlier",
-    )
-    Assert.deepEqual(
+    ).toEqual(["0", "1"])
+    t.expect(
       (farPartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
-      Some(20_001),
       ~message="Far startBlocks: earlier partition has mergeBlock",
-    )
-    Assert.deepEqual(
+    ).toEqual(Some(20_001))
+    t.expect(
       (farPartitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
-      Js.Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]),
       ~message="Far startBlocks: later partition has merged addresses from both contracts",
-    )
+    ).toEqual(Js.Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]))
   })
 
   it(
     "Single contract with close startBlocks creates one partition, far startBlocks creates two with mergeBlock",
-    () => {
+    t => {
       let gravatarEventConfig = (Mock.evmEventConfig(
         ~id="0",
         ~contractName="Gravatar",
@@ -601,21 +581,18 @@ describe("FetchState.make", () => {
       )
 
       let closePartitions = closeFetchState.optimizedPartitions
-      Assert.deepEqual(
+      t.expect(
         closePartitions.idsInAscOrder,
-        ["0"],
         ~message="Close startBlocks: Phase 1 groups into a single partition",
-      )
-      Assert.deepEqual(
+      ).toEqual(["0"])
+      t.expect(
         (closePartitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
-        Js.Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]),
         ~message="Close startBlocks: single partition has both addresses",
-      )
-      Assert.deepEqual(
+      ).toEqual(Js.Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]))
+      t.expect(
         (closePartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
-        None,
         ~message="Close startBlocks: no mergeBlock needed for single partition",
-      )
+      ).toEqual(None)
 
       // --- Far startBlocks: Phase 1 splits, Phase 2 merges with mergeBlock ---
       let farFetchState = FetchState.make(
@@ -645,35 +622,30 @@ describe("FetchState.make", () => {
       // Phase 1: 2 partitions (same contract, far startBlocks)
       // Phase 2: merges them with mergeBlock
       let farPartitions = farFetchState.optimizedPartitions
-      Assert.deepEqual(
+      t.expect(
         farPartitions.idsInAscOrder,
-        ["0", "1"],
         ~message="Far startBlocks: Phase 1 splits into 2, Phase 2 merges with mergeBlock",
-      )
-      Assert.deepEqual(
+      ).toEqual(["0", "1"])
+      t.expect(
         (farPartitions.entities->Js.Dict.unsafeGet("0")).latestFetchedBlock.blockNumber,
-        -1,
         ~message="Far startBlocks: earlier partition starts at block -1",
-      )
-      Assert.deepEqual(
+      ).toEqual(-1)
+      t.expect(
         (farPartitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
-        Some(20_001),
         ~message="Far startBlocks: earlier partition has mergeBlock matching later partition's block",
-      )
-      Assert.deepEqual(
+      ).toEqual(Some(20_001))
+      t.expect(
         (farPartitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
-        Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
         ~message="Far startBlocks: later partition has merged addresses",
-      )
-      Assert.deepEqual(
+      ).toEqual(Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]))
+      t.expect(
         (farPartitions.entities->Js.Dict.unsafeGet("1")).mergeBlock,
-        None,
         ~message="Far startBlocks: later partition has no mergeBlock",
-      )
+      ).toEqual(None)
     },
   )
 
-  it("Single contract with filterByAddresses keeps separate partitions per startBlock", () => {
+  it("Single contract with filterByAddresses keeps separate partitions per startBlock", t => {
     let gravatarEventConfig = (Mock.evmEventConfig(
       ~id="0",
       ~contractName="Gravatar",
@@ -707,41 +679,35 @@ describe("FetchState.make", () => {
     // Phase 1: filterByAddresses=true -> separate partitions per startBlock
     // Phase 2: hasFilterByAddresses -> mergeBlock on earlier, merge addresses into later
     let partitions = fetchState.optimizedPartitions
-    Assert.deepEqual(
+    t.expect(
       partitions.idsInAscOrder,
-      ["0", "1"],
       ~message="filterByAddresses: should create separate partitions per startBlock",
-    )
-    Assert.deepEqual(
+    ).toEqual(["0", "1"])
+    t.expect(
       (partitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
-      Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
       ~message="filterByAddresses: first partition has only first address",
-    )
-    Assert.deepEqual(
+    ).toEqual(Js.Dict.fromArray([("Gravatar", [mockAddress0])]))
+    t.expect(
       (partitions.entities->Js.Dict.unsafeGet("0")).latestFetchedBlock.blockNumber,
-      -1,
       ~message="filterByAddresses: first partition starts at block -1",
-    )
-    Assert.deepEqual(
+    ).toEqual(-1)
+    t.expect(
       (partitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
-      Some(99),
       ~message="filterByAddresses: first partition has mergeBlock matching second partition's block",
-    )
-    Assert.deepEqual(
+    ).toEqual(Some(99))
+    t.expect(
       (partitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
-      Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
       ~message="filterByAddresses: second partition has merged addresses from both",
-    )
-    Assert.deepEqual(
+    ).toEqual(Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]))
+    t.expect(
       (partitions.entities->Js.Dict.unsafeGet("1")).latestFetchedBlock.blockNumber,
-      99,
       ~message="filterByAddresses: second partition starts at block 99",
-    )
+    ).toEqual(99)
   })
 
   it(
     "Different contracts with filterByAddresses use mergeBlock strategy and merge addresses into later partition",
-    () => {
+    t => {
       let contractAEventConfig = (Mock.evmEventConfig(
         ~id="0",
         ~contractName="ContractA",
@@ -780,60 +746,53 @@ describe("FetchState.make", () => {
       // Phase 1: ContractA partition (block -1), ContractB partition (block 99)
       // Phase 2: hasFilterByAddresses -> mergeBlock on earlier, merge addresses into later
       let partitions = fetchState.optimizedPartitions
-      Assert.deepEqual(
+      t.expect(
         partitions.idsInAscOrder,
-        ["0", "1"],
         ~message="filterByAddresses cross-contract: should have 2 partitions",
-      )
-      Assert.deepEqual(
+      ).toEqual(["0", "1"])
+      t.expect(
         (partitions.entities->Js.Dict.unsafeGet("0")).addressesByContractName,
-        Js.Dict.fromArray([("ContractA", [mockAddress0])]),
         ~message="filterByAddresses cross-contract: first partition has only ContractA address",
-      )
-      Assert.deepEqual(
+      ).toEqual(Js.Dict.fromArray([("ContractA", [mockAddress0])]))
+      t.expect(
         (partitions.entities->Js.Dict.unsafeGet("0")).mergeBlock,
-        Some(99),
         ~message="filterByAddresses cross-contract: first partition has mergeBlock",
-      )
-      Assert.deepEqual(
+      ).toEqual(Some(99))
+      t.expect(
         (partitions.entities->Js.Dict.unsafeGet("1")).addressesByContractName,
-        Js.Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]),
         ~message="filterByAddresses cross-contract: second partition has merged addresses from both contracts",
-      )
-      Assert.deepEqual(
+      ).toEqual(Js.Dict.fromArray([("ContractB", [mockAddress1]), ("ContractA", [mockAddress0])]))
+      t.expect(
         (partitions.entities->Js.Dict.unsafeGet("1")).latestFetchedBlock.blockNumber,
-        99,
         ~message="filterByAddresses cross-contract: second partition starts at block 99",
-      )
+      ).toEqual(99)
     },
   )
 })
 
 describe("FetchState.registerDynamicContracts", () => {
   // It shouldn't happen, but just in case
-  it("Nothing breaks when provided an empty array", () => {
+  it("Nothing breaks when provided an empty array", t => {
     let fetchState = makeInitial()
 
-    Assert.equal(
+    t.expect(
       fetchState->FetchState.registerDynamicContracts([]),
-      fetchState,
       ~message="Should return fetchState without updating it",
-    )
+    ).toBe(fetchState)
   })
 
-  it("Doesn't register a dc which is already registered in config", () => {
+  it("Doesn't register a dc which is already registered in config", t => {
     let fetchState = makeInitial()
 
-    Assert.equal(
+    t.expect(
       fetchState->FetchState.registerDynamicContracts([
         makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress0)->dcToItem,
       ]),
-      fetchState,
       ~message="Should return fetchState without updating it",
-    )
+    ).toBe(fetchState)
   })
 
-  it("Correctly registers all valid contracts even when some are skipped in the middle", () => {
+  it("Correctly registers all valid contracts even when some are skipped in the middle", t => {
     let fetchState = makeInitial()
 
     // Create a single event with 3 DCs:
@@ -858,53 +817,52 @@ describe("FetchState.registerDynamicContracts", () => {
       ->Js.Dict.get(mockAddress2->Address.toString)
       ->Option.isSome
 
-    Assert.equal(hasAddress1, true, ~message="Address1 should be registered")
-    Assert.equal(
+    t.expect(
+      hasAddress1,
+      ~message="Address1 should be registered",
+    ).toBe(true)
+    t.expect(
       hasAddress2,
-      true,
       ~message="Address2 should be registered even though Address1 (which came before it) was skipped",
-    )
+    ).toBe(true)
   })
 
   it(
     "Should create a new partition for an already registered dc if it has an earlier start block",
-    () => {
+    t => {
       let fetchState = makeInitial()
 
       let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
 
       let fetchStateWithDc1 = fetchState->FetchState.registerDynamicContracts([dc1->dcToItem])
 
-      Assert.deepEqual(
+      t.expect(
         (
           fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count,
           fetchStateWithDc1.optimizedPartitions->FetchState.OptimizedPartitions.count,
         ),
-        (1, 2),
         ~message="Should have created a new partition for the dc",
-      )
+      ).toEqual((1, 2))
 
-      Assert.equal(
+      t.expect(
         fetchStateWithDc1->FetchState.registerDynamicContracts([dc1->dcToItem]),
-        fetchStateWithDc1,
         ~message="Calling it with the same dc for the second time shouldn't change anything",
-      )
+      ).toBe(fetchStateWithDc1)
 
-      Assert.equal(
+      // This is an edge case we currently don't cover
+      // But show a warning in the logs
+      t.expect(
         fetchStateWithDc1->FetchState.registerDynamicContracts([
           makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)->dcToItem,
         ]),
-        fetchStateWithDc1,
         ~message=`BROKEN: Calling it with the same dc
           but earlier block number should create a new short lived partition
           for the specific contract from block 0 to 1. And update the dc in db`,
-        // This is an edge case we currently don't cover
-        // But show a warning in the logs
-      )
+      ).toBe(fetchStateWithDc1)
     },
   )
 
-  it("Should split dcs into multiple partitions if they exceed maxAddrInPartition", () => {
+  it("Should split dcs into multiple partitions if they exceed maxAddrInPartition", t => {
     let fetchState = makeInitial()
 
     let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
@@ -920,9 +878,10 @@ describe("FetchState.registerDynamicContracts", () => {
         dc4->dcToItem,
       ])
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState.optimizedPartitions.entities->Js.Dict.values,
-      [
+      ~message=`Should add 2 new partitions + optimize the original partition to merge without blocking`,
+    ).toEqual([
         {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
           mergeBlock: Some(1),
@@ -960,9 +919,7 @@ describe("FetchState.registerDynamicContracts", () => {
           prevPrevQueryRange: 0,
           latestBlockRangeUpdateBlock: 0,
         },
-      ],
-      ~message=`Should add 2 new partitions + optimize the original partition to merge without blocking`,
-    )
+      ])
 
     let dc1FromAnotherContract = makeDynContractRegistration(
       ~blockNumber=2,
@@ -982,9 +939,12 @@ describe("FetchState.registerDynamicContracts", () => {
         dc4FromAnotherContract->dcToItem,
       ])
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState.optimizedPartitions.entities->Js.Dict.values,
-      [
+      ~message=`Should add 2 new partitions
++ optimize the original partition to merge without blocking
++ dynamic contracts don't share partitions`,
+    ).toEqual([
         {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
           mergeBlock: Some(1),
@@ -1024,17 +984,13 @@ describe("FetchState.registerDynamicContracts", () => {
           prevPrevQueryRange: 0,
           latestBlockRangeUpdateBlock: 0,
         },
-      ],
-      ~message=`Should add 2 new partitions
-+ optimize the original partition to merge without blocking
-+ dynamic contracts don't share partitions`,
-    )
+      ])
   })
 
   it(
     "Dcs for contract with event filtering using addresses shouldn't be grouped into a single partition to prevent overfetching",
     // This is because we can't filter events before dc registration block number for this case
-    () => {
+    t => {
       let fetchState = FetchState.make(
         ~eventConfigs=[
           baseEventConfig,
@@ -1057,14 +1013,11 @@ describe("FetchState.registerDynamicContracts", () => {
         ~knownHeight,
       )
 
-      Assert.deepEqual(
-        fetchState.contractConfigs,
-        Js.Dict.fromArray([
+      t.expect(fetchState.contractConfigs).toEqual(Js.Dict.fromArray([
           ("Gravatar", {FetchState.filterByAddresses: false}),
           ("NftFactory", {FetchState.filterByAddresses: false}),
           ("SimpleNft", {FetchState.filterByAddresses: true}),
-        ]),
-      )
+        ]))
 
       let dc1 = makeDynContractRegistration(
         ~blockNumber=3,
@@ -1104,9 +1057,11 @@ describe("FetchState.registerDynamicContracts", () => {
           dc5->dcToItem,
         ])
 
-      Assert.deepEqual(
+      t.expect(
         updatedFetchState.optimizedPartitions.entities->Js.Dict.values,
-        [
+        ~message=`All dcs without filterByAddresses should use the original logic and be grouped into a single partition,
+          while dcs with filterByAddress should be split into partition per every registration block`,
+      ).toEqual([
           {
             ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
             // Immediately merge to the original partition
@@ -1180,14 +1135,11 @@ describe("FetchState.registerDynamicContracts", () => {
             prevPrevQueryRange: 0,
             latestBlockRangeUpdateBlock: 0,
           },
-        ],
-        ~message=`All dcs without filterByAddresses should use the original logic and be grouped into a single partition,
-          while dcs with filterByAddress should be split into partition per every registration block`,
-      )
+        ])
     },
   )
 
-  it("Choose the earliest dc from the batch when there are two with the same address", () => {
+  it("Choose the earliest dc from the batch when there are two with the same address", t => {
     let fetchState = makeInitial()
 
     let dc1 = makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress1)
@@ -1197,20 +1149,19 @@ describe("FetchState.registerDynamicContracts", () => {
 
     let updatedFetchState = fetchState->FetchState.registerDynamicContracts([dcItem2, dcItem1])
 
-    Assert.deepEqual(
+    t.expect(
       (dcItem1->Internal.getItemDcs, dcItem2->Internal.getItemDcs),
-      (Some([]), Some([dc2])),
       ~message=`Should choose the earliest dc from the batch
   And remove the dc from the later one, so they are not duplicated in the db`,
-    )
-    Assert.deepEqual(
+    ).toEqual((Some([]), Some([dc2])))
+    t.expect(
       updatedFetchState.indexingContracts,
-      makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0]),
       ~message="Should choose the earliest dc from the batch",
-    )
-    Assert.deepEqual(
+    ).toEqual(makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0]))
+    t.expect(
       updatedFetchState.optimizedPartitions.entities->Js.Dict.values,
-      [
+      ~message="Adds dc and optimizes partitions",
+    ).toEqual([
         {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -1232,12 +1183,10 @@ describe("FetchState.registerDynamicContracts", () => {
           prevPrevQueryRange: 0,
           latestBlockRangeUpdateBlock: 0,
         },
-      ],
-      ~message="Adds dc and optimizes partitions",
-    )
+      ])
   })
 
-  it("All dcs are grouped in a single partition, but don't merged with an existing one", () => {
+  it("All dcs are grouped in a single partition, but don't merged with an existing one", t => {
     let fetchState = makeInitial()
 
     let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
@@ -1258,10 +1207,8 @@ describe("FetchState.registerDynamicContracts", () => {
       fetchState->FetchState.registerDynamicContracts(// Order of dcs doesn't matter
       // but they are not sorted in fetch state
       [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
-    Assert.equal(updatedFetchState.indexingContracts->Utils.Dict.size, 4)
-    Assert.deepEqual(
-      updatedFetchState.optimizedPartitions.entities->Js.Dict.values,
-      [
+    t.expect(updatedFetchState.indexingContracts->Utils.Dict.size).toBe(4)
+    t.expect(updatedFetchState.optimizedPartitions.entities->Js.Dict.values).toEqual([
         {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -1301,13 +1248,12 @@ describe("FetchState.registerDynamicContracts", () => {
           prevPrevQueryRange: 0,
           latestBlockRangeUpdateBlock: 0,
         },
-      ],
-    )
+      ])
   })
 
   it(
     "Creates FetchState with wildcard and normal events. Addresses not belonging to event configs should be skipped (pre-registration case)",
-    () => {
+    t => {
       let wildcard1 = (Mock.evmEventConfig(
         ~id="wildcard1",
         ~contractName="Gravatar",
@@ -1355,9 +1301,10 @@ describe("FetchState.registerDynamicContracts", () => {
         ~knownHeight,
       )
 
-      Assert.deepEqual(
+      t.expect(
         fetchState,
-        {
+        ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
+      ).toEqual({
           optimizedPartitions: FetchState.OptimizedPartitions.make(
             ~partitions=[
               {
@@ -1418,9 +1365,7 @@ describe("FetchState.registerDynamicContracts", () => {
           onBlockConfigs: [],
           knownHeight,
           firstEventBlock: None,
-        },
-        ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
-      )
+        })
     },
   )
 })
@@ -1554,16 +1499,14 @@ describe("FetchState.getNextQuery & integration", () => {
     ->FetchState.updateKnownHeight(~knownHeight)
     ->FetchState.getNextQuery(~concurrencyLimit)
 
-  it("Emulate first indexer queries with a static event", () => {
+  it("Emulate first indexer queries with a static event", t => {
     let fetchState = makeInitial()
 
-    Assert.deepEqual(fetchState->getNextQuery(~knownHeight=0), WaitingForNewBlock)
+    t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
 
     let nextQuery = fetchState->getNextQuery
 
-    Assert.deepEqual(
-      nextQuery,
-      Ready([
+    t.expect(nextQuery).toEqual(Ready([
         {
           partitionId: "0",
           fromBlock: 0,
@@ -1573,36 +1516,33 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchState.indexingContracts,
           isChunk: false,
         },
-      ]),
-    )
+      ]))
 
     let query = switch nextQuery {
     | Ready([q]) => q
-    | _ => Assert.fail("Failed to extract query")
+    | _ => Js.Exn.raiseError("Failed to extract query")
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
 
-    Assert.deepEqual(
+    t.expect(
       (fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0")).mutPendingQueries,
-      [
+      ~message="The startFetchingQueries should mutate mutPendingQueries",
+    ).toEqual([
         {
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
           fetchedBlock: None,
         },
-      ],
-      ~message="The startFetchingQueries should mutate mutPendingQueries",
-    )
+      ])
 
     let repeatedNextQuery = fetchState->getNextQuery
 
-    Assert.deepEqual(
+    t.expect(
       repeatedNextQuery,
-      NothingToQuery,
       ~message="Shouldn't double fetch the same partition",
-    )
+    ).toEqual(NothingToQuery)
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
       ~query,
@@ -1613,72 +1553,64 @@ describe("FetchState.getNextQuery & integration", () => {
       ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
     )
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState,
-      makeAfterFirstStaticAddressesQuery(),
       ~message="Should be equal to the initial state",
-    )
+    ).toEqual(makeAfterFirstStaticAddressesQuery())
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState->getNextQuery,
-      WaitingForNewBlock,
       ~message="Should wait for new block",
-    )
-    Assert.deepEqual(updatedFetchState->getNextQuery(~concurrencyLimit=0), ReachedMaxConcurrency)
-    Assert.deepEqual(
+    ).toEqual(WaitingForNewBlock)
+    t.expect(updatedFetchState->getNextQuery(~concurrencyLimit=0)).toEqual(ReachedMaxConcurrency)
+    t.expect(
       updatedFetchState->getNextQuery(~endBlock=Some(11)),
-      WaitingForNewBlock,
       ~message=`Should wait for new block
       when block height didn't reach the end block`,
-    )
-    Assert.deepEqual(
+    ).toEqual(WaitingForNewBlock)
+    t.expect(
       updatedFetchState->getNextQuery(~endBlock=Some(10)),
-      NothingToQuery,
       ~message=`Shouldn't wait for new block
       when block height reached the end block`,
-    )
-    Assert.deepEqual(
+    ).toEqual(NothingToQuery)
+    t.expect(
       updatedFetchState->getNextQuery(~endBlock=Some(9)),
-      NothingToQuery,
       ~message=`Shouldn't wait for new block
       when block height exceeded the end block`,
-    )
-    Assert.deepEqual(
+    ).toEqual(NothingToQuery)
+    t.expect(
       updatedFetchState->getNextQuery(~targetBufferSize=2),
-      WaitingForNewBlock,
       ~message=`Should wait for new block even if partitions have nothing to query`,
-    )
-    Assert.deepEqual(
+    ).toEqual(WaitingForNewBlock)
+    t.expect(
       updatedFetchState->getNextQuery(~targetBufferSize=2, ~knownHeight=11),
-      NothingToQuery,
       ~message=`Should do nothing if the case above is not waiting for new block`,
-    )
+    ).toEqual(NothingToQuery)
 
     updatedFetchState->FetchState.startFetchingQueries(~queries=[query])
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState->getNextQuery,
-      NothingToQuery,
       ~message=`Test that even if all partitions reached the current block height,
       we won't wait for new block while even one partition is fetching.
       It might return an updated knownHeight in response and we won't need to poll for new block`,
-    )
+    ).toEqual(NothingToQuery)
   })
 
-  it("Emulate first indexer queries with block lag configured", () => {
+  it("Emulate first indexer queries with block lag configured", t => {
     let fetchState = makeInitial(~blockLag=2)
 
-    Assert.deepEqual(fetchState->getNextQuery(~knownHeight=0), WaitingForNewBlock)
+    t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
 
-    Assert.deepEqual(
+    t.expect(
       fetchState->getNextQuery(~knownHeight=1),
-      WaitingForNewBlock,
       ~message="Should wait for new block when current block height - block lag is less than 0",
-    )
+    ).toEqual(WaitingForNewBlock)
 
     let nextQuery = fetchState->getNextQuery(~endBlock=Some(8), ~knownHeight=10)
-    Assert.deepEqual(
+    t.expect(
       nextQuery,
-      Ready([
+      ~message="No block lag when we are close to the end block",
+    ).toEqual(Ready([
         {
           partitionId: "0",
           toBlock: Some(8),
@@ -1688,14 +1620,13 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchState.indexingContracts,
           isChunk: false,
         },
-      ]),
-      ~message="No block lag when we are close to the end block",
-    )
+      ]))
 
     let nextQuery = fetchState->getNextQuery(~endBlock=Some(10), ~knownHeight=10)
-    Assert.deepEqual(
+    t.expect(
       nextQuery,
-      Ready([
+      ~message="Should apply block lag even when there's an upcoming end block",
+    ).toEqual(Ready([
         {
           partitionId: "0",
           toBlock: Some(8),
@@ -1705,23 +1636,20 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchState.indexingContracts,
           isChunk: false,
         },
-      ]),
-      ~message="Should apply block lag even when there's an upcoming end block",
-    )
+      ]))
 
     let query = switch nextQuery {
     | Ready([q]) => q
-    | _ => Assert.fail("Failed to extract query")
+    | _ => Js.Exn.raiseError("Failed to extract query")
     }
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
 
     let repeatedNextQuery = fetchState->getNextQuery
-    Assert.deepEqual(
+    t.expect(
       repeatedNextQuery,
-      NothingToQuery,
       ~message="Shouldn't double fetch the same partition",
-    )
+    ).toEqual(NothingToQuery)
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
       ~query,
@@ -1732,10 +1660,10 @@ describe("FetchState.getNextQuery & integration", () => {
       ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
     )
 
-    Assert.deepEqual(updatedFetchState->getNextQuery, WaitingForNewBlock)
+    t.expect(updatedFetchState->getNextQuery).toEqual(WaitingForNewBlock)
   })
 
-  it("Emulate dynamic contract registration", () => {
+  it("Emulate dynamic contract registration", t => {
     // Continue with the state from previous test
     let fetchState = makeAfterFirstStaticAddressesQuery()
 
@@ -1744,9 +1672,10 @@ describe("FetchState.getNextQuery & integration", () => {
       ->FetchState.registerDynamicContracts([dc2->dcToItem, dc1->dcToItem])
       ->FetchState.registerDynamicContracts([dc3->dcToItem])
 
-    Assert.deepEqual(
+    t.expect(
       fetchStateWithDcs.optimizedPartitions.entities->Js.Dict.values,
-      [
+      ~message="Assert internal representation of the fetch state",
+    ).toEqual([
         {
           ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
           dynamicContract: Some("Gravatar"),
@@ -1785,13 +1714,12 @@ describe("FetchState.getNextQuery & integration", () => {
           prevPrevQueryRange: 0,
           latestBlockRangeUpdateBlock: 0,
         },
-      ],
-      ~message="Assert internal representation of the fetch state",
-    )
+      ])
 
-    Assert.deepEqual(
+    t.expect(
       fetchStateWithDcs->getNextQuery,
-      Ready([
+      ~message="Merge DC partition into the later one + query other partitions in parallel",
+    ).toEqual(Ready([
         {
           partitionId: "1",
           toBlock: Some(10),
@@ -1811,21 +1739,18 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchStateWithDcs.indexingContracts,
         },
         // Partition 0 is not included since it's below knownHeight
-      ]),
-      ~message="Merge DC partition into the later one + query other partitions in parallel",
-    )
+      ]))
 
     let queries = switch fetchStateWithDcs->getNextQuery {
     | Ready(queries) => queries
-    | _ => Assert.fail("Failed to extract query. The getNextQuery should be idempotent")
+    | _ => Js.Exn.raiseError("Failed to extract query. The getNextQuery should be idempotent")
     }
 
     fetchStateWithDcs->FetchState.startFetchingQueries(~queries)
-    Assert.deepEqual(
+    t.expect(
       fetchStateWithDcs->getNextQuery,
-      NothingToQuery,
       ~message="All partitions below known height are already quering and can't be chunked",
-    )
+    ).toEqual(NothingToQuery)
 
     let updatedFetchState =
       fetchStateWithDcs
@@ -1846,11 +1771,10 @@ describe("FetchState.getNextQuery & integration", () => {
         ~newItems=[],
       )
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState,
-      makeIntermidiateDcMerge(),
       ~message="Should be equal to intermidiate state",
-    )
+    ).toEqual(makeIntermidiateDcMerge())
 
     let expectedPartition2Query: FetchState.query = {
       partitionId: "2",
@@ -1873,34 +1797,30 @@ describe("FetchState.getNextQuery & integration", () => {
       isChunk: false,
     }
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState->getNextQuery(~knownHeight=11),
-      Ready([expectedPartition2Query, expectedPartition0Query]),
       ~message=`Since the partition "0" reached the maxAddrNumber,
       there's no point to continue merging partitions,
       so we have two queries concurrently`,
-    )
-    Assert.deepEqual(
+    ).toEqual(Ready([expectedPartition2Query, expectedPartition0Query]))
+    t.expect(
       updatedFetchState->getNextQuery(~concurrencyLimit=1, ~knownHeight=11),
-      Ready([expectedPartition2Query]),
       ~message=`Should be the query with smaller fromBlock`,
-    )
-    Assert.deepEqual(
+    ).toEqual(Ready([expectedPartition2Query]))
+    t.expect(
       updatedFetchState->getNextQuery(~knownHeight=10),
-      Ready([expectedPartition2Query]),
       ~message=`Even if a single partition reached block height,
       we finish fetching other partitions until waiting for the new block first`,
-    )
+    ).toEqual(Ready([expectedPartition2Query]))
 
     updatedFetchState->FetchState.startFetchingQueries(~queries=[expectedPartition2Query])
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState->getNextQuery(~knownHeight=11),
-      Ready([expectedPartition0Query]),
       ~message=`Should skip fetching queries`,
-    )
+    ).toEqual(Ready([expectedPartition0Query]))
   })
 
-  it("Emulate partition merging cases", () => {
+  it("Emulate partition merging cases", t => {
     let originalFetchState = makeIntermidiateDcMerge()
     let originalFetchState = {
       ...originalFetchState,
@@ -1909,9 +1829,10 @@ describe("FetchState.getNextQuery & integration", () => {
         maxAddrInPartition: 4,
       },
     }
-    Assert.deepEqual(
+    t.expect(
       originalFetchState->getNextQuery(~knownHeight=11),
-      Ready([
+      ~message="Until we optimize partitions - on handle query, we don't need to merge partitions",
+    ).toEqual(Ready([
         {
           partitionId: "2",
           toBlock: None,
@@ -1932,16 +1853,15 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: originalFetchState.indexingContracts,
           isChunk: false,
         },
-      ]),
-      ~message="Until we optimize partitions - on handle query, we don't need to merge partitions",
-    )
+      ]))
 
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 4
     let fetchState = makeIntermidiateDcMerge(~maxAddrInPartition=4, ~knownHeight=11)
-    Assert.deepEqual(
+    t.expect(
       fetchState->getNextQuery,
-      Ready([
+      ~message="Although, if we pass it through partition optimization, it should merge partitions now",
+    ).toEqual(Ready([
         {
           partitionId: "2",
           toBlock: Some(10),
@@ -1962,13 +1882,11 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: originalFetchState.indexingContracts,
           isChunk: false,
         },
-      ]),
-      ~message="Although, if we pass it through partition optimization, it should merge partitions now",
-    )
+      ]))
 
     let queries = switch fetchState->getNextQuery {
     | Ready(queries) => queries
-    | _ => Assert.fail("Failed to extract query. The getNextQuery should be idempotent")
+    | _ => Js.Exn.raiseError("Failed to extract query. The getNextQuery should be idempotent")
     }
 
     let p2Query = queries->Array.getUnsafe(0)
@@ -1984,33 +1902,31 @@ describe("FetchState.getNextQuery & integration", () => {
       ~newItems=[mockEvent(~blockNumber=4, ~logIndex=6), mockEvent(~blockNumber=4, ~logIndex=2)],
     )
 
-    Assert.deepEqual(
+    t.expect(
       (
         fetchStateWithResponse1->FetchState.bufferBlock,
         fetchStateWithResponse1.optimizedPartitions.idsInAscOrder,
         fetchStateWithResponse1.buffer->Js.Array2.length,
       ),
-      (
+      ~message="The buffer block should be the latest fetched block",
+    ).toEqual((
         {
           blockNumber: 9,
           blockTimestamp: 9,
         },
         ["2", "0"],
         4,
-      ),
-      ~message="The buffer block should be the latest fetched block",
-    )
+      ))
 
-    Assert.deepEqual(
+    t.expect(
       fetchStateWithResponse1->getNextQuery(~targetBufferSize=1),
-      NothingToQuery,
       ~message=`Even if we have a partition with toBlock which wants to merge
       if it's outside of the targetBufferSize limit, we should return NothingToQuery`,
-    )
+    ).toEqual(NothingToQuery)
 
     let queries = switch fetchStateWithResponse1->getNextQuery {
     | Ready(queries) => queries
-    | _ => Assert.fail("Failed to extract query. The getNextQuery should be idempotent")
+    | _ => Js.Exn.raiseError("Failed to extract query. The getNextQuery should be idempotent")
     }
     fetchStateWithResponse1->FetchState.startFetchingQueries(~queries)
 
@@ -2023,9 +1939,10 @@ describe("FetchState.getNextQuery & integration", () => {
       ~newItems=[],
     )
 
-    Assert.deepEqual(
+    t.expect(
       fetchStateWithResponse2,
-      {
+      ~message="Partition 2 should come to mergeBlock and be removed",
+    ).toEqual({
         ...fetchStateWithResponse1,
         optimizedPartitions: FetchState.OptimizedPartitions.make(
           ~partitions=[
@@ -2058,12 +1975,10 @@ describe("FetchState.getNextQuery & integration", () => {
           ~maxAddrInPartition=fetchStateWithResponse1.optimizedPartitions.maxAddrInPartition,
           ~dynamicContracts=fetchStateWithResponse1.optimizedPartitions.dynamicContracts,
         ),
-      },
-      ~message="Partition 2 should come to mergeBlock and be removed",
-    )
+      })
   })
 
-  it("Wildcard partition never merges to another one", () => {
+  it("Wildcard partition never merges to another one", t => {
     let wildcard = (Mock.evmEventConfig(
       ~id="wildcard",
       ~contractName="ContractA",
@@ -2087,13 +2002,16 @@ describe("FetchState.getNextQuery & integration", () => {
         makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
       ])
 
-    Assert.deepEqual(fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count, 3)
+    t.expect(fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count).toEqual(3)
 
     let nextQuery = {...fetchState, knownHeight: 10}->FetchState.getNextQuery(~concurrencyLimit=10)
 
-    Assert.deepEqual(
+    t.expect(
       nextQuery,
-      Ready([
+      ~message=`Wildcard partition "0" is untouched.
+      Partitions "1" and "2" split in optimized way for further dynamic contract registrations.
+      All queries performed in parallel without locking.`,
+    ).toEqual(Ready([
         {
           partitionId: "0",
           fromBlock: 0,
@@ -2124,23 +2042,20 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress2])]),
           indexingContracts: fetchState.indexingContracts,
         },
-      ]),
-      ~message=`Wildcard partition "0" is untouched.
-      Partitions "1" and "2" split in optimized way for further dynamic contract registrations.
-      All queries performed in parallel without locking.`,
-    )
+      ]))
   })
 
-  it("Correctly rollbacks fetch state", () => {
+  it("Correctly rollbacks fetch state", t => {
     let fetchState = makeIntermidiateDcMerge()
 
     // Rollback to block 2: both DCs survive (regBlock <= 2)
     // Partition "0" (lfb=10 > 2) -> DELETED, addresses recreated as partition "1"
     // Partition "2" (lfb=2 <= 2) -> KEPT as partition "0" (IDs reset)
     let fetchStateAfterRollback1 = fetchState->FetchState.rollback(~targetBlockNumber=2)
-    Assert.deepEqual(
+    t.expect(
       fetchStateAfterRollback1,
-      {
+      ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
+    ).toEqual({
         ...fetchState,
         optimizedPartitions: FetchState.OptimizedPartitions.make(
           ~partitions=[
@@ -2181,16 +2096,15 @@ describe("FetchState.getNextQuery & integration", () => {
           ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
         ),
-      },
-      ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
-    )
+      })
 
     // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
     // Both partitions deleted (lfb > 1), surviving addresses [addr0, addr1] recreated
     let fetchStateAfterRollback2 = fetchState->FetchState.rollback(~targetBlockNumber=1)
-    Assert.deepEqual(
+    t.expect(
       fetchStateAfterRollback2,
-      {
+      ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
+    ).toEqual({
         ...fetchState,
         indexingContracts: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
         optimizedPartitions: FetchState.OptimizedPartitions.make(
@@ -2222,15 +2136,14 @@ describe("FetchState.getNextQuery & integration", () => {
         // Removed an item here
 
         buffer: [mockEvent(~blockNumber=1)],
-      },
-      ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
-    )
+      })
 
     // Rollback to block -1: all DCs removed, only static addr0 survives
     let fetchStateAfterRollback3 = fetchState->FetchState.rollback(~targetBlockNumber=-1)
-    Assert.deepEqual(
+    t.expect(
       fetchStateAfterRollback3,
-      {
+      ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
+    ).toEqual({
         ...fetchState,
         indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
         optimizedPartitions: FetchState.OptimizedPartitions.make(
@@ -2256,12 +2169,10 @@ describe("FetchState.getNextQuery & integration", () => {
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
         ),
         buffer: [],
-      },
-      ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
-    )
+      })
   })
 
-  it("Keeps wildcard partition on rollback", () => {
+  it("Keeps wildcard partition on rollback", t => {
     let wildcardEventConfigs = [
       (Mock.evmEventConfig(
         ~id="wildcard",
@@ -2305,19 +2216,19 @@ describe("FetchState.getNextQuery & integration", () => {
       ],
     )
 
-    Assert.deepEqual(
+    t.expect(
       fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count,
-      2,
       ~message=`Should have 2 partitions before rollback`,
-    )
+    ).toEqual(2)
 
     // resetPendingQueries must be called before rollback (removes in-flight queries)
     let fetchStateReset = fetchState->FetchState.resetPendingQueries
     let fetchStateAfterRollback = fetchStateReset->FetchState.rollback(~targetBlockNumber=1)
 
-    Assert.deepEqual(
+    t.expect(
       fetchStateAfterRollback,
-      {
+      ~message=`Should keep Wildcard partition even if it's empty`,
+    ).toEqual({
         ...fetchState,
         indexingContracts: Js.Dict.empty(),
         optimizedPartitions: FetchState.OptimizedPartitions.make(
@@ -2347,14 +2258,12 @@ describe("FetchState.getNextQuery & integration", () => {
           ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
         ),
         buffer: [],
-      },
-      ~message=`Should keep Wildcard partition even if it's empty`,
-    )
+      })
   })
 })
 
 describe("FetchState unit tests for specific cases", () => {
-  it("Should merge events in correct order on merging", () => {
+  it("Should merge events in correct order on merging", t => {
     let base = makeInitial()
     let normalSelection = base.normalSelection
     let fetchState = base->FetchState.updateInternal(
@@ -2424,9 +2333,10 @@ describe("FetchState unit tests for specific cases", () => {
       ~newItems=[mockEvent(~blockNumber=4, ~logIndex=1), mockEvent(~blockNumber=4, ~logIndex=1)],
     )
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState.buffer,
-      [
+      ~message="Should merge events in correct order",
+    ).toEqual([
         mockEvent(~blockNumber=1),
         mockEvent(~blockNumber=2),
         mockEvent(~blockNumber=3),
@@ -2434,12 +2344,10 @@ describe("FetchState unit tests for specific cases", () => {
         mockEvent(~blockNumber=4, ~logIndex=1),
         mockEvent(~blockNumber=4, ~logIndex=1),
         mockEvent(~blockNumber=4, ~logIndex=2),
-      ],
-      ~message="Should merge events in correct order",
-    )
+      ])
   })
 
-  it("Sorts newItems when source returns them unsorted", () => {
+  it("Sorts newItems when source returns them unsorted", t => {
     let base = makeInitial()
     let fetchState = base
 
@@ -2468,19 +2376,18 @@ describe("FetchState unit tests for specific cases", () => {
         ~newItems=unsorted,
       )
 
-    Assert.deepEqual(
+    t.expect(
       updatedFetchState.buffer,
-      [
+      ~message="Queue must be sorted DESC by (blockNumber, logIndex) regardless of input order",
+    ).toEqual([
         mockEvent(~blockNumber=5, ~logIndex=0),
         mockEvent(~blockNumber=5, ~logIndex=1),
         mockEvent(~blockNumber=6, ~logIndex=0),
         mockEvent(~blockNumber=6, ~logIndex=2),
-      ],
-      ~message="Queue must be sorted DESC by (blockNumber, logIndex) regardless of input order",
-    )
+      ])
   })
 
-  it("Shouldn't wait for new block until all partitions reached the head", () => {
+  it("Shouldn't wait for new block until all partitions reached the head", t => {
     let wildcard = (Mock.evmEventConfig(
       ~id="wildcard",
       ~contractName="ContractA",
@@ -2539,9 +2446,11 @@ describe("FetchState unit tests for specific cases", () => {
         ~newItems=[],
       )
 
-    Assert.deepEqual(
+    t.expect(
       {...fetchState, knownHeight: 2}->FetchState.getNextQuery(~concurrencyLimit=10),
-      Ready([
+      ~message=`Should be possible to query wildcard partition,
+      if it didn't reach max queue size limit`,
+    ).toEqual(Ready([
         {
           partitionId: "0",
           fromBlock: 2,
@@ -2554,34 +2463,27 @@ describe("FetchState unit tests for specific cases", () => {
           addressesByContractName: Js.Dict.empty(),
           indexingContracts: fetchState.indexingContracts,
         },
-      ]),
-      ~message=`Should be possible to query wildcard partition,
-      if it didn't reach max queue size limit`,
-    )
-    Assert.deepEqual(
+      ]))
+    t.expect(
       {
         ...fetchState,
         targetBufferSize: 2,
         knownHeight: 2,
       }->FetchState.getNextQuery(~concurrencyLimit=10),
-      NothingToQuery,
       ~message=`Should wait until queue is processed, to continue fetching.
       Don't wait for new block, until all partitions reached the head`,
-    )
+    ).toEqual(NothingToQuery)
   })
 
-  it("Allows to get event one block earlier than the dc registring event", () => {
+  it("Allows to get event one block earlier than the dc registring event", t => {
     let fetchState = makeInitial(~knownHeight=10)
 
-    Assert.deepEqual(
-      fetchState->getEarliestEvent,
-      NoItem({
+    t.expect(fetchState->getEarliestEvent).toEqual(NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
           blockTimestamp: 0,
         },
-      }),
-    )
+      }))
 
     let registeringBlockNumber = 3
 
@@ -2607,10 +2509,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~latestFetchedBlock=getBlockData(~blockNumber=10),
       )
 
-    Assert.deepEqual(
-      fetchStateWithEvents->getEarliestEvent->getItem,
-      Some(mockEvent(~blockNumber=2, ~logIndex=1)),
-    )
+    t.expect(fetchStateWithEvents->getEarliestEvent->getItem).toEqual(Some(mockEvent(~blockNumber=2, ~logIndex=1)))
 
     let fetchStateWithDc =
       fetchStateWithEvents->FetchState.registerDynamicContracts([
@@ -2620,14 +2519,13 @@ describe("FetchState unit tests for specific cases", () => {
         )->dcToItem,
       ])
 
-    Assert.deepEqual(
+    t.expect(
       fetchStateWithDc->getEarliestEvent->getItem,
-      Some(mockEvent(~blockNumber=2, ~logIndex=1)),
       ~message=`Should allow to get event before the dc registration`,
-    )
+    ).toEqual(Some(mockEvent(~blockNumber=2, ~logIndex=1)))
   })
 
-  it("Returns NoItem when there is an empty partition at block 0", () => {
+  it("Returns NoItem when there is an empty partition at block 0", t => {
     let fetchState = FetchState.make(
       ~eventConfigs=[
         (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
@@ -2644,15 +2542,12 @@ describe("FetchState unit tests for specific cases", () => {
       ~knownHeight,
     )
 
-    Assert.deepEqual(
-      fetchState->getEarliestEvent,
-      NoItem({
+    t.expect(fetchState->getEarliestEvent).toEqual(NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
           blockTimestamp: 0,
         },
-      }),
-    )
+      }))
 
     let query: FetchState.query = {
       partitionId: "0",
@@ -2671,18 +2566,15 @@ describe("FetchState unit tests for specific cases", () => {
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
       )
 
-    Assert.deepEqual(
-      updatedFetchState->getEarliestEvent,
-      NoItem({
+    t.expect(updatedFetchState->getEarliestEvent).toEqual(NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
           blockTimestamp: 0,
         },
-      }),
-    )
+      }))
   })
 
-  it("Get earliest event", () => {
+  it("Get earliest event", t => {
     let latestFetchedBlock = getBlockData(~blockNumber=500)
     let base = makeInitial()
     let normalSelection = base.normalSelection
@@ -2726,48 +2618,40 @@ describe("FetchState unit tests for specific cases", () => {
       ~knownHeight=10,
     )
 
-    Assert.deepEqual(
-      fetchState->getEarliestEvent->getItem,
-      Some(mockEvent(~blockNumber=2, ~logIndex=1)),
-    )
+    t.expect(fetchState->getEarliestEvent->getItem).toEqual(Some(mockEvent(~blockNumber=2, ~logIndex=1)))
 
-    Assert.deepEqual(
+    t.expect(
       fetchState
       ->FetchState.registerDynamicContracts([
         makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2)->dcToItem,
       ])
       ->getEarliestEvent,
-      NoItem({
+      ~message=`Accounts for registered dynamic contracts`,
+    ).toEqual(NoItem({
         latestFetchedBlock: {
           blockNumber: 1,
           blockTimestamp: 0,
         },
-      }),
-      ~message=`Accounts for registered dynamic contracts`,
-    )
+      }))
   })
 
-  it("isActively indexing", () => {
-    Assert.deepEqual(
+  it("isActively indexing", t => {
+    t.expect(
       makeInitial()->FetchState.isActivelyIndexing,
-      true,
       ~message=`Should be actively indexing with initial state`,
-    )
-    Assert.deepEqual(
+    ).toEqual(true)
+    t.expect(
       {...makeInitial(), endBlock: Some(10)}->FetchState.isActivelyIndexing,
-      true,
       ~message=`Should be actively indexing with initial state, even if there's an endBlock`,
-    )
-    Assert.deepEqual(
+    ).toEqual(true)
+    t.expect(
       {...makeInitial(), endBlock: Some(0)}->FetchState.isActivelyIndexing,
-      true,
       ~message=`Should be active if endBlock is equal to the startBlock`,
-    )
-    Assert.deepEqual(
+    ).toEqual(true)
+    t.expect(
       {...makeInitial(~startBlock=10), endBlock: Some(9)}->FetchState.isActivelyIndexing,
-      false,
       ~message=`Shouldn't be active if endBlock is less than the startBlock`,
-    )
+    ).toEqual(false)
     let fetchState = {
       ...makeInitial(),
       endBlock: Some(0),
@@ -2782,7 +2666,7 @@ describe("FetchState unit tests for specific cases", () => {
       indexingContracts: fetchState.indexingContracts,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
-    Assert.deepEqual(
+    t.expect(
       fetchState
       ->FetchState.handleQueryResult(
         ~query,
@@ -2790,14 +2674,13 @@ describe("FetchState unit tests for specific cases", () => {
         ~latestFetchedBlock={blockNumber: -1, blockTimestamp: 0},
       )
       ->FetchState.isActivelyIndexing,
-      true,
       ~message=`Although, with items in the queue it should be considered active`,
-    )
+    ).toEqual(true)
   })
 
   it(
     "Adding dc between two partitions while query is mid flight does no result in early merged partitinons",
-    () => {
+    t => {
       let knownHeight = 600
 
       let fetchState = FetchState.make(
@@ -2838,12 +2721,10 @@ describe("FetchState unit tests for specific cases", () => {
 
       let queries = switch fetchStateWithDcA->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready(queries) => queries
-      | _ => Assert.fail("Expected Ready queries")
+      | _ => Js.Exn.raiseError("Expected Ready queries")
       }
 
-      Assert.deepEqual(
-        queries,
-        [
+      t.expect(queries).toEqual([
           {
             ...queries->Array.getUnsafe(0),
             partitionId: "1",
@@ -2856,8 +2737,7 @@ describe("FetchState unit tests for specific cases", () => {
             fromBlock: 501,
             toBlock: None,
           },
-        ],
-      )
+        ])
 
       let queryA = queries->Array.getUnsafe(0)
 
@@ -2871,7 +2751,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       let queries = switch fetchStateWithDcB->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready(queries) => queries
-      | _ => Assert.fail("Expected Ready queries")
+      | _ => Js.Exn.raiseError("Expected Ready queries")
       }
       let partition2Query = {
         ...queries->Array.getUnsafe(0),
@@ -2881,11 +2761,10 @@ describe("FetchState unit tests for specific cases", () => {
         toBlock: None, // Didn't merge because reached max addresses in partition
         fromBlock: 200,
       }
-      Assert.deepEqual(
+      t.expect(
         fetchStateWithDcB->FetchState.getNextQuery(~concurrencyLimit=10),
-        Ready([partition2Query, queries->Array.getUnsafe(1)]),
         ~message=`Create a new partition for the newly registered contract`,
-      )
+      ).toEqual(Ready([partition2Query, queries->Array.getUnsafe(1)]))
 
       //Response with updated fetch state
       let fetchStateWithBothDcsAndQueryAResponse =
@@ -2895,9 +2774,10 @@ describe("FetchState unit tests for specific cases", () => {
           ~newItems=[],
         )
 
-      Assert.deepEqual(
+      t.expect(
         fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(~concurrencyLimit=10),
-        Ready([
+        ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
+      ).toEqual(Ready([
           partition2Query,
           {
             ...queryA,
@@ -2907,9 +2787,7 @@ describe("FetchState unit tests for specific cases", () => {
             fromBlock: 401,
           },
           queries->Array.getUnsafe(1),
-        ]),
-        ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
-      )
+        ]))
     },
   )
 })
@@ -2940,7 +2818,7 @@ describe("FetchState.sortForUnorderedBatch", () => {
     {...fs, firstEventBlock: Some(0)}
   }
 
-  it("Sorts by progress percentage. Chains further behind have higher priority", () => {
+  it("Sorts by progress percentage. Chains further behind have higher priority", t => {
     // Low progress: first item at block 1, knownHeight=10 → 10% progress
     let fsLow = makeFsWith(~latestBlock=3, ~queueBlocks=[1])
     // Mid progress: first item at block 5, knownHeight=10 → 50% progress
@@ -2953,13 +2831,10 @@ describe("FetchState.sortForUnorderedBatch", () => {
       ~batchSizeTarget=3,
     )
 
-    Assert.deepEqual(
-      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
-      [1, 5, 8],
-    )
+    t.expect(prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber)).toEqual([1, 5, 8])
   })
 
-  it("Prioritizes full batches over half full ones", () => {
+  it("Prioritizes full batches over half full ones", t => {
     // Full batch (>= maxBatchSize items). Make it later (earliest item at block 7)
     let fsFullLater = makeFsWith(~latestBlock=10, ~queueBlocks=[9, 8, 7])
     // Half-full batch (1 item) but earlier earliest item (block 1)
@@ -2970,13 +2845,10 @@ describe("FetchState.sortForUnorderedBatch", () => {
       ~batchSizeTarget=2,
     )
 
-    Assert.deepEqual(
-      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
-      [7, 1],
-    )
+    t.expect(prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber)).toEqual([7, 1])
   })
 
-  it("Treats exactly-full batches as full", () => {
+  it("Treats exactly-full batches as full", t => {
     // Exactly full (== maxBatchSize items)
     let fsExactFull = makeFsWith(~latestBlock=10, ~queueBlocks=[3, 2])
     // Half-full (1 item) but earlier earliest item
@@ -2988,28 +2860,25 @@ describe("FetchState.sortForUnorderedBatch", () => {
     )
 
     // Full batch should take priority regardless of earlier timestamp of half batch
-    Assert.deepEqual(
-      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
-      [2, 1],
-    )
+    t.expect(prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber)).toEqual([2, 1])
   })
 })
 
 describe("FetchState.isReadyToEnterReorgThreshold", () => {
-  it("Returns false when we just started the indexer and it has knownHeight=0", () => {
+  it("Returns false when we just started the indexer and it has knownHeight=0", t => {
     let fetchState = makeInitial()
-    Assert.equal({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold, false)
+    t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold).toBe(false)
   })
 
   it(
     "Returns false when we just started the indexer and it has knownHeight=0, while start block is more than 0 + reorg threshold",
-    () => {
+    t => {
       let fetchState = makeInitial(~startBlock=6000)
-      Assert.equal({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold, false)
+      t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold).toBe(false)
     },
   )
 
-  it("Returns true when endBlock is reached and queue is empty", () => {
+  it("Returns true when endBlock is reached and queue is empty", t => {
     // latestFullyFetchedBlock = startBlock - 1 = 5, endBlock = 5
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
@@ -3029,10 +2898,10 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=0,
       ~knownHeight=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
   })
 
-  it("Returns false when endBlock not reached and below head - blockLag", () => {
+  it("Returns false when endBlock not reached and below head - blockLag", t => {
     // latestFullyFetchedBlock = 49, endBlock = 100, head - lag = 50
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
@@ -3052,10 +2921,10 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, false)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(false)
   })
 
-  it("Returns true when endBlock not reached but latest >= head - blockLag", () => {
+  it("Returns true when endBlock not reached but latest >= head - blockLag", t => {
     // latestFullyFetchedBlock = 49, head - lag = 49
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
@@ -3075,10 +2944,10 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=59,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
   })
 
-  it("Returns true when no endBlock and latest >= head - blockLag (boundary)", () => {
+  it("Returns true when no endBlock and latest >= head - blockLag (boundary)", t => {
     // latestFullyFetchedBlock = 50, head - lag = 50
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
@@ -3098,10 +2967,10 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
   })
 
-  it("Returns false when no endBlock and latest < head - blockLag", () => {
+  it("Returns false when no endBlock and latest < head - blockLag", t => {
     // latestFullyFetchedBlock = 49, head - lag = 50
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
@@ -3121,10 +2990,10 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, false)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(false)
   })
 
-  it("Returns false when queue is not empty even if thresholds are met", () => {
+  it("Returns false when queue is not empty even if thresholds are met", t => {
     // EndBlock reached but queue has items
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
@@ -3145,10 +3014,10 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~knownHeight=10,
     )
     let fsWithQueue = fs->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=6)])
-    Assert.equal(fsWithQueue->FetchState.isReadyToEnterReorgThreshold, false)
+    t.expect(fsWithQueue->FetchState.isReadyToEnterReorgThreshold).toBe(false)
   })
 
-  it("Returns true when the queue is empty and threshold is more than current block height", () => {
+  it("Returns true when the queue is empty and threshold is more than current block height", t => {
     let fs = FetchState.make(
       ~eventConfigs=[baseEventConfig, baseEventConfig2],
       ~contracts=[
@@ -3167,12 +3036,12 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=200,
       ~knownHeight=10,
     )
-    Assert.equal(fs->FetchState.isReadyToEnterReorgThreshold, true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
   })
 })
 
 describe("Dynamic contracts with start blocks", () => {
-  it("Should respect dynamic contract startBlock even when registered earlier", () => {
+  it("Should respect dynamic contract startBlock even when registered earlier", t => {
     let fetchState = makeInitial()
 
     // Register a dynamic contract with startBlock=200
@@ -3187,12 +3056,9 @@ describe("Dynamic contracts with start blocks", () => {
       fetchState->FetchState.registerDynamicContracts([dynamicContract->dcToItem])
 
     // The contract should be registered in indexingContracts
-    Assert.ok(
-      updatedFetchState.indexingContracts
+    t.expect(updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
-      ->Option.isSome,
-      ~message="Dynamic contract should be registered in indexingContracts",
-    )
+      ->Option.isSome, ~message="Dynamic contract should be registered in indexingContracts").toBeTruthy()
 
     // Verify the startBlock is set correctly
     let registeredContract =
@@ -3200,14 +3066,13 @@ describe("Dynamic contracts with start blocks", () => {
       ->Js.Dict.get(mockAddress1->Address.toString)
       ->Option.getExn
 
-    Assert.equal(
+    t.expect(
       registeredContract.startBlock,
-      200,
       ~message="Dynamic contract should have correct startBlock",
-    )
+    ).toBe(200)
   })
 
-  it("Should handle dynamic contract registration with different startBlocks", () => {
+  it("Should handle dynamic contract registration with different startBlocks", t => {
     let fetchState = makeInitial()
 
     // Contract 1: startBlock=150
@@ -3238,17 +3103,15 @@ describe("Dynamic contracts with start blocks", () => {
       ->Js.Dict.get(mockAddress2->Address.toString)
       ->Option.getExn
 
-    Assert.equal(
+    t.expect(
       contract1Registered.startBlock,
-      150,
       ~message="Contract1 should have startBlock=150",
-    )
+    ).toBe(150)
 
-    Assert.equal(
+    t.expect(
       contract2Registered.startBlock,
-      300,
       ~message="Contract2 should have startBlock=300",
-    )
+    ).toBe(300)
   })
 })
 
@@ -3272,54 +3135,50 @@ describe("FetchState progress tracking", () => {
     )
   }
 
-  it("When queue is empty", () => {
+  it("When queue is empty", t => {
     let fetchStateEmpty = makeFetchStateWith(~latestBlock=100, ~queueBlocks=[])
 
-    Assert.equal(
+    t.expect(
       fetchStateEmpty->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
-      100,
       ~message="Should return latestFullyFetchedBlock.blockNumber when queue is empty",
-    )
+    ).toBe(100)
   })
 
-  it("When queue has a single item with log index 0", () => {
+  it("When queue has a single item with log index 0", t => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 0)])
 
-    Assert.equal(
+    t.expect(
       fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
-      54,
       ~message="Should return single queue item blockNumber - 1",
-    )
+    ).toBe(54)
   })
 
-  it("When queue has a single item with non 0 log index", () => {
+  it("When queue has a single item with non 0 log index", t => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 5)])
 
-    Assert.equal(
+    t.expect(
       fetchStateSingleItem->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
-      54,
       ~message="Should return single queue item blockNumber - 1",
-    )
+    ).toBe(54)
   })
 
-  it("When queue items are later than latest fetched block", () => {
+  it("When queue items are later than latest fetched block", t => {
     let fetchStateWithQueue = makeFetchStateWith(
       ~latestBlock=90,
       ~queueBlocks=[(105, 2), (103, 1), (101, 2)], // Last item has blockNumber=101
     )
 
-    Assert.equal(
+    t.expect(
       fetchStateWithQueue->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=0),
-      90,
       ~message="Should return latest fetched block number",
-    )
+    ).toBe(90)
   })
 })
 
 describe("FetchState buffer overflow prevention", () => {
   it(
     "Should limit endBlock when maxQueryBlockNumber < knownHeight to prevent buffer overflow",
-    () => {
+    t => {
       let fetchState = makeInitial(~maxAddrInPartition=1, ~targetBufferSize=10)
 
       // Create a second partition to ensure buffer limiting logic is exercised across partitions
@@ -3378,24 +3237,22 @@ describe("FetchState buffer overflow prevention", () => {
       switch fetchStateWithEndBlock->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready([q]) =>
         // The query should have endBlock limited to maxQueryBlockNumber (15)
-        Assert.equal(
+        t.expect(
           q.toBlock,
-          Some(15),
           ~message="Should limit endBlock to maxQueryBlockNumber (15) when both endBlock and maxQueryBlockNumber are present",
-        )
-      | _ => Assert.fail("Expected Ready query when buffer limiting is active")
+        ).toBe(Some(15))
+      | _ => Js.Exn.raiseError("Expected Ready query when buffer limiting is active")
       }
 
       // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
       switch fetchStateNoEndBlock->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready([q]) =>
-        Assert.equal(
+        t.expect(
           q.toBlock,
-          Some(15),
           ~message="Should set endBlock to maxQueryBlockNumber (15) when no endBlock was specified",
-        )
-      | _ => Assert.fail("Expected Ready query when buffer limiting is active")
+        ).toBe(Some(15))
+      | _ => Js.Exn.raiseError("Expected Ready query when buffer limiting is active")
       }
 
       // Test case 3: Small queue, no buffer limiting -> Should use Head target
@@ -3420,8 +3277,11 @@ describe("FetchState buffer overflow prevention", () => {
 
       switch fetchStateSmallQueue->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready([q]) =>
-        Assert.equal(q.toBlock, None, ~message="Should use None when buffer is not limited")
-      | _ => Assert.fail("Expected Ready query")
+        t.expect(
+          q.toBlock,
+          ~message="Should use None when buffer is not limited",
+        ).toBe(None)
+      | _ => Js.Exn.raiseError("Expected Ready query")
       }
     },
   )
@@ -3446,7 +3306,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
 
   it(
     "Creates FetchState with no event configs, triggers WaitingForNewBlock, then fills buffer on updateKnownHeight",
-    () => {
+    t => {
       let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(0))
 
       // Create FetchState with no event configs but with onBlockConfig
@@ -3463,64 +3323,63 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       )
 
       // Verify initial state
-      Assert.deepEqual(
+      t.expect(
         fetchState.optimizedPartitions.idsInAscOrder,
-        [],
         ~message="Partitions should be empty when there are no event configs",
-      )
-      Assert.deepEqual(fetchState.buffer, [], ~message="Buffer should be empty initially")
-      Assert.equal(fetchState.knownHeight, 0, ~message="knownHeight should be 0 initially")
-      Assert.deepEqual(
+      ).toEqual([])
+      t.expect(
+        fetchState.buffer,
+        ~message="Buffer should be empty initially",
+      ).toEqual([])
+      t.expect(
+        fetchState.knownHeight,
+        ~message="knownHeight should be 0 initially",
+      ).toBe(0)
+      t.expect(
         fetchState.onBlockConfigs,
-        [onBlockConfig],
         ~message="onBlockConfigs should be set",
-      )
+      ).toEqual([onBlockConfig])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
       let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit=10)
-      Assert.deepEqual(
+      t.expect(
         nextQuery,
-        WaitingForNewBlock,
         ~message="Should return WaitingForNewBlock when knownHeight is 0",
-      )
+      ).toEqual(WaitingForNewBlock)
 
       // Update known height to 20
       let updatedFetchState = fetchState->FetchState.updateKnownHeight(~knownHeight=20)
 
       // Verify buffer is now filled with block items
-      Assert.equal(
+      t.expect(
         updatedFetchState.knownHeight,
-        20,
         ~message="knownHeight should be updated to 20",
-      )
+      ).toBe(20)
 
       // Buffer should contain block items for blocks 0-9 (interval=1, startBlock=0, up to targetBufferSize limit)
       // Since latestFullyFetchedBlock is initially -1 and there are no partitions
-      Assert.equal(
+      t.expect(
         updatedFetchState.latestOnBlockBlockNumber,
-        10,
         ~message="latestOnBlockBlockNumber should be 10 since the onBlock config is interval=1 and startBlock=0",
-      )
-      Assert.equal(updatedFetchState->FetchState.bufferBlockNumber, 10)
+      ).toBe(10)
+      t.expect(updatedFetchState->FetchState.bufferBlockNumber).toBe(10)
 
       // Block items should be created from block 0 up to min(latestFullyFetchedBlock, targetBufferSize item)
       // With interval=1, startBlock=0, we expect blocks 0,1,2,3,4,5,6,7,8,9,10
       let blockNumbers =
         updatedFetchState.buffer->Array.map(item => item->Internal.getItemBlockNumber)
 
-      Assert.deepEqual(
+      t.expect(
         blockNumbers,
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         ~message="Buffer should contain block items for blocks 0-10",
-      )
+      ).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
       // Test that getNextQuery returns NothingToQuery (no partitions to query)
       let nextQuery2 = updatedFetchState->FetchState.getNextQuery(~concurrencyLimit=10)
-      Assert.deepEqual(
+      t.expect(
         nextQuery2,
-        NothingToQuery,
         ~message="Should return NothingToQuery when there are no partitions to query",
-      )
+      ).toEqual(NothingToQuery)
     },
   )
 })
@@ -3538,13 +3397,13 @@ describe("Stale query response should not overwrite block range", () => {
 
   it(
     "Out-of-order parallel query responses should not degrade chunking heuristic",
-    () => {
+    t => {
       let fetchState = makeInitial(~knownHeight=100000)
 
       // -- Query 1: uncapped query from block 0 --
       let q1 = switch fetchState->getNextQuery {
       | Ready([q]) => q
-      | _ => Assert.fail("Expected a single query")
+      | _ => Js.Exn.raiseError("Expected a single query")
       }
       fetchState->FetchState.startFetchingQueries(~queries=[q1])
 
@@ -3560,22 +3419,23 @@ describe("Stale query response should not overwrite block range", () => {
         )
 
       let p1 = fs1.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      Assert.equal(p1.prevQueryRange, 501, ~message="First query should set prevQueryRange=501")
-      Assert.equal(
+      t.expect(
+        p1.prevQueryRange,
+        ~message="First query should set prevQueryRange=501",
+      ).toBe(501)
+      t.expect(
         p1.prevPrevQueryRange,
-        0,
         ~message="First query prevPrevQueryRange should still be 0",
-      )
-      Assert.equal(
+      ).toBe(0)
+      t.expect(
         p1.latestBlockRangeUpdateBlock,
-        500,
         ~message="latestBlockRangeUpdateBlock should be 500 after first query",
-      )
+      ).toBe(500)
 
       // -- Query 2: uncapped query from block 501 --
       let q2 = switch fs1->getNextQuery {
       | Ready([q]) => q
-      | _ => Assert.fail("Expected a single query for second round")
+      | _ => Js.Exn.raiseError("Expected a single query for second round")
       }
       fs1->FetchState.startFetchingQueries(~queries=[q2])
 
@@ -3588,13 +3448,15 @@ describe("Stale query response should not overwrite block range", () => {
       )
 
       let p2 = fs2.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      Assert.equal(p2.prevQueryRange, 500, ~message="Second query should set prevQueryRange=500")
-      Assert.equal(
+      t.expect(
+        p2.prevQueryRange,
+        ~message="Second query should set prevQueryRange=500",
+      ).toBe(500)
+      t.expect(
         p2.prevPrevQueryRange,
-        501,
         ~message="Second query should shift prevPrevQueryRange=501",
-      )
-      Assert.equal(p2.latestBlockRangeUpdateBlock, 1000)
+      ).toBe(501)
+      t.expect(p2.latestBlockRangeUpdateBlock).toBe(1000)
 
       // Now chunking is active: getMinHistoryRange = Some(min(500, 501)) = Some(500)
       // chunkSize = ceil(500 * 1.8) = 900
@@ -3603,11 +3465,17 @@ describe("Stale query response should not overwrite block range", () => {
       // -- Query 3: get two chunk queries in parallel --
       let (chunkA, chunkB) = switch fs2->getNextQuery(~concurrencyLimit=2) {
       | Ready([a, b]) => (a, b)
-      | _ => Assert.fail("Expected two chunk queries")
+      | _ => Js.Exn.raiseError("Expected two chunk queries")
       }
 
-      Assert.equal(chunkA.fromBlock, 1001, ~message="Chunk A should start at 1001")
-      Assert.equal(chunkB.fromBlock, 1901, ~message="Chunk B should start at 1901")
+      t.expect(
+        chunkA.fromBlock,
+        ~message="Chunk A should start at 1001",
+      ).toBe(1001)
+      t.expect(
+        chunkB.fromBlock,
+        ~message="Chunk B should start at 1901",
+      ).toBe(1901)
 
       fs2->FetchState.startFetchingQueries(~queries=[chunkA, chunkB])
 
@@ -3623,21 +3491,18 @@ describe("Stale query response should not overwrite block range", () => {
       )
 
       let p3 = fs3.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      Assert.equal(
+      t.expect(
         p3.prevQueryRange,
-        600,
         ~message="Chunk B response should update prevQueryRange to 600",
-      )
-      Assert.equal(
+      ).toBe(600)
+      t.expect(
         p3.prevPrevQueryRange,
-        500,
         ~message="Chunk B response should shift prevPrevQueryRange to 500",
-      )
-      Assert.equal(
+      ).toBe(500)
+      t.expect(
         p3.latestBlockRangeUpdateBlock,
-        2500,
         ~message="latestBlockRangeUpdateBlock should update to 2500",
-      )
+      ).toBe(2500)
 
       // -- Now respond to the EARLIER chunk (A) --
       // Partial response: latestFetchedBlock=1400 < toBlock=1900
@@ -3650,21 +3515,18 @@ describe("Stale query response should not overwrite block range", () => {
       )
 
       let p4 = fs4.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      Assert.equal(
+      t.expect(
         p4.prevQueryRange,
-        600,
         ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 600)",
-      )
-      Assert.equal(
+      ).toBe(600)
+      t.expect(
         p4.prevPrevQueryRange,
-        500,
         ~message="Earlier chunk A response should NOT overwrite prevPrevQueryRange (still 500)",
-      )
-      Assert.equal(
+      ).toBe(500)
+      t.expect(
         p4.latestBlockRangeUpdateBlock,
-        2500,
         ~message="latestBlockRangeUpdateBlock should remain 2500 after stale response",
-      )
+      ).toBe(2500)
     },
   )
 })
