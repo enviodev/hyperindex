@@ -327,7 +327,13 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
       let registrations = if HandlerRegister.isPendingRegistration() {
         HandlerRegister.finishRegistration()
       } else {
-        await HandlerLoader.registerAllHandlers(~config)
+        // In tests, handler files are already loaded by the test framework
+        // (e.g. vitest imports them through its module system).
+        // Calling registerAllHandlers would re-import them via native import()
+        // which has a separate module cache, causing DuplicateEventRegistration.
+        // Instead, just start+finish registration to process pre-registered handlers.
+        HandlerRegister.startRegistration(~ecosystem=config.ecosystem, ~multichain=config.multichain)
+        HandlerRegister.finishRegistration()
       }
       cachedRegistrations := Some(registrations)
       registrations
