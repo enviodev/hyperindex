@@ -11,7 +11,6 @@ describe("Load and save an entity with a Timestamp from DB", () => {
   })
 
   Async.it("be able to set and read entities with Timestamp from DB", async t => {
-
     let sql = PgStorage.makeClient()
     /// Setup DB
     let testEntity: Indexer.Entities.EntityWithTimestamp.t = {

@@ -20,9 +20,7 @@ describe("Write/read tests", () => {
     t.expect(
       sourceMock.getHeightOrThrowCalls->Array.length,
       ~message="should have called getHeightOrThrow to get initial height",
-    ).toEqual(
-      1,
-    )
+    ).toEqual(1)
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
     await Utils.delay(0)
@@ -98,83 +96,65 @@ describe("Write/read tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    t.expect(
-      await indexerMock.query(EntityWithAllTypes),
-    ).toEqual(
-      [entityWithAllTypes],
-    )
-    t.expect(
-      await indexerMock.queryHistory(EntityWithAllTypes),
-    ).toEqual(
-      [
-        Set({
-          checkpointId: 1.,
-          entityId: "1",
-          entity: entityWithAllTypes,
-        }),
-      ],
-    )
-    t.expect(
-      await indexerMock.query(EntityWithAllNonArrayTypes),
-    ).toEqual(
-      [entityWithAllNonArrayTypes],
-    )
-    t.expect(
-      await indexerMock.queryHistory(EntityWithAllNonArrayTypes),
-    ).toEqual(
-      [
-        Set({
-          checkpointId: 1.,
-          entityId: "1",
-          entity: entityWithAllNonArrayTypes,
-        }),
-      ],
-    )
+    t.expect(await indexerMock.query(EntityWithAllTypes)).toEqual([entityWithAllTypes])
+    t.expect(await indexerMock.queryHistory(EntityWithAllTypes)).toEqual([
+      Set({
+        checkpointId: 1.,
+        entityId: "1",
+        entity: entityWithAllTypes,
+      }),
+    ])
+    t.expect(await indexerMock.query(EntityWithAllNonArrayTypes)).toEqual([
+      entityWithAllNonArrayTypes,
+    ])
+    t.expect(await indexerMock.queryHistory(EntityWithAllNonArrayTypes)).toEqual([
+      Set({
+        checkpointId: 1.,
+        entityId: "1",
+        entity: entityWithAllNonArrayTypes,
+      }),
+    ])
 
     t.expect(
       await indexerMock.query(EntityWith63LenghtName______________________________________one),
-    ).toEqual(
-      [
-        {
+    ).toEqual([
+      {
+        id: "1",
+      },
+    ])
+    t.expect(
+      await indexerMock.queryHistory(
+        EntityWith63LenghtName______________________________________one,
+      ),
+    ).toEqual([
+      Set({
+        checkpointId: 1.,
+        entityId: "1",
+        entity: {
           id: "1",
         },
-      ],
-    )
-    t.expect(
-      await indexerMock.queryHistory(EntityWith63LenghtName______________________________________one),
-    ).toEqual(
-      [
-        Set({
-          checkpointId: 1.,
-          entityId: "1",
-          entity: {
-            id: "1",
-          },
-        }),
-      ],
-    )
+      }),
+    ])
     t.expect(
       await indexerMock.query(EntityWith63LenghtName______________________________________two),
-    ).toEqual(
-      [
-        {
+    ).toEqual([
+      {
+        id: "2",
+      },
+    ])
+    t.expect(
+      await indexerMock.queryHistory(
+        EntityWith63LenghtName______________________________________two,
+      ),
+    ).toEqual([
+      Set({
+        checkpointId: 1.,
+        entityId: "2",
+        entity: {
           id: "2",
         },
-      ],
-    )
-    t.expect(
-      await indexerMock.queryHistory(EntityWith63LenghtName______________________________________two),
-    ).toEqual(
-      [
-        Set({
-          checkpointId: 1.,
-          entityId: "2",
-          entity: {
-            id: "2",
-          },
-        }),
-      ],
-    )
+      }),
+    ])
 
     t.expect(
       await indexerMock.graphql(`query {
@@ -186,18 +166,16 @@ describe("Write/read tests", () => {
       ~message=`We internally turn NUMERIC[] to TEXT[] when Hasura is enabled,
 to workaround a bug, when the values returned as number[] instead of string[],
 breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/788`,
-    ).toEqual(
-      {
-        data: {
-          "EntityWithAllTypes": [
-            {
-              "arrayOfBigInts": ["3", "4"],
-              "arrayOfBigDecimals": ["3.3", "4.4"],
-            },
-          ],
-        },
+    ).toEqual({
+      data: {
+        "EntityWithAllTypes": [
+          {
+            "arrayOfBigInts": ["3", "4"],
+            "arrayOfBigDecimals": ["3.3", "4.4"],
+          },
+        ],
       },
-    )
+    })
   })
 
   Async.it("Test getWhere queries with eq and gt operators", async t => {
@@ -270,21 +248,36 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           // Execute getWhere queries
           whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
           whereEqTokenIdTest := (await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
-          whereTokenIdGt50Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
-          whereTokenIdGt49Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
-          whereTokenIdLt50Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
-          whereTokenIdLt51Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
+          whereTokenIdGt50Test :=
+            (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
+          whereTokenIdGt49Test :=
+            (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
+          whereTokenIdLt50Test :=
+            (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
+          whereTokenIdLt51Test :=
+            (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
 
           // Execute _gte and _lte queries
-          whereTokenIdGte50Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
-          whereTokenIdGte51Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
-          whereTokenIdLte50Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
-          whereTokenIdLte49Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
+          whereTokenIdGte50Test :=
+            (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
+          whereTokenIdGte51Test :=
+            (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
+          whereTokenIdLte50Test :=
+            (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
+          whereTokenIdLte49Test :=
+            (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
 
           // Execute _in queries
-          whereInOwnerTest := (await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
-          whereInTokenIdTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]}}))
-          whereInTokenIdNoMatchTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}))
+          whereInOwnerTest :=
+            (await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
+          whereInTokenIdTest :=
+            (
+              await context.token.getWhere({
+                tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]},
+              })
+            )
+          whereInTokenIdNoMatchTest :=
+            (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}))
           whereInTokenIdEmptyTest := (await context.token.getWhere({tokenId: {_in: []}}))
         },
       },
@@ -295,93 +288,65 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     t.expect(
       whereEqOwnerTest.contents->Array.length,
       ~message="should have successfully loaded values on where eq owner_id query",
-    ).toBe(
-      2,
-    )
+    ).toBe(2)
     t.expect(
       whereEqTokenIdTest.contents->Array.length,
       ~message="should have successfully loaded values on where eq tokenId query",
-    ).toBe(
-      1,
-    )
+    ).toBe(1)
     t.expect(
       whereTokenIdGt50Test.contents->Array.length,
       ~message="Should have one token with tokenId > 50",
-    ).toBe(
-      1,
-    )
+    ).toBe(1)
     t.expect(
       whereTokenIdGt49Test.contents->Array.length,
       ~message="Should have two tokens with tokenId > 49",
-    ).toBe(
-      2,
-    )
+    ).toBe(2)
     t.expect(
       whereTokenIdLt50Test.contents->Array.length,
       ~message="Shouldn't have any value with tokenId < 50",
-    ).toBe(
-      0,
-    )
+    ).toBe(0)
     t.expect(
       whereTokenIdLt51Test.contents->Array.length,
       ~message="Should have one token with tokenId < 51",
-    ).toBe(
-      1,
-    )
+    ).toBe(1)
 
     // Assert _gte results
     t.expect(
       whereTokenIdGte50Test.contents->Array.length,
       ~message="Should have two tokens with tokenId >= 50 (50 and 60)",
-    ).toBe(
-      2,
-    )
+    ).toBe(2)
     t.expect(
       whereTokenIdGte51Test.contents->Array.length,
       ~message="Should have one token with tokenId >= 51 (only 60)",
-    ).toBe(
-      1,
-    )
+    ).toBe(1)
 
     // Assert _lte results
     t.expect(
       whereTokenIdLte50Test.contents->Array.length,
       ~message="Should have one token with tokenId <= 50",
-    ).toBe(
-      1,
-    )
+    ).toBe(1)
     t.expect(
       whereTokenIdLte49Test.contents->Array.length,
       ~message="Shouldn't have any value with tokenId <= 49",
-    ).toBe(
-      0,
-    )
+    ).toBe(0)
 
     // Assert _in results
     t.expect(
       whereInOwnerTest.contents->Array.length,
       ~message="_in on owner should return both tokens owned by testUserId",
-    ).toBe(
-      2,
-    )
+    ).toBe(2)
     t.expect(
       whereInTokenIdTest.contents->Array.length,
       ~message="_in on tokenId with [50, 60] should return both tokens",
-    ).toBe(
-      2,
-    )
+    ).toBe(2)
     t.expect(
       whereInTokenIdNoMatchTest.contents->Array.length,
       ~message="_in on tokenId with [999] should return no tokens",
-    ).toBe(
-      0,
-    )
+    ).toBe(0)
     t.expect(
       whereInTokenIdEmptyTest.contents->Array.length,
       ~message="_in on tokenId with empty array should return no tokens",
-    ).toBe(
-      0,
-    )
+    ).toBe(0)
 
     // Test deletion and index cleanup
     sourceMock.resolveGetItemsOrThrow([
@@ -401,8 +366,6 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     t.expect(
       whereEqOwnerTest.contents->Array.length,
       ~message="should have removed index on deleted token, leaving one token",
-    ).toBe(
-      1,
-    )
+    ).toBe(1)
   })
 })

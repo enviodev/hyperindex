@@ -150,42 +150,42 @@ describe("FetchState.make", () => {
     let fetchState = makeInitial()
 
     t.expect(fetchState).toEqual({
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: {
-                blockNumber: -1,
-                blockTimestamp: 0,
-              },
-              selection: fetchState.normalSelection,
-              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-              mergeBlock: None,
-              dynamicContract: None,
-              mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {
+              blockNumber: -1,
+              blockTimestamp: 0,
             },
-          ],
-          ~nextPartitionIndex=1,
-          ~maxAddrInPartition=3,
-          ~dynamicContracts=Utils.Set.make(),
-        ),
-        startBlock: 0,
-        endBlock: undefined,
-        latestOnBlockBlockNumber: -1,
-        targetBufferSize: 5000,
-        buffer: [],
-        normalSelection: fetchState.normalSelection,
-        chainId: 0,
-        indexingContracts: fetchState.indexingContracts,
-        contractConfigs: fetchState.contractConfigs,
-        blockLag: 0,
-        onBlockConfigs: [],
-        knownHeight,
-        firstEventBlock: None,
-      })
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+            mergeBlock: None,
+            dynamicContract: None,
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+          },
+        ],
+        ~nextPartitionIndex=1,
+        ~maxAddrInPartition=3,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: undefined,
+      latestOnBlockBlockNumber: -1,
+      targetBufferSize: 5000,
+      buffer: [],
+      normalSelection: fetchState.normalSelection,
+      chainId: 0,
+      indexingContracts: fetchState.indexingContracts,
+      contractConfigs: fetchState.contractConfigs,
+      blockLag: 0,
+      onBlockConfigs: [],
+      knownHeight,
+      firstEventBlock: None,
+    })
   })
 
   it("Panics with nothing to fetch", t => {
@@ -203,68 +203,64 @@ describe("FetchState.make", () => {
         )
       },
       ~message=`Should panic if there's nothing to fetch`,
-    ).toThrowError("Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.")
+    ).toThrowError(
+      "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
+    )
   })
 
-  it(
-    "Creates FetchState with static and dc addresses reaching the maxAddrInPartition limit",
-    t => {
-      let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
-      let fetchState = FetchState.make(
-        ~eventConfigs=[baseEventConfig],
-        ~contracts=[makeConfigContract("Gravatar", mockAddress1), dc],
-        ~startBlock=0,
-        ~endBlock=None,
-        ~targetBufferSize,
-        ~maxAddrInPartition=2,
-        ~chainId,
-        ~knownHeight,
-      )
+  it("Creates FetchState with static and dc addresses reaching the maxAddrInPartition limit", t => {
+    let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
+    let fetchState = FetchState.make(
+      ~eventConfigs=[baseEventConfig],
+      ~contracts=[makeConfigContract("Gravatar", mockAddress1), dc],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~targetBufferSize,
+      ~maxAddrInPartition=2,
+      ~chainId,
+      ~knownHeight,
+    )
 
-      t.expect(
-        fetchState,
-        ~message=`Should create only one partition`,
-      ).toEqual({
-          optimizedPartitions: FetchState.OptimizedPartitions.make(
-            ~partitions=[
-              {
-                id: "0",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: fetchState.normalSelection,
-                addressesByContractName: Js.Dict.fromArray([
-                  ("Gravatar", [mockAddress1, mockAddress2]),
-                ]),
-                mergeBlock: None,
-                dynamicContract: Some("Gravatar"),
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
-              },
-            ],
-            ~nextPartitionIndex=1,
-            ~maxAddrInPartition=2,
-            ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
-          ),
-          targetBufferSize,
-          latestOnBlockBlockNumber: -1,
-          buffer: [],
-          startBlock: 0,
-          endBlock: undefined,
-          normalSelection: fetchState.normalSelection,
-          chainId,
-          indexingContracts: fetchState.indexingContracts,
-          contractConfigs: fetchState.contractConfigs,
-          blockLag: 0,
-          onBlockConfigs: [],
-          knownHeight,
-          firstEventBlock: None,
-        })
-    },
-  )
+    t.expect(fetchState, ~message=`Should create only one partition`).toEqual({
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {
+              blockNumber: -1,
+              blockTimestamp: 0,
+            },
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([
+              ("Gravatar", [mockAddress1, mockAddress2]),
+            ]),
+            mergeBlock: None,
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+          },
+        ],
+        ~nextPartitionIndex=1,
+        ~maxAddrInPartition=2,
+        ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+      ),
+      targetBufferSize,
+      latestOnBlockBlockNumber: -1,
+      buffer: [],
+      startBlock: 0,
+      endBlock: undefined,
+      normalSelection: fetchState.normalSelection,
+      chainId,
+      indexingContracts: fetchState.indexingContracts,
+      contractConfigs: fetchState.contractConfigs,
+      blockLag: 0,
+      onBlockConfigs: [],
+      knownHeight,
+      firstEventBlock: None,
+    })
+  })
 
   it(
     "Creates FetchState with static addresses and dc addresses exceeding the maxAddrInPartition limit",
@@ -285,57 +281,57 @@ describe("FetchState.make", () => {
       )
 
       t.expect(fetchState).toEqual({
-          optimizedPartitions: FetchState.OptimizedPartitions.make(
-            ~partitions=[
-              {
-                id: "0",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: fetchState.normalSelection,
-                addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-                mergeBlock: None,
-                dynamicContract: None,
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+        optimizedPartitions: FetchState.OptimizedPartitions.make(
+          ~partitions=[
+            {
+              id: "0",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
               },
-              {
-                id: "1",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: fetchState.normalSelection,
-                addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress2])]),
-                mergeBlock: None,
-                dynamicContract: Some("Gravatar"),
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+              selection: fetchState.normalSelection,
+              addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
+              mergeBlock: None,
+              dynamicContract: None,
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+            {
+              id: "1",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
               },
-            ],
-            ~nextPartitionIndex=2,
-            ~maxAddrInPartition=1,
-            ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
-          ),
-          targetBufferSize,
-          latestOnBlockBlockNumber: -1,
-          buffer: [],
-          startBlock: 0,
-          endBlock: undefined,
-          normalSelection: fetchState.normalSelection,
-          chainId,
-          indexingContracts: fetchState.indexingContracts,
-          contractConfigs: fetchState.contractConfigs,
-          blockLag: 0,
-          onBlockConfigs: [],
-          knownHeight,
-          firstEventBlock: None,
-        })
+              selection: fetchState.normalSelection,
+              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress2])]),
+              mergeBlock: None,
+              dynamicContract: Some("Gravatar"),
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+          ],
+          ~nextPartitionIndex=2,
+          ~maxAddrInPartition=1,
+          ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+        ),
+        targetBufferSize,
+        latestOnBlockBlockNumber: -1,
+        buffer: [],
+        startBlock: 0,
+        endBlock: undefined,
+        normalSelection: fetchState.normalSelection,
+        chainId,
+        indexingContracts: fetchState.indexingContracts,
+        contractConfigs: fetchState.contractConfigs,
+        blockLag: 0,
+        onBlockConfigs: [],
+        knownHeight,
+        firstEventBlock: None,
+      })
 
       t.expect(
         (fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0")).selection,
@@ -370,87 +366,87 @@ describe("FetchState.make", () => {
       )
 
       t.expect(fetchState).toEqual({
-          optimizedPartitions: FetchState.OptimizedPartitions.make(
-            ~partitions=[
-              {
-                id: "0",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: fetchState.normalSelection,
-                addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
-                mergeBlock: None,
-                dynamicContract: None,
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+        optimizedPartitions: FetchState.OptimizedPartitions.make(
+          ~partitions=[
+            {
+              id: "0",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
               },
-              {
-                id: "1",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: fetchState.normalSelection,
-                addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress2])]),
-                mergeBlock: None,
-                dynamicContract: None,
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+              selection: fetchState.normalSelection,
+              addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
+              mergeBlock: None,
+              dynamicContract: None,
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+            {
+              id: "1",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
               },
-              {
-                id: "2",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: fetchState.normalSelection,
-                addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-                mergeBlock: None,
-                dynamicContract: Some("Gravatar"),
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+              selection: fetchState.normalSelection,
+              addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress2])]),
+              mergeBlock: None,
+              dynamicContract: None,
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+            {
+              id: "2",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
               },
-              {
-                id: "3",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: fetchState.normalSelection,
-                addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4])]),
-                mergeBlock: None,
-                dynamicContract: Some("Gravatar"),
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+              selection: fetchState.normalSelection,
+              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
+              mergeBlock: None,
+              dynamicContract: Some("Gravatar"),
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+            {
+              id: "3",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
               },
-            ],
-            ~nextPartitionIndex=4,
-            ~maxAddrInPartition=1,
-            ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
-          ),
-          targetBufferSize,
-          latestOnBlockBlockNumber: -1,
-          buffer: [],
-          startBlock: 0,
-          endBlock: undefined,
-          normalSelection: fetchState.normalSelection,
-          chainId,
-          indexingContracts: fetchState.indexingContracts,
-          contractConfigs: fetchState.contractConfigs,
-          blockLag: 0,
-          onBlockConfigs: [],
-          knownHeight,
-          firstEventBlock: None,
-        })
+              selection: fetchState.normalSelection,
+              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4])]),
+              mergeBlock: None,
+              dynamicContract: Some("Gravatar"),
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+          ],
+          ~nextPartitionIndex=4,
+          ~maxAddrInPartition=1,
+          ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+        ),
+        targetBufferSize,
+        latestOnBlockBlockNumber: -1,
+        buffer: [],
+        startBlock: 0,
+        endBlock: undefined,
+        normalSelection: fetchState.normalSelection,
+        chainId,
+        indexingContracts: fetchState.indexingContracts,
+        contractConfigs: fetchState.contractConfigs,
+        blockLag: 0,
+        onBlockConfigs: [],
+        knownHeight,
+        firstEventBlock: None,
+      })
     },
   )
 
@@ -817,10 +813,7 @@ describe("FetchState.registerDynamicContracts", () => {
       ->Js.Dict.get(mockAddress2->Address.toString)
       ->Option.isSome
 
-    t.expect(
-      hasAddress1,
-      ~message="Address1 should be registered",
-    ).toBe(true)
+    t.expect(hasAddress1, ~message="Address1 should be registered").toBe(true)
     t.expect(
       hasAddress2,
       ~message="Address2 should be registered even though Address1 (which came before it) was skipped",
@@ -882,44 +875,44 @@ describe("FetchState.registerDynamicContracts", () => {
       updatedFetchState.optimizedPartitions.entities->Js.Dict.values,
       ~message=`Should add 2 new partitions + optimize the original partition to merge without blocking`,
     ).toEqual([
-        {
-          ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-          mergeBlock: Some(1),
-          dynamicContract: Some("Gravatar"),
+      {
+        ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
+        mergeBlock: Some(1),
+        dynamicContract: Some("Gravatar"),
+      },
+      {
+        id: "1",
+        latestFetchedBlock: {
+          blockNumber: 1,
+          blockTimestamp: 0,
         },
-        {
-          id: "1",
-          latestFetchedBlock: {
-            blockNumber: 1,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([
-            ("Gravatar", [mockAddress1, mockAddress2, mockAddress3]),
-          ]),
-          mergeBlock: None,
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([
+          ("Gravatar", [mockAddress1, mockAddress2, mockAddress3]),
+        ]),
+        mergeBlock: None,
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+      {
+        id: "2",
+        latestFetchedBlock: {
+          blockNumber: 1,
+          blockTimestamp: 0,
         },
-        {
-          id: "2",
-          latestFetchedBlock: {
-            blockNumber: 1,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4, mockAddress0])]),
-          mergeBlock: None,
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-      ])
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress4, mockAddress0])]),
+        mergeBlock: None,
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+    ])
 
     let dc1FromAnotherContract = makeDynContractRegistration(
       ~blockNumber=2,
@@ -945,46 +938,44 @@ describe("FetchState.registerDynamicContracts", () => {
 + optimize the original partition to merge without blocking
 + dynamic contracts don't share partitions`,
     ).toEqual([
-        {
-          ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-          mergeBlock: Some(1),
-          dynamicContract: Some("Gravatar"),
+      {
+        ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
+        mergeBlock: Some(1),
+        dynamicContract: Some("Gravatar"),
+      },
+      {
+        id: "1",
+        latestFetchedBlock: {
+          blockNumber: 1,
+          blockTimestamp: 0,
         },
-        {
-          id: "1",
-          latestFetchedBlock: {
-            blockNumber: 1,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([
-            ("NftFactory", [mockAddress1, mockAddress4]),
-          ]),
-          mergeBlock: None,
-          dynamicContract: Some("NftFactory"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([("NftFactory", [mockAddress1, mockAddress4])]),
+        mergeBlock: None,
+        dynamicContract: Some("NftFactory"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+      {
+        id: "2",
+        latestFetchedBlock: {
+          blockNumber: 1,
+          blockTimestamp: 0,
         },
-        {
-          id: "2",
-          latestFetchedBlock: {
-            blockNumber: 1,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([
-            ("Gravatar", [mockAddress2, mockAddress3, mockAddress0]),
-          ]),
-          mergeBlock: None,
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-      ])
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([
+          ("Gravatar", [mockAddress2, mockAddress3, mockAddress0]),
+        ]),
+        mergeBlock: None,
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+    ])
   })
 
   it(
@@ -1013,11 +1004,13 @@ describe("FetchState.registerDynamicContracts", () => {
         ~knownHeight,
       )
 
-      t.expect(fetchState.contractConfigs).toEqual(Js.Dict.fromArray([
+      t.expect(fetchState.contractConfigs).toEqual(
+        Js.Dict.fromArray([
           ("Gravatar", {FetchState.filterByAddresses: false}),
           ("NftFactory", {FetchState.filterByAddresses: false}),
           ("SimpleNft", {FetchState.filterByAddresses: true}),
-        ]))
+        ]),
+      )
 
       let dc1 = makeDynContractRegistration(
         ~blockNumber=3,
@@ -1062,80 +1055,76 @@ describe("FetchState.registerDynamicContracts", () => {
         ~message=`All dcs without filterByAddresses should use the original logic and be grouped into a single partition,
           while dcs with filterByAddress should be split into partition per every registration block`,
       ).toEqual([
-          {
-            ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-            // Immediately merge to the original partition
-            addressesByContractName: Js.Dict.fromArray([
-              ("Gravatar", [mockAddress0, mockAddress1]),
-            ]),
-            dynamicContract: Some("Gravatar"),
+        {
+          ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
+          // Immediately merge to the original partition
+          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]),
+          dynamicContract: Some("Gravatar"),
+        },
+        // Partition to catch up with partition 0
+        {
+          id: "1",
+          latestFetchedBlock: {
+            blockNumber: 2,
+            blockTimestamp: 0,
           },
-          // Partition to catch up with partition 0
-          {
-            id: "1",
-            latestFetchedBlock: {
-              blockNumber: 2,
-              blockTimestamp: 0,
-            },
-            selection: fetchState.normalSelection,
-            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
-            mergeBlock: Some(9),
-            dynamicContract: Some("Gravatar"),
-            mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1])]),
+          mergeBlock: Some(9),
+          dynamicContract: Some("Gravatar"),
+          mutPendingQueries: [],
+          prevQueryRange: 0,
+          prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
+        },
+        {
+          id: "2",
+          latestFetchedBlock: {
+            blockNumber: 2,
+            blockTimestamp: 0,
           },
-          {
-            id: "2",
-            latestFetchedBlock: {
-              blockNumber: 2,
-              blockTimestamp: 0,
-            },
-            mergeBlock: Some(4),
-            selection: fetchState.normalSelection,
-            addressesByContractName: Js.Dict.fromArray([
-              ("SimpleNft", [mockAddress2, mockAddress3]),
-            ]),
-            dynamicContract: Some("SimpleNft"),
-            mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+          mergeBlock: Some(4),
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("SimpleNft", [mockAddress2, mockAddress3])]),
+          dynamicContract: Some("SimpleNft"),
+          mutPendingQueries: [],
+          prevQueryRange: 0,
+          prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
+        },
+        {
+          id: "3",
+          latestFetchedBlock: {
+            blockNumber: 4,
+            blockTimestamp: 0,
           },
-          {
-            id: "3",
-            latestFetchedBlock: {
-              blockNumber: 4,
-              blockTimestamp: 0,
-            },
-            selection: fetchState.normalSelection,
-            addressesByContractName: Js.Dict.fromArray([
-              ("SimpleNft", [mockAddress4, mockAddress2, mockAddress3]),
-            ]),
-            mergeBlock: None,
-            dynamicContract: Some("SimpleNft"),
-            mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([
+            ("SimpleNft", [mockAddress4, mockAddress2, mockAddress3]),
+          ]),
+          mergeBlock: None,
+          dynamicContract: Some("SimpleNft"),
+          mutPendingQueries: [],
+          prevQueryRange: 0,
+          prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
+        },
+        {
+          id: "4",
+          latestFetchedBlock: {
+            blockNumber: 5,
+            blockTimestamp: 0,
           },
-          {
-            id: "4",
-            latestFetchedBlock: {
-              blockNumber: 5,
-              blockTimestamp: 0,
-            },
-            selection: fetchState.normalSelection,
-            addressesByContractName: Js.Dict.fromArray([("NftFactory", [mockAddress5])]),
-            mergeBlock: None,
-            dynamicContract: Some("NftFactory"),
-            mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
-          },
-        ])
+          selection: fetchState.normalSelection,
+          addressesByContractName: Js.Dict.fromArray([("NftFactory", [mockAddress5])]),
+          mergeBlock: None,
+          dynamicContract: Some("NftFactory"),
+          mutPendingQueries: [],
+          prevQueryRange: 0,
+          prevPrevQueryRange: 0,
+          latestBlockRangeUpdateBlock: 0,
+        },
+      ])
     },
   )
 
@@ -1162,28 +1151,28 @@ describe("FetchState.registerDynamicContracts", () => {
       updatedFetchState.optimizedPartitions.entities->Js.Dict.values,
       ~message="Adds dc and optimizes partitions",
     ).toEqual([
-        {
-          ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          dynamicContract: Some("Gravatar"),
-          mergeBlock: Some(9),
+      {
+        ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
+        addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+        dynamicContract: Some("Gravatar"),
+        mergeBlock: Some(9),
+      },
+      {
+        id: "1",
+        latestFetchedBlock: {
+          blockNumber: 9,
+          blockTimestamp: 0,
         },
-        {
-          id: "1",
-          latestFetchedBlock: {
-            blockNumber: 9,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
-          mergeBlock: None,
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-      ])
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress0])]),
+        mergeBlock: None,
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+    ])
   })
 
   it("All dcs are grouped in a single partition, but don't merged with an existing one", t => {
@@ -1209,46 +1198,46 @@ describe("FetchState.registerDynamicContracts", () => {
       [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
     t.expect(updatedFetchState.indexingContracts->Utils.Dict.size).toBe(4)
     t.expect(updatedFetchState.optimizedPartitions.entities->Js.Dict.values).toEqual([
-        {
-          ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          dynamicContract: Some("Gravatar"),
-          mergeBlock: Some(1),
+      {
+        ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
+        addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+        dynamicContract: Some("Gravatar"),
+        mergeBlock: Some(1),
+      },
+      {
+        id: "1",
+        latestFetchedBlock: {
+          blockNumber: 1,
+          blockTimestamp: 0,
         },
-        {
-          id: "1",
-          latestFetchedBlock: {
-            blockNumber: 1,
-            blockTimestamp: 0,
-          },
-          mergeBlock: None,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([
-            ("Gravatar", [mockAddress1, mockAddress2, mockAddress0]),
-          ]),
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
+        mergeBlock: None,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([
+          ("Gravatar", [mockAddress1, mockAddress2, mockAddress0]),
+        ]),
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+      {
+        id: "2",
+        latestFetchedBlock: {
+          blockNumber: 299_999,
+          blockTimestamp: 0,
         },
-        {
-          id: "2",
-          latestFetchedBlock: {
-            blockNumber: 299_999,
-            blockTimestamp: 0,
-          },
-          mergeBlock: None,
-          selection: fetchState.normalSelection,
-          // The partition is too far, so we don't merge addresses from the prev partition too early
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-      ])
+        mergeBlock: None,
+        selection: fetchState.normalSelection,
+        // The partition is too far, so we don't merge addresses from the prev partition too early
+        addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+    ])
   })
 
   it(
@@ -1305,67 +1294,67 @@ describe("FetchState.registerDynamicContracts", () => {
         fetchState,
         ~message=`The static addresses for the Gravatar contract should be skipped, since they don't have non-wildcard event configs`,
       ).toEqual({
-          optimizedPartitions: FetchState.OptimizedPartitions.make(
-            ~partitions=[
-              {
-                id: "0",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: {
-                  dependsOnAddresses: false,
-                  // Even though normal2 is also a wildcard event
-                  // it should be a part of the normal selection
-                  eventConfigs: [wildcard1, wildcard2],
-                },
-                addressesByContractName: Js.Dict.empty(),
-                mergeBlock: None,
-                dynamicContract: None,
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+        optimizedPartitions: FetchState.OptimizedPartitions.make(
+          ~partitions=[
+            {
+              id: "0",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
               },
-              {
-                id: "1",
-                latestFetchedBlock: {
-                  blockNumber: -1,
-                  blockTimestamp: 0,
-                },
-                selection: {
-                  dependsOnAddresses: true,
-                  eventConfigs: [normal1, normal2],
-                },
-                addressesByContractName: Js.Dict.fromArray([
-                  ("NftFactory", [mockAddress0, mockAddress1, mockAddress5]),
-                ]),
-                mergeBlock: None,
-                dynamicContract: Some("NftFactory"),
-                mutPendingQueries: [],
-                prevQueryRange: 0,
-                prevPrevQueryRange: 0,
-                latestBlockRangeUpdateBlock: 0,
+              selection: {
+                dependsOnAddresses: false,
+                // Even though normal2 is also a wildcard event
+                // it should be a part of the normal selection
+                eventConfigs: [wildcard1, wildcard2],
               },
-            ],
-            ~nextPartitionIndex=2,
-            ~maxAddrInPartition=1000,
-            ~dynamicContracts=Utils.Set.fromArray(["NftFactory"]),
-          ),
-          startBlock: 0,
-          endBlock: undefined,
-          latestOnBlockBlockNumber: -1,
-          targetBufferSize,
-          buffer: [],
-          normalSelection: fetchState.normalSelection,
-          chainId,
-          indexingContracts: fetchState.indexingContracts,
-          contractConfigs: fetchState.contractConfigs,
-          blockLag: 0,
-          onBlockConfigs: [],
-          knownHeight,
-          firstEventBlock: None,
-        })
+              addressesByContractName: Js.Dict.empty(),
+              mergeBlock: None,
+              dynamicContract: None,
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+            {
+              id: "1",
+              latestFetchedBlock: {
+                blockNumber: -1,
+                blockTimestamp: 0,
+              },
+              selection: {
+                dependsOnAddresses: true,
+                eventConfigs: [normal1, normal2],
+              },
+              addressesByContractName: Js.Dict.fromArray([
+                ("NftFactory", [mockAddress0, mockAddress1, mockAddress5]),
+              ]),
+              mergeBlock: None,
+              dynamicContract: Some("NftFactory"),
+              mutPendingQueries: [],
+              prevQueryRange: 0,
+              prevPrevQueryRange: 0,
+              latestBlockRangeUpdateBlock: 0,
+            },
+          ],
+          ~nextPartitionIndex=2,
+          ~maxAddrInPartition=1000,
+          ~dynamicContracts=Utils.Set.fromArray(["NftFactory"]),
+        ),
+        startBlock: 0,
+        endBlock: undefined,
+        latestOnBlockBlockNumber: -1,
+        targetBufferSize,
+        buffer: [],
+        normalSelection: fetchState.normalSelection,
+        chainId,
+        indexingContracts: fetchState.indexingContracts,
+        contractConfigs: fetchState.contractConfigs,
+        blockLag: 0,
+        onBlockConfigs: [],
+        knownHeight,
+        firstEventBlock: None,
+      })
     },
   )
 })
@@ -1506,7 +1495,8 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let nextQuery = fetchState->getNextQuery
 
-    t.expect(nextQuery).toEqual(Ready([
+    t.expect(nextQuery).toEqual(
+      Ready([
         {
           partitionId: "0",
           fromBlock: 0,
@@ -1516,7 +1506,8 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchState.indexingContracts,
           isChunk: false,
         },
-      ]))
+      ]),
+    )
 
     let query = switch nextQuery {
     | Ready([q]) => q
@@ -1529,20 +1520,19 @@ describe("FetchState.getNextQuery & integration", () => {
       (fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0")).mutPendingQueries,
       ~message="The startFetchingQueries should mutate mutPendingQueries",
     ).toEqual([
-        {
-          fromBlock: 0,
-          toBlock: None,
-          isChunk: false,
-          fetchedBlock: None,
-        },
-      ])
+      {
+        fromBlock: 0,
+        toBlock: None,
+        isChunk: false,
+        fetchedBlock: None,
+      },
+    ])
 
     let repeatedNextQuery = fetchState->getNextQuery
 
-    t.expect(
-      repeatedNextQuery,
-      ~message="Shouldn't double fetch the same partition",
-    ).toEqual(NothingToQuery)
+    t.expect(repeatedNextQuery, ~message="Shouldn't double fetch the same partition").toEqual(
+      NothingToQuery,
+    )
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
       ~query,
@@ -1553,15 +1543,13 @@ describe("FetchState.getNextQuery & integration", () => {
       ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
     )
 
-    t.expect(
-      updatedFetchState,
-      ~message="Should be equal to the initial state",
-    ).toEqual(makeAfterFirstStaticAddressesQuery())
+    t.expect(updatedFetchState, ~message="Should be equal to the initial state").toEqual(
+      makeAfterFirstStaticAddressesQuery(),
+    )
 
-    t.expect(
-      updatedFetchState->getNextQuery,
-      ~message="Should wait for new block",
-    ).toEqual(WaitingForNewBlock)
+    t.expect(updatedFetchState->getNextQuery, ~message="Should wait for new block").toEqual(
+      WaitingForNewBlock,
+    )
     t.expect(updatedFetchState->getNextQuery(~concurrencyLimit=0)).toEqual(ReachedMaxConcurrency)
     t.expect(
       updatedFetchState->getNextQuery(~endBlock=Some(11)),
@@ -1607,10 +1595,8 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(WaitingForNewBlock)
 
     let nextQuery = fetchState->getNextQuery(~endBlock=Some(8), ~knownHeight=10)
-    t.expect(
-      nextQuery,
-      ~message="No block lag when we are close to the end block",
-    ).toEqual(Ready([
+    t.expect(nextQuery, ~message="No block lag when we are close to the end block").toEqual(
+      Ready([
         {
           partitionId: "0",
           toBlock: Some(8),
@@ -1620,13 +1606,15 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchState.indexingContracts,
           isChunk: false,
         },
-      ]))
+      ]),
+    )
 
     let nextQuery = fetchState->getNextQuery(~endBlock=Some(10), ~knownHeight=10)
     t.expect(
       nextQuery,
       ~message="Should apply block lag even when there's an upcoming end block",
-    ).toEqual(Ready([
+    ).toEqual(
+      Ready([
         {
           partitionId: "0",
           toBlock: Some(8),
@@ -1636,7 +1624,8 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchState.indexingContracts,
           isChunk: false,
         },
-      ]))
+      ]),
+    )
 
     let query = switch nextQuery {
     | Ready([q]) => q
@@ -1646,10 +1635,9 @@ describe("FetchState.getNextQuery & integration", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
 
     let repeatedNextQuery = fetchState->getNextQuery
-    t.expect(
-      repeatedNextQuery,
-      ~message="Shouldn't double fetch the same partition",
-    ).toEqual(NothingToQuery)
+    t.expect(repeatedNextQuery, ~message="Shouldn't double fetch the same partition").toEqual(
+      NothingToQuery,
+    )
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
       ~query,
@@ -1676,50 +1664,51 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateWithDcs.optimizedPartitions.entities->Js.Dict.values,
       ~message="Assert internal representation of the fetch state",
     ).toEqual([
-        {
-          ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
-          dynamicContract: Some("Gravatar"),
-          addressesByContractName: Js.Dict.fromArray([
-            ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
-          ]),
+      {
+        ...fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet("0"),
+        dynamicContract: Some("Gravatar"),
+        addressesByContractName: Js.Dict.fromArray([
+          ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+        ]),
+      },
+      {
+        id: "1",
+        latestFetchedBlock: {
+          blockNumber: 0,
+          blockTimestamp: 0,
         },
-        {
-          id: "1",
-          latestFetchedBlock: {
-            blockNumber: 0,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
-          mergeBlock: Some(10),
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress1, mockAddress2])]),
+        mergeBlock: Some(10),
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+      // Creates a new partition for this without merging, since 0 is full and 1 has mergeBlock
+      {
+        FetchState.id: "2",
+        latestFetchedBlock: {
+          blockNumber: 1,
+          blockTimestamp: 0,
         },
-        // Creates a new partition for this without merging, since 0 is full and 1 has mergeBlock
-        {
-          FetchState.id: "2",
-          latestFetchedBlock: {
-            blockNumber: 1,
-            blockTimestamp: 0,
-          },
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-          mergeBlock: None,
-          dynamicContract: Some("Gravatar"),
-          mutPendingQueries: [],
-          prevQueryRange: 0,
-          prevPrevQueryRange: 0,
-          latestBlockRangeUpdateBlock: 0,
-        },
-      ])
+        selection: fetchState.normalSelection,
+        addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
+        mergeBlock: None,
+        dynamicContract: Some("Gravatar"),
+        mutPendingQueries: [],
+        prevQueryRange: 0,
+        prevPrevQueryRange: 0,
+        latestBlockRangeUpdateBlock: 0,
+      },
+    ])
 
     t.expect(
       fetchStateWithDcs->getNextQuery,
       ~message="Merge DC partition into the later one + query other partitions in parallel",
-    ).toEqual(Ready([
+    ).toEqual(
+      Ready([
         {
           partitionId: "1",
           toBlock: Some(10),
@@ -1739,7 +1728,8 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: fetchStateWithDcs.indexingContracts,
         },
         // Partition 0 is not included since it's below knownHeight
-      ]))
+      ]),
+    )
 
     let queries = switch fetchStateWithDcs->getNextQuery {
     | Ready(queries) => queries
@@ -1771,10 +1761,9 @@ describe("FetchState.getNextQuery & integration", () => {
         ~newItems=[],
       )
 
-    t.expect(
-      updatedFetchState,
-      ~message="Should be equal to intermidiate state",
-    ).toEqual(makeIntermidiateDcMerge())
+    t.expect(updatedFetchState, ~message="Should be equal to intermidiate state").toEqual(
+      makeIntermidiateDcMerge(),
+    )
 
     let expectedPartition2Query: FetchState.query = {
       partitionId: "2",
@@ -1832,7 +1821,8 @@ describe("FetchState.getNextQuery & integration", () => {
     t.expect(
       originalFetchState->getNextQuery(~knownHeight=11),
       ~message="Until we optimize partitions - on handle query, we don't need to merge partitions",
-    ).toEqual(Ready([
+    ).toEqual(
+      Ready([
         {
           partitionId: "2",
           toBlock: None,
@@ -1853,7 +1843,8 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: originalFetchState.indexingContracts,
           isChunk: false,
         },
-      ]))
+      ]),
+    )
 
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 4
@@ -1861,7 +1852,8 @@ describe("FetchState.getNextQuery & integration", () => {
     t.expect(
       fetchState->getNextQuery,
       ~message="Although, if we pass it through partition optimization, it should merge partitions now",
-    ).toEqual(Ready([
+    ).toEqual(
+      Ready([
         {
           partitionId: "2",
           toBlock: Some(10),
@@ -1882,7 +1874,8 @@ describe("FetchState.getNextQuery & integration", () => {
           indexingContracts: originalFetchState.indexingContracts,
           isChunk: false,
         },
-      ]))
+      ]),
+    )
 
     let queries = switch fetchState->getNextQuery {
     | Ready(queries) => queries
@@ -1910,13 +1903,13 @@ describe("FetchState.getNextQuery & integration", () => {
       ),
       ~message="The buffer block should be the latest fetched block",
     ).toEqual((
-        {
-          blockNumber: 9,
-          blockTimestamp: 9,
-        },
-        ["2", "0"],
-        4,
-      ))
+      {
+        blockNumber: 9,
+        blockTimestamp: 9,
+      },
+      ["2", "0"],
+      4,
+    ))
 
     t.expect(
       fetchStateWithResponse1->getNextQuery(~targetBufferSize=1),
@@ -1943,39 +1936,39 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateWithResponse2,
       ~message="Partition 2 should come to mergeBlock and be removed",
     ).toEqual({
-        ...fetchStateWithResponse1,
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [
-                {
-                  fromBlock: 11,
-                  toBlock: None,
-                  isChunk: false,
-                  fetchedBlock: None,
-                },
-              ],
-              prevQueryRange: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
-              latestFetchedBlock: {
-                blockNumber: 10,
-                blockTimestamp: 10,
+      ...fetchStateWithResponse1,
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [
+              {
+                fromBlock: 11,
+                toBlock: None,
+                isChunk: false,
+                fetchedBlock: None,
               },
-              selection: fetchState.normalSelection,
-              addressesByContractName: Js.Dict.fromArray([
-                ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
-              ]),
-              mergeBlock: None,
+            ],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            latestFetchedBlock: {
+              blockNumber: 10,
+              blockTimestamp: 10,
             },
-          ],
-          ~nextPartitionIndex=fetchStateWithResponse1.optimizedPartitions.nextPartitionIndex,
-          ~maxAddrInPartition=fetchStateWithResponse1.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchStateWithResponse1.optimizedPartitions.dynamicContracts,
-        ),
-      })
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([
+              ("Gravatar", [mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
+            ]),
+            mergeBlock: None,
+          },
+        ],
+        ~nextPartitionIndex=fetchStateWithResponse1.optimizedPartitions.nextPartitionIndex,
+        ~maxAddrInPartition=fetchStateWithResponse1.optimizedPartitions.maxAddrInPartition,
+        ~dynamicContracts=fetchStateWithResponse1.optimizedPartitions.dynamicContracts,
+      ),
+    })
   })
 
   it("Wildcard partition never merges to another one", t => {
@@ -2011,7 +2004,8 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Wildcard partition "0" is untouched.
       Partitions "1" and "2" split in optimized way for further dynamic contract registrations.
       All queries performed in parallel without locking.`,
-    ).toEqual(Ready([
+    ).toEqual(
+      Ready([
         {
           partitionId: "0",
           fromBlock: 0,
@@ -2042,7 +2036,8 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress2])]),
           indexingContracts: fetchState.indexingContracts,
         },
-      ]))
+      ]),
+    )
   })
 
   it("Correctly rollbacks fetch state", t => {
@@ -2056,47 +2051,47 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback1,
       ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
     ).toEqual({
-        ...fetchState,
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: {
-                blockNumber: 2,
-                blockTimestamp: 0,
-              },
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
-              mergeBlock: None,
+      ...fetchState,
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {
+              blockNumber: 2,
+              blockTimestamp: 0,
             },
-            {
-              id: "1",
-              latestFetchedBlock: {
-                blockNumber: 2,
-                blockTimestamp: 0,
-              },
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              addressesByContractName: Js.Dict.fromArray([
-                ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
-              ]),
-              mergeBlock: None,
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress3])]),
+            mergeBlock: None,
+          },
+          {
+            id: "1",
+            latestFetchedBlock: {
+              blockNumber: 2,
+              blockTimestamp: 0,
             },
-          ],
-          ~nextPartitionIndex=2,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-        ),
-      })
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([
+              ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+            ]),
+            mergeBlock: None,
+          },
+        ],
+        ~nextPartitionIndex=2,
+        ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+        ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+      ),
+    })
 
     // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
     // Both partitions deleted (lfb > 1), surviving addresses [addr0, addr1] recreated
@@ -2105,38 +2100,38 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback2,
       ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
     ).toEqual({
-        ...fetchState,
-        indexingContracts: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: {
-                blockNumber: 1,
-                blockTimestamp: 0,
-              },
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
-              addressesByContractName: Js.Dict.fromArray([
-                ("Gravatar", [mockAddress0, mockAddress1]),
-              ]),
-              mergeBlock: None,
+      ...fetchState,
+      indexingContracts: makeIndexingContractsWithDynamics([dc1], ~static=[mockAddress0]),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {
+              blockNumber: 1,
+              blockTimestamp: 0,
             },
-            // Removed partition "2"
-          ],
-          ~nextPartitionIndex=1,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-        ),
-        // Removed an item here
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            selection: fetchState.normalSelection,
+            // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
+            addressesByContractName: Js.Dict.fromArray([
+              ("Gravatar", [mockAddress0, mockAddress1]),
+            ]),
+            mergeBlock: None,
+          },
+          // Removed partition "2"
+        ],
+        ~nextPartitionIndex=1,
+        ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+        ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+      ),
+      // Removed an item here
 
-        buffer: [mockEvent(~blockNumber=1)],
-      })
+      buffer: [mockEvent(~blockNumber=1)],
+    })
 
     // Rollback to block -1: all DCs removed, only static addr0 survives
     let fetchStateAfterRollback3 = fetchState->FetchState.rollback(~targetBlockNumber=-1)
@@ -2144,32 +2139,32 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback3,
       ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
     ).toEqual({
-        ...fetchState,
-        indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: {
-                blockNumber: -1,
-                blockTimestamp: 0,
-              },
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-              mergeBlock: None,
+      ...fetchState,
+      indexingContracts: makeIndexingContractsWithDynamics([], ~static=[mockAddress0]),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {
+              blockNumber: -1,
+              blockTimestamp: 0,
             },
-          ],
-          ~nextPartitionIndex=1,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-        ),
-        buffer: [],
-      })
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            selection: fetchState.normalSelection,
+            addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+            mergeBlock: None,
+          },
+        ],
+        ~nextPartitionIndex=1,
+        ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+        ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+      ),
+      buffer: [],
+    })
   })
 
   it("Keeps wildcard partition on rollback", t => {
@@ -2229,36 +2224,36 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback,
       ~message=`Should keep Wildcard partition even if it's empty`,
     ).toEqual({
-        ...fetchState,
-        indexingContracts: Js.Dict.empty(),
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: {
-                blockNumber: -1,
-                blockTimestamp: 0,
-              },
-              dynamicContract: None,
-              mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
-              selection: {
-                dependsOnAddresses: false,
-                eventConfigs: wildcardEventConfigs,
-              },
-              addressesByContractName: Js.Dict.empty(),
-              mergeBlock: None,
+      ...fetchState,
+      indexingContracts: Js.Dict.empty(),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {
+              blockNumber: -1,
+              blockTimestamp: 0,
             },
-          ],
-          // IDs reset on rollback
-          ~nextPartitionIndex=1,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-        ),
-        buffer: [],
-      })
+            dynamicContract: None,
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            selection: {
+              dependsOnAddresses: false,
+              eventConfigs: wildcardEventConfigs,
+            },
+            addressesByContractName: Js.Dict.empty(),
+            mergeBlock: None,
+          },
+        ],
+        // IDs reset on rollback
+        ~nextPartitionIndex=1,
+        ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+        ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+      ),
+      buffer: [],
+    })
   })
 })
 
@@ -2333,18 +2328,15 @@ describe("FetchState unit tests for specific cases", () => {
       ~newItems=[mockEvent(~blockNumber=4, ~logIndex=1), mockEvent(~blockNumber=4, ~logIndex=1)],
     )
 
-    t.expect(
-      updatedFetchState.buffer,
-      ~message="Should merge events in correct order",
-    ).toEqual([
-        mockEvent(~blockNumber=1),
-        mockEvent(~blockNumber=2),
-        mockEvent(~blockNumber=3),
-        mockEvent(~blockNumber=4),
-        mockEvent(~blockNumber=4, ~logIndex=1),
-        mockEvent(~blockNumber=4, ~logIndex=1),
-        mockEvent(~blockNumber=4, ~logIndex=2),
-      ])
+    t.expect(updatedFetchState.buffer, ~message="Should merge events in correct order").toEqual([
+      mockEvent(~blockNumber=1),
+      mockEvent(~blockNumber=2),
+      mockEvent(~blockNumber=3),
+      mockEvent(~blockNumber=4),
+      mockEvent(~blockNumber=4, ~logIndex=1),
+      mockEvent(~blockNumber=4, ~logIndex=1),
+      mockEvent(~blockNumber=4, ~logIndex=2),
+    ])
   })
 
   it("Sorts newItems when source returns them unsorted", t => {
@@ -2380,11 +2372,11 @@ describe("FetchState unit tests for specific cases", () => {
       updatedFetchState.buffer,
       ~message="Queue must be sorted DESC by (blockNumber, logIndex) regardless of input order",
     ).toEqual([
-        mockEvent(~blockNumber=5, ~logIndex=0),
-        mockEvent(~blockNumber=5, ~logIndex=1),
-        mockEvent(~blockNumber=6, ~logIndex=0),
-        mockEvent(~blockNumber=6, ~logIndex=2),
-      ])
+      mockEvent(~blockNumber=5, ~logIndex=0),
+      mockEvent(~blockNumber=5, ~logIndex=1),
+      mockEvent(~blockNumber=6, ~logIndex=0),
+      mockEvent(~blockNumber=6, ~logIndex=2),
+    ])
   })
 
   it("Shouldn't wait for new block until all partitions reached the head", t => {
@@ -2450,7 +2442,8 @@ describe("FetchState unit tests for specific cases", () => {
       {...fetchState, knownHeight: 2}->FetchState.getNextQuery(~concurrencyLimit=10),
       ~message=`Should be possible to query wildcard partition,
       if it didn't reach max queue size limit`,
-    ).toEqual(Ready([
+    ).toEqual(
+      Ready([
         {
           partitionId: "0",
           fromBlock: 2,
@@ -2463,7 +2456,8 @@ describe("FetchState unit tests for specific cases", () => {
           addressesByContractName: Js.Dict.empty(),
           indexingContracts: fetchState.indexingContracts,
         },
-      ]))
+      ]),
+    )
     t.expect(
       {
         ...fetchState,
@@ -2478,12 +2472,14 @@ describe("FetchState unit tests for specific cases", () => {
   it("Allows to get event one block earlier than the dc registring event", t => {
     let fetchState = makeInitial(~knownHeight=10)
 
-    t.expect(fetchState->getEarliestEvent).toEqual(NoItem({
+    t.expect(fetchState->getEarliestEvent).toEqual(
+      NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
           blockTimestamp: 0,
         },
-      }))
+      }),
+    )
 
     let registeringBlockNumber = 3
 
@@ -2509,7 +2505,9 @@ describe("FetchState unit tests for specific cases", () => {
         ~latestFetchedBlock=getBlockData(~blockNumber=10),
       )
 
-    t.expect(fetchStateWithEvents->getEarliestEvent->getItem).toEqual(Some(mockEvent(~blockNumber=2, ~logIndex=1)))
+    t.expect(fetchStateWithEvents->getEarliestEvent->getItem).toEqual(
+      Some(mockEvent(~blockNumber=2, ~logIndex=1)),
+    )
 
     let fetchStateWithDc =
       fetchStateWithEvents->FetchState.registerDynamicContracts([
@@ -2542,12 +2540,14 @@ describe("FetchState unit tests for specific cases", () => {
       ~knownHeight,
     )
 
-    t.expect(fetchState->getEarliestEvent).toEqual(NoItem({
+    t.expect(fetchState->getEarliestEvent).toEqual(
+      NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
           blockTimestamp: 0,
         },
-      }))
+      }),
+    )
 
     let query: FetchState.query = {
       partitionId: "0",
@@ -2566,12 +2566,14 @@ describe("FetchState unit tests for specific cases", () => {
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
       )
 
-    t.expect(updatedFetchState->getEarliestEvent).toEqual(NoItem({
+    t.expect(updatedFetchState->getEarliestEvent).toEqual(
+      NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
           blockTimestamp: 0,
         },
-      }))
+      }),
+    )
   })
 
   it("Get earliest event", t => {
@@ -2618,7 +2620,9 @@ describe("FetchState unit tests for specific cases", () => {
       ~knownHeight=10,
     )
 
-    t.expect(fetchState->getEarliestEvent->getItem).toEqual(Some(mockEvent(~blockNumber=2, ~logIndex=1)))
+    t.expect(fetchState->getEarliestEvent->getItem).toEqual(
+      Some(mockEvent(~blockNumber=2, ~logIndex=1)),
+    )
 
     t.expect(
       fetchState
@@ -2627,12 +2631,14 @@ describe("FetchState unit tests for specific cases", () => {
       ])
       ->getEarliestEvent,
       ~message=`Accounts for registered dynamic contracts`,
-    ).toEqual(NoItem({
+    ).toEqual(
+      NoItem({
         latestFetchedBlock: {
           blockNumber: 1,
           blockTimestamp: 0,
         },
-      }))
+      }),
+    )
   })
 
   it("isActively indexing", t => {
@@ -2725,19 +2731,19 @@ describe("FetchState unit tests for specific cases", () => {
       }
 
       t.expect(queries).toEqual([
-          {
-            ...queries->Array.getUnsafe(0),
-            partitionId: "1",
-            toBlock: Some(500),
-            fromBlock: 100,
-          },
-          {
-            ...queries->Array.getUnsafe(1),
-            partitionId: "0",
-            fromBlock: 501,
-            toBlock: None,
-          },
-        ])
+        {
+          ...queries->Array.getUnsafe(0),
+          partitionId: "1",
+          toBlock: Some(500),
+          fromBlock: 100,
+        },
+        {
+          ...queries->Array.getUnsafe(1),
+          partitionId: "0",
+          fromBlock: 501,
+          toBlock: None,
+        },
+      ])
 
       let queryA = queries->Array.getUnsafe(0)
 
@@ -2777,7 +2783,8 @@ describe("FetchState unit tests for specific cases", () => {
       t.expect(
         fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(~concurrencyLimit=10),
         ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
-      ).toEqual(Ready([
+      ).toEqual(
+        Ready([
           partition2Query,
           {
             ...queryA,
@@ -2787,7 +2794,8 @@ describe("FetchState unit tests for specific cases", () => {
             fromBlock: 401,
           },
           queries->Array.getUnsafe(1),
-        ]))
+        ]),
+      )
     },
   )
 })
@@ -2810,11 +2818,12 @@ describe("FetchState.sortForUnorderedBatch", () => {
     let fs0 = makeInitial(~knownHeight=10)
     let query = mkQuery(fs0)
     fs0->FetchState.startFetchingQueries(~queries=[query])
-    let fs = fs0->FetchState.handleQueryResult(
-      ~query,
-      ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
-      ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
-    )
+    let fs =
+      fs0->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+        ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
+      )
     {...fs, firstEventBlock: Some(0)}
   }
 
@@ -2826,12 +2835,11 @@ describe("FetchState.sortForUnorderedBatch", () => {
     // High progress: first item at block 8, knownHeight=10 → 80% progress
     let fsHigh = makeFsWith(~latestBlock=10, ~queueBlocks=[8])
 
-    let prepared = FetchState.sortForUnorderedBatch(
-      [fsHigh, fsLow, fsMid],
-      ~batchSizeTarget=3,
-    )
+    let prepared = FetchState.sortForUnorderedBatch([fsHigh, fsLow, fsMid], ~batchSizeTarget=3)
 
-    t.expect(prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber)).toEqual([1, 5, 8])
+    t.expect(
+      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+    ).toEqual([1, 5, 8])
   })
 
   it("Prioritizes full batches over half full ones", t => {
@@ -2845,7 +2853,9 @@ describe("FetchState.sortForUnorderedBatch", () => {
       ~batchSizeTarget=2,
     )
 
-    t.expect(prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber)).toEqual([7, 1])
+    t.expect(
+      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+    ).toEqual([7, 1])
   })
 
   it("Treats exactly-full batches as full", t => {
@@ -2860,7 +2870,9 @@ describe("FetchState.sortForUnorderedBatch", () => {
     )
 
     // Full batch should take priority regardless of earlier timestamp of half batch
-    t.expect(prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber)).toEqual([2, 1])
+    t.expect(
+      prepared->Array.map(fs => fs.buffer->Belt.Array.getUnsafe(0)->Internal.getItemBlockNumber),
+    ).toEqual([2, 1])
   })
 })
 
@@ -3056,9 +3068,12 @@ describe("Dynamic contracts with start blocks", () => {
       fetchState->FetchState.registerDynamicContracts([dynamicContract->dcToItem])
 
     // The contract should be registered in indexingContracts
-    t.expect(updatedFetchState.indexingContracts
+    t.expect(
+      updatedFetchState.indexingContracts
       ->Js.Dict.get(mockAddress1->Address.toString)
-      ->Option.isSome, ~message="Dynamic contract should be registered in indexingContracts").toBeTruthy()
+      ->Option.isSome,
+      ~message="Dynamic contract should be registered in indexingContracts",
+    ).toBeTruthy()
 
     // Verify the startBlock is set correctly
     let registeredContract =
@@ -3103,15 +3118,13 @@ describe("Dynamic contracts with start blocks", () => {
       ->Js.Dict.get(mockAddress2->Address.toString)
       ->Option.getExn
 
-    t.expect(
-      contract1Registered.startBlock,
-      ~message="Contract1 should have startBlock=150",
-    ).toBe(150)
+    t.expect(contract1Registered.startBlock, ~message="Contract1 should have startBlock=150").toBe(
+      150,
+    )
 
-    t.expect(
-      contract2Registered.startBlock,
-      ~message="Contract2 should have startBlock=300",
-    ).toBe(300)
+    t.expect(contract2Registered.startBlock, ~message="Contract2 should have startBlock=300").toBe(
+      300,
+    )
   })
 })
 
@@ -3277,10 +3290,7 @@ describe("FetchState buffer overflow prevention", () => {
 
       switch fetchStateSmallQueue->FetchState.getNextQuery(~concurrencyLimit=10) {
       | Ready([q]) =>
-        t.expect(
-          q.toBlock,
-          ~message="Should use None when buffer is not limited",
-        ).toBe(None)
+        t.expect(q.toBlock, ~message="Should use None when buffer is not limited").toBe(None)
       | _ => Js.Exn.raiseError("Expected Ready query")
       }
     },
@@ -3327,18 +3337,11 @@ describe("FetchState with onBlockConfig only (no events)", () => {
         fetchState.optimizedPartitions.idsInAscOrder,
         ~message="Partitions should be empty when there are no event configs",
       ).toEqual([])
-      t.expect(
-        fetchState.buffer,
-        ~message="Buffer should be empty initially",
-      ).toEqual([])
-      t.expect(
-        fetchState.knownHeight,
-        ~message="knownHeight should be 0 initially",
-      ).toBe(0)
-      t.expect(
-        fetchState.onBlockConfigs,
-        ~message="onBlockConfigs should be set",
-      ).toEqual([onBlockConfig])
+      t.expect(fetchState.buffer, ~message="Buffer should be empty initially").toEqual([])
+      t.expect(fetchState.knownHeight, ~message="knownHeight should be 0 initially").toBe(0)
+      t.expect(fetchState.onBlockConfigs, ~message="onBlockConfigs should be set").toEqual([
+        onBlockConfig,
+      ])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
       let nextQuery = fetchState->FetchState.getNextQuery(~concurrencyLimit=10)
@@ -3351,10 +3354,9 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       let updatedFetchState = fetchState->FetchState.updateKnownHeight(~knownHeight=20)
 
       // Verify buffer is now filled with block items
-      t.expect(
-        updatedFetchState.knownHeight,
-        ~message="knownHeight should be updated to 20",
-      ).toBe(20)
+      t.expect(updatedFetchState.knownHeight, ~message="knownHeight should be updated to 20").toBe(
+        20,
+      )
 
       // Buffer should contain block items for blocks 0-9 (interval=1, startBlock=0, up to targetBufferSize limit)
       // Since latestFullyFetchedBlock is initially -1 and there are no partitions
@@ -3369,10 +3371,19 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       let blockNumbers =
         updatedFetchState.buffer->Array.map(item => item->Internal.getItemBlockNumber)
 
-      t.expect(
-        blockNumbers,
-        ~message="Buffer should contain block items for blocks 0-10",
-      ).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+      t.expect(blockNumbers, ~message="Buffer should contain block items for blocks 0-10").toEqual([
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+      ])
 
       // Test that getNextQuery returns NothingToQuery (no partitions to query)
       let nextQuery2 = updatedFetchState->FetchState.getNextQuery(~concurrencyLimit=10)
@@ -3386,147 +3397,131 @@ describe("FetchState with onBlockConfig only (no events)", () => {
 
 describe("Stale query response should not overwrite block range", () => {
   // The default configuration with ability to overwrite some values
-  let getNextQuery = (
-    fs,
-    ~knownHeight=100000,
-    ~concurrencyLimit=10,
-  ) =>
+  let getNextQuery = (fs, ~knownHeight=100000, ~concurrencyLimit=10) =>
     fs
     ->FetchState.updateKnownHeight(~knownHeight)
     ->FetchState.getNextQuery(~concurrencyLimit)
 
-  it(
-    "Out-of-order parallel query responses should not degrade chunking heuristic",
-    t => {
-      let fetchState = makeInitial(~knownHeight=100000)
+  it("Out-of-order parallel query responses should not degrade chunking heuristic", t => {
+    let fetchState = makeInitial(~knownHeight=100000)
 
-      // -- Query 1: uncapped query from block 0 --
-      let q1 = switch fetchState->getNextQuery {
-      | Ready([q]) => q
-      | _ => Js.Exn.raiseError("Expected a single query")
-      }
-      fetchState->FetchState.startFetchingQueries(~queries=[q1])
+    // -- Query 1: uncapped query from block 0 --
+    let q1 = switch fetchState->getNextQuery {
+    | Ready([q]) => q
+    | _ => Js.Exn.raiseError("Expected a single query")
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[q1])
 
-      // Response arrives at block 500 (range = 501)
-      // shouldUpdateBlockRange: None toBlock => 500 < 100000 - 10 = true
-      let fs1 =
-        fetchState
-        ->FetchState.updateKnownHeight(~knownHeight=100000)
-        ->FetchState.handleQueryResult(
-          ~query=q1,
-          ~latestFetchedBlock={blockNumber: 500, blockTimestamp: 500 * 15},
-          ~newItems=[],
-        )
+    // Response arrives at block 500 (range = 501)
+    // shouldUpdateBlockRange: None toBlock => 500 < 100000 - 10 = true
+    let fs1 =
+      fetchState
+      ->FetchState.updateKnownHeight(~knownHeight=100000)
+      ->FetchState.handleQueryResult(
+        ~query=q1,
+        ~latestFetchedBlock={blockNumber: 500, blockTimestamp: 500 * 15},
+        ~newItems=[],
+      )
 
-      let p1 = fs1.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      t.expect(
-        p1.prevQueryRange,
-        ~message="First query should set prevQueryRange=501",
-      ).toBe(501)
-      t.expect(
-        p1.prevPrevQueryRange,
-        ~message="First query prevPrevQueryRange should still be 0",
-      ).toBe(0)
-      t.expect(
-        p1.latestBlockRangeUpdateBlock,
-        ~message="latestBlockRangeUpdateBlock should be 500 after first query",
-      ).toBe(500)
+    let p1 = fs1.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+    t.expect(p1.prevQueryRange, ~message="First query should set prevQueryRange=501").toBe(501)
+    t.expect(
+      p1.prevPrevQueryRange,
+      ~message="First query prevPrevQueryRange should still be 0",
+    ).toBe(0)
+    t.expect(
+      p1.latestBlockRangeUpdateBlock,
+      ~message="latestBlockRangeUpdateBlock should be 500 after first query",
+    ).toBe(500)
 
-      // -- Query 2: uncapped query from block 501 --
-      let q2 = switch fs1->getNextQuery {
-      | Ready([q]) => q
-      | _ => Js.Exn.raiseError("Expected a single query for second round")
-      }
-      fs1->FetchState.startFetchingQueries(~queries=[q2])
+    // -- Query 2: uncapped query from block 501 --
+    let q2 = switch fs1->getNextQuery {
+    | Ready([q]) => q
+    | _ => Js.Exn.raiseError("Expected a single query for second round")
+    }
+    fs1->FetchState.startFetchingQueries(~queries=[q2])
 
-      // Response arrives at block 1000 (range = 500)
-      // shouldUpdateBlockRange: None toBlock => 1000 < 99990 = true
-      let fs2 = fs1->FetchState.handleQueryResult(
+    // Response arrives at block 1000 (range = 500)
+    // shouldUpdateBlockRange: None toBlock => 1000 < 99990 = true
+    let fs2 =
+      fs1->FetchState.handleQueryResult(
         ~query=q2,
         ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000 * 15},
         ~newItems=[],
       )
 
-      let p2 = fs2.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      t.expect(
-        p2.prevQueryRange,
-        ~message="Second query should set prevQueryRange=500",
-      ).toBe(500)
-      t.expect(
-        p2.prevPrevQueryRange,
-        ~message="Second query should shift prevPrevQueryRange=501",
-      ).toBe(501)
-      t.expect(p2.latestBlockRangeUpdateBlock).toBe(1000)
+    let p2 = fs2.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+    t.expect(p2.prevQueryRange, ~message="Second query should set prevQueryRange=500").toBe(500)
+    t.expect(
+      p2.prevPrevQueryRange,
+      ~message="Second query should shift prevPrevQueryRange=501",
+    ).toBe(501)
+    t.expect(p2.latestBlockRangeUpdateBlock).toBe(1000)
 
-      // Now chunking is active: getMinHistoryRange = Some(min(500, 501)) = Some(500)
-      // chunkSize = ceil(500 * 1.8) = 900
-      // Chunks: [1001..1900] and [1901..2800]
+    // Now chunking is active: getMinHistoryRange = Some(min(500, 501)) = Some(500)
+    // chunkSize = ceil(500 * 1.8) = 900
+    // Chunks: [1001..1900] and [1901..2800]
 
-      // -- Query 3: get two chunk queries in parallel --
-      let (chunkA, chunkB) = switch fs2->getNextQuery(~concurrencyLimit=2) {
-      | Ready([a, b]) => (a, b)
-      | _ => Js.Exn.raiseError("Expected two chunk queries")
-      }
+    // -- Query 3: get two chunk queries in parallel --
+    let (chunkA, chunkB) = switch fs2->getNextQuery(~concurrencyLimit=2) {
+    | Ready([a, b]) => (a, b)
+    | _ => Js.Exn.raiseError("Expected two chunk queries")
+    }
 
-      t.expect(
-        chunkA.fromBlock,
-        ~message="Chunk A should start at 1001",
-      ).toBe(1001)
-      t.expect(
-        chunkB.fromBlock,
-        ~message="Chunk B should start at 1901",
-      ).toBe(1901)
+    t.expect(chunkA.fromBlock, ~message="Chunk A should start at 1001").toBe(1001)
+    t.expect(chunkB.fromBlock, ~message="Chunk B should start at 1901").toBe(1901)
 
-      fs2->FetchState.startFetchingQueries(~queries=[chunkA, chunkB])
+    fs2->FetchState.startFetchingQueries(~queries=[chunkA, chunkB])
 
-      // -- Respond to the LATER chunk (B) first --
-      // Partial response: latestFetchedBlock=2500 < toBlock=2800
-      // shouldUpdateBlockRange: 2500 > 1000 (latestBlockRangeUpdateBlock) = true,
-      //   then 2500 < 2800 = true (partial response)
-      // blockRange = 2500 - 1901 + 1 = 600
-      let fs3 = fs2->FetchState.handleQueryResult(
+    // -- Respond to the LATER chunk (B) first --
+    // Partial response: latestFetchedBlock=2500 < toBlock=2800
+    // shouldUpdateBlockRange: 2500 > 1000 (latestBlockRangeUpdateBlock) = true,
+    //   then 2500 < 2800 = true (partial response)
+    // blockRange = 2500 - 1901 + 1 = 600
+    let fs3 =
+      fs2->FetchState.handleQueryResult(
         ~query=chunkB,
         ~latestFetchedBlock={blockNumber: 2500, blockTimestamp: 2500 * 15},
         ~newItems=[],
       )
 
-      let p3 = fs3.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      t.expect(
-        p3.prevQueryRange,
-        ~message="Chunk B response should update prevQueryRange to 600",
-      ).toBe(600)
-      t.expect(
-        p3.prevPrevQueryRange,
-        ~message="Chunk B response should shift prevPrevQueryRange to 500",
-      ).toBe(500)
-      t.expect(
-        p3.latestBlockRangeUpdateBlock,
-        ~message="latestBlockRangeUpdateBlock should update to 2500",
-      ).toBe(2500)
+    let p3 = fs3.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+    t.expect(
+      p3.prevQueryRange,
+      ~message="Chunk B response should update prevQueryRange to 600",
+    ).toBe(600)
+    t.expect(
+      p3.prevPrevQueryRange,
+      ~message="Chunk B response should shift prevPrevQueryRange to 500",
+    ).toBe(500)
+    t.expect(
+      p3.latestBlockRangeUpdateBlock,
+      ~message="latestBlockRangeUpdateBlock should update to 2500",
+    ).toBe(2500)
 
-      // -- Now respond to the EARLIER chunk (A) --
-      // Partial response: latestFetchedBlock=1400 < toBlock=1900
-      // shouldUpdateBlockRange: 1400 > 2500 (latestBlockRangeUpdateBlock) = FALSE
-      // So prevQueryRange should NOT change
-      let fs4 = fs3->FetchState.handleQueryResult(
+    // -- Now respond to the EARLIER chunk (A) --
+    // Partial response: latestFetchedBlock=1400 < toBlock=1900
+    // shouldUpdateBlockRange: 1400 > 2500 (latestBlockRangeUpdateBlock) = FALSE
+    // So prevQueryRange should NOT change
+    let fs4 =
+      fs3->FetchState.handleQueryResult(
         ~query=chunkA,
         ~latestFetchedBlock={blockNumber: 1400, blockTimestamp: 1400 * 15},
         ~newItems=[],
       )
 
-      let p4 = fs4.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
-      t.expect(
-        p4.prevQueryRange,
-        ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 600)",
-      ).toBe(600)
-      t.expect(
-        p4.prevPrevQueryRange,
-        ~message="Earlier chunk A response should NOT overwrite prevPrevQueryRange (still 500)",
-      ).toBe(500)
-      t.expect(
-        p4.latestBlockRangeUpdateBlock,
-        ~message="latestBlockRangeUpdateBlock should remain 2500 after stale response",
-      ).toBe(2500)
-    },
-  )
+    let p4 = fs4.optimizedPartitions.entities->Js.Dict.unsafeGet("0")
+    t.expect(
+      p4.prevQueryRange,
+      ~message="Earlier chunk A response should NOT overwrite prevQueryRange (still 600)",
+    ).toBe(600)
+    t.expect(
+      p4.prevPrevQueryRange,
+      ~message="Earlier chunk A response should NOT overwrite prevPrevQueryRange (still 500)",
+    ).toBe(500)
+    t.expect(
+      p4.latestBlockRangeUpdateBlock,
+      ~message="latestBlockRangeUpdateBlock should remain 2500 after stale response",
+    ).toBe(2500)
+  })
 })

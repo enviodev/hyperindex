@@ -16,9 +16,7 @@ describe_skip("Rpc Test", () => {
       ~client,
     )
 
-    t.expect(
-      maybeBlock,
-    ).toEqual(
+    t.expect(maybeBlock).toEqual(
       Some({
         difficulty: Some(17171480576n),
         extraData: "0x476574682f76312e302e302f6c696e75782f676f312e342e32",
@@ -78,27 +76,22 @@ describe_skip("Rpc Test", () => {
       ~client,
     )
 
-    t.expect(
-      logs,
-      ~message="Should have 1 transfer logs",
-    ).toEqual(
-      [
-        {
-          address: "0xf57e7e7c23978c3caec3c3548e3d615c346e79ff"->Address.unsafeFromString,
-          blockHash: "0xd6b9a4d49a8ae1af5a13d2de596d0c045ec80b2cc41754ff09547521eca7bf66",
-          blockNumber: 20742567,
-          data: "0x000000000000000000000000000000000000000000000009c2007651b2500000",
-          logIndex: 125,
-          removed: false,
-          topics: [
-            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-            "0x00000000000000000000000074dec05e5b894b0efec69cdf6316971802a2f9a1",
-            "0x0000000000000000000000008eadea389180f8d21393d6c7e9a914b4bb23cbca",
-          ],
-          transactionHash: "0x32461781e65b36f321fb8c9532a2729d6e16026a8f5b242401ff9993ddc0bf27",
-          transactionIndex: 101,
-        },
-      ],
-    )
+    t.expect(logs, ~message="Should have 1 transfer logs").toEqual([
+      {
+        address: "0xf57e7e7c23978c3caec3c3548e3d615c346e79ff"->Address.unsafeFromString,
+        blockHash: "0xd6b9a4d49a8ae1af5a13d2de596d0c045ec80b2cc41754ff09547521eca7bf66",
+        blockNumber: 20742567,
+        data: "0x000000000000000000000000000000000000000000000009c2007651b2500000",
+        logIndex: 125,
+        removed: false,
+        topics: [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000074dec05e5b894b0efec69cdf6316971802a2f9a1",
+          "0x0000000000000000000000008eadea389180f8d21393d6c7e9a914b4bb23cbca",
+        ],
+        transactionHash: "0x32461781e65b36f321fb8c9532a2729d6e16026a8f5b242401ff9993ddc0bf27",
+        transactionIndex: 101,
+      },
+    ])
   })
 })

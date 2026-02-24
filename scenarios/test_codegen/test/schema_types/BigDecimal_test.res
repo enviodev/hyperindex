@@ -11,7 +11,6 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
   })
 
   Async.it("be able to set and read entities with BigDecimal from DB", async t => {
-
     let sql = PgStorage.makeClient()
     /// Setup DB
     let testEntity1: Indexer.Entities.EntityWithBigDecimal.t = {

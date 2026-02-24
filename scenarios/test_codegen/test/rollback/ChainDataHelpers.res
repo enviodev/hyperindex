@@ -14,23 +14,25 @@ let makeTransaction = (~transactionIndex, ~transactionHash) =>
 
 module Gravatar = {
   let contractName = "Gravatar"
-  let chainConfig = Indexer.Generated.makeGeneratedConfig().chainMap->ChainMap.get(MockConfig.chain1337)
+  let chainConfig =
+    Indexer.Generated.makeGeneratedConfig().chainMap->ChainMap.get(MockConfig.chain1337)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
 
-  let makeEventConstructorWithDefaultSrcAddress =
-    MockChainData.makeEventConstructor(
-      ~srcAddress=defaultAddress,
-      ~makeBlock,
-      ~makeTransaction,
-      ...
-    )
+  let makeEventConstructorWithDefaultSrcAddress = MockChainData.makeEventConstructor(
+    ~srcAddress=defaultAddress,
+    ~makeBlock,
+    ~makeTransaction,
+    ...
+  )
 
   module NewGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
         ~eventConfig=Indexer.Gravatar.NewGravatar.register(),
-        ~params=params->(Utils.magic: Indexer.Gravatar.NewGravatar.eventArgs => Internal.eventParams),
+        ~params=params->(
+          Utils.magic: Indexer.Gravatar.NewGravatar.eventArgs => Internal.eventParams
+        ),
         ...
       )
   }

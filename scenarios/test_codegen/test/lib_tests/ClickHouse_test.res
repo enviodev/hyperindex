@@ -42,10 +42,7 @@ describe("Test makeClickHouseEntitySchema", () => {
       ->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity)
       ->S.reverseConvertToJsonOrThrow(clickHouseSchema)
 
-    t.expect(
-      serialized,
-      ~message="Entity should be serialized with timestamps as numbers",
-    ).toEqual(
+    t.expect(serialized, ~message="Entity should be serialized with timestamps as numbers").toEqual(
       %raw(`{
           "id": "test-id",
           "string": "test",
@@ -136,10 +133,9 @@ ORDER BY (id)`
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`
 
-        t.expect(
-          query,
-          ~message="A entity history table SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="A entity history table SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
   })

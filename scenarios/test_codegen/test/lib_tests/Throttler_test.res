@@ -21,12 +21,10 @@ describe("Throttler", () => {
 
     // Should have a second call in 1 more millisecond. Wait 3 just in case
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=3)
-    t.expect(
-      actionsCalled,
-      ~message="Should have called latest scheduled fn after delay",
-    ).toEqual(
-      [1, 3],
-    )
+    t.expect(actionsCalled, ~message="Should have called latest scheduled fn after delay").toEqual([
+      1,
+      3,
+    ])
   })
 
   Async.it("Does not continuously increase schedule time", async t => {
@@ -40,9 +38,7 @@ describe("Throttler", () => {
     t.expect(
       actionsCalled,
       ~message="Scheduler should have been called straight after the initial interval",
-    ).toEqual(
-      [1, 2],
-    )
+    ).toEqual([1, 2])
   })
 
   Async.it("Does not run until previous task is finished", async t => {
@@ -67,18 +63,14 @@ describe("Throttler", () => {
     t.expect(
       actionsCalled,
       ~message="Second task has not executed even though passed interval",
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
 
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=5)
 
     t.expect(
       actionsCalled,
       ~message="Should have finished task one and execute task two immediately",
-    ).toEqual(
-      [1, 2],
-    )
+    ).toEqual([1, 2])
   })
 
   Async.it(
@@ -103,17 +95,13 @@ describe("Throttler", () => {
       t.expect(
         actionsCalled,
         ~message="First action finished, second action waiting for interval",
-      ).toEqual(
-        [1],
-      )
+      ).toEqual([1])
 
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=5)
       t.expect(
         actionsCalled,
         ~message="Second action should have been called after the interval as passed",
-      ).toEqual(
-        [1, 2],
-      )
+      ).toEqual([1, 2])
     },
   )
 })

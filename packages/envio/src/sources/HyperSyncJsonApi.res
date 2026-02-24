@@ -286,7 +286,10 @@ module ResponseTypes = {
     v: ?s.field("v", S.option(S.null(S.string))),
     r: ?s.field("r", S.option(S.null(S.string))),
     s: ?s.field("s", S.option(S.null(S.string))),
-    maxPriorityFeePerGas: ?s.field("max_priority_fee_per_gas", S.option(S.null(Utils.BigInt.schema))),
+    maxPriorityFeePerGas: ?s.field(
+      "max_priority_fee_per_gas",
+      S.option(S.null(Utils.BigInt.schema)),
+    ),
     maxFeePerGas: ?s.field("max_fee_per_gas", S.option(S.null(Utils.BigInt.schema))),
     chainId: ?s.field("chain_id", S.option(S.null(S.int))),
     cumulativeGasUsed: ?s.field("cumulative_gas_used", S.option(Utils.BigInt.schema)),

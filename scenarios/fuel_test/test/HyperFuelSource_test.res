@@ -35,9 +35,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     let getNormalRecieptsSelection = mock(~contracts=[])
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with no events", t => {
@@ -51,9 +49,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with single non-wildcard log event", t => {
@@ -83,16 +79,14 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          rb: [1n],
-          receiptType: [LogData],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        rb: [1n],
+        receiptType: [LogData],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+    ])
   })
 
   it(
@@ -138,20 +132,18 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       )
       t.expect(
         getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-      ).toEqual(
-        [
-          {
-            receiptType: [Transfer, TransferOut],
-            rootContractId: [address1, address2],
-            txStatus: [1],
-          },
-          {
-            receiptType: [Transfer, TransferOut],
-            rootContractId: [address3],
-            txStatus: [1],
-          },
-        ],
-      )
+      ).toEqual([
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+        {
+          receiptType: [Transfer, TransferOut],
+          rootContractId: [address3],
+          txStatus: [1],
+        },
+      ])
     },
   )
 
@@ -196,20 +188,18 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          receiptType: [Mint],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        receiptType: [Mint],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with non-wildcard burn event", t => {
@@ -253,20 +243,18 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Burn],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with all possible events together", t => {
@@ -392,32 +380,30 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
       ~message=`Note that non-wildcard events should be skipped`,
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint, Burn, Transfer, TransferOut],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          rb: [1n],
-          receiptType: [LogData],
-          rootContractId: [address1, address2],
-          txStatus: [1],
-        },
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-        {
-          rb: [3n],
-          receiptType: [LogData],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint, Burn, Transfer, TransferOut],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        rb: [1n],
+        receiptType: [LogData],
+        rootContractId: [address1, address2],
+        txStatus: [1],
+      },
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+      {
+        rb: [3n],
+        receiptType: [LogData],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Fails with non-wildcard Call event", t => {
@@ -445,9 +431,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           ],
         )
       },
-    ).toThrowError(
-      "Call receipt indexing currently supported only in wildcard mode",
-    )
+    ).toThrowError("Call receipt indexing currently supported only in wildcard mode")
   })
 
   it("Fails when contract has multiple mint events", t => {
@@ -487,9 +471,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           ],
         )
       },
-    ).toThrowError(
-      "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
-    )
+    ).toThrowError("Duplicate event detected: MyEvent2 for contract TestContract on chain 0")
   })
 
   it("Fails when contract has multiple burn events", t => {
@@ -529,9 +511,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
           ],
         )
       },
-    ).toThrowError(
-      "Duplicate event detected: MyEvent2 for contract TestContract on chain 0",
-    )
+    ).toThrowError("Duplicate event detected: MyEvent2 for contract TestContract on chain 0")
   })
 
   it(
@@ -572,15 +552,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
       )
       t.expect(
         getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-      ).toEqual(
-        [
-          {
-            receiptType: [Mint],
-            rootContractId: [address1, address2],
-            txStatus: [1],
-          },
-        ],
-      )
+      ).toEqual([
+        {
+          receiptType: [Mint],
+          rootContractId: [address1, address2],
+          txStatus: [1],
+        },
+      ])
     },
   )
 
@@ -625,15 +603,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
 
     // The same but with different event registration order
     let getNormalRecieptsSelection = mock(
@@ -676,15 +652,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Mint],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Works with wildcard burn and non-wildcard burn together in different contract", t => {
@@ -728,15 +702,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
 
     // The same but with different event registration order
     let getNormalRecieptsSelection = mock(
@@ -779,15 +751,13 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     )
     t.expect(
       getNormalRecieptsSelection(~addressesByContractName=mockAddressesByContractName()),
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          rootContractId: [address3],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Burn],
+        rootContractId: [address3],
+        txStatus: [1],
+      },
+    ])
   })
 })
 
@@ -817,9 +787,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     t.expect(
       wildcardReceiptsSelection,
       ~message=`It should never happen, since the partition like this wouldn't exist`,
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with no events", t => {
@@ -834,9 +802,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     t.expect(
       wildcardReceiptsSelection,
       ~message=`It should never happen, since the partition like this wouldn't exist`,
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
   })
 
   it("Receipts Selection with all possible events together", t => {
@@ -962,19 +928,17 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     t.expect(
       wildcardReceiptsSelection,
       ~message=`Note that wildcard events should be skipped`,
-    ).toEqual(
-      [
-        {
-          receiptType: [Call],
-          txStatus: [1],
-        },
-        {
-          rb: [2n],
-          receiptType: [LogData],
-          txStatus: [1],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        receiptType: [Call],
+        txStatus: [1],
+      },
+      {
+        rb: [2n],
+        receiptType: [LogData],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Works with wildcard mint and non-wildcard mint together in different contract", t => {
@@ -1016,16 +980,12 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        receiptType: [Mint],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with wildcard mint event", t => {
@@ -1050,16 +1010,12 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          receiptType: [Mint],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        receiptType: [Mint],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with wildcard burn event", t => {
@@ -1084,16 +1040,12 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          receiptType: [Burn],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        receiptType: [Burn],
+        txStatus: [1],
+      },
+    ])
   })
 
   it("Receipts Selection with multiple wildcard log event", t => {
@@ -1156,16 +1108,12 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
         },
       ],
     )
-    t.expect(
-      wildcardReceiptsSelection,
-    ).toEqual(
-      [
-        {
-          rb: [1n, 2n, 3n],
-          receiptType: [LogData],
-          txStatus: [1],
-        },
-      ],
-    )
+    t.expect(wildcardReceiptsSelection).toEqual([
+      {
+        rb: [1n, 2n, 3n],
+        receiptType: [LogData],
+        txStatus: [1],
+      },
+    ])
   })
 })

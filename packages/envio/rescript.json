@@ -23,5 +23,5 @@
   "jsx": {
     "version": 4
   },
-  "dependencies": ["rescript-schema", "@rescript/react"]
+  "dependencies": ["rescript-schema", "rescript-envsafe", "@rescript/react"]
 }

@@ -77,11 +77,14 @@ importers:
         specifier: 15.0.0
         version: 15.0.0
       rescript:
-        specifier: 12.1.0
-        version: 12.1.0
+        specifier: 12.2.0-rc.1
+        version: 12.2.0-rc.1
+      rescript-envsafe:
+        specifier: 5.0.0
+        version: 5.0.0(rescript-schema@9.3.0-rescript12.0(rescript@12.2.0-rc.1))(rescript@12.2.0-rc.1)
       rescript-schema:
         specifier: 9.3.0-rescript12.0
-        version: 9.3.0-rescript12.0(rescript@12.1.0)
+        version: 9.3.0-rescript12.0(rescript@12.2.0-rc.1)
       tsx:
         specifier: 4.21.0
         version: 4.21.0
@@ -118,11 +121,11 @@ importers:
         specifier: ../helpers
         version: link:../helpers
       rescript:
-        specifier: 12.1.0
-        version: 12.1.0
+        specifier: 12.2.0-rc.1
+        version: 12.2.0-rc.1
       rescript-schema:
         specifier: 9.3.0-rescript12.0
-        version: 9.3.0-rescript12.0(rescript@12.1.0)
+        version: 9.3.0-rescript12.0(rescript@12.2.0-rc.1)
       tsx:
         specifier: 4.21.0
         version: 4.21.0
@@ -141,11 +144,11 @@ importers:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
       rescript:
-        specifier: 12.1.0
-        version: 12.1.0
+        specifier: 12.2.0-rc.1
+        version: 12.2.0-rc.1
       rescript-schema:
         specifier: 9.3.0-rescript12.0
-        version: 9.3.0-rescript12.0(rescript@12.1.0)
+        version: 9.3.0-rescript12.0(rescript@12.2.0-rc.1)
       ts-expect:
         specifier: 1.3.0
         version: 1.3.0
@@ -173,11 +176,11 @@ importers:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
       rescript:
-        specifier: 12.1.0
-        version: 12.1.0
+        specifier: 12.2.0-rc.1
+        version: 12.2.0-rc.1
       rescript-schema:
         specifier: 9.3.0-rescript12.0
-        version: 9.3.0-rescript12.0(rescript@12.1.0)
+        version: 9.3.0-rescript12.0(rescript@12.2.0-rc.1)
 
   scenarios/test_codegen:
     dependencies:
@@ -207,11 +210,11 @@ importers:
         specifier: ^24.10.1
         version: 24.10.9
       rescript:
-        specifier: 12.1.0
-        version: 12.1.0
+        specifier: 12.2.0-rc.1
+        version: 12.2.0-rc.1
       rescript-schema:
         specifier: 9.3.0-rescript12.0
-        version: 9.3.0-rescript12.0(rescript@12.1.0)
+        version: 9.3.0-rescript12.0(rescript@12.2.0-rc.1)
       sinon:
         specifier: ^15.0.4
         version: 15.2.0
@@ -750,26 +753,26 @@ packages:
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
-  '@rescript/darwin-arm64@12.1.0':
-    resolution: {integrity: sha512-OuJMT+2h2Lp60n8ONFx1oBAAePSVkM9zl7E/EX4VD2xkQoVTPklz0BpHYOICnFJSCOOdbOhbsTBXdLpo3yvllg==}
+  '@rescript/darwin-arm64@12.2.0-rc.1':
+    resolution: {integrity: sha512-UoQElHfMRs9sQ5Kk2IEUTZ+YyBRUFKggIWp8XbtDd38un6rir1ujo6Mhcl0/WWFGuyad7VAJP4D0GCAOuKUqkA==}
     engines: {node: '>=20.11.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rescript/darwin-x64@12.1.0':
-    resolution: {integrity: sha512-r5Iv4ga+LaNq+6g9LODwZG4bwydd9UDXACP/HKxOfrP9XQCITlF/XqB1ZDJWyJOgJLZSJCd7erlG38YtB0VZKA==}
+  '@rescript/darwin-x64@12.2.0-rc.1':
+    resolution: {integrity: sha512-sfRlDyUfCe13aV9qeuTkYTwCTn8IN4IOjWP1JWaNkl2BI0yc1bqVpUdD0OnSijcNJLtSP/DrDsIcEp2I/JGYGw==}
     engines: {node: '>=20.11.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rescript/linux-arm64@12.1.0':
-    resolution: {integrity: sha512-UTZv4GTjbyQ/T5LQDfQiGcumK3SzE1K7+ug6gWpDcGZ7ALc7hCS6BVEFL/LDs8iWVwAwkK/6r456s2zRnvS7wQ==}
+  '@rescript/linux-arm64@12.2.0-rc.1':
+    resolution: {integrity: sha512-AO7ceQe6w5hoNg1dDXD2ewYMWum+AA6DUHBs++n9umsHzoHcJIk5udlYnCyU5FxgXnzn4T3wESPCBS0SxAPBtw==}
     engines: {node: '>=20.11.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rescript/linux-x64@12.1.0':
-    resolution: {integrity: sha512-c0PXuBL09JRSA4nQusYbR4mW5QJrBPqxDrqvIX+M79fk3d6jQmj5x4NsBwk5BavxvmbR/JU1JjYBlSAa3h22Vg==}
+  '@rescript/linux-x64@12.2.0-rc.1':
+    resolution: {integrity: sha512-26/Is70/dU11xJIvhb7f6h9cvk7xqrWhQ1MtmiKqT1TRtX1T8HE+1nYvhI57Tp7mExerkPIgZDU/SKfhMaeuFw==}
     engines: {node: '>=20.11.0'}
     cpu: [x64]
     os: [linux]
@@ -780,11 +783,11 @@ packages:
       react: '>=19.0.0'
       react-dom: '>=19.0.0'
 
-  '@rescript/runtime@12.1.0':
-    resolution: {integrity: sha512-bvr9RfvBD+JS/6foWCA4l2fLXmUXN0KGqylXQPHt09QxUghqgoCiaWVHaHSx5dOIk/jAPlGQ7zB5yVeMas/EFQ==}
+  '@rescript/runtime@12.2.0-rc.1':
+    resolution: {integrity: sha512-T9oXYacZgpQmuwPLa/niw1zQdGsdKBR0ABq5trhbrw+4q5KdgafIqinl0rkI1IBn7Dc1Tb857gqtqobzIR/AMw==}
 
-  '@rescript/win32-x64@12.1.0':
-    resolution: {integrity: sha512-nQC42QByyAbryfkbyK67iskipUqXVwTPCFrqissY4jJoP0128gg0yG6DydJnV1stXphtFdMFHtmyYE1ffG7UBg==}
+  '@rescript/win32-x64@12.2.0-rc.1':
+    resolution: {integrity: sha512-+blvRHc9P1QtgfjtkLDJgUGN0dn/hPncIP4ybss84EZFcDetEnTy5LKMepWYDyG71dgFN4HFoTbyXvt7EI5bZg==}
     engines: {node: '>=20.11.0'}
     cpu: [x64]
     os: [win32]
@@ -2342,6 +2345,12 @@ packages:
   requires-port@1.0.0:
     resolution: {integrity: sha512-KigOCHcocU3XODJxsu8i/j8T9tzT4adHiecwORRQ0ZZFcp7ahwXuRU1m+yuO90C5ZUyGeGfocHDI14M3L3yDAQ==}
 
+  rescript-envsafe@5.0.0:
+    resolution: {integrity: sha512-xSQbNsFSSQEynvLWUYtI7GJJhzicACLTq5aO1tjgK0N2Vcm9qlrkcLSmnU8tTohebEu9zgm1V/xYY+oGeQgLvA==}
+    peerDependencies:
+      rescript: 11.x
+      rescript-schema: 9.x
+
   rescript-schema@9.3.0-rescript12.0:
     resolution: {integrity: sha512-K+1Ia5JMpqWfUrDaPFu4TR0sOa/k5P9KVx4HA7wyUJBBmx3z8Nz0pKR5nX0Bmq+clXnYPSzuukU3SJ1H6eEfaA==}
     peerDependencies:
@@ -2350,8 +2359,8 @@ packages:
       rescript:
         optional: true
 
-  rescript@12.1.0:
-    resolution: {integrity: sha512-n/B43wzIEKV4OmlrWbrlQOL4zZaz0RM/Cc8PG2YvhQvQDW7nscHJliDq1AGeVwHoMX68MeaKKzLDOMOMU9Z6FA==}
+  rescript@12.2.0-rc.1:
+    resolution: {integrity: sha512-3KsxhbsfoMkMV4hQeNggrsGtqIhCEnokdH5TzTRoV7pWjGEik2gfHtBr7Hc1VjnEgIO7Wf2+IdMaE3L/NUwxjg==}
     engines: {node: '>=20.11.0'}
     hasBin: true
 
@@ -3460,16 +3469,16 @@ snapshots:
 
   '@pinojs/redact@0.4.0': {}
 
-  '@rescript/darwin-arm64@12.1.0':
+  '@rescript/darwin-arm64@12.2.0-rc.1':
     optional: true
 
-  '@rescript/darwin-x64@12.1.0':
+  '@rescript/darwin-x64@12.2.0-rc.1':
     optional: true
 
-  '@rescript/linux-arm64@12.1.0':
+  '@rescript/linux-arm64@12.2.0-rc.1':
     optional: true
 
-  '@rescript/linux-x64@12.1.0':
+  '@rescript/linux-x64@12.2.0-rc.1':
     optional: true
 
   '@rescript/react@0.14.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
@@ -3477,9 +3486,9 @@ snapshots:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@rescript/runtime@12.1.0': {}
+  '@rescript/runtime@12.2.0-rc.1': {}
 
-  '@rescript/win32-x64@12.1.0':
+  '@rescript/win32-x64@12.2.0-rc.1':
     optional: true
 
   '@rollup/rollup-android-arm-eabi@4.55.1':
@@ -5225,19 +5234,24 @@ snapshots:
 
   requires-port@1.0.0: {}
 
-  rescript-schema@9.3.0-rescript12.0(rescript@12.1.0):
-    optionalDependencies:
-      rescript: 12.1.0
-
-  rescript@12.1.0:
+  rescript-envsafe@5.0.0(rescript-schema@9.3.0-rescript12.0(rescript@12.2.0-rc.1))(rescript@12.2.0-rc.1):
     dependencies:
-      '@rescript/runtime': 12.1.0
+      rescript: 12.2.0-rc.1
+      rescript-schema: 9.3.0-rescript12.0(rescript@12.2.0-rc.1)
+
+  rescript-schema@9.3.0-rescript12.0(rescript@12.2.0-rc.1):
     optionalDependencies:
-      '@rescript/darwin-arm64': 12.1.0
-      '@rescript/darwin-x64': 12.1.0
-      '@rescript/linux-arm64': 12.1.0
-      '@rescript/linux-x64': 12.1.0
-      '@rescript/win32-x64': 12.1.0
+      rescript: 12.2.0-rc.1
+
+  rescript@12.2.0-rc.1:
+    dependencies:
+      '@rescript/runtime': 12.2.0-rc.1
+    optionalDependencies:
+      '@rescript/darwin-arm64': 12.2.0-rc.1
+      '@rescript/darwin-x64': 12.2.0-rc.1
+      '@rescript/linux-arm64': 12.2.0-rc.1
+      '@rescript/linux-x64': 12.2.0-rc.1
+      '@rescript/win32-x64': 12.2.0-rc.1
 
   resolve-cwd@3.0.0:
     dependencies:

@@ -23,7 +23,7 @@
     "@types/node": "^24.10.1",
     "tsx": "4.21.0",
     "vitest": "4.0.18",
-    "rescript": "12.1.0",
+    "rescript": "12.2.0-rc.1",
     "rescript-schema": "9.3.0-rescript12.0",
     "sinon": "^15.0.4"
   },

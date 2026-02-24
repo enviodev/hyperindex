@@ -11,8 +11,7 @@ let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
 
 module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
-    let inMemTable =
-      inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+    let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
       Set({
@@ -20,9 +19,7 @@ module InMemoryStore = {
         checkpointId: 0.,
         entity,
       }),
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(
-        ~isInReorgThreshold=false,
-      ),
+      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold=false),
     )
   }
 
@@ -276,7 +273,9 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
+    let registrations = await HandlerLoader.registerAllHandlers(
+      ~config=Indexer.Generated.configWithoutRegistrations,
+    )
 
     let config = {
       let config = Indexer.Generated.makeGeneratedConfig()
@@ -385,9 +384,7 @@ module Indexer = {
       query: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
         sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
-        )
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(ec.rowsSchema)
         })
@@ -500,9 +497,7 @@ module Source = {
   type itemMock = {
     blockNumber: int,
     logIndex: int,
-    handler?: Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<
-      unit,
-    >,
+    handler?: Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<unit>,
     contractRegister?: contractRegister<unit>,
   }
 
@@ -757,9 +752,9 @@ module Source = {
                             | None => None
                             },
                             contractRegister: item.contractRegister->(
-                              Utils.magic: option<
-                                contractRegister<unit>,
-                              > => option<Internal.contractRegister>
+                              Utils.magic: option<contractRegister<unit>> => option<
+                                Internal.contractRegister,
+                              >
                             ),
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
@@ -838,10 +833,8 @@ module Helper = {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
       ~message="Should request items until reorg threshold",
-    ).toEqual(
-      // fromBlock 1 since it's in the config.yaml start_block is 1
-      [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}],
-    )
+    ).toEqual(// fromBlock 1 since it's in the config.yaml start_block is 1
+    [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()
   }

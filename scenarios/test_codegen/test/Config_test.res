@@ -95,9 +95,6 @@ describe("Config.fromPublic", () => {
     let contracts = chain.contracts
     t.expect(contracts->Array.length, ~message="Should have one contract").toBe(1)
     let contract = contracts->Js.Array2.unsafe_get(0)
-    t.expect(
-      contract.name,
-      ~message="Contract name should remain Greeter",
-    ).toBe("Greeter")
+    t.expect(contract.name, ~message="Contract name should remain Greeter").toBe("Greeter")
   })
 })

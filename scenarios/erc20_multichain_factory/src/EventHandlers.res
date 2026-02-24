@@ -105,25 +105,23 @@ Indexer.ERC20.Transfer.handler(async ({event, context}) => {
   let fromAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=fromAccount_id)
   let toAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=toAccount_id)
 
-  let (senderAccountToken, receiverAccountToken) =
-    await (
-      context.accountToken.get(fromAccountToken_id),
-      context.accountToken.get(toAccountToken_id),
-    )->Promise.all2
+  let (senderAccountToken, receiverAccountToken) = await (
+    context.accountToken.get(fromAccountToken_id),
+    context.accountToken.get(toAccountToken_id),
+  )->Promise.all2
 
   let {params: {from, to, value}, srcAddress} = event
   let fromAccount_id = from->Address.toString
   let toAccount_id = to->Address.toString
   let tokenAddress = srcAddress->Address.toString
 
-  let manipulateAccountBalance =
-    manipulateAccountBalance(
-      ~value,
-      ~tokenAddress,
-      ~setAccountToken=context.accountToken.set,
-      ~setAccount=context.account.set,
-      ...
-    )
+  let manipulateAccountBalance = manipulateAccountBalance(
+    ~value,
+    ~tokenAddress,
+    ~setAccountToken=context.accountToken.set,
+    ~setAccount=context.account.set,
+    ...
+  )
 
   senderAccountToken->manipulateAccountBalance(subFromBalance, ~account_id=fromAccount_id)
   receiverAccountToken->manipulateAccountBalance(addToBalance, ~account_id=toAccount_id)

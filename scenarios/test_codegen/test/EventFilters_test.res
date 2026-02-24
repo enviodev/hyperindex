@@ -1,6 +1,8 @@
 open Vitest
 
-let _ = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
+let _ = await HandlerLoader.registerAllHandlers(
+  ~config=Indexer.Generated.configWithoutRegistrations,
+)
 
 // Test types:
 let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
@@ -9,9 +11,7 @@ describe("Test eventFilters", () => {
   it("Supports multichain filters", t => {
     let eventConfig = Indexer.EventFiltersTest.Transfer.register()
 
-    t.expect(
-      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
-    ).toEqual(
+    t.expect(eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137))).toEqual(
       Static([
         {
           topic0: [
@@ -46,9 +46,7 @@ describe("Test eventFilters", () => {
       ~message=`Even though event filter has a callback,
       dependsOnAddresses should be set to false.
       Otherwise the wildcard event won't fetch for contracts without addresses`,
-    ).toBe(
-      false,
-    )
+    ).toBe(false)
   })
 
   it("Supports filter depending on addresses", t => {
@@ -63,36 +61,34 @@ describe("Test eventFilters", () => {
           "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"->Address.unsafeFromString,
         ])
       },
-    ).toEqual(
-      [
-        {
-          topic0: [
-            "0xf26849ed9bbf448cc2a8d7bcb15203e1e2a68bbbd94550aa4f2f717455c1abed",
-          ]->EvmTypes.Hex.fromStringsUnsafe,
-          topic1: [
-            "0x0000000000000000000000000000000000000000000000000000000000000000",
-          ]->EvmTypes.Hex.fromStringsUnsafe,
-          topic2: [
-            "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-            "0x00000000000000000000000070997970C51812dc3A010C7d01b50e0d17dc79C8",
-          ]->EvmTypes.Hex.fromStringsUnsafe,
-          topic3: [],
-        },
-        {
-          topic0: [
-            "0xf26849ed9bbf448cc2a8d7bcb15203e1e2a68bbbd94550aa4f2f717455c1abed",
-          ]->EvmTypes.Hex.fromStringsUnsafe,
-          topic1: [
-            "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-            "0x00000000000000000000000070997970C51812dc3A010C7d01b50e0d17dc79C8",
-          ]->EvmTypes.Hex.fromStringsUnsafe,
-          topic2: [
-            "0x0000000000000000000000000000000000000000000000000000000000000000",
-          ]->EvmTypes.Hex.fromStringsUnsafe,
-          topic3: [],
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        topic0: [
+          "0xf26849ed9bbf448cc2a8d7bcb15203e1e2a68bbbd94550aa4f2f717455c1abed",
+        ]->EvmTypes.Hex.fromStringsUnsafe,
+        topic1: [
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+        ]->EvmTypes.Hex.fromStringsUnsafe,
+        topic2: [
+          "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "0x00000000000000000000000070997970C51812dc3A010C7d01b50e0d17dc79C8",
+        ]->EvmTypes.Hex.fromStringsUnsafe,
+        topic3: [],
+      },
+      {
+        topic0: [
+          "0xf26849ed9bbf448cc2a8d7bcb15203e1e2a68bbbd94550aa4f2f717455c1abed",
+        ]->EvmTypes.Hex.fromStringsUnsafe,
+        topic1: [
+          "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "0x00000000000000000000000070997970C51812dc3A010C7d01b50e0d17dc79C8",
+        ]->EvmTypes.Hex.fromStringsUnsafe,
+        topic2: [
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+        ]->EvmTypes.Hex.fromStringsUnsafe,
+        topic3: [],
+      },
+    ])
     t.expect(eventConfig.dependsOnAddresses).toBe(true)
     t.expect(eventConfig.isWildcard).toBe(true)
   })
@@ -100,9 +96,7 @@ describe("Test eventFilters", () => {
   it("Empty filters should fallback to normal topic selection with only topic0", t => {
     let eventConfig = Indexer.EventFiltersTest.EmptyFiltersArray.register()
 
-    t.expect(
-      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
-    ).toEqual(
+    t.expect(eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137))).toEqual(
       Static([
         {
           topic0: [

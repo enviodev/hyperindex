@@ -15,7 +15,7 @@
     "envio": "file:../../packages/envio",
     "tsx": "4.21.0",
     "helpers": "../helpers",
-    "rescript": "12.1.0",
+    "rescript": "12.2.0-rc.1",
     "rescript-schema": "9.3.0-rescript12.0"
   },
   "devDependencies": {

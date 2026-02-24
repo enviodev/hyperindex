@@ -51,21 +51,21 @@ describe("E2E tests", () => {
     )
     await Utils.delay(0)
 
-    t.expect(
-      await indexerMock.metric("envio_reorg_threshold"),
-    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
-    t.expect(
-      await indexerMock.metric("hyperindex_synced_to_head"),
-    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
+    t.expect(await indexerMock.metric("envio_reorg_threshold")).toEqual([
+      {value: "0", labels: Js.Dict.empty()},
+    ])
+    t.expect(await indexerMock.metric("hyperindex_synced_to_head")).toEqual([
+      {value: "0", labels: Js.Dict.empty()},
+    ])
 
     await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
-    t.expect(
-      await indexerMock.metric("envio_reorg_threshold"),
-    ).toEqual([{value: "1", labels: Js.Dict.empty()}])
-    t.expect(
-      await indexerMock.metric("hyperindex_synced_to_head"),
-    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
+    t.expect(await indexerMock.metric("envio_reorg_threshold")).toEqual([
+      {value: "1", labels: Js.Dict.empty()},
+    ])
+    t.expect(await indexerMock.metric("hyperindex_synced_to_head")).toEqual([
+      {value: "0", labels: Js.Dict.empty()},
+    ])
 
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
     await indexerMock.getBatchWritePromise()
@@ -144,18 +144,13 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    t.expect(
-      await indexerMock.query(SimpleEntity),
-    ).toEqual([{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}])
-    t.expect(
-      errors,
-      ~message="should have an error thrown during set",
-    ).toEqual(
-      [
-        Utils.Error.make(`Impossible to access context.addGravatar after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
-        Utils.Error.make(`Impossible to access context.SimpleEntity after the handler is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
-      ],
-    )
+    t.expect(await indexerMock.query(SimpleEntity)).toEqual([
+      {Indexer.Entities.SimpleEntity.id: "1", value: "value-2"},
+    ])
+    t.expect(errors, ~message="should have an error thrown during set").toEqual([
+      Utils.Error.make(`Impossible to access context.addGravatar after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
+      Utils.Error.make(`Impossible to access context.SimpleEntity after the handler is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
+    ])
   })
 
   // A regression test for a bug introduced in 2.30.0
@@ -235,77 +230,72 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await Promise.all2((
-        indexerMock.queryCheckpoints(),
-        indexerMock.queryHistory(SimpleEntity),
-      )),
-    ).toEqual(
-      (
-        [
-          {
-            id: 2.,
-            chainId: 100,
-            blockNumber: 150,
-            blockHash: Js.Null.Null,
-            eventsProcessed: 1,
+      await Promise.all2((indexerMock.queryCheckpoints(), indexerMock.queryHistory(SimpleEntity))),
+    ).toEqual((
+      [
+        {
+          id: 2.,
+          chainId: 100,
+          blockNumber: 150,
+          blockHash: Js.Null.Null,
+          eventsProcessed: 1,
+        },
+        {
+          id: 3.,
+          chainId: 1337,
+          blockNumber: 100,
+          blockHash: Js.Null.Value("0x100"),
+          eventsProcessed: 0,
+        },
+        {
+          id: 4.,
+          chainId: 1337,
+          blockNumber: 150,
+          blockHash: Js.Null.Null,
+          eventsProcessed: 1,
+        },
+        {
+          id: 5.,
+          chainId: 100,
+          blockNumber: 151,
+          blockHash: Js.Null.Null,
+          eventsProcessed: 1,
+        },
+        {
+          id: 6.,
+          chainId: 100,
+          blockNumber: 160,
+          blockHash: Js.Null.Value("0x160"),
+          eventsProcessed: 0,
+        },
+      ],
+      [
+        Set({
+          checkpointId: 2.,
+          entityId: "1",
+          entity: {
+            Indexer.Entities.SimpleEntity.id: "1",
+            value: "call-0",
           },
-          {
-            id: 3.,
-            chainId: 1337,
-            blockNumber: 100,
-            blockHash: Js.Null.Value("0x100"),
-            eventsProcessed: 0,
+        }),
+        Set({
+          checkpointId: 4.,
+          entityId: "1",
+          entity: {
+            Indexer.Entities.SimpleEntity.id: "1",
+            value: "call-1",
           },
-          {
-            id: 4.,
-            chainId: 1337,
-            blockNumber: 150,
-            blockHash: Js.Null.Null,
-            eventsProcessed: 1,
+        }),
+        Set({
+          checkpointId: 5.,
+          entityId: "1",
+          entity: {
+            Indexer.Entities.SimpleEntity.id: "1",
+            value: "call-2",
           },
-          {
-            id: 5.,
-            chainId: 100,
-            blockNumber: 151,
-            blockHash: Js.Null.Null,
-            eventsProcessed: 1,
-          },
-          {
-            id: 6.,
-            chainId: 100,
-            blockNumber: 160,
-            blockHash: Js.Null.Value("0x160"),
-            eventsProcessed: 0,
-          },
-        ],
-        [
-          Set({
-            checkpointId: 2.,
-            entityId: "1",
-            entity: {
-              Indexer.Entities.SimpleEntity.id: "1",
-              value: "call-0",
-            },
-          }),
-          Set({
-            checkpointId: 4.,
-            entityId: "1",
-            entity: {
-              Indexer.Entities.SimpleEntity.id: "1",
-              value: "call-1",
-            },
-          }),
-          Set({
-            checkpointId: 5.,
-            entityId: "1",
-            entity: {
-              Indexer.Entities.SimpleEntity.id: "1",
-              value: "call-2",
-            },
-          }),
-        ],
-      ),
-    )
+        }),
+      ],
+    ))
   })
 
   Async.it("Track effects in prom metrics", async t => {
@@ -377,29 +367,25 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_calls_count"),
       ~message="should increment effect calls count",
-    ).toEqual(
-      [
-        {
-          value: "1",
-          labels: Js.Dict.fromArray([("effect", "testEffect")]),
-        },
-        {
-          value: "1",
-          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        value: "1",
+        labels: Js.Dict.fromArray([("effect", "testEffect")]),
+      },
+      {
+        value: "1",
+        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+      },
+    ])
     t.expect(
       await indexerMock.metric("envio_effect_cache_count"),
       ~message="should increment effect cache count",
-    ).toEqual(
-      [
-        {
-          value: "1",
-          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        value: "1",
+        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+      },
+    ])
     t.expect(
       await indexerMock.metric("envio_storage_load_count"),
       ~message="Shouldn't load anything from storage at this point",
@@ -419,14 +405,12 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_cache_count"),
       ~message="should resume effect cache count on restart",
-    ).toEqual(
-      [
-        {
-          value: "1",
-          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        value: "1",
+        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+      },
+    ])
 
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
@@ -457,60 +441,57 @@ describe("E2E tests", () => {
         indexerMock.metric("envio_storage_load_count"),
       )),
       ~message="Time to load cache from storage now",
-    ).toEqual(
-      (
-        [
-          {
-            value: "2",
-            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
-          },
-        ],
-        [
-          {
-            value: "1",
-            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
-          },
-        ],
-        [
-          {
-            value: "1",
-            labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
-          },
-        ],
-      ),
-    )
+    ).toEqual((
+      [
+        {
+          value: "2",
+          labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+        },
+      ],
+      [
+        {
+          value: "1",
+          labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+        },
+      ],
+      [
+        {
+          value: "1",
+          labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+        },
+      ],
+    ))
     t.expect(
       await Promise.all2((
         indexerMock.metric("envio_effect_calls_count"),
         indexerMock.metric("envio_effect_cache_count"),
       )),
       ~message="Should increment effect calls count and cache count",
-    ).toEqual(
-      (
-        [
-          {
-            value: "1",
-            labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
-          },
-        ],
-        [
-          {
-            value: "2",
-            labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
-          },
-        ],
-      ),
-    )
+    ).toEqual((
+      [
+        {
+          value: "1",
+          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        },
+      ],
+      [
+        {
+          value: "2",
+          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        },
+      ],
+    ))
 
     let testEffectWithCacheV2 = Envio.createEffect(
       {
         name: "testEffectWithCache",
         input: S.string,
         output: S.string->S.refine(
-          s => v =>
-            if !(v->Js.String2.includes("2")) {
-              s.fail(`Expected to include '2', got ${v}`)
-            },
+          s =>
+            v =>
+              if !(v->Js.String2.includes("2")) {
+                s.fail(`Expected to include '2', got ${v}`)
+              },
         ),
         rateLimit: Disable,
         cache: true,
@@ -542,23 +523,19 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.queryEffectCache("testEffectWithCache"),
       ~message="Should invalidate loaded cache and store new one",
-    ).toEqual(
-      [
-        {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
-        {"id": `"test"`, "output": %raw(`"test-output-v2"`)},
-      ],
-    )
+    ).toEqual([
+      {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
+      {"id": `"test"`, "output": %raw(`"test-output-v2"`)},
+    ])
     t.expect(
       await indexerMock.metric("envio_effect_cache_count"),
       ~message="Shouldn't increment on invalidation",
-    ).toEqual(
-      [
-        {
-          value: "2",
-          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
-        },
-      ],
-    )
+    ).toEqual([
+      {
+        value: "2",
+        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+      },
+    ])
   })
 
   Async.it(
@@ -620,7 +597,8 @@ describe("E2E tests", () => {
       | [call] =>
         // Resolve the fallback source successfully
         call.resolve([], ~latestFetchedBlockNumber=100)
-      | _ => Js.Exn.raiseError("fallback source should be called after primary fails with invalid data")
+      | _ =>
+        Js.Exn.raiseError("fallback source should be called after primary fails with invalid data")
       }
 
       await indexerMock.getBatchWritePromise()
@@ -696,9 +674,14 @@ describe("E2E tests", () => {
             activeMetricDuringExecution := Some(activeMetric)
 
             let results = await resultsPromise
-            t.expect(
-              results,
-            ).toEqual(["1-output", "2-output", "3-output", "4-output", "5-output", "6-output"])
+            t.expect(results).toEqual([
+              "1-output",
+              "2-output",
+              "3-output",
+              "4-output",
+              "5-output",
+              "6-output",
+            ])
           },
         },
       ],
@@ -888,20 +871,20 @@ describe("E2E tests", () => {
           logIndex: 0,
           handler: async ({context}) => {
             // Call 1: Disable cache persistence for this specific call
-            t.expect(
-              await context.effect(testEffectWithCacheControl, "test1"),
-            ).toEqual("test1-output")
+            t.expect(await context.effect(testEffectWithCacheControl, "test1")).toEqual(
+              "test1-output",
+            )
 
             // Call 2: Same input as call 1, uses in-memory cache from call 1
             // Shouldn't do anything, since memoization
-            t.expect(
-              await context.effect(testEffectWithCacheControl, "test1"),
-            ).toEqual("test1-output")
+            t.expect(await context.effect(testEffectWithCacheControl, "test1")).toEqual(
+              "test1-output",
+            )
 
             // Call 3: Different input with default cache behavior (should cache in memory and DB)
-            t.expect(
-              await context.effect(testEffectWithCacheControl, "test2"),
-            ).toEqual("test2-output")
+            t.expect(await context.effect(testEffectWithCacheControl, "test2")).toEqual(
+              "test2-output",
+            )
           },
         },
       ],
@@ -1108,12 +1091,10 @@ describe("E2E tests", () => {
       ->Js.Array2.map(c => c.payload)
       ->Js.Array2.slice(~start=0, ~end_=2),
       ~message="Should have at least 2 chunks of size 540",
-    ).toEqual(
-      [
-        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
-        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
-      ],
-    )
+    ).toEqual([
+      {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+      {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+    ])
 
     // Phase A — chunks grow:
     // Resolve chunk1 and chunk2 at full range.
@@ -1202,98 +1183,89 @@ describe("E2E tests", () => {
       ->Js.Array2.map(c => c.payload)
       ->Js.Array2.slice(~start=0, ~end_=2),
       ~message="Should have at least 2 chunks of size 540",
-    ).toEqual(
-      [
-        {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
-        {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
-      ],
-    )
+    ).toEqual([
+      {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
+      {"fromBlock": 1341, "toBlock": Some(1880), "retry": 0, "p": "0"},
+    ])
     let calls = sourceMock.getItemsOrThrowCalls
     if calls->Array.length < 2 {
       Js.Exn.raiseError("Expected at least 2 chunks")
     }
     let chunk1 = calls->Js.Array2.unsafe_get(0)
     let chunk2 = calls->Js.Array2.unsafe_get(1)
-    {
-      // Step 1: Resolve chunk2 FIRST (out of order) with item at block 1500
-      chunk2.resolve([
+
+    // Step 1: Resolve chunk2 FIRST (out of order) with item at block 1500
+    chunk2.resolve([
+      {
+        blockNumber: 1500,
+        logIndex: 0,
+        handler: async ({context}) => {
+          context.simpleEntity.set({id: "item-1500", value: "from-chunk2"})
+        },
+      },
+    ])
+    // Wait for chunk2's response to be processed
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    // Item at 1500 should NOT be in DB yet — chunk1 hasn't completed,
+    // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
+    t.expect(
+      await indexerMock.query(SimpleEntity),
+      ~message="Item at block 1500 should not be ready while chunk1 is pending",
+    ).toEqual([])
+
+    // Step 2: Resolve chunk1 at HALF range (801-1070) with item at block 850.
+    // Only chunk1's first half is consumed; chunk2 still blocked.
+    // After chunk2 resolved, chunk1 should remain pending
+    t.expect(
+      sourceMock.getItemsOrThrowCalls
+      ->Js.Array2.map(c => c.payload)
+      ->Js.Array2.slice(~start=0, ~end_=1),
+      ~message="After chunk2 resolved, chunk1 should remain pending",
+    ).toEqual([{"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"}])
+    chunk1.resolve(
+      [
         {
-          blockNumber: 1500,
+          blockNumber: 850,
           logIndex: 0,
           handler: async ({context}) => {
-            context.simpleEntity.set({id: "item-1500", value: "from-chunk2"})
+            context.simpleEntity.set({id: "item-850", value: "from-chunk1"})
           },
         },
-      ])
-      // Wait for chunk2's response to be processed
-      await Utils.delay(0)
-      await Utils.delay(0)
+      ],
+      ~latestFetchedBlockNumber=1070,
+    )
+    await indexerMock.getBatchWritePromise()
 
-      // Item at 1500 should NOT be in DB yet — chunk1 hasn't completed,
-      // so bufferBlockNumber=800 and 1500 > 800 means it's not ready.
-      t.expect(
-        await indexerMock.query(SimpleEntity),
-        ~message="Item at block 1500 should not be ready while chunk1 is pending",
-      ).toEqual([])
+    // Only item-850 should be in DB — chunk1 didn't finish its full range,
+    // so chunk2's item at 1500 is still beyond the buffer.
+    t.expect(
+      await indexerMock.query(SimpleEntity),
+      ~message="Only item-850 should be in DB after partial chunk1 resolve",
+    ).toEqual([{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}])
 
-      // Step 2: Resolve chunk1 at HALF range (801-1070) with item at block 850.
-      // Only chunk1's first half is consumed; chunk2 still blocked.
-      // After chunk2 resolved, chunk1 should remain pending
-      t.expect(
-        sourceMock.getItemsOrThrowCalls
-        ->Js.Array2.map(c => c.payload)
-        ->Js.Array2.slice(~start=0, ~end_=1),
-        ~message="After chunk2 resolved, chunk1 should remain pending",
-      ).toEqual(
-        [
-          {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
-        ],
-      )
-      chunk1.resolve(
-        [
-          {
-            blockNumber: 850,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.simpleEntity.set({id: "item-850", value: "from-chunk1"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=1070,
-      )
-      await indexerMock.getBatchWritePromise()
+    // Step 3: A finishing query for the remainder of chunk1 (1071-1340) should exist.
+    let finishingQuery =
+      sourceMock.getItemsOrThrowCalls->Js.Array2.find(c => c.payload["fromBlock"] === 1071)
+    t.expect(
+      finishingQuery->Option.map(c => c.payload),
+      ~message="Should have a finishing query for the rest of chunk1",
+    ).toEqual(Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}))
 
-      // Only item-850 should be in DB — chunk1 didn't finish its full range,
-      // so chunk2's item at 1500 is still beyond the buffer.
-      t.expect(
-        await indexerMock.query(SimpleEntity),
-        ~message="Only item-850 should be in DB after partial chunk1 resolve",
-      ).toEqual([{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}])
+    // Step 4: Resolve the finishing query — now chunk1's full range is consumed,
+    // then chunk2 is consumed too. bufferBlockNumber advances to 1880.
+    (finishingQuery->Option.getExn).resolve([], ~latestFetchedBlockNumber=1340)
+    await indexerMock.getBatchWritePromise()
 
-      // Step 3: A finishing query for the remainder of chunk1 (1071-1340) should exist.
-      let finishingQuery =
-        sourceMock.getItemsOrThrowCalls->Js.Array2.find(c => c.payload["fromBlock"] === 1071)
-      t.expect(
-        finishingQuery->Option.map(c => c.payload),
-        ~message="Should have a finishing query for the rest of chunk1",
-      ).toEqual(Some({"fromBlock": 1071, "toBlock": Some(1340), "retry": 0, "p": "0"}))
-
-      // Step 4: Resolve the finishing query — now chunk1's full range is consumed,
-      // then chunk2 is consumed too. bufferBlockNumber advances to 1880.
-      (finishingQuery->Option.getExn).resolve([], ~latestFetchedBlockNumber=1340)
-      await indexerMock.getBatchWritePromise()
-
-      // Both items should now be in DB
-      t.expect(
-        await indexerMock.query(SimpleEntity),
-        ~message="Both items should be in DB after chunk1 fully completes",
-      ).toEqual(
-        [
-          {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
-          {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
-        ],
-      )
-    }
+    // Both items should now be in DB
+    t.expect(
+      await indexerMock.query(SimpleEntity),
+      ~message="Both items should be in DB after chunk1 fully completes",
+    ).toEqual([
+      {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
+      {Indexer.Entities.SimpleEntity.id: "item-1500", value: "from-chunk2"},
+    ])
   })
 
   Async.it("Partition merging works for fetching partitions via mergeBlock", async t => {
@@ -1394,14 +1366,12 @@ describe("E2E tests", () => {
       ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
       ~message="Step 4: DC2 has 2 chunks (25901-26440, 26441-26980)",
-    ).toEqual(
-      [
-        ("2", 5000, Some(99800)),
-        ("0", 25101, Some(99800)),
-        ("3", 25901, Some(26440)),
-        ("3", 26441, Some(26980)),
-      ],
-    )
+    ).toEqual([
+      ("2", 5000, Some(99800)),
+      ("0", 25101, Some(99800)),
+      ("3", 25901, Some(26440)),
+      ("3", 26441, Some(26980)),
+    ])
 
     // Step 5: Resolve DC1 at lfb=7000 → merge triggers
     // DC1 mergeBlock=7000 (idle), DC2 mergeBlock=26980 (last chunk toBlock)
@@ -1428,16 +1398,14 @@ describe("E2E tests", () => {
       ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
       ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
-    ).toEqual(
-      [
-        ("2", 7001, Some(26980)),
-        ("0", 25101, Some(99800)),
-        ("3", 25901, Some(26440)),
-        ("3", 26441, Some(26980)),
-        ("4", 26981, Some(27520)),
-        ("4", 27521, Some(28060)),
-      ],
-    )
+    ).toEqual([
+      ("2", 7001, Some(26980)),
+      ("0", 25101, Some(99800)),
+      ("3", 25901, Some(26440)),
+      ("3", 26441, Some(26980)),
+      ("4", 26981, Some(27520)),
+      ("4", 27521, Some(28060)),
+    ])
 
     // Verify merged partition "4" has both DC addresses
     let partition4Call =

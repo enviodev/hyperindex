@@ -20,57 +20,46 @@ describe("LoadLayer", () => {
     let user = await getUser("123")
 
     t.expect(user).toEqual(None)
-    t.expect(
-      storageMock.loadByIdsOrThrowCalls,
-    ).toEqual(
-      [
-        {
-          "ids": ["123"],
-          "tableName": "User",
-        },
-      ],
-    )
+    t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+      {
+        "ids": ["123"],
+        "tableName": "User",
+      },
+    ])
   })
 
-  Async.it(
-    "Does two round trips to db when requesting non existing entity one by one",
-    async t => {
-      let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
-      let loadManager = LoadManager.make()
-      let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+  Async.it("Does two round trips to db when requesting non existing entity one by one", async t => {
+    let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
+    let loadManager = LoadManager.make()
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
 
-      let getUser = entityId =>
-        LoadLayer.loadById(
-          ~loadManager,
-          ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=Mock.entityConfig(User),
-          ~inMemoryStore,
-          ~entityId,
-          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~shouldGroup=true,
-        )
-
-      let user1 = await getUser("1")
-      let user2 = await getUser("2")
-
-      t.expect(user1).toEqual(None)
-      t.expect(user2).toEqual(None)
-      t.expect(
-        storageMock.loadByIdsOrThrowCalls,
-      ).toEqual(
-        [
-          {
-            "ids": ["1"],
-            "tableName": "User",
-          },
-          {
-            "ids": ["2"],
-            "tableName": "User",
-          },
-        ],
+    let getUser = entityId =>
+      LoadLayer.loadById(
+        ~loadManager,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
+        ~entityConfig=Mock.entityConfig(User),
+        ~inMemoryStore,
+        ~entityId,
+        ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~shouldGroup=true,
       )
-    },
-  )
+
+    let user1 = await getUser("1")
+    let user2 = await getUser("2")
+
+    t.expect(user1).toEqual(None)
+    t.expect(user2).toEqual(None)
+    t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+      {
+        "ids": ["1"],
+        "tableName": "User",
+      },
+      {
+        "ids": ["2"],
+        "tableName": "User",
+      },
+    ])
+  })
 
   Async.it(
     "Stores the loaded entity in the in memory store and starts returning it on a subsequent call",
@@ -94,16 +83,12 @@ describe("LoadLayer", () => {
 
       t.expect(user1).toEqual(None)
       t.expect(user2).toEqual(None)
-      t.expect(
-        storageMock.loadByIdsOrThrowCalls,
-      ).toEqual(
-        [
-          {
-            "ids": ["1"],
-            "tableName": "User",
-          },
-        ],
-      )
+      t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+        {
+          "ids": ["1"],
+          "tableName": "User",
+        },
+      ])
     },
   )
 
@@ -139,54 +124,43 @@ describe("LoadLayer", () => {
 
     t.expect(user1).toEqual(None)
     t.expect(user2).toEqual(None)
-    t.expect(
-      storageMock.loadByIdsOrThrowCalls,
-    ).toEqual(
-      [
-        {
-          "ids": ["1"],
-          "tableName": "User",
-        },
-        {
-          "ids": ["2"],
-          "tableName": "User",
-        },
-      ],
-    )
+    t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+      {
+        "ids": ["1"],
+        "tableName": "User",
+      },
+      {
+        "ids": ["2"],
+        "tableName": "User",
+      },
+    ])
   })
 
-  Async.it(
-    "Batches requests to db when requesting non existing entity in Promise.all",
-    async t => {
-      let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
-      let loadManager = LoadManager.make()
-      let inMemoryStore = Mock.InMemoryStore.make()
-      let getUser = entityId =>
-        LoadLayer.loadById(
-          ~loadManager,
-          ~persistence=storageMock->Mock.Storage.toPersistence,
-          ~entityConfig=Mock.entityConfig(User),
-          ~inMemoryStore,
-          ~entityId,
-          ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
-          ~shouldGroup=true,
-        )
-
-      let users = await Promise.all([getUser("1"), getUser("2")])
-
-      t.expect(users).toEqual([None, None])
-      t.expect(
-        storageMock.loadByIdsOrThrowCalls,
-      ).toEqual(
-        [
-          {
-            "ids": ["1", "2"],
-            "tableName": "User",
-          },
-        ],
+  Async.it("Batches requests to db when requesting non existing entity in Promise.all", async t => {
+    let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
+    let loadManager = LoadManager.make()
+    let inMemoryStore = Mock.InMemoryStore.make()
+    let getUser = entityId =>
+      LoadLayer.loadById(
+        ~loadManager,
+        ~persistence=storageMock->Mock.Storage.toPersistence,
+        ~entityConfig=Mock.entityConfig(User),
+        ~inMemoryStore,
+        ~entityId,
+        ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~shouldGroup=true,
       )
-    },
-  )
+
+    let users = await Promise.all([getUser("1"), getUser("2")])
+
+    t.expect(users).toEqual([None, None])
+    t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+      {
+        "ids": ["1", "2"],
+        "tableName": "User",
+      },
+    ])
+  })
 
   Async.it(
     "Doesn't select entity from the db which was initially in the in memory store",
@@ -218,17 +192,16 @@ describe("LoadLayer", () => {
 
       let users = await Promise.all([getUser("1"), getUser("2")])
 
-      t.expect(users).toEqual([Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)), None])
-      t.expect(
-        storageMock.loadByIdsOrThrowCalls,
-      ).toEqual(
-        [
-          {
-            "ids": ["2"],
-            "tableName": "User",
-          },
-        ],
-      )
+      t.expect(users).toEqual([
+        Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)),
+        None,
+      ])
+      t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+        {
+          "ids": ["2"],
+          "tableName": "User",
+        },
+      ])
       t.expect(storageMock.loadByFieldOrThrowCalls).toEqual([])
     },
   )
@@ -274,16 +247,12 @@ describe("LoadLayer", () => {
 
       // It's Some(user1) even though from db we get None
       t.expect(user).toEqual(Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)))
-      t.expect(
-        storageMock.loadByIdsOrThrowCalls,
-      ).toEqual(
-        [
-          {
-            "ids": ["1"],
-            "tableName": "User",
-          },
-        ],
-      )
+      t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+        {
+          "ids": ["1"],
+          "tableName": "User",
+        },
+      ])
     },
   )
 
@@ -329,20 +298,16 @@ describe("LoadLayer", () => {
       t.expect(users).toEqual([None, None])
       // If we used setTimeout for schedule it would behave differently,
       // but we are not sure that it'll bring some benefits
-      t.expect(
-        storageMock.loadByIdsOrThrowCalls,
-      ).toEqual(
-        [
-          {
-            "ids": ["2"],
-            "tableName": "User",
-          },
-          {
-            "ids": ["3"],
-            "tableName": "User",
-          },
-        ],
-      )
+      t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([
+        {
+          "ids": ["2"],
+          "tableName": "User",
+        },
+        {
+          "ids": ["3"],
+          "tableName": "User",
+        },
+      ])
     },
   )
 
@@ -384,24 +349,20 @@ describe("LoadLayer", () => {
 
     t.expect(users1).toEqual([])
     t.expect(users2).toEqual([])
-    t.expect(
-      storageMock.loadByFieldOrThrowCalls,
-    ).toEqual(
-      [
-        {
-          "fieldName": "id",
-          "fieldValue": "123"->Utils.magic,
-          "tableName": "User",
-          "operator": #"=",
-        },
-        {
-          "fieldName": "updatesCountOnUserForTesting",
-          "fieldValue": 0->Utils.magic,
-          "tableName": "User",
-          "operator": #">",
-        },
-      ],
-    )
+    t.expect(storageMock.loadByFieldOrThrowCalls).toEqual([
+      {
+        "fieldName": "id",
+        "fieldValue": "123"->Utils.magic,
+        "tableName": "User",
+        "operator": #"=",
+      },
+      {
+        "fieldName": "updatesCountOnUserForTesting",
+        "fieldValue": 0->Utils.magic,
+        "tableName": "User",
+        "operator": #">",
+      },
+    ])
 
     // Test Lt operator
     let getUsersWithUpdatesLt = fieldValue =>
@@ -423,12 +384,8 @@ describe("LoadLayer", () => {
     t.expect(
       storageMock.loadByFieldOrThrowCalls->Array.length,
       ~message="Should have added Lt operator call",
-    ).toEqual(
-      3,
-    )
-    t.expect(
-      storageMock.loadByFieldOrThrowCalls->Belt.Array.get(2),
-    ).toEqual(
+    ).toEqual(3)
+    t.expect(storageMock.loadByFieldOrThrowCalls->Belt.Array.get(2)).toEqual(
       Some({
         "fieldName": "updatesCountOnUserForTesting",
         "fieldValue": 5->Utils.magic,
@@ -457,7 +414,9 @@ describe("LoadLayer", () => {
       updatesCountOnUserForTesting: 1,
     }
 
-    let inMemoryStore = Mock.InMemoryStore.make(~entities=[(Mock.entityConfig(User), [user1, user2])])
+    let inMemoryStore = Mock.InMemoryStore.make(
+      ~entities=[(Mock.entityConfig(User), [user1, user2])],
+    )
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
     let getUsersWithId = fieldValue =>
@@ -488,43 +447,40 @@ describe("LoadLayer", () => {
         ~shouldGroup=true,
       )
 
-    t.expect(await getUsersWithId("1")).toEqual([user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
-    t.expect(
-      await getUsersWithUpdates(0),
-      ~message="Should have loaded user2",
-    ).toEqual(
-      [user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity)],
-    )
+    t.expect(await getUsersWithId("1")).toEqual([
+      user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity),
+    ])
+    t.expect(await getUsersWithUpdates(0), ~message="Should have loaded user2").toEqual([
+      user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity),
+    ])
     t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
-    t.expect(
-      storageMock.loadByFieldOrThrowCalls,
-    ).toEqual(
-      [
-        {
-          "fieldName": "id",
-          "fieldValue": "1"->Utils.magic,
-          "tableName": "User",
-          "operator": #"=",
-        },
-        {
-          "fieldName": "updatesCountOnUserForTesting",
-          "fieldValue": 0->Utils.magic,
-          "tableName": "User",
-          "operator": #">",
-        },
-      ],
-    )
+    t.expect(storageMock.loadByFieldOrThrowCalls).toEqual([
+      {
+        "fieldName": "id",
+        "fieldValue": "1"->Utils.magic,
+        "tableName": "User",
+        "operator": #"=",
+      },
+      {
+        "fieldName": "updatesCountOnUserForTesting",
+        "fieldValue": 0->Utils.magic,
+        "tableName": "User",
+        "operator": #">",
+      },
+    ])
 
     // The second time gets from inMemoryStore
-    t.expect(await getUsersWithId("1")).toEqual([user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
-    t.expect(await getUsersWithUpdates(0)).toEqual([user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
+    t.expect(await getUsersWithId("1")).toEqual([
+      user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity),
+    ])
+    t.expect(await getUsersWithUpdates(0)).toEqual([
+      user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity),
+    ])
     t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
     t.expect(
       storageMock.loadByFieldOrThrowCalls->Array.length,
       ~message=`Shouldn't add more calls to the db`,
-    ).toEqual(
-      2,
-    )
+    ).toEqual(2)
 
     inMemoryStore->Mock.InMemoryStore.setEntity(
       ~entityConfig=Mock.entityConfig(User),
@@ -534,16 +490,12 @@ describe("LoadLayer", () => {
     t.expect(
       await getUsersWithUpdates(0),
       ~message=`Doesn't get the user after the value is updated and not match the query`,
-    ).toEqual(
-      [],
-    )
+    ).toEqual([])
     t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
     t.expect(
       storageMock.loadByFieldOrThrowCalls->Array.length,
       ~message=`Shouldn't add more calls to the db`,
-    ).toEqual(
-      2,
-    )
+    ).toEqual(2)
   })
 
   Async.it(

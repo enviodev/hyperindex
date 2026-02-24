@@ -239,37 +239,35 @@ describe("SourceManager fetchNext", () => {
       t.expect(
         executeQueryMock.calls,
         ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
-      ).toEqual(
-        [
-          {
-            partitionId: "2",
-            fromBlock: 2,
-            toBlock: None,
-            isChunk: false,
-            selection: normalSelection,
-            addressesByContractName: partition2.addressesByContractName,
-            indexingContracts: fetchState.indexingContracts,
-          },
-          {
-            partitionId: "0",
-            fromBlock: 5,
-            toBlock: None,
-            isChunk: false,
-            selection: normalSelection,
-            addressesByContractName: partition0.addressesByContractName,
-            indexingContracts: fetchState.indexingContracts,
-          },
-          {
-            partitionId: "1",
-            fromBlock: 6,
-            toBlock: None,
-            isChunk: false,
-            selection: normalSelection,
-            addressesByContractName: partition1.addressesByContractName,
-            indexingContracts: fetchState.indexingContracts,
-          },
-        ],
-      )
+      ).toEqual([
+        {
+          partitionId: "2",
+          fromBlock: 2,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          addressesByContractName: partition2.addressesByContractName,
+          indexingContracts: fetchState.indexingContracts,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 5,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          addressesByContractName: partition0.addressesByContractName,
+          indexingContracts: fetchState.indexingContracts,
+        },
+        {
+          partitionId: "1",
+          fromBlock: 6,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          addressesByContractName: partition1.addressesByContractName,
+          indexingContracts: fetchState.indexingContracts,
+        },
+      ])
 
       executeQueryMock.resolveAll()
 
@@ -278,9 +276,7 @@ describe("SourceManager fetchNext", () => {
       t.expect(
         executeQueryMock.calls->Js.Array2.length,
         ~message="Shouldn't have called more after resolving prev promises",
-      ).toEqual(
-        3,
-      )
+      ).toEqual(3)
     },
   )
 
@@ -306,30 +302,26 @@ describe("SourceManager fetchNext", () => {
           ~stateId=0,
         )
 
-      t.expect(
-        executeQueryMock.calls,
-      ).toEqual(
-        [
-          {
-            partitionId: "2",
-            fromBlock: 2,
-            toBlock: None,
-            isChunk: false,
-            selection: normalSelection,
-            addressesByContractName: partition2.addressesByContractName,
-            indexingContracts: fetchState.indexingContracts,
-          },
-          {
-            partitionId: "0",
-            fromBlock: 5,
-            toBlock: None,
-            isChunk: false,
-            selection: normalSelection,
-            addressesByContractName: partition0.addressesByContractName,
-            indexingContracts: fetchState.indexingContracts,
-          },
-        ],
-      )
+      t.expect(executeQueryMock.calls).toEqual([
+        {
+          partitionId: "2",
+          fromBlock: 2,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          addressesByContractName: partition2.addressesByContractName,
+          indexingContracts: fetchState.indexingContracts,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 5,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          addressesByContractName: partition0.addressesByContractName,
+          indexingContracts: fetchState.indexingContracts,
+        },
+      ])
 
       executeQueryMock.resolveAll()
 
@@ -338,9 +330,7 @@ describe("SourceManager fetchNext", () => {
       t.expect(
         executeQueryMock.calls->Js.Array2.length,
         ~message="Shouldn't have called more after resolving prev promises",
-      ).toEqual(
-        2,
-      )
+      ).toEqual(2)
     },
   )
 
@@ -372,9 +362,7 @@ describe("SourceManager fetchNext", () => {
       t.expect(
         executeQueryMock.calls->Js.Array2.length,
         ~message="Shouldn't have called more after resolving prev promises",
-      ).toEqual(
-        1,
-      )
+      ).toEqual(1)
 
       await fetchNextPromise
     },
@@ -524,9 +512,7 @@ describe("SourceManager fetchNext", () => {
     t.expect(
       waitForNewBlockMock.calls,
       ~message=`New call is not added with the same stateId`,
-    ).toEqual(
-      [5],
-    )
+    ).toEqual([5])
 
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
@@ -536,12 +522,10 @@ describe("SourceManager fetchNext", () => {
         ~onNewBlock=onNewBlockMock.fn,
         ~stateId=1,
       )
-    t.expect(
-      waitForNewBlockMock.calls,
-      ~message=`Should add a new call after a rollback`,
-    ).toEqual(
-      [5, 5],
-    )
+    t.expect(waitForNewBlockMock.calls, ~message=`Should add a new call after a rollback`).toEqual([
+      5,
+      5,
+    ])
 
     (waitForNewBlockMock.resolveFns->Utils.Array.firstUnsafe)(7)
     (waitForNewBlockMock.resolveFns->Js.Array2.unsafe_get(1))(6)
@@ -552,9 +536,7 @@ describe("SourceManager fetchNext", () => {
     t.expect(
       onNewBlockMock.calls,
       ~message=`Should invalidate the waitForNewBlock result with block height 7, which responded after the reorg rollback`,
-    ).toEqual(
-      [6],
-    )
+    ).toEqual([6])
   })
 
   Async.it("Can add new partitions until the concurrency limit reached", async t => {
@@ -592,9 +574,7 @@ describe("SourceManager fetchNext", () => {
       ~message=`We repeated the fetchNext but now with p2 and p3,
       since p0 and p1 are already fetching, we have concurrency limit left as 1,
       so we choose p3 since it's more behind than p2`,
-    ).toEqual(
-      ["0", "1", "3"],
-    )
+    ).toEqual(["0", "1", "3"])
 
     // The third call won't do anything, because the concurrency is reached
     await sourceManager->SourceManager.fetchNext(
@@ -674,9 +654,7 @@ describe("SourceManager fetchNext", () => {
     t.expect(
       executeQueryMock.calls->Js.Array2.length,
       ~message="Shouldn't have called more after resolving prev promises",
-    ).toEqual(
-      5,
-    )
+    ).toEqual(5)
   })
 
   Async.it("Should not query partitions that are at max queue size", async t => {
@@ -717,9 +695,7 @@ describe("SourceManager fetchNext", () => {
     t.expect(
       executeQueryMock.callIds,
       ~message="Should have skipped partitions that are at max queue size",
-    ).toEqual(
-      ["2", "3", "4"],
-    )
+    ).toEqual(["2", "3", "4"])
   })
 
   Async.it("Sorts after all the filtering is applied", async t => {
@@ -796,16 +772,12 @@ describe("SourceManager wait for new blocks", () => {
         // during the most first block height request,
         // but we don't allow both HyperSync and RPC for historical sync
         ~message="Even though mock0 resolved with higher value, mock1 was the first",
-      ).toEqual(
-        2,
-      )
+      ).toEqual(2)
 
       t.expect(
         sourceManager->SourceManager.getActiveSource,
         ~message=`Should also switch the active source`,
-      ).toBe(
-        mock1.source,
-      )
+      ).toBe(mock1.source)
 
       // No new calls
       t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -835,25 +807,19 @@ describe("SourceManager wait for new blocks", () => {
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Shouldn't immediately call getHeightOrThrow again",
-          ).toEqual(
-            1,
-          )
+          ).toEqual(1)
           await Utils.delay(0)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should call after a polling interval",
-          ).toEqual(
-            2,
-          )
+          ).toEqual(2)
 
           mock0.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval0 + 1)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should have a second round",
-          ).toEqual(
-            3,
-          )
+          ).toEqual(3)
         }
       )(),
       (
@@ -865,25 +831,19 @@ describe("SourceManager wait for new blocks", () => {
           t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
             ~message="Shouldn't immediately call getHeightOrThrow again",
-          ).toEqual(
-            1,
-          )
+          ).toEqual(1)
           await Utils.delay(0)
           t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
             ~message="Should call after a polling interval",
-          ).toEqual(
-            2,
-          )
+          ).toEqual(2)
 
           mock1.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval1 + 1)
           t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
             ~message="Should have a second round",
-          ).toEqual(
-            3,
-          )
+          ).toEqual(3)
         }
       )(),
     ))
@@ -900,15 +860,11 @@ describe("SourceManager wait for new blocks", () => {
     t.expect(
       mock0.getHeightOrThrowCalls->Array.length,
       ~message="Polling for source 0 should stop after successful response",
-    ).toEqual(
-      3,
-    )
+    ).toEqual(3)
     t.expect(
       mock1.getHeightOrThrowCalls->Array.length,
       ~message="Polling for source 1 should stop after successful response",
-    ).toEqual(
-      3,
-    )
+    ).toEqual(3)
   })
 
   Async.it("Retries on throw without affecting polling of other sources", async t => {
@@ -940,16 +896,12 @@ describe("SourceManager wait for new blocks", () => {
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Shouldn't immediately call getHeightOrThrow again",
-          ).toEqual(
-            1,
-          )
+          ).toEqual(1)
           await Utils.delay(0)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should call after a retry",
-          ).toEqual(
-            2,
-          )
+          ).toEqual(2)
 
           mock0.rejectGetHeightOrThrow("ERROR")
 
@@ -957,16 +909,12 @@ describe("SourceManager wait for new blocks", () => {
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should increase the retry interval",
-          ).toEqual(
-            2,
-          )
+          ).toEqual(2)
           await Utils.delay(0)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should call after a longer retry",
-          ).toEqual(
-            3,
-          )
+          ).toEqual(3)
 
           mock0.rejectGetHeightOrThrow("ERROR")
 
@@ -974,41 +922,31 @@ describe("SourceManager wait for new blocks", () => {
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should increase the retry interval but not exceed the max",
-          ).toEqual(
-            3,
-          )
+          ).toEqual(3)
           await Utils.delay(0)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should call after the max retry interval",
-          ).toEqual(
-            4,
-          )
+          ).toEqual(4)
 
           mock0.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval0 + 1)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should return to normal polling after a successful retry",
-          ).toEqual(
-            5,
-          )
+          ).toEqual(5)
 
           mock0.rejectGetHeightOrThrow("ERROR3")
           await Utils.delay(initialRetryInterval)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Retry interval resets after a successful resolve",
-          ).toEqual(
-            5,
-          )
+          ).toEqual(5)
           await Utils.delay(0)
           t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
             ~message="Should call after a retry for error3",
-          ).toEqual(
-            6,
-          )
+          ).toEqual(6)
         }
       )(),
       // This is not affected by the source0 and done in parallel
@@ -1022,25 +960,19 @@ describe("SourceManager wait for new blocks", () => {
           t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
             ~message="Shouldn't immediately call getHeightOrThrow again",
-          ).toEqual(
-            1,
-          )
+          ).toEqual(1)
           await Utils.delay(0)
           t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
             ~message="Should call after a polling interval",
-          ).toEqual(
-            2,
-          )
+          ).toEqual(2)
 
           mock1.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval1 + 1)
           t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
             ~message="Should have a second round",
-          ).toEqual(
-            3,
-          )
+          ).toEqual(3)
         }
       )(),
     ))
@@ -1057,173 +989,134 @@ describe("SourceManager wait for new blocks", () => {
     t.expect(
       mock0.getHeightOrThrowCalls->Array.length,
       ~message="Polling for source 0 should stop after successful response",
-    ).toEqual(
-      6,
-    )
+    ).toEqual(6)
     t.expect(
       mock1.getHeightOrThrowCalls->Array.length,
       ~message="Polling for source 1 should stop after successful response",
-    ).toEqual(
-      3,
-    )
+    ).toEqual(3)
   })
 
-  Async.it(
-    "Starts polling the fallback source after the newBlockFallbackStallTimeout",
-    async t => {
-      let pollingInterval = 1
-      let stalledPollingInterval = 2
-      let newBlockFallbackStallTimeout = 8
-      let sync = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
-      let fallback = Mock.Source.make(~sourceFor=Fallback, [#getHeightOrThrow], ~pollingInterval)
-      let sourceManager = SourceManager.make(
-        ~sources=[sync.source, fallback.source],
-        ~maxPartitionConcurrency=10,
-        ~newBlockFallbackStallTimeout,
-        ~stalledPollingInterval,
-      )
+  Async.it("Starts polling the fallback source after the newBlockFallbackStallTimeout", async t => {
+    let pollingInterval = 1
+    let stalledPollingInterval = 2
+    let newBlockFallbackStallTimeout = 8
+    let sync = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
+    let fallback = Mock.Source.make(~sourceFor=Fallback, [#getHeightOrThrow], ~pollingInterval)
+    let sourceManager = SourceManager.make(
+      ~sources=[sync.source, fallback.source],
+      ~maxPartitionConcurrency=10,
+      ~newBlockFallbackStallTimeout,
+      ~stalledPollingInterval,
+    )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
-      t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
-      t.expect(fallback.getHeightOrThrowCalls->Array.length).toEqual(0)
-      sync.resolveGetHeightOrThrow(100)
+    t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
+    t.expect(fallback.getHeightOrThrowCalls->Array.length).toEqual(0)
+    sync.resolveGetHeightOrThrow(100)
 
-      await Utils.delay(pollingInterval + 1)
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Should call after a polling interval",
-      ).toEqual(
-        2,
-      )
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Fallback is still not called",
-      ).toEqual(
-        0,
-      )
+    await Utils.delay(pollingInterval + 1)
+    t.expect(
+      sync.getHeightOrThrowCalls->Array.length,
+      ~message="Should call after a polling interval",
+    ).toEqual(2)
+    t.expect(
+      fallback.getHeightOrThrowCalls->Array.length,
+      ~message="Fallback is still not called",
+    ).toEqual(0)
 
-      await Utils.delay(newBlockFallbackStallTimeout)
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Shouldn't increase, since the request is still pending",
-      ).toEqual(
-        2,
-      )
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Should start polling the fallback source",
-      ).toEqual(
-        1,
-      )
+    await Utils.delay(newBlockFallbackStallTimeout)
+    t.expect(
+      sync.getHeightOrThrowCalls->Array.length,
+      ~message="Shouldn't increase, since the request is still pending",
+    ).toEqual(2)
+    t.expect(
+      fallback.getHeightOrThrowCalls->Array.length,
+      ~message="Should start polling the fallback source",
+    ).toEqual(1)
 
-      sync.resolveGetHeightOrThrow(100)
-      fallback.resolveGetHeightOrThrow(100)
+    sync.resolveGetHeightOrThrow(100)
+    fallback.resolveGetHeightOrThrow(100)
 
-      // After newBlockFallbackStallTimeout, the polling interval should be
-      // increased to stalledPollingInterval for both sync and fallback sources
-      await Utils.delay(stalledPollingInterval)
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should still wait for the polling interval",
-      ).toEqual(
-        2,
-      )
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Fallback source should still wait for the polling interval",
-      ).toEqual(
-        1,
-      )
-      await Utils.delay(0)
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Should call after stalledPollingInterval",
-      ).toEqual(
-        3,
-      )
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Should call after stalledPollingInterval",
-      ).toEqual(
-        2,
-      )
+    // After newBlockFallbackStallTimeout, the polling interval should be
+    // increased to stalledPollingInterval for both sync and fallback sources
+    await Utils.delay(stalledPollingInterval)
+    t.expect(
+      sync.getHeightOrThrowCalls->Array.length,
+      ~message="Sync source should still wait for the polling interval",
+    ).toEqual(2)
+    t.expect(
+      fallback.getHeightOrThrowCalls->Array.length,
+      ~message="Fallback source should still wait for the polling interval",
+    ).toEqual(1)
+    await Utils.delay(0)
+    t.expect(
+      sync.getHeightOrThrowCalls->Array.length,
+      ~message="Should call after stalledPollingInterval",
+    ).toEqual(3)
+    t.expect(
+      fallback.getHeightOrThrowCalls->Array.length,
+      ~message="Should call after stalledPollingInterval",
+    ).toEqual(2)
 
-      fallback.resolveGetHeightOrThrow(101)
+    fallback.resolveGetHeightOrThrow(101)
 
-      t.expect(await p, ~message="Returns the fallback source response").toEqual(101)
+    t.expect(await p, ~message="Returns the fallback source response").toEqual(101)
 
-      t.expect(
-        sourceManager->SourceManager.getActiveSource,
-        ~message=`Changes the active source to the fallback`,
-      ).toBe(
-        fallback.source,
-      )
+    t.expect(
+      sourceManager->SourceManager.getActiveSource,
+      ~message=`Changes the active source to the fallback`,
+    ).toBe(fallback.source)
 
-      await Utils.delay(
-        // Time during which a new polling should definetely happen
-        stalledPollingInterval + 1,
-      )
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Polling for sync source should stop after successful response",
-      ).toEqual(
-        3,
-      )
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Polling for fallback source should stop after successful response",
-      ).toEqual(
-        2,
-      )
+    await Utils.delay(
+      // Time during which a new polling should definetely happen
+      stalledPollingInterval + 1,
+    )
+    t.expect(
+      sync.getHeightOrThrowCalls->Array.length,
+      ~message="Polling for sync source should stop after successful response",
+    ).toEqual(3)
+    t.expect(
+      fallback.getHeightOrThrowCalls->Array.length,
+      ~message="Polling for fallback source should stop after successful response",
+    ).toEqual(2)
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
+    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
 
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Should call on the next waitForNewBlock",
-      ).toEqual(
-        4,
-      )
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message=`Even if the source is a fallback - it's currently active.
+    t.expect(
+      sync.getHeightOrThrowCalls->Array.length,
+      ~message="Should call on the next waitForNewBlock",
+    ).toEqual(4)
+    t.expect(
+      fallback.getHeightOrThrowCalls->Array.length,
+      ~message=`Even if the source is a fallback - it's currently active.
         Since we don't wait for a timeout again in case
         all main sync sources are still not valid,
         we immediately call the active source on the next waitForNewBlock.`,
-      ).toEqual(
-        3,
-      )
+    ).toEqual(3)
 
-      sync.resolveGetHeightOrThrow(102)
+    sync.resolveGetHeightOrThrow(102)
 
-      t.expect(await p, ~message="Returns the sync source response").toEqual(102)
+    t.expect(await p, ~message="Returns the sync source response").toEqual(102)
 
-      t.expect(
-        sourceManager->SourceManager.getActiveSource,
-        ~message=`Changes the active source back to the sync`,
-      ).toBe(
-        sync.source,
-      )
+    t.expect(
+      sourceManager->SourceManager.getActiveSource,
+      ~message=`Changes the active source back to the sync`,
+    ).toBe(sync.source)
 
-      await Utils.delay(
-        // Time during which a new polling should definetely happen
-        stalledPollingInterval + 1,
-      )
-      t.expect(
-        sync.getHeightOrThrowCalls->Array.length,
-        ~message="Polling for sync source should stop after successful response",
-      ).toEqual(
-        4,
-      )
-      t.expect(
-        fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Polling for fallback source should stop after successful response",
-      ).toEqual(
-        3,
-      )
-    },
-  )
+    await Utils.delay(
+      // Time during which a new polling should definetely happen
+      stalledPollingInterval + 1,
+    )
+    t.expect(
+      sync.getHeightOrThrowCalls->Array.length,
+      ~message="Polling for sync source should stop after successful response",
+    ).toEqual(4)
+    t.expect(
+      fallback.getHeightOrThrowCalls->Array.length,
+      ~message="Polling for fallback source should stop after successful response",
+    ).toEqual(3)
+  })
 
   Async.it(
     "Continues polling even after newBlockFallbackStallTimeout when there are no fallback sources",
@@ -1249,17 +1142,13 @@ describe("SourceManager wait for new blocks", () => {
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
         ~message="Should call after a polling interval",
-      ).toEqual(
-        2,
-      )
+      ).toEqual(2)
 
       await Utils.delay(newBlockFallbackStallTimeout)
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
         ~message="Shouldn't increase, since the request is still pending",
-      ).toEqual(
-        2,
-      )
+      ).toEqual(2)
 
       sync.resolveGetHeightOrThrow(100)
 
@@ -1269,16 +1158,12 @@ describe("SourceManager wait for new blocks", () => {
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
         ~message="Sync source should still wait for the polling interval",
-      ).toEqual(
-        2,
-      )
+      ).toEqual(2)
       await Utils.delay(0)
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
         ~message="Should call after stalledPollingInterval",
-      ).toEqual(
-        3,
-      )
+      ).toEqual(3)
 
       sync.resolveGetHeightOrThrow(101)
 
@@ -1306,11 +1191,9 @@ describe("SourceManager.executeQuery", () => {
     ])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
-    t.expect(
-      getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
-    ).toEqual(
-      [{"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"}],
-    )
+    t.expect(getItemsOrThrowCalls->Js.Array2.map(call => call.payload)).toEqual([
+      {"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"},
+    ])
     resolveGetItemsOrThrow([])
     t.expect((await p).parsedQueueItems).toEqual([])
   })
@@ -1330,10 +1213,7 @@ describe("SourceManager.executeQuery", () => {
       let _ = await p
       Js.Exn.raiseError("Should not have resolved")
     } catch {
-    | Js.Exn.Error(e) =>
-      t.expect(
-        e->Js.Exn.message,
-      ).toEqual(Some(error["message"]))
+    | Js.Exn.Error(e) => t.expect(e->Js.Exn.message).toEqual(Some(error["message"]))
     }
   })
 
@@ -1352,9 +1232,7 @@ describe("SourceManager.executeQuery", () => {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.length,
       ~message="Should call getItemsOrThrow",
-    ).toEqual(
-      1,
-    )
+    ).toEqual(1)
     (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
       Source.GetItemsError(
         FailedGettingItems({
@@ -1367,9 +1245,7 @@ describe("SourceManager.executeQuery", () => {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.length,
       ~message="No new calls before the microtask",
-    ).toEqual(
-      0,
-    )
+    ).toEqual(0)
     await Promise.resolve() // Wait for microtask, so the rejection is caught
 
     switch sourceMock.getItemsOrThrowCalls {
@@ -1377,9 +1253,7 @@ describe("SourceManager.executeQuery", () => {
         t.expect(
           call.payload,
           ~message=`Should reset retry count on WithSuggestedToBlock error`,
-        ).toEqual(
-          {"fromBlock": 0, "toBlock": Some(10), "retry": 0, "p": "0"},
-        )
+        ).toEqual({"fromBlock": 0, "toBlock": Some(10), "retry": 0, "p": "0"})
         call.resolve([])
       }
     | _ => Js.Exn.raiseError("Should have a new call after the microtask")
@@ -1416,9 +1290,7 @@ describe("SourceManager.executeQuery", () => {
         t.expect(
           sourceManager->SourceManager.getActiveSource,
           ~message="Should switch to the fallback source",
-        ).toBe(
-          sourceMock1.source,
-        )
+        ).toBe(sourceMock1.source)
       }
 
       let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
@@ -1520,16 +1392,14 @@ Then sources start switching every second retry.
 The fallback sources not included in the rotation until the 10th retry,
 but we still attempt the fallback source if it was the initial active source.
         `,
-          ).toEqual(
-            [
-              {"fromBlock": 0, "toBlock": None, "retry": 0, "source": 1},
-              {"fromBlock": 0, "toBlock": None, "retry": 1, "source": 1},
-              {"fromBlock": 0, "toBlock": None, "retry": 2, "source": 1},
-              {"fromBlock": 0, "toBlock": None, "retry": 3, "source": 0},
-              {"fromBlock": 0, "toBlock": None, "retry": 4, "source": 0},
-              {"fromBlock": 0, "toBlock": None, "retry": 5, "source": 1},
-            ],
-          )
+          ).toEqual([
+            {"fromBlock": 0, "toBlock": None, "retry": 0, "source": 1},
+            {"fromBlock": 0, "toBlock": None, "retry": 1, "source": 1},
+            {"fromBlock": 0, "toBlock": None, "retry": 2, "source": 1},
+            {"fromBlock": 0, "toBlock": None, "retry": 3, "source": 0},
+            {"fromBlock": 0, "toBlock": None, "retry": 4, "source": 0},
+            {"fromBlock": 0, "toBlock": None, "retry": 5, "source": 1},
+          ])
 
           call.resolve([])
           t.expect((await p).parsedQueueItems).toEqual([])
@@ -1560,9 +1430,7 @@ describe("SourceManager height subscription", () => {
       t.expect(
         mock.heightSubscriptionCalls->Array.length,
         ~message="Should have created a height subscription",
-      ).toEqual(
-        1,
-      )
+      ).toEqual(1)
 
       // Trigger new height from subscription
       mock.triggerHeightSubscription(101)
@@ -1587,9 +1455,7 @@ describe("SourceManager height subscription", () => {
     t.expect(
       mock.getHeightOrThrowCalls->Array.length,
       ~message="Should not call getHeightOrThrow again since subscription exists",
-    ).toEqual(
-      1,
-    )
+    ).toEqual(1)
     t.expect(await p2, ~message="Should immediately return cached height").toEqual(105)
   })
 
@@ -1611,9 +1477,7 @@ describe("SourceManager height subscription", () => {
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
         ~message="Should not call getHeightOrThrow since subscription exists",
-      ).toEqual(
-        1,
-      )
+      ).toEqual(1)
 
       // Trigger new height
       mock.triggerHeightSubscription(102)
@@ -1637,9 +1501,7 @@ describe("SourceManager height subscription", () => {
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
         ~message="Should poll again since no subscription is available",
-      ).toEqual(
-        2,
-      )
+      ).toEqual(2)
 
       mock.resolveGetHeightOrThrow(101)
       t.expect(await p).toEqual(101)
@@ -1673,10 +1535,7 @@ describe("SourceManager height subscription", () => {
       },
     )
     await Utils.delay(0)
-    t.expect(
-      resolved.contents,
-      ~message="Should not resolve with height <= knownHeight",
-    ).toEqual(
+    t.expect(resolved.contents, ~message="Should not resolve with height <= knownHeight").toEqual(
       false,
     )
 

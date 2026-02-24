@@ -29,9 +29,7 @@ describe("EventRouter", () => {
       ~isWildcard=false,
     )
 
-    t.expect(
-      router,
-    ).toEqual(
+    t.expect(router).toEqual(
       mockFromArray([
         (
           "test-event-tag",
@@ -93,7 +91,9 @@ describe("EventRouter", () => {
           ~isWildcard=true,
         )
       },
-    ).toThrowError("Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1")
+    ).toThrowError(
+      "Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1",
+    )
   })
 
   it("get doesn't returns the correct eventMod without address in mapping if unique", t => {
@@ -116,9 +116,7 @@ describe("EventRouter", () => {
         ~indexingContracts=Js.Dict.empty(),
       ),
       ~message=`We can return Some, but we want to always check that event is after contract startBlock`,
-    ).toEqual(
-      None,
-    )
+    ).toEqual(None)
   })
 
   it(
@@ -166,9 +164,7 @@ describe("EventRouter", () => {
           ~indexingContracts,
         ),
         ~message="Should return the non wildcard event",
-      ).toEqual(
-        Some("non-wildcard"),
-      )
+      ).toEqual(Some("non-wildcard"))
 
       t.expect(
         router->EventRouter.get(
@@ -178,9 +174,7 @@ describe("EventRouter", () => {
           ~indexingContracts,
         ),
         ~message="Should return the wildcard event",
-      ).toEqual(
-        Some("wildcard"),
-      )
+      ).toEqual(Some("wildcard"))
     },
   )
 
@@ -188,9 +182,7 @@ describe("EventRouter", () => {
     let item = Indexer.Gravatar.NewGravatar.register()
     let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
 
-    t.expect(
-      router,
-    ).toEqual(
+    t.expect(router).toEqual(
       mockFromArray([
         (
           "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1",

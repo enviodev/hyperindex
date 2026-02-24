@@ -15,14 +15,9 @@ describe("e2e", () => {
       },
     })
 
-    t.expect(
-      result,
-      ~message="Test Indexer should return the correct result",
-    ).toEqual(
-      {
-        changes: [],
-      },
-    )
+    t.expect(result, ~message="Test Indexer should return the correct result").toEqual({
+      changes: [],
+    })
   })
 })
 
@@ -78,9 +73,7 @@ describe("Transfers", () => {
       t.expect(
         account1Balance,
         ~message="Should have subtracted transfer amount 3 from userAddress1 balance 5",
-      ).toBe(
-        Some(BigInt.fromInt(2)),
-      )
+      ).toBe(Some(BigInt.fromInt(2)))
 
       //Get the balance of userAddress2 after the transfer
       let account2Balance =
@@ -94,9 +87,7 @@ describe("Transfers", () => {
       t.expect(
         Some(BigInt.fromInt(3)),
         ~message="Should have added transfer amount 3 to userAddress2 balance 0",
-      ).toBe(
-        account2Balance,
-      )
+      ).toBe(account2Balance)
 
       let _ = await ERC20.Transfer.processEvent({
         event: mockTransfer,

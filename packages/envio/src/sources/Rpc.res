@@ -217,11 +217,19 @@ module GetBlockHeight = {
 }
 
 module GetTransactionByHash = {
-  let rawRoute = makeRpcRoute("eth_getTransactionByHash", S.tuple1(S.string), S.null(S.json(~validate=false)))
+  let rawRoute = makeRpcRoute(
+    "eth_getTransactionByHash",
+    S.tuple1(S.string),
+    S.null(S.json(~validate=false)),
+  )
 }
 
 module GetTransactionReceipt = {
-  let rawRoute = makeRpcRoute("eth_getTransactionReceipt", S.tuple1(S.string), S.null(S.json(~validate=false)))
+  let rawRoute = makeRpcRoute(
+    "eth_getTransactionReceipt",
+    S.tuple1(S.string),
+    S.null(S.json(~validate=false)),
+  )
 }
 
 let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {

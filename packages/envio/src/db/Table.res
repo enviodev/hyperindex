@@ -219,8 +219,6 @@ let getNonDefaultFieldNames = table => {
 let getFieldByName = (table, fieldName) =>
   table.fields->Js.Array2.find(field => field->getUserDefinedFieldName === fieldName)
 
-// TODO: Test whether it should be passed via args and match the column type
-
 let getFieldByDbName = (table, dbFieldName) =>
   table.fields->Js.Array2.find(field =>
     switch field {
