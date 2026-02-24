@@ -196,6 +196,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   }
   app->useFor("/console", consoleCorsMiddleware)
   app->useFor("/metrics", consoleCorsMiddleware)
+  app->useFor("/metrics/runtime", consoleCorsMiddleware)
 
   app->get("/healthz", (_req, res) => {
     // this is the machine readable port used in kubernetes to check the health of this service.
@@ -223,12 +224,21 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     }
   })
 
-  PromClient.collectDefaultMetrics()
+  let runtimeRegistry = PromClient.makeRegistry()
+  PromClient.collectDefaultMetrics({"register": runtimeRegistry})
 
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
     let _ =
       PromClient.defaultRegister
+      ->PromClient.metrics
+      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+  })
+
+  app->get("/metrics/runtime", (_req, res) => {
+    res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
+    let _ =
+      runtimeRegistry
       ->PromClient.metrics
       ->Promise.thenResolve(metrics => res->endWithData(metrics))
   })

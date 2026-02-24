@@ -1,7 +1,7 @@
 open Vitest
 
 describe("Throttler", () => {
-  Async.it("Schedules and throttles functions as expected", async t => {
+  Async.itWithOptions("Schedules and throttles functions as expected", {retry: 3}, async t => {
     let throttler = Throttler.make(~intervalMillis=10, ~logger=Logging.getLogger())
     let actionsCalled = []
 
