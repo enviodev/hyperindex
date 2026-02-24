@@ -1,4 +1,5 @@
 target
+codegenerator/
 .DS_Store
 .env
 # vim files
