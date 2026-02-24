@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 type executeQueryMock = {
   fn: FetchState.query => Promise.t<unit>,
@@ -74,13 +74,13 @@ let onNewBlockMock = () => {
 }
 
 describe("SourceManager creation", () => {
-  it("Successfully creates with a sync source", () => {
+  it("Successfully creates with a sync source", t => {
     let source = Mock.Source.make([]).source
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
-    Assert.equal(sourceManager->SourceManager.getActiveSource, source)
+    t.expect(sourceManager->SourceManager.getActiveSource).toBe(source)
   })
 
-  it("Uses first sync source as initial active source", () => {
+  it("Uses first sync source as initial active source", t => {
     let fallback = Mock.Source.make([], ~sourceFor=Fallback).source
     let sync0 = Mock.Source.make([]).source
     let sync1 = Mock.Source.make([]).source
@@ -88,29 +88,23 @@ describe("SourceManager creation", () => {
       ~sources=[fallback, sync0, sync1],
       ~maxPartitionConcurrency=10,
     )
-    Assert.equal(sourceManager->SourceManager.getActiveSource, sync0)
+    t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync0)
   })
 
-  it("Fails to create without sync sources", () => {
-    Assert.throws(
+  it("Fails to create without sync sources", t => {
+    t.expect(
       () => {
         SourceManager.make(~sources=[], ~maxPartitionConcurrency=10)
       },
-      ~error={
-        "message": "Invalid configuration, no data-source for historical sync provided",
-      },
-    )
-    Assert.throws(
+    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
+    t.expect(
       () => {
         SourceManager.make(
           ~sources=[Mock.Source.make([], ~sourceFor=Fallback).source],
           ~maxPartitionConcurrency=10,
         )
       },
-      ~error={
-        "message": "Invalid configuration, no data-source for historical sync provided",
-      },
-    )
+    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
   })
 })
 
@@ -210,19 +204,19 @@ describe("SourceManager fetchNext", () => {
   }
 
   let neverWaitForNewBlock = async (~knownHeight as _) =>
-    Assert.fail("The waitForNewBlock shouldn't be called for the test")
+    Js.Exn.raiseError("The waitForNewBlock shouldn't be called for the test")
 
   let neverOnNewBlock = (~knownHeight as _) =>
-    Assert.fail("The onNewBlock shouldn't be called for the test")
+    Js.Exn.raiseError("The onNewBlock shouldn't be called for the test")
 
   let neverExecutePartitionQuery = _ =>
-    Assert.fail("The executeQuery shouldn't be called for the test")
+    Js.Exn.raiseError("The executeQuery shouldn't be called for the test")
 
   let source: Source.t = Mock.Source.make([]).source
 
   Async.it(
     "Executes full partitions in any order when we didn't reach concurency limit",
-    async () => {
+    async t => {
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -242,8 +236,10 @@ describe("SourceManager fetchNext", () => {
           ~stateId=0,
         )
 
-      Assert.deepEqual(
+      t.expect(
         executeQueryMock.calls,
+        ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
+      ).toEqual(
         [
           {
             partitionId: "2",
@@ -273,24 +269,24 @@ describe("SourceManager fetchNext", () => {
             indexingContracts: fetchState.indexingContracts,
           },
         ],
-        ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
       )
 
       executeQueryMock.resolveAll()
 
       await fetchNextPromise
 
-      Assert.deepEqual(
+      t.expect(
         executeQueryMock.calls->Js.Array2.length,
-        3,
         ~message="Shouldn't have called more after resolving prev promises",
+      ).toEqual(
+        3,
       )
     },
   )
 
   Async.it(
     "Slices full partitions to the concurrency limit, takes the earliest queries first",
-    async () => {
+    async t => {
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=2)
 
       let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -310,8 +306,9 @@ describe("SourceManager fetchNext", () => {
           ~stateId=0,
         )
 
-      Assert.deepEqual(
+      t.expect(
         executeQueryMock.calls,
+      ).toEqual(
         [
           {
             partitionId: "2",
@@ -338,17 +335,18 @@ describe("SourceManager fetchNext", () => {
 
       await fetchNextPromise
 
-      Assert.deepEqual(
+      t.expect(
         executeQueryMock.calls->Js.Array2.length,
-        2,
         ~message="Shouldn't have called more after resolving prev promises",
+      ).toEqual(
+        2,
       )
     },
   )
 
   Async.it(
     "Skips full partitions at the chain last block and the ones at the mergeBlock",
-    async () => {
+    async t => {
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
       let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -367,21 +365,22 @@ describe("SourceManager fetchNext", () => {
           ~stateId=0,
         )
 
-      Assert.deepEqual(executeQueryMock.callIds, ["2"])
+      t.expect(executeQueryMock.callIds).toEqual(["2"])
 
       executeQueryMock.resolveAll()
 
-      Assert.deepEqual(
+      t.expect(
         executeQueryMock.calls->Js.Array2.length,
-        1,
         ~message="Shouldn't have called more after resolving prev promises",
+      ).toEqual(
+        1,
       )
 
       await fetchNextPromise
     },
   )
 
-  Async.it("Starts indexing from the initial state", async () => {
+  Async.it("Starts indexing from the initial state", async t => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let waitForNewBlockMock = waitForNewBlockMock()
@@ -403,8 +402,8 @@ describe("SourceManager fetchNext", () => {
 
     await fetchNextPromise1
 
-    Assert.deepEqual(waitForNewBlockMock.calls, [0])
-    Assert.deepEqual(onNewBlockMock.calls, [20])
+    t.expect(waitForNewBlockMock.calls).toEqual([0])
+    t.expect(onNewBlockMock.calls).toEqual([20])
 
     // Can wait the second time
     let fetchNextPromise2 =
@@ -423,11 +422,11 @@ describe("SourceManager fetchNext", () => {
 
     await fetchNextPromise2
 
-    Assert.deepEqual(waitForNewBlockMock.calls, [0, 20])
-    Assert.deepEqual(onNewBlockMock.calls, [20, 40])
+    t.expect(waitForNewBlockMock.calls).toEqual([0, 20])
+    t.expect(onNewBlockMock.calls).toEqual([20, 40])
   })
 
-  Async.it("Waits for new block with knownHeight=0 even when all partitions are done", async () => {
+  Async.it("Waits for new block with knownHeight=0 even when all partitions are done", async t => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let waitForNewBlockMock = waitForNewBlockMock()
@@ -450,11 +449,11 @@ describe("SourceManager fetchNext", () => {
 
     await fetchNextPromise1
 
-    Assert.deepEqual(waitForNewBlockMock.calls, [0])
-    Assert.deepEqual(onNewBlockMock.calls, [20])
+    t.expect(waitForNewBlockMock.calls).toEqual([0])
+    t.expect(onNewBlockMock.calls).toEqual([20])
   })
 
-  Async.it("Waits for new block when all partitions are at the knownHeight", async () => {
+  Async.it("Waits for new block when all partitions are at the knownHeight", async t => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
@@ -472,7 +471,7 @@ describe("SourceManager fetchNext", () => {
         ~stateId=0,
       )
 
-    Assert.deepEqual(waitForNewBlockMock.calls, [5])
+    t.expect(waitForNewBlockMock.calls).toEqual([5])
 
     // Should do nothing on the second call with the same data
     await sourceManager->SourceManager.fetchNext(
@@ -483,19 +482,19 @@ describe("SourceManager fetchNext", () => {
       ~stateId=0,
     )
 
-    Assert.deepEqual(onNewBlockMock.calls, [])
+    t.expect(onNewBlockMock.calls).toEqual([])
     waitForNewBlockMock.resolveAll(6)
 
     await Promise.resolve()
-    Assert.deepEqual(onNewBlockMock.calls, [6])
+    t.expect(onNewBlockMock.calls).toEqual([6])
 
     await fetchNextPromise
 
-    Assert.deepEqual(waitForNewBlockMock.calls->Js.Array2.length, 1)
-    Assert.deepEqual(onNewBlockMock.calls->Js.Array2.length, 1)
+    t.expect(waitForNewBlockMock.calls->Js.Array2.length).toEqual(1)
+    t.expect(onNewBlockMock.calls->Js.Array2.length).toEqual(1)
   })
 
-  Async.it("Restarts waiting for new block after a rollback", async () => {
+  Async.it("Restarts waiting for new block after a rollback", async t => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=5)
@@ -512,7 +511,7 @@ describe("SourceManager fetchNext", () => {
         ~stateId=0,
       )
 
-    Assert.deepEqual(waitForNewBlockMock.calls, [5], ~message=`Should wait for new block`)
+    t.expect(waitForNewBlockMock.calls, ~message=`Should wait for new block`).toEqual([5])
 
     // Should do nothing on the second call with the same data
     await sourceManager->SourceManager.fetchNext(
@@ -522,10 +521,11 @@ describe("SourceManager fetchNext", () => {
       ~onNewBlock=neverOnNewBlock,
       ~stateId=0,
     )
-    Assert.deepEqual(
+    t.expect(
       waitForNewBlockMock.calls,
-      [5],
       ~message=`New call is not added with the same stateId`,
+    ).toEqual(
+      [5],
     )
 
     let fetchNextPromise2 =
@@ -536,10 +536,11 @@ describe("SourceManager fetchNext", () => {
         ~onNewBlock=onNewBlockMock.fn,
         ~stateId=1,
       )
-    Assert.deepEqual(
+    t.expect(
       waitForNewBlockMock.calls,
-      [5, 5],
       ~message=`Should add a new call after a rollback`,
+    ).toEqual(
+      [5, 5],
     )
 
     (waitForNewBlockMock.resolveFns->Utils.Array.firstUnsafe)(7)
@@ -548,14 +549,15 @@ describe("SourceManager fetchNext", () => {
     await fetchNextPromise
     await fetchNextPromise2
 
-    Assert.deepEqual(
+    t.expect(
       onNewBlockMock.calls,
-      [6],
       ~message=`Should invalidate the waitForNewBlock result with block height 7, which responded after the reorg rollback`,
+    ).toEqual(
+      [6],
     )
   })
 
-  Async.it("Can add new partitions until the concurrency limit reached", async () => {
+  Async.it("Can add new partitions until the concurrency limit reached", async t => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=3)
 
     let p0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
@@ -574,7 +576,7 @@ describe("SourceManager fetchNext", () => {
         ~stateId=0,
       )
 
-    Assert.deepEqual(executeQueryMock.callIds, ["0", "1"])
+    t.expect(executeQueryMock.callIds).toEqual(["0", "1"])
 
     let fetchNextPromise2 =
       sourceManager->SourceManager.fetchNext(
@@ -585,12 +587,13 @@ describe("SourceManager fetchNext", () => {
         ~stateId=0,
       )
 
-    Assert.deepEqual(
+    t.expect(
       executeQueryMock.callIds,
-      ["0", "1", "3"],
       ~message=`We repeated the fetchNext but now with p2 and p3,
       since p0 and p1 are already fetching, we have concurrency limit left as 1,
       so we choose p3 since it's more behind than p2`,
+    ).toEqual(
+      ["0", "1", "3"],
     )
 
     // The third call won't do anything, because the concurrency is reached
@@ -639,7 +642,7 @@ describe("SourceManager fetchNext", () => {
 
     // Note how partitionId=3 was called again,
     // even though it's still fetching for the prev stateId
-    Assert.deepEqual(executeQueryMock.callIds, ["0", "1", "3", "3", "2"])
+    t.expect(executeQueryMock.callIds).toEqual(["0", "1", "3", "3", "2"])
 
     // But let's say partitions 0 and 1 were fetched to the known chain height
     // And all the fetching partitions are resolved
@@ -668,14 +671,15 @@ describe("SourceManager fetchNext", () => {
     await fetchNextPromise2
     await fetchNextPromise3
 
-    Assert.deepEqual(
+    t.expect(
       executeQueryMock.calls->Js.Array2.length,
-      5,
       ~message="Shouldn't have called more after resolving prev promises",
+    ).toEqual(
+      5,
     )
   })
 
-  Async.it("Should not query partitions that are at max queue size", async () => {
+  Async.it("Should not query partitions that are at max queue size", async t => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
     let executeQueryMock = executeQueryMock()
@@ -710,14 +714,15 @@ describe("SourceManager fetchNext", () => {
 
     await fetchNextPromise
 
-    Assert.deepEqual(
+    t.expect(
       executeQueryMock.callIds,
-      ["2", "3", "4"],
       ~message="Should have skipped partitions that are at max queue size",
+    ).toEqual(
+      ["2", "3", "4"],
     )
   })
 
-  Async.it("Sorts after all the filtering is applied", async () => {
+  Async.it("Sorts after all the filtering is applied", async t => {
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=1)
 
     let executeQueryMock = executeQueryMock()
@@ -745,14 +750,14 @@ describe("SourceManager fetchNext", () => {
 
     await fetchNextPromise
 
-    Assert.deepEqual(executeQueryMock.callIds, ["3"])
+    t.expect(executeQueryMock.callIds).toEqual(["3"])
   })
 })
 
 describe("SourceManager wait for new blocks", () => {
   Async.it(
     "Immediately resolves when the source height is higher than the current height",
-    async () => {
+    async t => {
       let {source, getHeightOrThrowCalls, resolveGetHeightOrThrow} = Mock.Source.make([
         #getHeightOrThrow,
       ])
@@ -760,16 +765,16 @@ describe("SourceManager wait for new blocks", () => {
 
       let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=0)
 
-      Assert.deepEqual(getHeightOrThrowCalls->Array.length, 1)
+      t.expect(getHeightOrThrowCalls->Array.length).toEqual(1)
       resolveGetHeightOrThrow(1)
 
-      Assert.deepEqual(await p, 1)
+      t.expect(await p).toEqual(1)
     },
   )
 
   Async.it(
     "Calls all sync sources in parallel. Resolves the first one with valid response",
-    async () => {
+    async t => {
       let mock0 = Mock.Source.make([#getHeightOrThrow])
       let mock1 = Mock.Source.make([#getHeightOrThrow])
       let sourceManager = SourceManager.make(
@@ -779,34 +784,36 @@ describe("SourceManager wait for new blocks", () => {
 
       let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=0)
 
-      Assert.deepEqual(mock0.getHeightOrThrowCalls->Array.length, 1)
-      Assert.deepEqual(mock1.getHeightOrThrowCalls->Array.length, 1)
+      t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
+      t.expect(mock1.getHeightOrThrowCalls->Array.length).toEqual(1)
 
       mock1.resolveGetHeightOrThrow(2)
       mock0.resolveGetHeightOrThrow(3)
 
-      Assert.deepEqual(
+      t.expect(
         await p,
-        2,
         // This can only be an issue if HyperSync switches to RPC
         // during the most first block height request,
         // but we don't allow both HyperSync and RPC for historical sync
         ~message="Even though mock0 resolved with higher value, mock1 was the first",
+      ).toEqual(
+        2,
       )
 
-      Assert.equal(
+      t.expect(
         sourceManager->SourceManager.getActiveSource,
-        mock1.source,
         ~message=`Should also switch the active source`,
+      ).toBe(
+        mock1.source,
       )
 
       // No new calls
-      Assert.deepEqual(mock0.getHeightOrThrowCalls->Array.length, 1)
-      Assert.deepEqual(mock1.getHeightOrThrowCalls->Array.length, 1)
+      t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
+      t.expect(mock1.getHeightOrThrowCalls->Array.length).toEqual(1)
     },
   )
 
-  Async.it("Start polling all sources with it's own rates if new block isn't found", async () => {
+  Async.it("Start polling all sources with it's own rates if new block isn't found", async t => {
     let pollingInterval0 = 1
     let pollingInterval1 = 2
     let mock0 = Mock.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
@@ -821,55 +828,61 @@ describe("SourceManager wait for new blocks", () => {
     let ((), ()) = await Promise.all2((
       (
         async () => {
-          Assert.deepEqual(mock0.getHeightOrThrowCalls->Array.length, 1)
+          t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
           mock0.resolveGetHeightOrThrow(100)
 
           await Utils.delay(pollingInterval0)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            1,
             ~message="Shouldn't immediately call getHeightOrThrow again",
+          ).toEqual(
+            1,
           )
           await Utils.delay(0)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            2,
             ~message="Should call after a polling interval",
+          ).toEqual(
+            2,
           )
 
           mock0.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval0 + 1)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            3,
             ~message="Should have a second round",
+          ).toEqual(
+            3,
           )
         }
       )(),
       (
         async () => {
-          Assert.deepEqual(mock1.getHeightOrThrowCalls->Array.length, 1)
+          t.expect(mock1.getHeightOrThrowCalls->Array.length).toEqual(1)
           mock1.resolveGetHeightOrThrow(100)
 
           await Utils.delay(pollingInterval1)
-          Assert.deepEqual(
+          t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
-            1,
             ~message="Shouldn't immediately call getHeightOrThrow again",
+          ).toEqual(
+            1,
           )
           await Utils.delay(0)
-          Assert.deepEqual(
+          t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
-            2,
             ~message="Should call after a polling interval",
+          ).toEqual(
+            2,
           )
 
           mock1.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval1 + 1)
-          Assert.deepEqual(
+          t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
-            3,
             ~message="Should have a second round",
+          ).toEqual(
+            3,
           )
         }
       )(),
@@ -878,25 +891,27 @@ describe("SourceManager wait for new blocks", () => {
     mock0.resolveGetHeightOrThrow(101)
     mock1.resolveGetHeightOrThrow(100)
 
-    Assert.deepEqual(await p, 101)
+    t.expect(await p).toEqual(101)
 
     await Utils.delay(
       // Time during which a new polling should definetely happen
       pollingInterval0 + pollingInterval1,
     )
-    Assert.deepEqual(
+    t.expect(
       mock0.getHeightOrThrowCalls->Array.length,
-      3,
       ~message="Polling for source 0 should stop after successful response",
-    )
-    Assert.deepEqual(
-      mock1.getHeightOrThrowCalls->Array.length,
+    ).toEqual(
       3,
+    )
+    t.expect(
+      mock1.getHeightOrThrowCalls->Array.length,
       ~message="Polling for source 1 should stop after successful response",
+    ).toEqual(
+      3,
     )
   })
 
-  Async.it("Retries on throw without affecting polling of other sources", async () => {
+  Async.it("Retries on throw without affecting polling of other sources", async t => {
     let pollingInterval0 = 1
     let pollingInterval1 = 2
     let initialRetryInterval = 4
@@ -917,73 +932,82 @@ describe("SourceManager wait for new blocks", () => {
     let ((), ()) = await Promise.all2((
       (
         async () => {
-          Assert.deepEqual(mock0.getHeightOrThrowCalls->Array.length, 1)
+          t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
 
           mock0.rejectGetHeightOrThrow("ERROR")
 
           await Utils.delay(initialRetryInterval)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            1,
             ~message="Shouldn't immediately call getHeightOrThrow again",
+          ).toEqual(
+            1,
           )
           await Utils.delay(0)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            2,
             ~message="Should call after a retry",
+          ).toEqual(
+            2,
           )
 
           mock0.rejectGetHeightOrThrow("ERROR")
 
           await Utils.delay(initialRetryInterval * 2)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            2,
             ~message="Should increase the retry interval",
+          ).toEqual(
+            2,
           )
           await Utils.delay(0)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            3,
             ~message="Should call after a longer retry",
+          ).toEqual(
+            3,
           )
 
           mock0.rejectGetHeightOrThrow("ERROR")
 
           await Utils.delay(10)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            3,
             ~message="Should increase the retry interval but not exceed the max",
+          ).toEqual(
+            3,
           )
           await Utils.delay(0)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            4,
             ~message="Should call after the max retry interval",
+          ).toEqual(
+            4,
           )
 
           mock0.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval0 + 1)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            5,
             ~message="Should return to normal polling after a successful retry",
+          ).toEqual(
+            5,
           )
 
           mock0.rejectGetHeightOrThrow("ERROR3")
           await Utils.delay(initialRetryInterval)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            5,
             ~message="Retry interval resets after a successful resolve",
+          ).toEqual(
+            5,
           )
           await Utils.delay(0)
-          Assert.deepEqual(
+          t.expect(
             mock0.getHeightOrThrowCalls->Array.length,
-            6,
             ~message="Should call after a retry for error3",
+          ).toEqual(
+            6,
           )
         }
       )(),
@@ -991,28 +1015,31 @@ describe("SourceManager wait for new blocks", () => {
 
       (
         async () => {
-          Assert.deepEqual(mock1.getHeightOrThrowCalls->Array.length, 1)
+          t.expect(mock1.getHeightOrThrowCalls->Array.length).toEqual(1)
           mock1.resolveGetHeightOrThrow(100)
 
           await Utils.delay(pollingInterval1)
-          Assert.deepEqual(
+          t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
-            1,
             ~message="Shouldn't immediately call getHeightOrThrow again",
+          ).toEqual(
+            1,
           )
           await Utils.delay(0)
-          Assert.deepEqual(
+          t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
-            2,
             ~message="Should call after a polling interval",
+          ).toEqual(
+            2,
           )
 
           mock1.resolveGetHeightOrThrow(100)
           await Utils.delay(pollingInterval1 + 1)
-          Assert.deepEqual(
+          t.expect(
             mock1.getHeightOrThrowCalls->Array.length,
-            3,
             ~message="Should have a second round",
+          ).toEqual(
+            3,
           )
         }
       )(),
@@ -1021,27 +1048,29 @@ describe("SourceManager wait for new blocks", () => {
     mock0.resolveGetHeightOrThrow(101)
     mock1.resolveGetHeightOrThrow(100)
 
-    Assert.deepEqual(await p, 101)
+    t.expect(await p).toEqual(101)
 
     await Utils.delay(
       // Time during which a new polling should definetely happen
       pollingInterval0 + pollingInterval1,
     )
-    Assert.deepEqual(
+    t.expect(
       mock0.getHeightOrThrowCalls->Array.length,
-      6,
       ~message="Polling for source 0 should stop after successful response",
+    ).toEqual(
+      6,
     )
-    Assert.deepEqual(
+    t.expect(
       mock1.getHeightOrThrowCalls->Array.length,
-      3,
       ~message="Polling for source 1 should stop after successful response",
+    ).toEqual(
+      3,
     )
   })
 
   Async.it(
     "Starts polling the fallback source after the newBlockFallbackStallTimeout",
-    async () => {
+    async t => {
       let pollingInterval = 1
       let stalledPollingInterval = 2
       let newBlockFallbackStallTimeout = 8
@@ -1056,32 +1085,36 @@ describe("SourceManager wait for new blocks", () => {
 
       let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
-      Assert.deepEqual(sync.getHeightOrThrowCalls->Array.length, 1)
-      Assert.deepEqual(fallback.getHeightOrThrowCalls->Array.length, 0)
+      t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
+      t.expect(fallback.getHeightOrThrowCalls->Array.length).toEqual(0)
       sync.resolveGetHeightOrThrow(100)
 
       await Utils.delay(pollingInterval + 1)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Should call after a polling interval",
+      ).toEqual(
+        2,
       )
-      Assert.deepEqual(
+      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        0,
         ~message="Fallback is still not called",
+      ).toEqual(
+        0,
       )
 
       await Utils.delay(newBlockFallbackStallTimeout)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Shouldn't increase, since the request is still pending",
+      ).toEqual(
+        2,
       )
-      Assert.deepEqual(
+      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        1,
         ~message="Should start polling the fallback source",
+      ).toEqual(
+        1,
       )
 
       sync.resolveGetHeightOrThrow(100)
@@ -1090,99 +1123,111 @@ describe("SourceManager wait for new blocks", () => {
       // After newBlockFallbackStallTimeout, the polling interval should be
       // increased to stalledPollingInterval for both sync and fallback sources
       await Utils.delay(stalledPollingInterval)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Sync source should still wait for the polling interval",
+      ).toEqual(
+        2,
       )
-      Assert.deepEqual(
+      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        1,
         ~message="Fallback source should still wait for the polling interval",
+      ).toEqual(
+        1,
       )
       await Utils.delay(0)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
+        ~message="Should call after stalledPollingInterval",
+      ).toEqual(
         3,
-        ~message="Should call after stalledPollingInterval",
       )
-      Assert.deepEqual(
+      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Should call after stalledPollingInterval",
+      ).toEqual(
+        2,
       )
 
       fallback.resolveGetHeightOrThrow(101)
 
-      Assert.deepEqual(await p, 101, ~message="Returns the fallback source response")
+      t.expect(await p, ~message="Returns the fallback source response").toEqual(101)
 
-      Assert.equal(
+      t.expect(
         sourceManager->SourceManager.getActiveSource,
-        fallback.source,
         ~message=`Changes the active source to the fallback`,
+      ).toBe(
+        fallback.source,
       )
 
       await Utils.delay(
         // Time during which a new polling should definetely happen
         stalledPollingInterval + 1,
       )
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        3,
         ~message="Polling for sync source should stop after successful response",
+      ).toEqual(
+        3,
       )
-      Assert.deepEqual(
+      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Polling for fallback source should stop after successful response",
+      ).toEqual(
+        2,
       )
 
       let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
 
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        4,
         ~message="Should call on the next waitForNewBlock",
+      ).toEqual(
+        4,
       )
-      Assert.deepEqual(
+      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        3,
         ~message=`Even if the source is a fallback - it's currently active.
         Since we don't wait for a timeout again in case
         all main sync sources are still not valid,
         we immediately call the active source on the next waitForNewBlock.`,
+      ).toEqual(
+        3,
       )
 
       sync.resolveGetHeightOrThrow(102)
 
-      Assert.deepEqual(await p, 102, ~message="Returns the sync source response")
+      t.expect(await p, ~message="Returns the sync source response").toEqual(102)
 
-      Assert.equal(
+      t.expect(
         sourceManager->SourceManager.getActiveSource,
-        sync.source,
         ~message=`Changes the active source back to the sync`,
+      ).toBe(
+        sync.source,
       )
 
       await Utils.delay(
         // Time during which a new polling should definetely happen
         stalledPollingInterval + 1,
       )
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        4,
         ~message="Polling for sync source should stop after successful response",
+      ).toEqual(
+        4,
       )
-      Assert.deepEqual(
+      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        3,
         ~message="Polling for fallback source should stop after successful response",
+      ).toEqual(
+        3,
       )
     },
   )
 
   Async.it(
     "Continues polling even after newBlockFallbackStallTimeout when there are no fallback sources",
-    async () => {
+    async t => {
       let pollingInterval = 1
       let stalledPollingInterval = 2
       let newBlockFallbackStallTimeout = 8
@@ -1197,21 +1242,23 @@ describe("SourceManager wait for new blocks", () => {
 
       let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
-      Assert.deepEqual(sync.getHeightOrThrowCalls->Array.length, 1)
+      t.expect(sync.getHeightOrThrowCalls->Array.length).toEqual(1)
       sync.resolveGetHeightOrThrow(100)
 
       await Utils.delay(pollingInterval + 1)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Should call after a polling interval",
+      ).toEqual(
+        2,
       )
 
       await Utils.delay(newBlockFallbackStallTimeout)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Shouldn't increase, since the request is still pending",
+      ).toEqual(
+        2,
       )
 
       sync.resolveGetHeightOrThrow(100)
@@ -1219,21 +1266,23 @@ describe("SourceManager wait for new blocks", () => {
       // After newBlockFallbackStallTimeout, the polling interval should be
       // increased to stalledPollingInterval for both sync and fallback sources
       await Utils.delay(stalledPollingInterval)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Sync source should still wait for the polling interval",
+      ).toEqual(
+        2,
       )
       await Utils.delay(0)
-      Assert.deepEqual(
+      t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        3,
         ~message="Should call after stalledPollingInterval",
+      ).toEqual(
+        3,
       )
 
       sync.resolveGetHeightOrThrow(101)
 
-      Assert.deepEqual(await p, 101, ~message="Returns the sync source response")
+      t.expect(await p, ~message="Returns the sync source response").toEqual(101)
     },
   )
 })
@@ -1251,21 +1300,22 @@ describe("SourceManager.executeQuery", () => {
     indexingContracts: Js.Dict.empty(),
   }
 
-  Async.it("Successfully executes the query", async () => {
+  Async.it("Successfully executes the query", async t => {
     let {source, getItemsOrThrowCalls, resolveGetItemsOrThrow} = Mock.Source.make([
       #getItemsOrThrow,
     ])
     let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
-    Assert.deepEqual(
+    t.expect(
       getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+    ).toEqual(
       [{"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"}],
     )
     resolveGetItemsOrThrow([])
-    Assert.deepEqual((await p).parsedQueueItems, [])
+    t.expect((await p).parsedQueueItems).toEqual([])
   })
 
-  Async.it("Rethrows unknown errors", async () => {
+  Async.it("Rethrows unknown errors", async t => {
     let sourceMock = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
       ~sources=[sourceMock.source],
@@ -1276,10 +1326,18 @@ describe("SourceManager.executeQuery", () => {
       "message": "Something went wrong",
     }
     sourceMock.getItemsOrThrowCalls->Js.Array2.forEach(call => call.reject(error))
-    await Assert.rejects(() => p, ~error)
+    try {
+      let _ = await p
+      Js.Exn.raiseError("Should not have resolved")
+    } catch {
+    | Js.Exn.Error(e) =>
+      t.expect(
+        e->Js.Exn.message,
+      ).toEqual(Some(error["message"]))
+    }
   })
 
-  Async.it("Immediately retries with the suggested toBlock", async () => {
+  Async.it("Immediately retries with the suggested toBlock", async t => {
     let sourceMock = Mock.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(
       ~sources=[
@@ -1291,10 +1349,11 @@ describe("SourceManager.executeQuery", () => {
       ~maxPartitionConcurrency=10,
     )
     let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Array.length,
-      1,
       ~message="Should call getItemsOrThrow",
+    ).toEqual(
+      1,
     )
     (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
       Source.GetItemsError(
@@ -1305,31 +1364,33 @@ describe("SourceManager.executeQuery", () => {
         }),
       ),
     )
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Array.length,
-      0,
       ~message="No new calls before the microtask",
+    ).toEqual(
+      0,
     )
     await Promise.resolve() // Wait for microtask, so the rejection is caught
 
     switch sourceMock.getItemsOrThrowCalls {
     | [call] => {
-        Assert.deepEqual(
+        t.expect(
           call.payload,
-          {"fromBlock": 0, "toBlock": Some(10), "retry": 0, "p": "0"},
           ~message=`Should reset retry count on WithSuggestedToBlock error`,
+        ).toEqual(
+          {"fromBlock": 0, "toBlock": Some(10), "retry": 0, "p": "0"},
         )
         call.resolve([])
       }
-    | _ => Assert.fail("Should have a new call after the microtask")
+    | _ => Js.Exn.raiseError("Should have a new call after the microtask")
     }
 
-    Assert.deepEqual((await p).parsedQueueItems, [])
+    t.expect((await p).parsedQueueItems).toEqual([])
   })
 
   Async.it(
     "When there are multiple sync sources, it retries 2 times and then immediately switches to another source without waiting for backoff. After that it switches every second retry",
-    async () => {
+    async t => {
       let sourceMock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
       let sourceMock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockFallbackStallTimeout = 0
@@ -1351,11 +1412,12 @@ describe("SourceManager.executeQuery", () => {
         let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
         await Utils.delay(newBlockFallbackStallTimeout)
         sourceMock1.resolveGetHeightOrThrow(101)
-        Assert.equal(await p, 101)
-        Assert.equal(
+        t.expect(await p).toBe(101)
+        t.expect(
           sourceManager->SourceManager.getActiveSource,
-          sourceMock1.source,
           ~message="Should switch to the fallback source",
+        ).toBe(
+          sourceMock1.source,
         )
       }
 
@@ -1382,7 +1444,7 @@ describe("SourceManager.executeQuery", () => {
               ),
             )
           }
-        | _ => Assert.fail("Should have one pending call to sourceMock1")
+        | _ => Js.Exn.raiseError("Should have one pending call to sourceMock1")
         }
 
         // Wait for microtask, so the rejection is caught
@@ -1411,7 +1473,7 @@ describe("SourceManager.executeQuery", () => {
             ),
           )
         }
-      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock0")
       }
 
       await Promise.resolve() // Wait for microtask, so the rejection is caught
@@ -1435,7 +1497,7 @@ describe("SourceManager.executeQuery", () => {
             ),
           )
         }
-      | _ => Assert.fail("Should have one pending call to sourceMock0")
+      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock0")
       }
 
       await Promise.resolve()
@@ -1449,8 +1511,16 @@ describe("SourceManager.executeQuery", () => {
             "retry": call.payload["retry"],
             "source": 1,
           })
-          Assert.deepEqual(
+          t.expect(
             handledGetItemsOrThrowCalls,
+            ~message=`Should start with the initial active source and perform 3 tries.
+After that it switches to another sync source.
+The fallback source is skipped.
+Then sources start switching every second retry.
+The fallback sources not included in the rotation until the 10th retry,
+but we still attempt the fallback source if it was the initial active source.
+        `,
+          ).toEqual(
             [
               {"fromBlock": 0, "toBlock": None, "retry": 0, "source": 1},
               {"fromBlock": 0, "toBlock": None, "retry": 1, "source": 1},
@@ -1459,19 +1529,12 @@ describe("SourceManager.executeQuery", () => {
               {"fromBlock": 0, "toBlock": None, "retry": 4, "source": 0},
               {"fromBlock": 0, "toBlock": None, "retry": 5, "source": 1},
             ],
-            ~message=`Should start with the initial active source and perform 3 tries.
-After that it switches to another sync source.
-The fallback source is skipped.
-Then sources start switching every second retry.
-The fallback sources not included in the rotation until the 10th retry,
-but we still attempt the fallback source if it was the initial active source.
-        `,
           )
 
           call.resolve([])
-          Assert.deepEqual((await p).parsedQueueItems, [])
+          t.expect((await p).parsedQueueItems).toEqual([])
         }
-      | _ => Assert.fail("Should have one pending call to sourceMock1")
+      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock1")
       }
     },
   )
@@ -1480,34 +1543,35 @@ but we still attempt the fallback source if it was the initial active source.
 describe("SourceManager height subscription", () => {
   Async.it(
     "Creates subscription when getHeightOrThrow returns same height as knownHeight",
-    async () => {
+    async t => {
       let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
       let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
 
       let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
       // First call to getHeightOrThrow
-      Assert.deepEqual(mock.getHeightOrThrowCalls->Array.length, 1)
+      t.expect(mock.getHeightOrThrowCalls->Array.length).toEqual(1)
       // Return the same height - should trigger subscription creation
       mock.resolveGetHeightOrThrow(100)
 
       // Wait for the subscription to be created
       await Utils.delay(0)
 
-      Assert.deepEqual(
+      t.expect(
         mock.heightSubscriptionCalls->Array.length,
-        1,
         ~message="Should have created a height subscription",
+      ).toEqual(
+        1,
       )
 
       // Trigger new height from subscription
       mock.triggerHeightSubscription(101)
 
-      Assert.deepEqual(await p, 101, ~message="Should resolve with the subscription height")
+      t.expect(await p, ~message="Should resolve with the subscription height").toEqual(101)
     },
   )
 
-  Async.it("Uses cached height from subscription if higher than knownHeight", async () => {
+  Async.it("Uses cached height from subscription if higher than knownHeight", async t => {
     let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
 
@@ -1516,21 +1580,22 @@ describe("SourceManager height subscription", () => {
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(105)
-    Assert.deepEqual(await p1, 105)
+    t.expect(await p1).toEqual(105)
 
     // Second call - should use cached height immediately without calling getHeightOrThrow
     let p2 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
-    Assert.deepEqual(
+    t.expect(
       mock.getHeightOrThrowCalls->Array.length,
-      1,
       ~message="Should not call getHeightOrThrow again since subscription exists",
+    ).toEqual(
+      1,
     )
-    Assert.deepEqual(await p2, 105, ~message="Should immediately return cached height")
+    t.expect(await p2, ~message="Should immediately return cached height").toEqual(105)
   })
 
   Async.it(
     "Waits for next height event when subscription exists but height <= knownHeight",
-    async () => {
+    async t => {
       let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
       let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
 
@@ -1539,25 +1604,26 @@ describe("SourceManager height subscription", () => {
       mock.resolveGetHeightOrThrow(100)
       await Utils.delay(0)
       mock.triggerHeightSubscription(101)
-      Assert.deepEqual(await p1, 101)
+      t.expect(await p1).toEqual(101)
 
       // Second call with higher knownHeight - should wait for next subscription event
       let p2 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
-      Assert.deepEqual(
+      t.expect(
         mock.getHeightOrThrowCalls->Array.length,
-        1,
         ~message="Should not call getHeightOrThrow since subscription exists",
+      ).toEqual(
+        1,
       )
 
       // Trigger new height
       mock.triggerHeightSubscription(102)
-      Assert.deepEqual(await p2, 102, ~message="Should wait for and resolve with new height")
+      t.expect(await p2, ~message="Should wait for and resolve with new height").toEqual(102)
     },
   )
 
   Async.it(
     "[flaky] Falls back to polling when createHeightSubscription is not available",
-    async () => {
+    async t => {
       let pollingInterval = 1
       let mock = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
       let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
@@ -1568,18 +1634,19 @@ describe("SourceManager height subscription", () => {
       mock.resolveGetHeightOrThrow(100)
       await Utils.delay(pollingInterval + 1)
 
-      Assert.deepEqual(
+      t.expect(
         mock.getHeightOrThrowCalls->Array.length,
-        2,
         ~message="Should poll again since no subscription is available",
+      ).toEqual(
+        2,
       )
 
       mock.resolveGetHeightOrThrow(101)
-      Assert.deepEqual(await p, 101)
+      t.expect(await p).toEqual(101)
     },
   )
 
-  Async.it("Ignores subscription heights lower than or equal to knownHeight", async () => {
+  Async.it("Ignores subscription heights lower than or equal to knownHeight", async t => {
     let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(~sources=[mock.source], ~maxPartitionConcurrency=10)
 
@@ -1588,7 +1655,7 @@ describe("SourceManager height subscription", () => {
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(101)
-    Assert.deepEqual(await p1, 101)
+    t.expect(await p1).toEqual(101)
 
     // Second call with higher knownHeight
     let p2 = sourceManager->SourceManager.waitForNewBlock(~knownHeight=105)
@@ -1606,14 +1673,15 @@ describe("SourceManager height subscription", () => {
       },
     )
     await Utils.delay(0)
-    Assert.deepEqual(
+    t.expect(
       resolved.contents,
-      false,
       ~message="Should not resolve with height <= knownHeight",
+    ).toEqual(
+      false,
     )
 
     // Finally trigger with valid height
     mock.triggerHeightSubscription(106)
-    Assert.deepEqual(await p2, 106, ~message="Should resolve with height > knownHeight")
+    t.expect(await p2, ~message="Should resolve with height > knownHeight").toEqual(106)
   })
 })

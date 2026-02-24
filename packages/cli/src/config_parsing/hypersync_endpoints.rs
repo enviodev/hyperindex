@@ -49,21 +49,35 @@ mod integration_tests {
         Ok(response.status().is_success())
     }
 
+    const MAX_RETRIES: u32 = 3;
+
     #[tokio::test]
     async fn all_supported_endpoints_are_healthy() {
         for network in HypersyncNetwork::iter() {
             let url = network_to_hypersync_url(&network);
-            match fetch_hypersync_health(&url).await {
-                Ok(is_healthy) => {
-                    assert!(
-                        is_healthy,
-                        "Endpoint for {} is not healthy, but was expected to be.",
-                        url
-                    );
+            let mut last_err = None;
+            for attempt in 0..=MAX_RETRIES {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
                 }
-                Err(e) => {
-                    panic!("Failed to fetch health for {}: {:?}", url, e);
+                match fetch_hypersync_health(&url).await {
+                    Ok(true) => {
+                        last_err = None;
+                        break;
+                    }
+                    Ok(false) => {
+                        last_err = Some(anyhow::anyhow!(
+                            "Endpoint for {} returned unhealthy status",
+                            url
+                        ));
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                    }
                 }
+            }
+            if let Some(e) = last_err {
+                panic!("Failed to fetch health for {} after {} retries: {:?}", url, MAX_RETRIES, e);
             }
         }
     }

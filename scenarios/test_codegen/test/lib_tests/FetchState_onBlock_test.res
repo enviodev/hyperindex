@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 let chainId = 0
 
@@ -64,13 +64,13 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
 })
 
 describe("FetchState onBlock functionality", () => {
-  it("should add block items to queue when processing first batch with onBlock config", () => {
+  it("should add block items to queue when processing first batch with onBlock config", t => {
     // Create a fetch state with onBlock config
     let onBlockConfig = makeOnBlockConfig(~interval=2, ~startBlock=Some(0))
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
 
     // Verify initial state - no items in queue
-    Assert.equal(fetchState->FetchState.bufferSize, 0, ~message="Initial queue should be empty")
+    t.expect(fetchState->FetchState.bufferSize, ~message="Initial queue should be empty").toBe(0)
 
     // Simulate getting first batch of events by calling handleQueryResult
     // This should trigger the onBlock logic and add block items to the queue
@@ -109,14 +109,13 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should respect onBlock startBlock configuration", () => {
+  it("should respect onBlock startBlock configuration", t => {
     // Create onBlock config with startBlock = 5
     let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(5))
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
@@ -158,14 +157,13 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should respect onBlock endBlock configuration", () => {
+  it("should respect onBlock endBlock configuration", t => {
     // Create onBlock config with endBlock = 8
     let onBlockConfig = makeOnBlockConfig(~interval=1, ~endBlock=Some(8))
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
@@ -210,14 +208,13 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should handle multiple onBlock configs with different intervals", () => {
+  it("should handle multiple onBlock configs with different intervals", t => {
     // Create two onBlock configs with different intervals
     let onBlockConfig1 = makeOnBlockConfig(~name="config1", ~index=0, ~interval=2)
     let onBlockConfig2 = makeOnBlockConfig(~name="config2", ~index=1, ~interval=3)
@@ -268,14 +265,13 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should not add block items when onBlock configs are not provided", () => {
+  it("should not add block items when onBlock configs are not provided", t => {
     // Create fetch state without onBlock configs
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=None)
 
@@ -307,10 +303,9 @@ describe("FetchState onBlock functionality", () => {
     let expectedTuples = [(5, 0)]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 })

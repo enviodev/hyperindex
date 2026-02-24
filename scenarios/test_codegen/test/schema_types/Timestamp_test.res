@@ -1,17 +1,16 @@
-open RescriptMocha
+open Vitest
 
 describe("Load and save an entity with a Timestamp from DB", () => {
-  Async.before(() => {
+  Async.beforeAll(() => {
     DbHelpers.runUpDownMigration()
   })
 
-  Async.after(() => {
+  Async.afterAll(() => {
     // It is probably overkill that we are running these 'after' also
     DbHelpers.runUpDownMigration()
   })
 
-  Async.it("be able to set and read entities with Timestamp from DB", async () => {
-    This.timeout(5 * 1000)
+  Async.it("be able to set and read entities with Timestamp from DB", async t => {
 
     let sql = PgStorage.makeClient()
     /// Setup DB
@@ -52,8 +51,8 @@ describe("Load and save an entity with a Timestamp from DB", () => {
 
     switch await handlerContext.entityWithTimestamp.get(testEntity.id) {
     | Some(entity) =>
-      Assert.deepEqual(entity.timestamp->Js.Date.toISOString, "1970-01-01T00:02:03.456Z")
-    | None => Assert.fail("Entity should exist")
+      t.expect(entity.timestamp->Js.Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")
+    | None => Js.Exn.raiseError("Entity should exist")
     }
   })
 })
