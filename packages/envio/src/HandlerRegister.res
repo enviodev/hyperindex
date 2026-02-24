@@ -200,7 +200,7 @@ let eventOptionsMatch = (
 ) => {
   switch (existing, incoming) {
   | (None, None) => true
-  | (Some(a), Some(b)) => a.wildcard === b.wildcard && a.eventFilters == b.eventFilters
+  | (Some(a), Some(b)) => a.wildcard === b.wildcard && a.eventFilters === b.eventFilters
   | _ => false
   }
 }
