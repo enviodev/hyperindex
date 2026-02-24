@@ -44,6 +44,9 @@ let deleteDictKey: (dict<'a>, string) => unit = %raw(`
 
 let config = Indexer.Generated.configWithoutRegistrations
 
+// Cache registrations to avoid re-registering handlers on subsequent processEvent calls
+let cachedRegistrations: ref<option<HandlerRegister.registrations>> = ref(None)
+
 /**
 The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
 to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
@@ -318,13 +321,16 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
   } else {
     let itemsWithContractRegister = []
 
-    let registrations = if HandlerRegister.isPendingRegistration() {
-      HandlerRegister.finishRegistration()
-    } else {
-      switch HandlerRegister.getFinishedRegistrations() {
-      | Some(registrations) => registrations
-      | None => await HandlerLoader.registerAllHandlers(~config)
+    let registrations = switch cachedRegistrations.contents {
+    | Some(registrations) => registrations
+    | None =>
+      let registrations = if HandlerRegister.isPendingRegistration() {
+        HandlerRegister.finishRegistration()
+      } else {
+        await HandlerLoader.registerAllHandlers(~config)
       }
+      cachedRegistrations := Some(registrations)
+      registrations
     }
 
     let config = Indexer.Generated.makeGeneratedConfig()
