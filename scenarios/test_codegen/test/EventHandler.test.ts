@@ -624,6 +624,30 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  it("throws when registering a duplicate handler or contractRegister for the same event", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: "0x1234567890123456789012345678901234567890",
+      testCase: "syncRegistration",
+    });
+
+    // Trigger module load via autoLoadFromSrcHandlers
+    await mockDbInitial.processEvents([event]);
+
+    // Dynamic-import EventHandlers.js to access exported error values
+    const handlers = await import("../src/handlers/EventHandlers");
+
+    assert.strictEqual(
+      handlers.duplicateHandlerError?.message,
+      "Duplicate registration of event handlers not allowed for Gravatar.CustomSelection"
+    );
+    assert.strictEqual(
+      handlers.duplicateContractRegisterError?.message,
+      "Duplicate contractRegister handlers not allowed for Gravatar.FactoryEvent"
+    );
+  });
+
   it("Currently filters are ignored by the test framework", async () => {
     const mockDbInitial = MockDb.createMockDb();
 

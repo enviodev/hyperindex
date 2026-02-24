@@ -757,3 +757,18 @@ EventFiltersTest.FilterTestEvent.handler(
     },
   },
 );
+
+// Duplicate handler registration tests
+export let duplicateHandlerError: Error | undefined;
+try {
+  Gravatar.CustomSelection.handler(async () => {});
+} catch (e) {
+  duplicateHandlerError = e as Error;
+}
+
+export let duplicateContractRegisterError: Error | undefined;
+try {
+  Gravatar.FactoryEvent.contractRegister(() => {});
+} catch (e) {
+  duplicateContractRegisterError = e as Error;
+}
