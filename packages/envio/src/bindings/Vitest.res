@@ -97,12 +97,13 @@ external afterEach: (unit => unit) => unit = "afterEach"
 // Async Module
 // ============================================================================
 
+type options = {retry?: int}
+
 module Async = {
   @module("vitest")
   external it: (string, testContext => promise<unit>) => unit = "it"
 
   @module("vitest")
-  type options = {"retry": option<int>}
   external itWithOptions: (string, options, testContext => promise<unit>) => unit = "it"
 
   @module("vitest") @scope("it")
