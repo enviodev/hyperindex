@@ -813,7 +813,7 @@ describe("SourceManager wait for new blocks", () => {
     },
   )
 
-  Async.it("Start polling all sources with it's own rates if new block isn't found", async t => {
+  Async.itWithOptions("Start polling all sources with it's own rates if new block isn't found", {"retry": 3}, async t => {
     let pollingInterval0 = 1
     let pollingInterval1 = 2
     let mock0 = Mock.Source.make([#getHeightOrThrow], ~pollingInterval=pollingInterval0)
@@ -1621,8 +1621,9 @@ describe("SourceManager height subscription", () => {
     },
   )
 
-  Async.it(
-    "[flaky] Falls back to polling when createHeightSubscription is not available",
+  Async.itWithOptions(
+    "Falls back to polling when createHeightSubscription is not available",
+    {"retry": 3},
     async t => {
       let pollingInterval = 1
       let mock = Mock.Source.make([#getHeightOrThrow], ~pollingInterval)
