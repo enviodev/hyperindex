@@ -61,14 +61,15 @@ mod integration_tests {
                     tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
                 }
                 match fetch_hypersync_health(&url).await {
-                    Ok(is_healthy) => {
-                        assert!(
-                            is_healthy,
-                            "Endpoint for {} is not healthy, but was expected to be.",
-                            url
-                        );
+                    Ok(true) => {
                         last_err = None;
                         break;
+                    }
+                    Ok(false) => {
+                        last_err = Some(anyhow::anyhow!(
+                            "Endpoint for {} returned unhealthy status",
+                            url
+                        ));
                     }
                     Err(e) => {
                         last_err = Some(e);
