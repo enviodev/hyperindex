@@ -194,6 +194,17 @@ let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
   Js.Exn.raiseError(fullMsg)
 }
 
+let eventOptionsMatch = (
+  existing: option<Internal.eventOptions<Js.Json.t>>,
+  incoming: option<Internal.eventOptions<Js.Json.t>>,
+) => {
+  switch (existing, incoming) {
+  | (None, None) => true
+  | (Some(a), Some(b)) => a.wildcard == b.wildcard && a.eventFilters == b.eventFilters
+  | _ => false
+  }
+}
+
 let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging.getLogger()) => {
   switch eventOptions {
   | Some(value) =>
@@ -203,12 +214,13 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
     switch t.eventOptions {
     | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
     | Some(existingValue) =>
-      if (
-        existingValue.wildcard !== value.wildcard ||
-          // TODO: Can improve the check by using deepEqual
-          existingValue.eventFilters !== value.eventFilters
-      ) {
-        raiseDuplicateRegistration(~contractName, ~eventName, ~msg="Duplicate eventOptions in handlers not allowed", ~logger)
+      if !eventOptionsMatch(Some(existingValue), Some(value)) {
+        raiseDuplicateRegistration(
+          ~contractName,
+          ~eventName,
+          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~logger,
+        )
       }
     }
   | None => ()
@@ -218,38 +230,77 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
 let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Logging.getLogger()) => {
   withRegistration(_registration => {
     let t = get(~contractName, ~eventName)
+    let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
     switch t.handler {
     | None =>
       set(~contractName, ~eventName, {
         ...t,
-        handler: handler
-          ->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
-          ->Some,
+        handler: Some(newHandler),
       })
-    | Some(_) =>
-      raiseDuplicateRegistration(~contractName, ~eventName, ~msg="Duplicate registration of event handlers not allowed", ~logger)
+      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
+    | Some(prevHandler) =>
+      let incomingEventOptions =
+        eventOptions->Belt.Option.map(v =>
+          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Js.Json.t>)
+        )
+      if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
+        let composedHandler: Internal.handler = async args => {
+          await prevHandler(args)
+          await newHandler(args)
+        }
+        set(~contractName, ~eventName, {
+          ...t,
+          handler: Some(composedHandler),
+        })
+      } else {
+        raiseDuplicateRegistration(
+          ~contractName,
+          ~eventName,
+          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~logger,
+        )
+      }
     }
-
-    setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
   })
 }
 
 let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOptions, ~logger=Logging.getLogger()) => {
   withRegistration(_registration => {
     let t = get(~contractName, ~eventName)
+    let newContractRegister = contractRegister->(
+      Utils.magic: Internal.genericContractRegister<
+        Internal.genericContractRegisterArgs<'event, 'context>,
+      > => Internal.contractRegister
+    )
     switch t.contractRegister {
     | None =>
       set(~contractName, ~eventName, {
         ...t,
-        contractRegister: contractRegister->(
-          Utils.magic: Internal.genericContractRegister<
-            Internal.genericContractRegisterArgs<'event, 'context>,
-          > => Internal.contractRegister
-        )->Some,
+        contractRegister: Some(newContractRegister),
       })
-    | Some(_) =>
-      raiseDuplicateRegistration(~contractName, ~eventName, ~msg="Duplicate contractRegister handlers not allowed", ~logger)
+      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
+    | Some(prevContractRegister) =>
+      let incomingEventOptions =
+        eventOptions->Belt.Option.map(v =>
+          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Js.Json.t>)
+        )
+      if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
+        let composedContractRegister: Internal.contractRegister = async args => {
+          await prevContractRegister(args)
+          await newContractRegister(args)
+        }
+        set(~contractName, ~eventName, {
+          ...t,
+          contractRegister: Some(composedContractRegister),
+        })
+      } else {
+        raiseDuplicateRegistration(
+          ~contractName,
+          ~eventName,
+          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~logger,
+        )
+      }
     }
-    setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
   })
 }

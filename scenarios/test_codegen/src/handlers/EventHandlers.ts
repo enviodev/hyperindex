@@ -759,16 +759,22 @@ EventFiltersTest.FilterTestEvent.handler(
 );
 
 // Duplicate handler registration tests
-export let duplicateHandlerError: Error | undefined;
-try {
-  Gravatar.CustomSelection.handler(async () => {});
-} catch (e) {
-  duplicateHandlerError = e as Error;
-}
 
-export let duplicateContractRegisterError: Error | undefined;
+// Same options (no options) → should compose without error
+export let composedHandlerCalled = false;
+Gravatar.CustomSelection.handler(async () => {
+  composedHandlerCalled = true;
+});
+
+export let composedContractRegisterCalled = false;
+Gravatar.FactoryEvent.contractRegister(() => {
+  composedContractRegisterCalled = true;
+});
+
+// Different options → should throw
+export let mismatchedHandlerOptionsError: Error | undefined;
 try {
-  Gravatar.FactoryEvent.contractRegister(() => {});
+  Gravatar.CustomSelection.handler(async () => {}, { wildcard: true });
 } catch (e) {
-  duplicateContractRegisterError = e as Error;
+  mismatchedHandlerOptionsError = e as Error;
 }

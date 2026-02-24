@@ -624,7 +624,7 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
-  it("throws when registering a duplicate handler or contractRegister for the same event", async () => {
+  it("composes duplicate handlers with same options and rejects mismatched options", async () => {
     const mockDbInitial = MockDb.createMockDb();
 
     const event = Gravatar.FactoryEvent.createMockEvent({
@@ -638,13 +638,14 @@ describe("Use Envio test framework to test event handlers", () => {
     // Dynamic-import EventHandlers.js to access exported error values
     const handlers = await import("../src/handlers/EventHandlers");
 
+    // Same options → composed without error
+    // contractRegister ran during factory event processing, proving compose works
+    assert.strictEqual(handlers.composedContractRegisterCalled, true);
+
+    // Different options → throws a user-friendly error
     assert.strictEqual(
-      handlers.duplicateHandlerError?.message,
-      "Duplicate registration of event handlers not allowed for Gravatar.CustomSelection"
-    );
-    assert.strictEqual(
-      handlers.duplicateContractRegisterError?.message,
-      "Duplicate contractRegister handlers not allowed for Gravatar.FactoryEvent"
+      handlers.mismatchedHandlerOptionsError?.message,
+      "Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters) for Gravatar.CustomSelection"
     );
   });
 
