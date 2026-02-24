@@ -8,6 +8,15 @@ importers:
 
   .: {}
 
+  packages/build-envio:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.7
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/e2e-tests:
     devDependencies:
       '@types/node':

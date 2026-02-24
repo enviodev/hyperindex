@@ -1,0 +1,369 @@
+name: Build & Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+
+jobs:
+  # ── Build ───────────────────────────────────────────────────────────
+
+  # Build envio CLI binary for linux-x64 and wrap it in a platform npm package
+  build-linux-package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: musl-tools
+
+      - name: Build envio CLI
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+        run: cargo build --release --bins --target x86_64-unknown-linux-musl
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build platform npm package
+        run: |
+          node packages/build-envio/build-platform-package.ts \
+            --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
+          mkdir -p envio-linux-x64/bin
+          cp target/x86_64-unknown-linux-musl/release/envio envio-linux-x64/bin/
+          chmod +x envio-linux-x64/bin/envio
+
+      - name: Upload linux-x64 platform npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: envio-linux-x64
+
+  # Build envio base npm package (ReScript compilation, package.json rewrite)
+  build-envio-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-linux-package
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux-x64 platform package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./npm-pkg-envio-linux-x64
+
+      - name: Add envio to PATH
+        run: |
+          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
+          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build envio package
+        run: node packages/build-envio/src/build-artifact.ts --version 0.0.1-dev --out envio-dist
+
+      - name: Verify artifact
+        run: node packages/build-envio/src/verify-artifact.ts envio-dist
+
+      - name: Upload envio npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: envio-dist
+
+  # ── Verify ──────────────────────────────────────────────────────────
+
+  # Cargo unit tests - no artifacts needed, independent compilation
+  cargo-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Cargo Test
+        run: cargo test --no-default-features
+
+      - name: Hypersync Health Test
+        run: cargo test --features integration_tests
+
+  # Template tests - verify envio templates can be initialized and built
+  template-tests:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux-x64 platform package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./npm-pkg-envio-linux-x64
+
+      - name: Add envio to PATH
+        run: |
+          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
+          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Download pre-built envio package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./envio-dist
+
+      # Overlay pre-built dist (compiled ReScript etc.) on top of installed packages/envio
+      - name: Install pre-built envio package
+        run: cp -r envio-dist/* packages/envio/
+
+      - name: Run template tests
+        working-directory: packages/e2e-tests
+        run: pnpm test:templates
+
+  # Scenario integration tests
+  # Requires DB services (postgres + hasura)
+  scenarios-test:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      hasura:
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux-x64 platform package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./npm-pkg-envio-linux-x64
+
+      - name: Add envio to PATH
+        run: |
+          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
+          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Download pre-built envio package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./envio-dist
+
+      # Overlay pre-built dist (compiled ReScript etc.) on top of installed packages/envio
+      - name: Install pre-built envio package
+        run: cp -r envio-dist/* packages/envio/
+
+      - name: Wait for Hasura
+        run: |
+          for i in {1..60}; do
+            if curl -sSf http://localhost:8080/healthz >/dev/null; then
+              echo "Hasura is up"; exit 0; fi; sleep 1; done
+          echo "Hasura did not become ready"; exit 1
+
+      - name: test_codegen
+        working-directory: scenarios/test_codegen
+        run: |
+          envio codegen
+          pnpm test
+
+      - name: fuel_test
+        working-directory: scenarios/fuel_test
+        run: |
+          envio codegen
+          pnpm test
+
+      - name: Test Failure Notification
+        uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
+        if: failure() && github.ref == 'refs/heads/main'
+        with:
+          severity: error
+          details: "Tests Failed on main!"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+
+  # E2E test - runs envio dev with a real indexer scenario
+  e2e-test:
+    runs-on: ubuntu-latest
+    needs: build-envio-package
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      hasura:
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux-x64 platform package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./npm-pkg-envio-linux-x64
+
+      - name: Add envio to PATH
+        run: |
+          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
+          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Download pre-built envio package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./envio-dist
+
+      # Overlay pre-built dist (compiled ReScript etc.) on top of installed packages/envio
+      - name: Install pre-built envio package
+        run: cp -r envio-dist/* packages/envio/
+
+      - name: Wait for Hasura
+        run: |
+          for i in {1..60}; do
+            if curl -sSf http://localhost:8080/healthz >/dev/null; then
+              echo "Hasura is up"; exit 0; fi; sleep 1; done
+          echo "Hasura did not become ready"; exit 1
+
+      - name: Run E2E test
+        working-directory: packages/e2e-tests
+        run: pnpm test:e2e
+
+      - name: E2E Test Failure Notification
+        uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
+        if: failure() && github.ref == 'refs/heads/main'
+        with:
+          severity: error
+          details: "E2E Tests Failed on main!"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
