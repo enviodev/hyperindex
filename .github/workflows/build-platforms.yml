@@ -61,14 +61,13 @@ jobs:
           NAME: ${{ matrix.job.name }}
           VERSION: ${{ inputs.version }}
         run: |
-          cd packages/cli/npm
           node_os=$(echo "${NAME}" | cut -d '-' -f1)
           node_arch=$(echo "${NAME}" | cut -d '-' -f2)
-          node_pkg="envio-${node_os}-${node_arch}"
-          node ../../../packages/build-envio/build-platform-package.ts \
+          node_pkg="packages/cli/npm/envio-${node_os}-${node_arch}"
+          node packages/build-envio/build-platform-package.ts \
             --version "${VERSION}" --platform "${node_os}" --arch "${node_arch}" --out "${node_pkg}"
           mkdir -p "${node_pkg}/bin"
-          cp "../../../target/${TARGET}/release/envio" "${node_pkg}/bin"
+          cp "target/${TARGET}/release/envio" "${node_pkg}/bin"
 
       - name: Upload platform npm package artifact
         uses: actions/upload-artifact@v4
