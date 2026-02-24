@@ -102,7 +102,8 @@ module Async = {
   external it: (string, testContext => promise<unit>) => unit = "it"
 
   @module("vitest")
-  external itWithOptions: (string, {"retry": int}, testContext => promise<unit>) => unit = "it"
+  type options = {"retry": option<int>}
+  external itWithOptions: (string, options, testContext => promise<unit>) => unit = "it"
 
   @module("vitest") @scope("it")
   external it_only: (string, testContext => promise<unit>) => unit = "only"
