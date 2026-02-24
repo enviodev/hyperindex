@@ -1,7 +1,7 @@
-open RescriptMocha
+open Vitest
 
 describe("LoadLayer", () => {
-  Async.it("Trys to load non existing entity from db", async () => {
+  Async.it("Trys to load non existing entity from db", async t => {
     let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
     let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
     let loadManager = LoadManager.make()
@@ -19,9 +19,10 @@ describe("LoadLayer", () => {
 
     let user = await getUser("123")
 
-    Assert.deepEqual(user, None)
-    Assert.deepEqual(
+    t.expect(user).toEqual(None)
+    t.expect(
       storageMock.loadByIdsOrThrowCalls,
+    ).toEqual(
       [
         {
           "ids": ["123"],
@@ -33,7 +34,7 @@ describe("LoadLayer", () => {
 
   Async.it(
     "Does two round trips to db when requesting non existing entity one by one",
-    async () => {
+    async t => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
       let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
@@ -52,10 +53,11 @@ describe("LoadLayer", () => {
       let user1 = await getUser("1")
       let user2 = await getUser("2")
 
-      Assert.deepEqual(user1, None)
-      Assert.deepEqual(user2, None)
-      Assert.deepEqual(
+      t.expect(user1).toEqual(None)
+      t.expect(user2).toEqual(None)
+      t.expect(
         storageMock.loadByIdsOrThrowCalls,
+      ).toEqual(
         [
           {
             "ids": ["1"],
@@ -72,7 +74,7 @@ describe("LoadLayer", () => {
 
   Async.it(
     "Stores the loaded entity in the in memory store and starts returning it on a subsequent call",
-    async () => {
+    async t => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
       let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
@@ -90,10 +92,11 @@ describe("LoadLayer", () => {
       let user1 = await getUser("1")
       let user2 = await getUser("1")
 
-      Assert.deepEqual(user1, None)
-      Assert.deepEqual(user2, None)
-      Assert.deepEqual(
+      t.expect(user1).toEqual(None)
+      t.expect(user2).toEqual(None)
+      t.expect(
         storageMock.loadByIdsOrThrowCalls,
+      ).toEqual(
         [
           {
             "ids": ["1"],
@@ -104,7 +107,7 @@ describe("LoadLayer", () => {
     },
   )
 
-  Async.it("Doesn't stack with an await in between of loader calls", async () => {
+  Async.it("Doesn't stack with an await in between of loader calls", async t => {
     let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
     let loadManager = LoadManager.make()
     let inMemoryStore = Mock.InMemoryStore.make()
@@ -134,10 +137,11 @@ describe("LoadLayer", () => {
 
     let user2 = await getUser("2")
 
-    Assert.deepEqual(user1, None)
-    Assert.deepEqual(user2, None)
-    Assert.deepEqual(
+    t.expect(user1).toEqual(None)
+    t.expect(user2).toEqual(None)
+    t.expect(
       storageMock.loadByIdsOrThrowCalls,
+    ).toEqual(
       [
         {
           "ids": ["1"],
@@ -153,7 +157,7 @@ describe("LoadLayer", () => {
 
   Async.it(
     "Batches requests to db when requesting non existing entity in Promise.all",
-    async () => {
+    async t => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
       let inMemoryStore = Mock.InMemoryStore.make()
@@ -170,9 +174,10 @@ describe("LoadLayer", () => {
 
       let users = await Promise.all([getUser("1"), getUser("2")])
 
-      Assert.deepEqual(users, [None, None])
-      Assert.deepEqual(
+      t.expect(users).toEqual([None, None])
+      t.expect(
         storageMock.loadByIdsOrThrowCalls,
+      ).toEqual(
         [
           {
             "ids": ["1", "2"],
@@ -185,7 +190,7 @@ describe("LoadLayer", () => {
 
   Async.it(
     "Doesn't select entity from the db which was initially in the in memory store",
-    async () => {
+    async t => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
 
@@ -213,9 +218,10 @@ describe("LoadLayer", () => {
 
       let users = await Promise.all([getUser("1"), getUser("2")])
 
-      Assert.deepEqual(users, [Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)), None])
-      Assert.deepEqual(
+      t.expect(users).toEqual([Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)), None])
+      t.expect(
         storageMock.loadByIdsOrThrowCalls,
+      ).toEqual(
         [
           {
             "ids": ["2"],
@@ -223,13 +229,13 @@ describe("LoadLayer", () => {
           },
         ],
       )
-      Assert.deepEqual(storageMock.loadByFieldOrThrowCalls, [])
+      t.expect(storageMock.loadByFieldOrThrowCalls).toEqual([])
     },
   )
 
   Async.it(
     "Still selects entity from the db, even if it was added while LoadLayer was awaiting execution. But use the in memory store version to resolve",
-    async () => {
+    async t => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
       let inMemoryStore = Mock.InMemoryStore.make()
@@ -267,9 +273,10 @@ describe("LoadLayer", () => {
       let user = await userPromise
 
       // It's Some(user1) even though from db we get None
-      Assert.deepEqual(user, Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)))
-      Assert.deepEqual(
+      t.expect(user).toEqual(Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)))
+      t.expect(
         storageMock.loadByIdsOrThrowCalls,
+      ).toEqual(
         [
           {
             "ids": ["1"],
@@ -282,7 +289,7 @@ describe("LoadLayer", () => {
 
   Async.it(
     "Batch separated by microtasks, so it doesn't stack with an item after immediately resolving await (getting an existing entity from in memory store)",
-    async () => {
+    async t => {
       let storageMock = Mock.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
 
@@ -319,11 +326,12 @@ describe("LoadLayer", () => {
         )(),
       ])
 
-      Assert.deepEqual(users, [None, None])
+      t.expect(users).toEqual([None, None])
       // If we used setTimeout for schedule it would behave differently,
       // but we are not sure that it'll bring some benefits
-      Assert.deepEqual(
+      t.expect(
         storageMock.loadByIdsOrThrowCalls,
+      ).toEqual(
         [
           {
             "ids": ["2"],
@@ -338,7 +346,7 @@ describe("LoadLayer", () => {
     },
   )
 
-  Async.it("Trys to load non existing entities from db by field", async () => {
+  Async.it("Trys to load non existing entities from db by field", async t => {
     let storageMock = Mock.Storage.make([#loadByFieldOrThrow])
     let loadManager = LoadManager.make()
     let inMemoryStore = Mock.InMemoryStore.make()
@@ -374,10 +382,11 @@ describe("LoadLayer", () => {
     let users1 = await getUsersWithId("123")
     let users2 = await getUsersWithUpdates(0)
 
-    Assert.deepEqual(users1, [])
-    Assert.deepEqual(users2, [])
-    Assert.deepEqual(
+    t.expect(users1).toEqual([])
+    t.expect(users2).toEqual([])
+    t.expect(
       storageMock.loadByFieldOrThrowCalls,
+    ).toEqual(
       [
         {
           "fieldName": "id",
@@ -410,14 +419,16 @@ describe("LoadLayer", () => {
       )
 
     let users3 = await getUsersWithUpdatesLt(5)
-    Assert.deepEqual(users3, [])
-    Assert.deepEqual(
+    t.expect(users3).toEqual([])
+    t.expect(
       storageMock.loadByFieldOrThrowCalls->Array.length,
-      3,
       ~message="Should have added Lt operator call",
+    ).toEqual(
+      3,
     )
-    Assert.deepEqual(
+    t.expect(
       storageMock.loadByFieldOrThrowCalls->Belt.Array.get(2),
+    ).toEqual(
       Some({
         "fieldName": "updatesCountOnUserForTesting",
         "fieldValue": 5->Utils.magic,
@@ -427,7 +438,7 @@ describe("LoadLayer", () => {
     )
   })
 
-  Async.it("Gets entity from inMemoryStore by index if it exists", async () => {
+  Async.it("Gets entity from inMemoryStore by index if it exists", async t => {
     let storageMock = Mock.Storage.make([#loadByIdsOrThrow, #loadByFieldOrThrow])
     let loadManager = LoadManager.make()
 
@@ -477,15 +488,17 @@ describe("LoadLayer", () => {
         ~shouldGroup=true,
       )
 
-    Assert.deepEqual(await getUsersWithId("1"), [user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
-    Assert.deepEqual(
+    t.expect(await getUsersWithId("1")).toEqual([user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
+    t.expect(
       await getUsersWithUpdates(0),
-      [user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity)],
       ~message="Should have loaded user2",
+    ).toEqual(
+      [user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity)],
     )
-    Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
-    Assert.deepEqual(
+    t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
+    t.expect(
       storageMock.loadByFieldOrThrowCalls,
+    ).toEqual(
       [
         {
           "fieldName": "id",
@@ -503,13 +516,14 @@ describe("LoadLayer", () => {
     )
 
     // The second time gets from inMemoryStore
-    Assert.deepEqual(await getUsersWithId("1"), [user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
-    Assert.deepEqual(await getUsersWithUpdates(0), [user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
-    Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
-    Assert.deepEqual(
+    t.expect(await getUsersWithId("1")).toEqual([user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
+    t.expect(await getUsersWithUpdates(0)).toEqual([user2->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
+    t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
+    t.expect(
       storageMock.loadByFieldOrThrowCalls->Array.length,
-      2,
       ~message=`Shouldn't add more calls to the db`,
+    ).toEqual(
+      2,
     )
 
     inMemoryStore->Mock.InMemoryStore.setEntity(
@@ -517,22 +531,24 @@ describe("LoadLayer", () => {
       {...user2, updatesCountOnUserForTesting: 0},
     )
 
-    Assert.deepEqual(
+    t.expect(
       await getUsersWithUpdates(0),
-      [],
       ~message=`Doesn't get the user after the value is updated and not match the query`,
+    ).toEqual(
+      [],
     )
-    Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
-    Assert.deepEqual(
+    t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
+    t.expect(
       storageMock.loadByFieldOrThrowCalls->Array.length,
-      2,
       ~message=`Shouldn't add more calls to the db`,
+    ).toEqual(
+      2,
     )
   })
 
   Async.it(
     "Correctly gets entity from inMemoryStore by index if the entity set after the index creation",
-    async () => {
+    async t => {
       let storageMock = Mock.Storage.make([#loadByFieldOrThrow])
       let loadManager = LoadManager.make()
       let inMemoryStore = Mock.InMemoryStore.make()
@@ -572,17 +588,17 @@ describe("LoadLayer", () => {
           "operator": #"=",
         },
       ]
-      Assert.deepEqual(users, [])
-      Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
-      Assert.deepEqual(storageMock.loadByFieldOrThrowCalls, loadEntitiesByFieldSingleDbCall)
+      t.expect(users).toEqual([])
+      t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
+      t.expect(storageMock.loadByFieldOrThrowCalls).toEqual(loadEntitiesByFieldSingleDbCall)
 
       inMemoryStore->Mock.InMemoryStore.setEntity(~entityConfig=Mock.entityConfig(User), user1)
 
       // The second time gets from inMemoryStore
       let users = await getUsersWithId("1")
-      Assert.deepEqual(users, [user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
-      Assert.deepEqual(storageMock.loadByIdsOrThrowCalls, [])
-      Assert.deepEqual(storageMock.loadByFieldOrThrowCalls, loadEntitiesByFieldSingleDbCall)
+      t.expect(users).toEqual([user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
+      t.expect(storageMock.loadByIdsOrThrowCalls).toEqual([])
+      t.expect(storageMock.loadByFieldOrThrowCalls).toEqual(loadEntitiesByFieldSingleDbCall)
     },
   )
 })
