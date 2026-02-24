@@ -481,7 +481,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
               progressBlockNumber: chainFetcher.committedProgressBlockNumber,
               sourceBlockNumber: chainFetcher.fetchState.knownHeight,
               totalEventsProcessed: chainFetcher.numEventsProcessed,
-              configuredBlockLag: chainFetcher.chainConfig.blockLag,
+              chainConfig: chainFetcher.chainConfig,
             }: Batch.chainBeforeBatch
           ),
         ),
