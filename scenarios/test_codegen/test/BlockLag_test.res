@@ -1,7 +1,7 @@
 open Vitest
 
 describe("E2E blockLag tests", () => {
-  Async.itWithTimeout(
+  Async.it(
     "Chain with blockLag=1 should be marked as synced to head when at knownHeight - blockLag",
     async t => {
       let sourceMock = Mock.Source.make(
@@ -94,6 +94,5 @@ describe("E2E blockLag tests", () => {
         ~message="Chain with blockLag=1 should still be synced after height advances",
       ).toEqual([{value: "1", labels: Js.Dict.empty()}])
     },
-    10_000,
   )
 })
