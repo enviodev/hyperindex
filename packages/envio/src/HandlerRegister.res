@@ -1,7 +1,7 @@
 type eventRegistration = {
   handler: option<Internal.handler>,
   contractRegister: option<Internal.contractRegister>,
-  eventOptions: option<Internal.eventOptions<Js.Json.t>>,
+  eventOptions: option<Internal.eventOptions<Internal.eventFilters>>,
 }
 
 let empty = {
@@ -194,13 +194,23 @@ let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
   Js.Exn.raiseError(fullMsg)
 }
 
+let eventFiltersMatch = (a: option<Internal.eventFilters>, b: option<Internal.eventFilters>) => {
+  switch (a, b) {
+  | (None, None) => true
+  | (Some(Static(a)), Some(Static(b))) => a == b
+  | (Some(Dynamic(a)), Some(Dynamic(b))) => a === b
+  | _ => false
+  }
+}
+
 let eventOptionsMatch = (
-  existing: option<Internal.eventOptions<Js.Json.t>>,
-  incoming: option<Internal.eventOptions<Js.Json.t>>,
+  existing: option<Internal.eventOptions<Internal.eventFilters>>,
+  incoming: option<Internal.eventOptions<Internal.eventFilters>>,
 ) => {
   switch (existing, incoming) {
   | (None, None) => true
-  | (Some(a), Some(b)) => a.wildcard === b.wildcard && a.eventFilters == b.eventFilters
+  | (Some(a), Some(b)) =>
+    a.wildcard === b.wildcard && eventFiltersMatch(a.eventFilters, b.eventFilters)
   | _ => false
   }
 }
@@ -209,7 +219,7 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
   switch eventOptions {
   | Some(value) =>
     let value =
-      value->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Js.Json.t>)
+      value->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
     let t = get(~contractName, ~eventName)
     switch t.eventOptions {
     | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
@@ -241,7 +251,7 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Log
     | Some(prevHandler) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Js.Json.t>)
+          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedHandler: Internal.handler = async args => {
@@ -282,7 +292,7 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
     | Some(prevContractRegister) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Js.Json.t>)
+          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedContractRegister: Internal.contractRegister = async args => {
