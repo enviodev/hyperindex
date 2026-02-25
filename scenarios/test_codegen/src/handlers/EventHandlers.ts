@@ -757,3 +757,24 @@ EventFiltersTest.FilterTestEvent.handler(
     },
   },
 );
+
+// Duplicate handler registration tests
+
+// Same options (no options) → should compose without error
+export let composedHandlerCalled = false;
+Gravatar.CustomSelection.handler(async () => {
+  composedHandlerCalled = true;
+});
+
+export let composedContractRegisterCalled = false;
+Gravatar.FactoryEvent.contractRegister(() => {
+  composedContractRegisterCalled = true;
+});
+
+// Different options → should throw
+export let mismatchedHandlerOptionsError: Error | undefined;
+try {
+  Gravatar.CustomSelection.handler(async () => {}, { wildcard: true });
+} catch (e) {
+  mismatchedHandlerOptionsError = e as Error;
+}

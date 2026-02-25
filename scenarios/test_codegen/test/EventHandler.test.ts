@@ -624,6 +624,31 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  it("composes duplicate handlers with same options and rejects mismatched options", async () => {
+    const mockDbInitial = MockDb.createMockDb();
+
+    const event = Gravatar.FactoryEvent.createMockEvent({
+      contract: "0x1234567890123456789012345678901234567890",
+      testCase: "syncRegistration",
+    });
+
+    // Trigger module load via autoLoadFromSrcHandlers
+    await mockDbInitial.processEvents([event]);
+
+    // Dynamic-import EventHandlers.js to access exported error values
+    const handlers = await import("../src/handlers/EventHandlers");
+
+    // Same options → composed without error
+    // contractRegister ran during factory event processing, proving compose works
+    assert.strictEqual(handlers.composedContractRegisterCalled, true);
+
+    // Different options → throws a user-friendly error
+    assert.strictEqual(
+      handlers.mismatchedHandlerOptionsError?.message,
+      "Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters) for Gravatar.CustomSelection"
+    );
+  });
+
   it("Currently filters are ignored by the test framework", async () => {
     const mockDbInitial = MockDb.createMockDb();
 

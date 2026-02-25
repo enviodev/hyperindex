@@ -100,7 +100,7 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "Publishing $(node -p "require('./package.json').name")@${VERSION}"
-          pnpm publish --access public --no-git-checks
+          pnpm publish --access public --tag latest --no-git-checks
 
   # Publish the base envio package to npm
   publish-envio-package:
