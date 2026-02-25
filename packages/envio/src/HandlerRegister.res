@@ -175,6 +175,7 @@ let getContractRegister = (~contractName, ~eventName) =>
 let getEventFilters = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).eventOptions
   ->Belt.Option.flatMap(value => value.eventFilters)
+  ->(Utils.magic: option<Internal.eventFilters> => option<Js.Json.t>)
 
 let isWildcard = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).eventOptions
@@ -243,11 +244,12 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Log
     let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
     switch t.handler {
     | None =>
+      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
+      let t = get(~contractName, ~eventName)
       set(~contractName, ~eventName, {
         ...t,
         handler: Some(newHandler),
       })
-      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
     | Some(prevHandler) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
@@ -284,11 +286,12 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
     )
     switch t.contractRegister {
     | None =>
+      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
+      let t = get(~contractName, ~eventName)
       set(~contractName, ~eventName, {
         ...t,
         contractRegister: Some(newContractRegister),
       })
-      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
     | Some(prevContractRegister) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
