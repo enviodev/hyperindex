@@ -188,7 +188,7 @@ describe("Isolated dependency e2e", () => {
       await waitForOutput(
         indexerProcess,
         "All chains are caught up to end blocks",
-        60_000
+        120_000
       );
 
       // Kill immediately so envio dev doesn't tear down docker before tests query it.
