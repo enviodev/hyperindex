@@ -42,7 +42,10 @@ interface PmConfig {
 
 const PACKAGE_MANAGERS: PmConfig[] = [
   { pm: "pnpm", installArgs: ["install"] },
-  { pm: "npm", installArgs: ["install"] },
+  // --install-links makes npm copy file: deps instead of symlinking them,
+  // matching real `npm install envio` (from registry) behavior. Without it,
+  // node resolves from the symlink target which has no node_modules.
+  { pm: "npm", installArgs: ["install", "--install-links"] },
 ];
 
 describe("Isolated dependency e2e", () => {
@@ -158,6 +161,22 @@ describe("Isolated dependency e2e", () => {
         console.error(`[${pm}] install failed:`, rootInstall.stderr);
       }
       expect(rootInstall.exitCode).toBe(0);
+
+      // ReScript deps (rescript-envsafe, rescript-schema, etc.) ship only .res
+      // source — rescript build compiles them to .res.mjs. In a real flow, codegen
+      // handles this, but we skip codegen (persisted state matches), so build manually.
+      const rescriptBuild = await runCommand(
+        "npx",
+        ["rescript", "build"],
+        {
+          cwd: path.join(projectDir, "generated"),
+          timeout: 120_000,
+        }
+      );
+      if (rescriptBuild.exitCode !== 0) {
+        console.error(`[${pm}] rescript build failed:`, rescriptBuild.stderr);
+      }
+      expect(rescriptBuild.exitCode).toBe(0);
 
       // envio dev: persisted state matches → skips codegen (and its pnpm install) →
       // starts docker → runs migrations → starts indexer.
