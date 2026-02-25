@@ -1,10 +1,10 @@
 /**
  * Isolated Dependency E2E Test
  *
- * Packs the envio package into a tarball, runs codegen in an isolated
- * directory, then re-installs from the tarball with both pnpm and npm.
- * Starts `envio dev` to verify the indexer runs and produces data,
- * proving all runtime dependencies are correctly declared.
+ * Runs codegen in an isolated directory outside the pnpm workspace,
+ * then re-installs with both pnpm and npm using a direct file: reference
+ * to packages/envio. Starts `envio dev` to verify the indexer runs and
+ * produces data, proving all runtime dependencies are correctly declared.
  *
  * This catches undeclared dependencies that work inside the pnpm workspace
  * (due to hoisting) but break for end users who `npm install envio`.
@@ -46,32 +46,13 @@ const PACKAGE_MANAGERS: PmConfig[] = [
 ];
 
 describe("Isolated dependency e2e", () => {
-  let tarballPath: string;
   let baseProjectDir: string;
   const tempDirs: string[] = [];
+  const envioPackagePath = path.join(config.rootDir, "packages/envio");
 
-  // Pack envio and run codegen once; each PM test copies from here.
+  // Run codegen once; each PM test copies from here.
   beforeAll(async () => {
-    // 1. Pack the envio package into a tarball
-    const tarballDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-tb-"));
-    tempDirs.push(tarballDir);
-
-    const packResult = await runCommand(
-      "npm",
-      ["pack", "--pack-destination", tarballDir],
-      { cwd: path.join(config.rootDir, "packages/envio"), timeout: 30_000 }
-    );
-    expect(packResult.exitCode, `npm pack failed: ${packResult.stderr}`).toBe(
-      0
-    );
-
-    const tarball = fs
-      .readdirSync(tarballDir)
-      .find((f: string) => f.endsWith(".tgz"));
-    expect(tarball, "no .tgz tarball from npm pack").toBeDefined();
-    tarballPath = path.join(tarballDir, tarball!);
-
-    // 2. Copy e2e_test scenario into an isolated temp directory
+    // 1. Copy e2e_test scenario into an isolated temp directory
     baseProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-base-"));
     tempDirs.push(baseProjectDir);
 
@@ -89,7 +70,14 @@ describe("Isolated dependency e2e", () => {
       path.join(baseProjectDir, "package.json")
     );
 
-    // 3. Run envio codegen — generates code, pnpm-installs from workspace ref, builds rescript
+    // 2. Patch root package.json to absolute file: path so codegen's
+    //    pnpm install resolves correctly outside the workspace
+    patchEnvioDep(
+      path.join(baseProjectDir, "package.json"),
+      `file:${envioPackagePath}`
+    );
+
+    // 3. Run envio codegen — generates code, pnpm-installs, builds rescript
     const codegenResult = await runCommand(config.envioBin, ["codegen"], {
       cwd: baseProjectDir,
       timeout: 120_000,
@@ -100,23 +88,24 @@ describe("Isolated dependency e2e", () => {
       `codegen failed: ${codegenResult.stderr}`
     ).toBe(0);
 
-    // 4. Patch both package.json files to reference the tarball instead of the workspace
-    patchEnvioDep(path.join(baseProjectDir, "package.json"), tarballPath);
+    // 4. Ensure both package.json files use the absolute file: path
+    patchEnvioDep(
+      path.join(baseProjectDir, "package.json"),
+      `file:${envioPackagePath}`
+    );
     patchEnvioDep(
       path.join(baseProjectDir, "generated", "package.json"),
-      tarballPath
+      `file:${envioPackagePath}`
     );
 
     // 5. Remove node_modules and lockfiles so each PM test starts clean
-    for (const nm of [
-      path.join(baseProjectDir, "node_modules"),
-      path.join(baseProjectDir, "generated", "node_modules"),
-    ]) {
+    for (const dir of [baseProjectDir, path.join(baseProjectDir, "generated")]) {
+      const nm = path.join(dir, "node_modules");
       if (fs.existsSync(nm)) fs.rmSync(nm, { recursive: true, force: true });
-    }
-    for (const name of ["pnpm-lock.yaml", "package-lock.json"]) {
-      const p = path.join(baseProjectDir, name);
-      if (fs.existsSync(p)) fs.unlinkSync(p);
+      for (const name of ["pnpm-lock.yaml", "package-lock.json"]) {
+        const p = path.join(dir, name);
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      }
     }
   }, 180_000);
 
@@ -168,7 +157,7 @@ describe("Isolated dependency e2e", () => {
 
       // envio dev: persisted state matches → skips codegen (and its pnpm install) →
       // starts docker → runs migrations → starts indexer.
-      // Our tarball-installed node_modules are preserved.
+      // Our isolated node_modules are preserved.
       indexerProcess = startBackground(config.envioBin, ["dev"], {
         cwd: projectDir,
         env: {
