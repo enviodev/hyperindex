@@ -944,7 +944,19 @@ let injectedTaskReducer = (
       }
 
       if progressedChainsById->Utils.Dict.isEmpty {
-        ()
+        // When resuming from persisted state, all events may already be processed.
+        // Log the same completion message and handle exit just like EventBatchProcessed does.
+        if EventProcessing.allChainsEventsProcessedToEndblock(state.chainManager.chainFetchers) {
+          Logging.info("All chains are caught up to end blocks.")
+          if !state.keepProcessAlive {
+            updateChainMetadataTable(
+              state.chainManager,
+              ~persistence=state.ctx.persistence,
+              ~throttler=state.writeThrottlers.chainMetaData,
+            )
+            dispatchAction(SuccessExit)
+          }
+        }
       } else {
         if Env.Benchmark.shouldSaveData {
           let group = "Other"

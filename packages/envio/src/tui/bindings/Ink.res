@@ -369,8 +369,3 @@ module Spinner = {
   @module("ink-spinner") @react.component
   external make: (@as("type") ~type_: typeOption=?) => React.element = "default"
 }
-
-module Table = {
-  @module("ink-table") @react.component
-  external make: (~head: array<string>, ~rows: array<array<string>>) => React.element = "Table"
-}

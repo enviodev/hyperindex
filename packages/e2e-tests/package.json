@@ -6,6 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "test:templates": "vitest run src/template-tests/",
+    "test:deps": "vitest run src/dependency-tests/",
     "test:e2e": "vitest run src/e2e/",
     "lint": "tsc --noEmit"
   },
