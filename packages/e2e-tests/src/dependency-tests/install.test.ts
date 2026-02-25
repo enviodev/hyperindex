@@ -1,9 +1,9 @@
 /**
  * Isolated Dependency E2E Test
  *
- * Runs codegen in an isolated directory outside the pnpm workspace,
- * then re-installs with both pnpm and npm using a direct file: reference
- * to packages/envio. Starts `envio dev` to verify the indexer runs and
+ * Copies the scenario and packages/envio into a temp directory outside
+ * the pnpm workspace, runs full codegen + install, then re-installs with
+ * both pnpm and npm. Starts `envio dev` to verify the indexer runs and
  * produces data, proving all runtime dependencies are correctly declared.
  *
  * This catches undeclared dependencies that work inside the pnpm workspace
@@ -47,15 +47,25 @@ const PACKAGE_MANAGERS: PmConfig[] = [
 
 describe("Isolated dependency e2e", () => {
   let baseProjectDir: string;
+  let isolatedEnvioDir: string;
   const tempDirs: string[] = [];
-  const envioPackagePath = path.join(config.rootDir, "packages/envio");
 
   // Run codegen once; each PM test copies from here.
   beforeAll(async () => {
-    // 1. Copy e2e_test scenario into an isolated temp directory
-    baseProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-base-"));
-    tempDirs.push(baseProjectDir);
+    // 1. Create isolated temp root and copy packages/envio + scenario into it
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "envio-iso-"));
+    tempDirs.push(tmpRoot);
 
+    // Copy packages/envio (skip node_modules to avoid workspace artifacts)
+    isolatedEnvioDir = path.join(tmpRoot, "envio-pkg");
+    fs.cpSync(path.join(config.rootDir, "packages/envio"), isolatedEnvioDir, {
+      recursive: true,
+      filter: (src: string) => path.basename(src) !== "node_modules",
+    });
+
+    // Copy e2e_test scenario
+    baseProjectDir = path.join(tmpRoot, "project");
+    fs.mkdirSync(baseProjectDir);
     for (const name of ["config.yaml", "schema.graphql", "tsconfig.json"]) {
       fs.cpSync(
         path.join(SCENARIO_DIR, name),
@@ -70,11 +80,10 @@ describe("Isolated dependency e2e", () => {
       path.join(baseProjectDir, "package.json")
     );
 
-    // 2. Patch root package.json to absolute file: path so codegen's
-    //    pnpm install resolves correctly outside the workspace
+    // 2. Patch root package.json to reference the isolated envio copy
     patchEnvioDep(
       path.join(baseProjectDir, "package.json"),
-      `file:${envioPackagePath}`
+      `file:${isolatedEnvioDir}`
     );
 
     // 3. Run envio codegen — generates code, pnpm-installs, builds rescript
@@ -88,14 +97,14 @@ describe("Isolated dependency e2e", () => {
       `codegen failed: ${codegenResult.stderr}`
     ).toBe(0);
 
-    // 4. Ensure both package.json files use the absolute file: path
+    // 4. Ensure both package.json files reference the isolated envio copy
     patchEnvioDep(
       path.join(baseProjectDir, "package.json"),
-      `file:${envioPackagePath}`
+      `file:${isolatedEnvioDir}`
     );
     patchEnvioDep(
       path.join(baseProjectDir, "generated", "package.json"),
-      `file:${envioPackagePath}`
+      `file:${isolatedEnvioDir}`
     );
 
     // 5. Remove node_modules and lockfiles so each PM test starts clean
