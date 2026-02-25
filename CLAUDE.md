@@ -9,3 +9,4 @@
 ## ReScript
 
 - When using `Utils.magic` for type casting, always add explicit type annotations: `value->(Utils.magic: inputType => outputType)`
+- `end` is a reserved keyword. Use `~end_` for labeled arguments (e.g., `Js.Array2.slice(~start=0, ~end_=n)`).
