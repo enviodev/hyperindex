@@ -46,26 +46,28 @@ const PACKAGE_MANAGERS: PmConfig[] = [
 ];
 
 describe("Isolated dependency e2e", () => {
+  let tmpRoot: string;
   let baseProjectDir: string;
-  let isolatedEnvioDir: string;
-  const tempDirs: string[] = [];
 
   // Run codegen once; each PM test copies from here.
   beforeAll(async () => {
-    // 1. Create isolated temp root and copy packages/envio + scenario into it
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "envio-iso-"));
-    tempDirs.push(tmpRoot);
+    // 1. Mirror repo layout in an isolated temp root so the scenario's
+    //    "file:../../packages/envio" relative path resolves naturally.
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "envio-iso-"));
 
     // Copy packages/envio (skip node_modules to avoid workspace artifacts)
-    isolatedEnvioDir = path.join(tmpRoot, "envio-pkg");
-    fs.cpSync(path.join(config.rootDir, "packages/envio"), isolatedEnvioDir, {
-      recursive: true,
-      filter: (src: string) => path.basename(src) !== "node_modules",
-    });
+    fs.cpSync(
+      path.join(config.rootDir, "packages/envio"),
+      path.join(tmpRoot, "packages/envio"),
+      {
+        recursive: true,
+        filter: (src: string) => path.basename(src) !== "node_modules",
+      }
+    );
 
     // Copy e2e_test scenario
-    baseProjectDir = path.join(tmpRoot, "project");
-    fs.mkdirSync(baseProjectDir);
+    baseProjectDir = path.join(tmpRoot, "scenarios/e2e_test");
+    fs.mkdirSync(baseProjectDir, { recursive: true });
     for (const name of ["config.yaml", "schema.graphql", "tsconfig.json"]) {
       fs.cpSync(
         path.join(SCENARIO_DIR, name),
@@ -80,13 +82,8 @@ describe("Isolated dependency e2e", () => {
       path.join(baseProjectDir, "package.json")
     );
 
-    // 2. Patch root package.json to reference the isolated envio copy
-    patchEnvioDep(
-      path.join(baseProjectDir, "package.json"),
-      `file:${isolatedEnvioDir}`
-    );
-
-    // 3. Run envio codegen — generates code, pnpm-installs, builds rescript
+    // 2. Run envio codegen — generates code, pnpm-installs, builds rescript.
+    //    Root package.json's "file:../../packages/envio" resolves to tmpRoot/packages/envio.
     const codegenResult = await runCommand(config.envioBin, ["codegen"], {
       cwd: baseProjectDir,
       timeout: 120_000,
@@ -97,17 +94,14 @@ describe("Isolated dependency e2e", () => {
       `codegen failed: ${codegenResult.stderr}`
     ).toBe(0);
 
-    // 4. Ensure both package.json files reference the isolated envio copy
-    patchEnvioDep(
-      path.join(baseProjectDir, "package.json"),
-      `file:${isolatedEnvioDir}`
-    );
+    // 3. Codegen writes an absolute binary-relative path for envio in
+    //    generated/package.json; rewrite it to the same relative scheme.
     patchEnvioDep(
       path.join(baseProjectDir, "generated", "package.json"),
-      `file:${isolatedEnvioDir}`
+      "file:../../../packages/envio"
     );
 
-    // 5. Remove node_modules and lockfiles so each PM test starts clean
+    // 4. Remove node_modules and lockfiles so each PM test starts clean
     for (const dir of [baseProjectDir, path.join(baseProjectDir, "generated")]) {
       const nm = path.join(dir, "node_modules");
       if (fs.existsSync(nm)) fs.rmSync(nm, { recursive: true, force: true });
@@ -119,8 +113,8 @@ describe("Isolated dependency e2e", () => {
   }, 180_000);
 
   afterAll(() => {
-    for (const dir of tempDirs) {
-      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    if (tmpRoot && fs.existsSync(tmpRoot)) {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
 
@@ -137,9 +131,10 @@ describe("Isolated dependency e2e", () => {
 
       await killProcessOnPort(config.indexerPort);
 
-      // Copy the base project (skip node_modules dirs)
-      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), `envio-${pm}-`));
-      tempDirs.push(projectDir);
+      // Copy the base project into <tmpRoot>/<pm>/e2e_test/ so the
+      // relative path "../../packages/envio" still resolves to tmpRoot/packages/envio.
+      projectDir = path.join(tmpRoot, pm, "e2e_test");
+      fs.mkdirSync(path.join(tmpRoot, pm), { recursive: true });
       fs.cpSync(baseProjectDir, projectDir, {
         recursive: true,
         filter: (source: string) => path.basename(source) !== "node_modules",
