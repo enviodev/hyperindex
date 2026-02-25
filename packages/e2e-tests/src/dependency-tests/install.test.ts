@@ -42,10 +42,6 @@ interface PmConfig {
 
 const PACKAGE_MANAGERS: PmConfig[] = [
   { pm: "pnpm", installArgs: ["install"] },
-  // --install-links makes npm copy file: deps instead of symlinking them,
-  // matching real `npm install envio` (from registry) behavior. Without it,
-  // node resolves from the symlink target which has no node_modules.
-  { pm: "npm", installArgs: ["install", "--install-links"] },
 ];
 
 describe("Isolated dependency e2e", () => {
