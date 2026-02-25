@@ -1,38 +1,36 @@
-open RescriptMocha
+open Vitest
 
 describe("Test PgStorage SQL generation functions", () => {
   describe("makeCreateIndexQuery", () => {
     Async.it(
       "Should create simple index SQL",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateIndexQuery(
           ~tableName="test_table",
           ~indexFields=["field1"],
           ~pgSchema="test_schema",
         )
 
-        Assert.equal(
+        t.expect(
           query,
-          `CREATE INDEX IF NOT EXISTS "test_table_field1" ON "test_schema"."test_table"("field1");`,
           ~message="Should generate correct single field index SQL",
-        )
+        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1" ON "test_schema"."test_table"("field1");`)
       },
     )
 
     Async.it(
       "Should create composite index SQL",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateIndexQuery(
           ~tableName="test_table",
           ~indexFields=["field1", "field2", "field3"],
           ~pgSchema="test_schema",
         )
 
-        Assert.equal(
+        t.expect(
           query,
-          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2_field3" ON "test_schema"."test_table"("field1", "field2", "field3");`,
           ~message="Should generate correct composite index SQL",
-        )
+        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_field2_field3" ON "test_schema"."test_table"("field1", "field2", "field3");`)
       },
     )
   })
@@ -40,7 +38,7 @@ describe("Test PgStorage SQL generation functions", () => {
   describe("makeCreateCompositeIndexQuery", () => {
     Async.it(
       "Should create composite index SQL with ASC direction (default, omitted in SQL)",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateCompositeIndexQuery(
           ~tableName="test_table",
           ~indexFields=[
@@ -50,17 +48,16 @@ describe("Test PgStorage SQL generation functions", () => {
           ~pgSchema="test_schema",
         )
 
-        Assert.equal(
+        t.expect(
           query,
-          `CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1", "field2");`,
           ~message="Should generate correct composite index SQL with ASC (default) direction",
-        )
+        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1", "field2");`)
       },
     )
 
     Async.it(
       "Should create composite index SQL with DESC direction",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateCompositeIndexQuery(
           ~tableName="test_table",
           ~indexFields=[
@@ -70,17 +67,16 @@ describe("Test PgStorage SQL generation functions", () => {
           ~pgSchema="test_schema",
         )
 
-        Assert.equal(
+        t.expect(
           query,
-          `CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2" ON "test_schema"."test_table"("field1" DESC, "field2");`,
           ~message="Should generate correct composite index SQL with DESC direction",
-        )
+        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2" ON "test_schema"."test_table"("field1" DESC, "field2");`)
       },
     )
 
     Async.it(
       "Should create composite index SQL with all DESC",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateCompositeIndexQuery(
           ~tableName="test_table",
           ~indexFields=[
@@ -91,17 +87,16 @@ describe("Test PgStorage SQL generation functions", () => {
           ~pgSchema="test_schema",
         )
 
-        Assert.equal(
+        t.expect(
           query,
-          `CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2_desc_field3_desc" ON "test_schema"."test_table"("field1" DESC, "field2" DESC, "field3" DESC);`,
           ~message="Should generate correct composite index SQL with all DESC direction",
-        )
+        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2_desc_field3_desc" ON "test_schema"."test_table"("field1" DESC, "field2" DESC, "field3" DESC);`)
       },
     )
 
     Async.it(
       "Should encode direction in index name to avoid collisions",
-      async () => {
+      async t => {
         let queryAsc = PgStorage.makeCreateCompositeIndexQuery(
           ~tableName="t",
           ~indexFields=[
@@ -120,9 +115,9 @@ describe("Test PgStorage SQL generation functions", () => {
         )
 
         // Index names must differ so CREATE INDEX IF NOT EXISTS doesn't skip the second
-        Assert.notEqual(queryAsc, queryDesc, ~message="Same fields with different directions must produce different index names")
-        Assert.ok(queryAsc->Js.String2.includes("\"t_a_b\""), ~message="ASC index name has no suffix")
-        Assert.ok(queryDesc->Js.String2.includes("\"t_a_desc_b_desc\""), ~message="DESC index name encodes direction")
+        t.expect(queryAsc, ~message="Same fields with different directions must produce different index names").not.toBe(queryDesc)
+        t.expect(queryAsc->Js.String2.includes("\"t_a_b\""), ~message="ASC index name has no suffix").toBeTruthy()
+        t.expect(queryDesc->Js.String2.includes("\"t_a_desc_b_desc\""), ~message="DESC index name encodes direction").toBeTruthy()
       },
     )
   })
@@ -130,21 +125,27 @@ describe("Test PgStorage SQL generation functions", () => {
   describe("makeCreateTableIndicesQuery", () => {
     Async.it(
       "Should create indices for A entity table",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateTableIndicesQuery(Mock.entityConfig(A).table, ~pgSchema="test_schema")
 
         let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-        Assert.equal(query, expectedIndices, ~message="Indices SQL should match exactly")
+        t.expect(
+          query,
+          ~message="Indices SQL should match exactly",
+        ).toBe(expectedIndices)
       },
     )
 
     Async.it(
       "Should handle table with no indices",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateTableIndicesQuery(Mock.entityConfig(B).table, ~pgSchema="test_schema")
 
         // B entity has no indexed fields, so should return empty string
-        Assert.equal(query, "", ~message="Should return empty string for table with no indices")
+        t.expect(
+          query,
+          ~message="Should return empty string for table with no indices",
+        ).toBe("")
       },
     )
   })
@@ -152,7 +153,7 @@ describe("Test PgStorage SQL generation functions", () => {
   describe("makeCreateTableQuery", () => {
     Async.it(
       "Should create SQL for A entity table",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateTableQuery(
           Mock.entityConfig(A).table,
           ~pgSchema="test_schema",
@@ -160,13 +161,16 @@ describe("Test PgStorage SQL generation functions", () => {
         )
 
         let expectedTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));`
-        Assert.equal(query, expectedTableSql, ~message="A table SQL should match exactly")
+        t.expect(
+          query,
+          ~message="A table SQL should match exactly",
+        ).toBe(expectedTableSql)
       },
     )
 
     Async.it(
       "Should create SQL for B entity table with derived fields",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateTableQuery(
           Mock.entityConfig(B).table,
           ~pgSchema="test_schema",
@@ -174,13 +178,16 @@ describe("Test PgStorage SQL generation functions", () => {
         )
 
         let expectedBTableSql = `CREATE TABLE IF NOT EXISTS "test_schema"."B"("id" TEXT NOT NULL, "c_id" TEXT, PRIMARY KEY("id"));`
-        Assert.equal(query, expectedBTableSql, ~message="B table SQL should match exactly")
+        t.expect(
+          query,
+          ~message="B table SQL should match exactly",
+        ).toBe(expectedBTableSql)
       },
     )
 
     Async.it(
       "Should handle default values",
-      async () => {
+      async t => {
         let query = PgStorage.makeCreateTableQuery(
           Mock.entityConfig(A).table,
           ~pgSchema="test_schema",
@@ -188,11 +195,10 @@ describe("Test PgStorage SQL generation functions", () => {
         )
 
         let expectedDefaultTestSql = `CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));`
-        Assert.equal(
+        t.expect(
           query,
-          expectedDefaultTestSql,
           ~message="Default value table SQL should match exactly",
-        )
+        ).toBe(expectedDefaultTestSql)
       },
     )
   })
@@ -200,7 +206,7 @@ describe("Test PgStorage SQL generation functions", () => {
   describe("makeInitializeTransaction", () => {
     Async.it(
       "Should create complete initialization queries",
-      async () => {
+      async t => {
         let entities = [
           Mock.entityConfig(A),
           Mock.entityConfig(B),
@@ -222,6 +228,7 @@ describe("Test PgStorage SQL generation functions", () => {
               startBlock: 100,
               endBlock: 200,
               maxReorgDepth: 10,
+              blockLag: 0,
               contracts: [],
               sourceConfig: Config.CustomSources([]),
             },
@@ -230,6 +237,7 @@ describe("Test PgStorage SQL generation functions", () => {
               id: 137,
               startBlock: 0,
               maxReorgDepth: 200,
+              blockLag: 0,
               contracts: [],
               sourceConfig: Config.CustomSources([]),
             },
@@ -240,11 +248,10 @@ describe("Test PgStorage SQL generation functions", () => {
         )
 
         // Should return exactly 2 queries: main DDL + functions
-        Assert.equal(
+        t.expect(
           queries->Array.length,
-          2,
           ~message="Should return exactly 2 queries for main DDL and functions",
-        )
+        ).toBe(2)
 
         let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
 
@@ -302,17 +309,16 @@ INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max
 VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false, 0),
        (137, 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
-        Assert.equal(
+        t.expect(
           mainQuery,
-          expectedMainQuery,
           ~message="Main query should match expected SQL exactly",
-        )
+        ).toBe(expectedMainQuery)
       },
     )
 
     Async.it(
       "Should handle minimal configuration correctly",
-      async () => {
+      async t => {
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
@@ -321,11 +327,10 @@ VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false, 0),
         )
 
         // Should return exactly 2 query (main DDL, and a function for cache)
-        Assert.equal(
+        t.expect(
           queries->Array.length,
-          2,
           ~message="Should return single query when no entities have functions. And a function needed for cache.",
-        )
+        ).toBe(2)
 
         let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
 
@@ -366,15 +371,15 @@ SELECT
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";`
 
-        Assert.equal(
+        t.expect(
           mainQuery,
-          expectedMainQuery,
           ~message="Minimal configuration should match expected SQL exactly",
-        )
+        ).toBe(expectedMainQuery)
 
-        Assert.equal(
+        t.expect(
           queries->Belt.Array.get(1)->Belt.Option.getExn,
-          `CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
+          ~message="A function for cache should be created",
+        ).toBe(`CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
 RETURNS integer AS $$
 DECLARE
   result integer;
@@ -382,15 +387,13 @@ BEGIN
   EXECUTE format('SELECT COUNT(*) FROM "test_schema".%I', table_name) INTO result;
   RETURN result;
 END;
-$$ LANGUAGE plpgsql;`,
-          ~message="A function for cache should be created",
-        )
+$$ LANGUAGE plpgsql;`)
       },
     )
 
     Async.it(
       "Should create SQL for single entity with indices",
-      async () => {
+      async t => {
         // Test with just entity A which has an indexed field
         let entities = [Mock.entityConfig(A)]
 
@@ -402,11 +405,10 @@ $$ LANGUAGE plpgsql;`,
           ~isHasuraEnabled=false,
         )
 
-        Assert.equal(
+        t.expect(
           queries->Array.length,
-          2,
           ~message="Should return 2 queries for entity with history function",
-        )
+        ).toBe(2)
 
         let mainQuery = queries->Belt.Array.get(0)->Belt.Option.getExn
         let functionsQuery = queries->Belt.Array.get(1)->Belt.Option.getExn
@@ -451,16 +453,16 @@ SELECT
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "public"."envio_chains";`
 
-        Assert.equal(
+        t.expect(
           mainQuery,
-          expectedMainQuery,
           ~message="Single entity SQL should match expected output exactly",
-        )
+        ).toBe(expectedMainQuery)
 
         // Verify functions query contains the A history function
-        Assert.equal(
+        t.expect(
           functionsQuery,
-          `CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
+          ~message="Should contain cache row count function definition",
+        ).toBe(`CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
 RETURNS integer AS $$
 DECLARE
   result integer;
@@ -468,9 +470,7 @@ BEGIN
   EXECUTE format('SELECT COUNT(*) FROM "public".%I', table_name) INTO result;
   RETURN result;
 END;
-$$ LANGUAGE plpgsql;`,
-          ~message="Should contain cache row count function definition",
-        )
+$$ LANGUAGE plpgsql;`)
       },
     )
   })
@@ -478,27 +478,25 @@ $$ LANGUAGE plpgsql;`,
   describe("makeLoadByIdQuery", () => {
     Async.it(
       "Should create correct SQL for loading single record by ID",
-      async () => {
+      async t => {
         let query = PgStorage.makeLoadByIdQuery(~pgSchema="test_schema", ~tableName="users")
 
-        Assert.equal(
+        t.expect(
           query,
-          `SELECT * FROM "test_schema"."users" WHERE id = $1 LIMIT 1;`,
           ~message="Should generate correct single ID query SQL",
-        )
+        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = $1 LIMIT 1;`)
       },
     )
 
     Async.it(
       "Should handle different schema and table names",
-      async () => {
+      async t => {
         let query = PgStorage.makeLoadByIdQuery(~pgSchema="public", ~tableName="A")
 
-        Assert.equal(
+        t.expect(
           query,
-          `SELECT * FROM "public"."A" WHERE id = $1 LIMIT 1;`,
           ~message="Should generate correct SQL with different schema and table names",
-        )
+        ).toBe(`SELECT * FROM "public"."A" WHERE id = $1 LIMIT 1;`)
       },
     )
   })
@@ -506,27 +504,25 @@ $$ LANGUAGE plpgsql;`,
   describe("makeLoadByIdsQuery", () => {
     Async.it(
       "Should create correct SQL for loading multiple records by IDs",
-      async () => {
+      async t => {
         let query = PgStorage.makeLoadByIdsQuery(~pgSchema="test_schema", ~tableName="users")
 
-        Assert.equal(
+        t.expect(
           query,
-          `SELECT * FROM "test_schema"."users" WHERE id = ANY($1::text[]);`,
           ~message="Should generate correct multiple IDs query SQL",
-        )
+        ).toBe(`SELECT * FROM "test_schema"."users" WHERE id = ANY($1::text[]);`)
       },
     )
 
     Async.it(
       "Should handle different schema and table names",
-      async () => {
+      async t => {
         let query = PgStorage.makeLoadByIdsQuery(~pgSchema="production", ~tableName="entities")
 
-        Assert.equal(
+        t.expect(
           query,
-          `SELECT * FROM "production"."entities" WHERE id = ANY($1::text[]);`,
           ~message="Should generate correct SQL with different schema and table names",
-        )
+        ).toBe(`SELECT * FROM "production"."entities" WHERE id = ANY($1::text[]);`)
       },
     )
   })
@@ -534,7 +530,7 @@ $$ LANGUAGE plpgsql;`,
   describe("makeInsertUnnestSetQuery", () => {
     Async.it(
       "Should create correct SQL for inserting with unnest",
-      async () => {
+      async t => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
           ~table=Mock.entityConfig(EntityWithAllNonArrayTypes).table,
@@ -545,13 +541,16 @@ $$ LANGUAGE plpgsql;`,
         let expectedQuery = `INSERT INTO "test_schema"."EntityWithAllNonArrayTypes" ("id", "string", "optString", "int_", "optInt", "float_", "optFloat", "bool", "optBool", "bigInt", "optBigInt", "bigDecimal", "optBigDecimal", "bigDecimalWithConfig", "enumField", "optEnumField", "timestamp", "optTimestamp")
 SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[],$4::INTEGER[],$5::INTEGER[],$6::DOUBLE PRECISION[],$7::DOUBLE PRECISION[],$8::INTEGER[]::BOOLEAN[],$9::INTEGER[]::BOOLEAN[],$10::NUMERIC[],$11::NUMERIC[],$12::NUMERIC[],$13::NUMERIC[],$14::NUMERIC(10, 8)[],$15::TEXT[]::"test_schema".AccountType[],$16::TEXT[]::"test_schema".AccountType[],$17::TIMESTAMP WITH TIME ZONE[],$18::TIMESTAMP WITH TIME ZONE NULL[])ON CONFLICT("id") DO UPDATE SET "string" = EXCLUDED."string","optString" = EXCLUDED."optString","int_" = EXCLUDED."int_","optInt" = EXCLUDED."optInt","float_" = EXCLUDED."float_","optFloat" = EXCLUDED."optFloat","bool" = EXCLUDED."bool","optBool" = EXCLUDED."optBool","bigInt" = EXCLUDED."bigInt","optBigInt" = EXCLUDED."optBigInt","bigDecimal" = EXCLUDED."bigDecimal","optBigDecimal" = EXCLUDED."optBigDecimal","bigDecimalWithConfig" = EXCLUDED."bigDecimalWithConfig","enumField" = EXCLUDED."enumField","optEnumField" = EXCLUDED."optEnumField","timestamp" = EXCLUDED."timestamp","optTimestamp" = EXCLUDED."optTimestamp";`
 
-        Assert.equal(query, expectedQuery, ~message="Should generate correct unnest insert SQL")
+        t.expect(
+          query,
+          ~message="Should generate correct unnest insert SQL",
+        ).toBe(expectedQuery)
       },
     )
 
     Async.it(
       "Should handle raw events table correctly",
-      async () => {
+      async t => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
           ~table=InternalTable.RawEvents.table,
@@ -562,7 +561,10 @@ SELECT * FROM unnest($1::TEXT[],$2::TEXT[],$3::TEXT[],$4::INTEGER[],$5::INTEGER[
         let expectedQuery = `INSERT INTO "test_schema"."raw_events" ("chain_id", "event_id", "event_name", "contract_name", "block_number", "log_index", "src_address", "block_hash", "block_timestamp", "block_fields", "transaction_fields", "params")
 SELECT * FROM unnest($1::INTEGER[],$2::NUMERIC[],$3::TEXT[],$4::TEXT[],$5::INTEGER[],$6::INTEGER[],$7::TEXT[],$8::TEXT[],$9::INTEGER[],$10::JSONB[],$11::JSONB[],$12::JSONB[]);`
 
-        Assert.equal(query, expectedQuery, ~message="Don't need EXCLUDED for raw events")
+        t.expect(
+          query,
+          ~message="Don't need EXCLUDED for raw events",
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -570,7 +572,7 @@ SELECT * FROM unnest($1::INTEGER[],$2::NUMERIC[],$3::TEXT[],$4::TEXT[],$5::INTEG
   describe("makeInsertValuesSetQuery", () => {
     Async.it(
       "Should create correct SQL for inserting with values",
-      async () => {
+      async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
           ~table=Mock.entityConfig(A).table,
@@ -581,18 +583,17 @@ SELECT * FROM unnest($1::INTEGER[],$2::NUMERIC[],$3::TEXT[],$4::TEXT[],$5::INTEG
         let expectedQuery = `INSERT INTO "test_schema"."A" ("id", "b_id", "optionalStringToTestLinkedEntities")
 VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_id","optionalStringToTestLinkedEntities" = EXCLUDED."optionalStringToTestLinkedEntities";`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message=`Should generate correct values insert SQL.
         The $x in the order, because we flatten unnested entities for the query`,
-        )
+        ).toBe(expectedQuery)
       },
     )
 
     Async.it(
       "Should handle table without primary key",
-      async () => {
+      async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
           ~table=Mock.entityConfig(B).table,
@@ -603,11 +604,10 @@ VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_
         let expectedQuery = `INSERT INTO "test_schema"."B" ("id", "c_id")
 VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message="Should generate correct values insert SQL for table without primary key",
-        )
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -615,7 +615,7 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
   describe("InternalTable.Chains.makeMetaFieldsUpdateQuery", () => {
     Async.it(
       "Should create correct SQL for updating chain state",
-      async () => {
+      async t => {
         let query = InternalTable.Chains.makeMetaFieldsUpdateQuery(~pgSchema="test_schema")
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
@@ -626,11 +626,10 @@ SET "buffer_block" = $2,
     "_num_batches_fetched" = $6
 WHERE "id" = $1;`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message="Should generate correct UPDATE SQL with parameter placeholders",
-        )
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -638,7 +637,7 @@ WHERE "id" = $1;`
   describe("InternalTable.Chains.makeProgressFieldsUpdateQuery", () => {
     Async.it(
       "Should create correct SQL for updating chain progress fields",
-      async () => {
+      async t => {
         let query = InternalTable.Chains.makeProgressFieldsUpdateQuery(~pgSchema="test_schema")
 
         let expectedQuery = `UPDATE "test_schema"."envio_chains"
@@ -647,11 +646,10 @@ SET "progress_block" = $2,
     "source_block" = $4
 WHERE "id" = $1;`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message="Should generate correct UPDATE SQL for progress fields with parameter placeholders",
-        )
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -659,7 +657,7 @@ WHERE "id" = $1;`
   describe("InternalTable.Checkpoints.makeGetReorgCheckpointsQuery", () => {
     Async.it(
       "Should generate optimized SQL query with CTE",
-      async () => {
+      async t => {
         let query = InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema="test_schema")
 
         // The query should use a CTE to pre-filter chains and compute safe_block
@@ -682,11 +680,10 @@ INNER JOIN reorg_chains rc
 WHERE cp."block_hash" IS NOT NULL
   AND cp."block_number" >= rc.safe_block;`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message="Should generate optimized CTE query filtering chains outside reorg threshold",
-        )
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -694,29 +691,29 @@ WHERE cp."block_hash" IS NOT NULL
   describe("InternalTable.Chains.makeInitialValuesQuery", () => {
     Async.it(
       "Should return empty string for empty chain configs",
-      async () => {
+      async t => {
         let query = InternalTable.Chains.makeInitialValuesQuery(
           ~pgSchema="test_schema",
           ~chainConfigs=[],
         )
 
-        Assert.equal(
+        t.expect(
           query,
-          None,
           ~message="Should return empty string when no chain configs provided",
-        )
+        ).toBe(None)
       },
     )
 
     Async.it(
       "Should create correct SQL for single chain config",
-      async () => {
+      async t => {
         let chainConfig: Config.chain = {
           name: "Chain1",
           id: 1,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }
@@ -729,22 +726,22 @@ WHERE cp."block_hash" IS NOT NULL
         let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
 VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
-        Assert.equal(
+        t.expect(
           query,
-          Some(expectedQuery),
           ~message="Should generate correct INSERT VALUES SQL for single chain",
-        )
+        ).toBe(Some(expectedQuery))
       },
     )
 
     Async.it(
       "Should create correct SQL for single chain config with no end block",
-      async () => {
+      async t => {
         let chainConfig: Config.chain = {
           name: "Chain1",
           id: 1,
           startBlock: 100,
           maxReorgDepth: 5,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }
@@ -757,23 +754,23 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
         let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
 VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
-        Assert.equal(
+        t.expect(
           query,
-          Some(expectedQuery),
           ~message="Should generate correct INSERT VALUES SQL with NULL end_block",
-        )
+        ).toBe(Some(expectedQuery))
       },
     )
 
     Async.it(
       "Should create correct SQL for multiple chain configs",
-      async () => {
+      async t => {
         let chainConfig1: Config.chain = {
           name: "Chain1",
           id: 1,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }
@@ -783,6 +780,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
           id: 42,
           startBlock: 500,
           maxReorgDepth: 0,
+          blockLag: 0,
           contracts: [],
           sourceConfig: Config.CustomSources([]),
         }
@@ -796,11 +794,10 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
 VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
        (42, 500, NULL, 0, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
-        Assert.equal(
+        t.expect(
           query,
-          Some(expectedQuery),
           ~message="Should generate correct INSERT VALUES SQL for multiple chains",
-        )
+        ).toBe(Some(expectedQuery))
       },
     )
   })
@@ -808,7 +805,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
   describe("InternalTable.Chains.makeGetInitialStateQuery", () => {
     Async.it(
       "Should create correct SQL for initial state query",
-      async () => {
+      async t => {
         let query = InternalTable.Chains.makeGetInitialStateQuery(~pgSchema="test_schema")
 
         let expectedQuery = `SELECT "id" as "id",
@@ -832,7 +829,10 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
 ) as "dynamicContracts"
 FROM "test_schema"."envio_chains" as chains;`
 
-        Assert.equal(query, expectedQuery, ~message="Initial state SQL should match exactly")
+        t.expect(
+          query,
+          ~message="Initial state SQL should match exactly",
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -840,14 +840,13 @@ FROM "test_schema"."envio_chains" as chains;`
   describe("InternalTable.Checkpoints.makeCommitedCheckpointIdQuery", () => {
     Async.it(
       "Should create correct SQL to get committed checkpoint id",
-      async () => {
+      async t => {
         let query = InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema="test_schema")
 
-        Assert.equal(
+        t.expect(
           query,
-          `SELECT COALESCE(MAX(id), 0) AS id FROM "test_schema"."envio_checkpoints";`,
           ~message="Committed checkpoint id SQL should match exactly",
-        )
+        ).toBe(`SELECT COALESCE(MAX(id), 0) AS id FROM "test_schema"."envio_checkpoints";`)
       },
     )
   })
@@ -855,13 +854,16 @@ FROM "test_schema"."envio_chains" as chains;`
   describe("InternalTable.Checkpoints.makeInsertCheckpointQuery", () => {
     Async.it(
       "Should create correct SQL for inserting checkpoints with unnest",
-      async () => {
+      async t => {
         let query = InternalTable.Checkpoints.makeInsertCheckpointQuery(~pgSchema="test_schema")
 
         let expectedQuery = `INSERT INTO "test_schema"."envio_checkpoints" ("id", "chain_id", "block_number", "block_hash", "events_processed")
 SELECT * FROM unnest($1::INTEGER[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INTEGER[]);`
 
-        Assert.equal(query, expectedQuery, ~message="Insert checkpoints SQL should match exactly")
+        t.expect(
+          query,
+          ~message="Insert checkpoints SQL should match exactly",
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -869,16 +871,15 @@ SELECT * FROM unnest($1::INTEGER[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::IN
   describe("InternalTable.Checkpoints.makePruneStaleCheckpointsQuery", () => {
     Async.it(
       "Should create correct SQL for pruning stale checkpoints",
-      async () => {
+      async t => {
         let query = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
         )
 
-        Assert.equal(
+        t.expect(
           query,
-          `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`,
           ~message="Prune stale checkpoints SQL should match exactly",
-        )
+        ).toBe(`DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`)
       },
     )
   })
@@ -886,7 +887,7 @@ SELECT * FROM unnest($1::INTEGER[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::IN
   describe("InternalTable.Checkpoints.makeGetRollbackTargetCheckpointQuery", () => {
     Async.it(
       "Should create correct SQL for rollback target checkpoint",
-      async () => {
+      async t => {
         let query = InternalTable.Checkpoints.makeGetRollbackTargetCheckpointQuery(
           ~pgSchema="test_schema",
         )
@@ -898,11 +899,10 @@ WHERE
 ORDER BY "id" DESC
 LIMIT 1;`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message="Rollback target checkpoint SQL should match exactly",
-        )
+        ).toBe(expectedQuery)
       },
     )
   })
@@ -910,7 +910,7 @@ LIMIT 1;`
   describe("InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery", () => {
     Async.it(
       "Should create correct SQL for rollback progress diff",
-      async () => {
+      async t => {
         let query = InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
           ~pgSchema="test_schema",
         )
@@ -923,11 +923,10 @@ FROM "test_schema"."envio_checkpoints"
 WHERE "id" > $1
 GROUP BY "chain_id";`
 
-        Assert.equal(
+        t.expect(
           query,
-          expectedQuery,
           ~message="Rollback progress diff SQL should match exactly",
-        )
+        ).toBe(expectedQuery)
       },
     )
   })

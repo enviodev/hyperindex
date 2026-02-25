@@ -1,0 +1,76 @@
+name: Build Platforms
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+jobs:
+  build-platform-package:
+    name: Build ${{ matrix.job.name }}
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      matrix:
+        job:
+          - { os: "ubuntu-22.04", target: "aarch64-unknown-linux-gnu", arch: "arm64", svm_target_platform: "linux-aarch64", name: "linux-arm64" }
+          - { os: "macos-latest", target: "x86_64-apple-darwin", arch: "x64", svm_target_platform: "macosx-amd64", name: "darwin-x64" }
+          - { os: "macos-latest", target: "aarch64-apple-darwin", arch: "arm64", svm_target_platform: "macosx-aarch64", name: "darwin-arm64" }
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.job.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Apple M1 setup
+        if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
+        run: |
+          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
+
+      - name: Linux ARM setup
+        if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Build binaries
+        env:
+          SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
+        run: cargo build --release --bins --target ${{ matrix.job.target }}
+
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build platform npm package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.job.target }}
+          NAME: ${{ matrix.job.name }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          node_os=$(echo "${NAME}" | cut -d '-' -f1)
+          node_arch=$(echo "${NAME}" | cut -d '-' -f2)
+          node_pkg="packages/cli/npm/envio-${node_os}-${node_arch}"
+          node packages/build-envio/build-platform-package.ts \
+            --version "${VERSION}" --platform "${node_os}" --arch "${node_arch}" --out "${node_pkg}"
+          mkdir -p "${node_pkg}/bin"
+          cp "target/${TARGET}/release/envio" "${node_pkg}/bin"
+
+      - name: Upload platform npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-pkg-envio-${{ matrix.job.name }}
+          path: packages/cli/npm/envio-${{ matrix.job.name }}

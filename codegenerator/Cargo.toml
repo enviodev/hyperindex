@@ -1,3 +1,0 @@
-[workspace]
-members = ["cli", "integration_tests"]
-resolver = "2"

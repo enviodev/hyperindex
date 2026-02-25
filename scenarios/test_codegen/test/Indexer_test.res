@@ -1,15 +1,16 @@
-open RescriptMocha
+open Vitest
 
 describe("Indexer.indexer", () => {
-  it("has correct metadata", () => {
-    Assert.deepEqual(Indexer.indexer.name, "test_codegen")
-    Assert.deepEqual(Indexer.indexer.description, Some("Gravatar for Ethereum"))
-    Assert.deepEqual(Indexer.indexer.chainIds, [#1, #100, #137, #1337])
+  it("has correct metadata", t => {
+    t.expect(Indexer.indexer.name).toEqual("test_codegen")
+    t.expect(Indexer.indexer.description).toEqual(Some("Gravatar for Ethereum"))
+    t.expect(Indexer.indexer.chainIds).toEqual([#1, #100, #137, #1337])
   })
 
-  it("has correct chain configurations", () => {
-    Assert.deepEqual(
+  it("has correct chain configurations", t => {
+    t.expect(
       Indexer.indexer.chains.chain1337,
+    ).toEqual(
       {
         id: #1337,
         startBlock: 1,
@@ -50,13 +51,13 @@ describe("Indexer.indexer", () => {
     )
   })
 
-  it("chains by name are not enumerable, but should be accessible by name", () => {
-    Assert.equal(Indexer.indexer.chains.chain1, Indexer.indexer.chains.ethereumMainnet)
-    Assert.equal(Indexer.indexer.chains.chain100, Indexer.indexer.chains.gnosis)
-    Assert.equal(Indexer.indexer.chains.chain137, Indexer.indexer.chains.polygon)
+  it("chains by name are not enumerable, but should be accessible by name", t => {
+    t.expect(Indexer.indexer.chains.chain1).toBe(Indexer.indexer.chains.ethereumMainnet)
+    t.expect(Indexer.indexer.chains.chain100).toBe(Indexer.indexer.chains.gnosis)
+    t.expect(Indexer.indexer.chains.chain137).toBe(Indexer.indexer.chains.polygon)
   })
 
-  it("getChainById returns correct chain", () => {
-    Assert.equal(Indexer.getChainById(Indexer.indexer, #1337), Indexer.indexer.chains.chain1337)
+  it("getChainById returns correct chain", t => {
+    t.expect(Indexer.getChainById(Indexer.indexer, #1337)).toBe(Indexer.indexer.chains.chain1337)
   })
 })

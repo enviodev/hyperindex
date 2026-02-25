@@ -1,0 +1,8 @@
+type Transfer {
+  id: ID!
+  from: String! @index
+  to: String! @index
+  value: BigInt!
+  blockNumber: Int!
+  transactionHash: String!
+}

@@ -1,9 +1,9 @@
-open RescriptMocha
+open Vitest
 
 @module("viem") external parseAbi: array<string> => EvmTypes.Abi.t = "parseAbi"
 
 describe("decodeEventLogOrThrow", () => {
-  it("decodes event with args as an object", () => {
+  it("decodes event with args as an object", t => {
     let eventLog: Viem.eventLog = {
       {
         abi: parseAbi([
@@ -20,8 +20,7 @@ describe("decodeEventLogOrThrow", () => {
     }
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
 
-    Assert.deepEqual(
-      decodedEvent,
+    t.expect(decodedEvent).toEqual(
       {
         args: {
           "fee": 3000,
@@ -35,7 +34,7 @@ describe("decodeEventLogOrThrow", () => {
     )
   })
 
-  it("if there's a param without name, it decodes as an array, which we don't want", () => {
+  it("if there's a param without name, it decodes as an array, which we don't want", t => {
     let eventLog: Viem.eventLog = {
       {
         abi: parseAbi([
@@ -51,17 +50,16 @@ describe("decodeEventLogOrThrow", () => {
     }
     let decodedEvent = eventLog->Viem.decodeEventLogOrThrow
 
-    Assert.deepEqual(
-      decodedEvent,
-      {
+    t.expect(decodedEvent).toEqual(
+      %raw(`{
         args: [
           "0x4200000000000000000000000000000000000006",
           "0x6D521550fc0E937CD3f4dB0B17Bbc256F5bFd140",
           "0x1CC744d0891457E16e94426EA4357662A9A9bA50",
-          "449",
+          449n,
         ],
         eventName: "PairCreated",
-      },
+      }`),
     )
     // We don't want that /|\ to be an array, so we need to output abi with the param names
   })

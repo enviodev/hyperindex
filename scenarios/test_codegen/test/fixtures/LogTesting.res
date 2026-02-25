@@ -2,7 +2,7 @@
 switch NodeJs.Process.process.env->Js.Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 | None =>
   Js.Exn.raiseError(
-    "LogTesting.res should only be run via Logging_test.ts. " ++ "Set ENVIO_TEST_LOGGING_FORMAT=1 to run directly.",
+    "LogTesting.res should only be run via Logging.test.ts. " ++ "Set ENVIO_TEST_LOGGING_FORMAT=1 to run directly.",
   )
 | Some(_) => ()
 }
