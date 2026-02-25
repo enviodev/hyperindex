@@ -177,11 +177,30 @@ describe("Isolated dependency e2e", () => {
         },
       });
 
-      await waitForOutput(
-        indexerProcess,
-        "All chains are caught up to end blocks",
-        120_000
-      );
+      // Accumulate output so we can surface missing-dep errors on failure.
+      let combinedOutput = "";
+      indexerProcess.stdout?.on("data", (d: Buffer) => { combinedOutput += d.toString(); });
+      indexerProcess.stderr?.on("data", (d: Buffer) => { combinedOutput += d.toString(); });
+
+      try {
+        await waitForOutput(
+          indexerProcess,
+          "All chains are caught up to end blocks",
+          120_000
+        );
+      } catch (err) {
+        // Surface MODULE_NOT_FOUND / missing dependency errors clearly
+        const moduleErrors = combinedOutput
+          .split("\n")
+          .filter((l) => /Cannot find (package|module)|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/.test(l));
+        if (moduleErrors.length > 0) {
+          throw new Error(
+            `[${pm}] Missing dependencies detected:\n${moduleErrors.join("\n")}\n\n` +
+              `These must be added to packages/envio/package.json "dependencies".`
+          );
+        }
+        throw err;
+      }
 
       // Kill immediately so envio dev doesn't tear down docker before tests query it.
       // The "Exiting with success" → process.exit(0) path runs docker compose down.
