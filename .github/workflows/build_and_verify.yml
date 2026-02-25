@@ -175,10 +175,6 @@ jobs:
         working-directory: packages/e2e-tests
         run: pnpm test:templates
 
-      - name: Run dependency completeness tests
-        working-directory: packages/e2e-tests
-        run: pnpm test:deps
-
   # Scenario integration tests
   # Requires DB services (postgres + hasura)
   scenarios-test:
@@ -363,6 +359,10 @@ jobs:
       - name: Run E2E test
         working-directory: packages/e2e-tests
         run: pnpm test:e2e
+
+      - name: Run dependency completeness tests
+        working-directory: packages/e2e-tests
+        run: pnpm test:deps
 
       - name: E2E Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3

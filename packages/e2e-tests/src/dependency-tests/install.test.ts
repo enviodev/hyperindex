@@ -92,7 +92,7 @@ describe("Isolated dependency e2e", () => {
     // 3. Run envio codegen — generates code, pnpm-installs from workspace ref, builds rescript
     const codegenResult = await runCommand(config.envioBin, ["codegen"], {
       cwd: baseProjectDir,
-      timeout: 180_000,
+      timeout: 120_000,
       env: { ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "" },
     });
     expect(
@@ -118,7 +118,7 @@ describe("Isolated dependency e2e", () => {
       const p = path.join(baseProjectDir, name);
       if (fs.existsSync(p)) fs.unlinkSync(p);
     }
-  }, 300_000);
+  }, 180_000);
 
   afterAll(() => {
     for (const dir of tempDirs) {
@@ -177,36 +177,17 @@ describe("Isolated dependency e2e", () => {
         },
       });
 
-      // Accumulate output so we can surface missing-dep errors on failure.
-      let combinedOutput = "";
-      indexerProcess.stdout?.on("data", (d: Buffer) => { combinedOutput += d.toString(); });
-      indexerProcess.stderr?.on("data", (d: Buffer) => { combinedOutput += d.toString(); });
-
-      try {
-        await waitForOutput(
-          indexerProcess,
-          "All chains are caught up to end blocks",
-          120_000
-        );
-      } catch (err) {
-        // Surface MODULE_NOT_FOUND / missing dependency errors clearly
-        const moduleErrors = combinedOutput
-          .split("\n")
-          .filter((l) => /Cannot find (package|module)|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/.test(l));
-        if (moduleErrors.length > 0) {
-          throw new Error(
-            `[${pm}] Missing dependencies detected:\n${moduleErrors.join("\n")}\n\n` +
-              `These must be added to packages/envio/package.json "dependencies".`
-          );
-        }
-        throw err;
-      }
+      await waitForOutput(
+        indexerProcess,
+        "All chains are caught up to end blocks",
+        60_000
+      );
 
       // Kill immediately so envio dev doesn't tear down docker before tests query it.
       // The "Exiting with success" → process.exit(0) path runs docker compose down.
       indexerProcess.kill("SIGKILL");
       indexerProcess = null;
-    }, 600_000);
+    }, 300_000);
 
     afterAll(async () => {
       if (indexerProcess) {
