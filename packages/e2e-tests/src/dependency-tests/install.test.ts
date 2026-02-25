@@ -185,15 +185,9 @@ describe("Isolated dependency e2e", () => {
         },
       });
 
-      // When the indexer resumes from persisted state (e.g. left by a prior e2e run
-      // sharing the same Docker/DB), there are no new batches, so it enters the reorg
-      // threshold without printing the "caught up" message.  Accept either signal.
       await waitForOutput(
         indexerProcess,
-        [
-          "All chains are caught up to end blocks",
-          "Reorg threshold reached",
-        ],
+        "All chains are caught up to end blocks",
         120_000
       );
 

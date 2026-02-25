@@ -141,14 +141,12 @@ export function startBackground(
  */
 export function waitForOutput(
   child: ChildProcess,
-  pattern: string | string[],
+  pattern: string,
   timeoutMs: number
 ): Promise<void> {
-  const patterns = Array.isArray(pattern) ? pattern : [pattern];
   return new Promise((resolve, reject) => {
     const onData = (data: Buffer) => {
-      const str = data.toString();
-      if (patterns.some((p) => str.includes(p))) {
+      if (data.toString().includes(pattern)) {
         cleanup();
         resolve();
       }
