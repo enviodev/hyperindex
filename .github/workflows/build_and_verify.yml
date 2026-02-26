@@ -131,6 +131,17 @@ jobs:
           name: npm-pkg-envio-linux-x64
           path: ./npm-pkg-envio-linux-x64
 
+      - name: Download pre-built envio package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./envio-dist
+
+      # Overlay before pnpm install so pnpm sees bin: ./bin.js
+      # and wires the correct bin link for `pnpm exec envio`.
+      - name: Overlay pre-built envio package
+        run: cp -r envio-dist/* packages/envio/
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -145,19 +156,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./envio-dist
-
-      # Overlay pre-built dist on packages/envio (switches bin to bin.js)
-      # and place the platform binary where bin.js expects it (require.resolve).
-      # Tests resolve packages/envio/bin.js via config.ts — no PATH needed.
-      - name: Install pre-built envio package
-        run: |
-          cp -r envio-dist/* packages/envio/
-          cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
+      # Place the platform binary where bin.js expects it (require.resolve)
+      - name: Install platform binary
+        run: cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -208,6 +209,15 @@ jobs:
           name: npm-pkg-envio-linux-x64
           path: ./npm-pkg-envio-linux-x64
 
+      - name: Download pre-built envio package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./envio-dist
+
+      - name: Overlay pre-built envio package
+        run: cp -r envio-dist/* packages/envio/
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -222,16 +232,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./envio-dist
-
-      - name: Install pre-built envio package
-        run: |
-          cp -r envio-dist/* packages/envio/
-          cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
+      - name: Install platform binary
+        run: cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
 
       - name: Wait for Hasura
         run: |
@@ -243,13 +245,13 @@ jobs:
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
-          node "${{ github.workspace }}/packages/envio/bin.js" codegen
+          pnpm exec envio codegen
           pnpm test
 
       - name: fuel_test
         working-directory: scenarios/fuel_test
         run: |
-          node "${{ github.workspace }}/packages/envio/bin.js" codegen
+          pnpm exec envio codegen
           pnpm test
 
       - name: Test Failure Notification
@@ -304,6 +306,15 @@ jobs:
           name: npm-pkg-envio-linux-x64
           path: ./npm-pkg-envio-linux-x64
 
+      - name: Download pre-built envio package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./envio-dist
+
+      - name: Overlay pre-built envio package
+        run: cp -r envio-dist/* packages/envio/
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -318,16 +329,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./envio-dist
-
-      - name: Install pre-built envio package
-        run: |
-          cp -r envio-dist/* packages/envio/
-          cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
+      - name: Install platform binary
+        run: cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
 
       - name: Wait for Hasura
         run: |
