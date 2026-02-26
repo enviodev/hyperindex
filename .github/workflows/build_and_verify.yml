@@ -67,17 +67,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
-      - name: Add envio to PATH
-        run: |
-          chmod +x ./npm-pkg-envio-linux-x64/bin/envio
-          echo "${{ github.workspace }}/npm-pkg-envio-linux-x64/bin" >> $GITHUB_PATH
-
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -164,14 +153,13 @@ jobs:
 
       # Overlay pre-built dist on packages/envio (switches bin to bin.js),
       # place the platform binary where bin.js expects it (require.resolve),
-      # and add a wrapper to PATH. This exercises the real npm entry point.
+      # and symlink bin.js to PATH. This exercises the real npm entry point.
       - name: Install pre-built envio package
         run: |
           cp -r envio-dist/* packages/envio/
           cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
           mkdir -p .bin
-          printf '#!/bin/sh\nexec node "%s/packages/envio/bin.js" "$@"\n' "${{ github.workspace }}" > .bin/envio
-          chmod +x .bin/envio
+          ln -s "${{ github.workspace }}/packages/envio/bin.js" .bin/envio
           echo "${{ github.workspace }}/.bin" >> $GITHUB_PATH
 
       - name: Run template tests
@@ -248,8 +236,7 @@ jobs:
           cp -r envio-dist/* packages/envio/
           cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
           mkdir -p .bin
-          printf '#!/bin/sh\nexec node "%s/packages/envio/bin.js" "$@"\n' "${{ github.workspace }}" > .bin/envio
-          chmod +x .bin/envio
+          ln -s "${{ github.workspace }}/packages/envio/bin.js" .bin/envio
           echo "${{ github.workspace }}/.bin" >> $GITHUB_PATH
 
       - name: Wait for Hasura
@@ -348,8 +335,7 @@ jobs:
           cp -r envio-dist/* packages/envio/
           cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
           mkdir -p .bin
-          printf '#!/bin/sh\nexec node "%s/packages/envio/bin.js" "$@"\n' "${{ github.workspace }}" > .bin/envio
-          chmod +x .bin/envio
+          ln -s "${{ github.workspace }}/packages/envio/bin.js" .bin/envio
           echo "${{ github.workspace }}/.bin" >> $GITHUB_PATH
 
       - name: Wait for Hasura
