@@ -125,22 +125,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
+      # Download directly to final locations before pnpm install.
+      # Overlay so pnpm sees bin: ./bin.js and wires the correct bin link.
       - name: Download pre-built envio package
         uses: actions/download-artifact@v4
         with:
           name: npm-pkg-envio
-          path: ./envio-dist
+          path: ./packages/envio
 
-      # Overlay before pnpm install so pnpm sees bin: ./bin.js
-      # and wires the correct bin link for `pnpm exec envio`.
-      - name: Overlay pre-built envio package
-        run: cp -r envio-dist/* packages/envio/
+      - name: Download platform binary
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./node_modules/envio-linux-x64
 
       - uses: pnpm/action-setup@v4
         with:
@@ -155,10 +152,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
-      # Place the platform binary where bin.js expects it (require.resolve)
-      - name: Install platform binary
-        run: cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -203,20 +196,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
       - name: Download pre-built envio package
         uses: actions/download-artifact@v4
         with:
           name: npm-pkg-envio
-          path: ./envio-dist
+          path: ./packages/envio
 
-      - name: Overlay pre-built envio package
-        run: cp -r envio-dist/* packages/envio/
+      - name: Download platform binary
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./node_modules/envio-linux-x64
 
       - uses: pnpm/action-setup@v4
         with:
@@ -231,9 +221,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Install platform binary
-        run: cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
 
       - name: Wait for Hasura
         run: |
@@ -300,20 +287,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download linux-x64 platform package
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./npm-pkg-envio-linux-x64
-
       - name: Download pre-built envio package
         uses: actions/download-artifact@v4
         with:
           name: npm-pkg-envio
-          path: ./envio-dist
+          path: ./packages/envio
 
-      - name: Overlay pre-built envio package
-        run: cp -r envio-dist/* packages/envio/
+      - name: Download platform binary
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./node_modules/envio-linux-x64
 
       - uses: pnpm/action-setup@v4
         with:
@@ -328,9 +312,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Install platform binary
-        run: cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
 
       - name: Wait for Hasura
         run: |
