@@ -45,6 +45,7 @@ let mockChainConfig: Config.chain = {
   name: "MockChain",
   id: 1337,
   maxReorgDepth: 200,
+  blockLag: 0,
   startBlock: 1,
   contracts,
   sourceConfig: Config.CustomSources([

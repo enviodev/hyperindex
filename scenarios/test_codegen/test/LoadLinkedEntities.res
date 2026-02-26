@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 /// NOTE: diagrams for these tests can be found here: https://www.figma.com/file/TrBPqQHYoJ8wg6e0kAynZo/Scenarios-to-test-Linked-Entities?type=whiteboard&node-id=0%3A1&t=CZAE4T4oY9PCbszw-1
 
@@ -160,7 +160,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
 })
 
 describe("Async linked entity loaders", () => {
-  Async.it("should update the big int to be the same ", async () => {
+  Async.it("should update the big int to be the same ", async t => {
     // Initializing values for mock db
     let messageFromC = "Hi there I was in C originally"
     // mockDbInitial->Testhelpers.MockDb.
@@ -208,7 +208,7 @@ describe("Async linked entity loaders", () => {
       updatedMockDb.entities.a.get(EventHandlers.aIdWithGrandChildC)->Belt.Option.flatMap(
         a => a.optionalStringToTestLinkedEntities,
       )
-    Assert.deepEqual(stringInAFromC, Some(messageFromC))
+    t.expect(stringInAFromC).toEqual(Some(messageFromC))
 
     // Expected string to be null still since no c grandchild.
     let optionalStringToTestLinkedEntitiesNoGrandchild =
@@ -216,6 +216,6 @@ describe("Async linked entity loaders", () => {
         a => a.optionalStringToTestLinkedEntities,
       )
 
-    Assert.deepEqual(optionalStringToTestLinkedEntitiesNoGrandchild, None)
+    t.expect(optionalStringToTestLinkedEntitiesNoGrandchild).toEqual(None)
   })
 })

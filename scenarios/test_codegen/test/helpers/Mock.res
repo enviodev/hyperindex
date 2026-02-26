@@ -256,7 +256,7 @@ module Indexer = {
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
-  type chainConfig = {chain: chainId, sourceConfig: Config.sourceConfig, startBlock?: int}
+  type chainConfig = {chain: chainId, sourceConfig: Config.sourceConfig, startBlock?: int, blockLag?: int}
 
   let rec make = async (
     ~chains: array<chainConfig>,
@@ -293,6 +293,9 @@ module Indexer = {
               sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getWithDefault(
                 originalChainConfig.startBlock,
+              ),
+              blockLag: chainConfig.blockLag->Option.getWithDefault(
+                originalChainConfig.blockLag,
               ),
             },
           )
@@ -822,23 +825,25 @@ module Source = {
 }
 
 module Helper = {
-  let initialEnterReorgThreshold = async (~indexerMock: Indexer.t, ~sourceMock: Source.t) => {
-    open RescriptMocha
-
-    Assert.deepEqual(
+  let initialEnterReorgThreshold = async (
+    ~t: Vitest.testContext,
+    ~indexerMock: Indexer.t,
+    ~sourceMock: Source.t,
+  ) => {
+    t.expect(
       sourceMock.getHeightOrThrowCalls->Array.length,
-      1,
       ~message="should have called getHeightOrThrow to get initial height",
-    )
+    ).toEqual(1)
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
     await Utils.delay(0)
 
-    Assert.deepEqual(
+    t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      ~message="Should request items until reorg threshold",
+    ).toEqual(
       // fromBlock 1 since it's in the config.yaml start_block is 1
       [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}],
-      ~message="Should request items until reorg threshold",
     )
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()

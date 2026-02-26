@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
 
@@ -20,7 +20,7 @@ let mockLog = (
 }
 
 describe("RpcSource - name", () => {
-  it("Returns the name of the source including sanitized rpc url", () => {
+  it("Returns the name of the source including sanitized rpc url", t => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
@@ -30,12 +30,12 @@ describe("RpcSource - name", () => {
       allEventSignatures: [],
       lowercaseAddresses: false,
     })
-    Assert.equal(source.name, "RPC (eth.rpc.hypersync.xyz)")
+    t.expect(source.name).toBe("RPC (eth.rpc.hypersync.xyz)")
   })
 })
 
 describe("RpcSource - getHeightOrThrow", () => {
-  Async.it("Returns the name of the source including sanitized rpc url", async () => {
+  Async.it("Returns the name of the source including sanitized rpc url", async t => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
@@ -46,17 +46,17 @@ describe("RpcSource - getHeightOrThrow", () => {
       lowercaseAddresses: false,
     })
     let height = await source.getHeightOrThrow()
-    Assert.equal(height > 21994218, true)
-    Assert.equal(height < 30000000, true)
+    t.expect(height > 21994218).toBe(true)
+    t.expect(height < 30000000).toBe(true)
   })
 })
 
 describe("RpcSource - getEventTransactionOrThrow", () => {
-  let neverGetTransactionJson = _ => Assert.fail("getTransactionJson should not be called")
-  let neverGetReceiptJson = _ => Assert.fail("getReceiptJson should not be called")
+  let neverGetTransactionJson = _ => Js.Exn.raiseError("getTransactionJson should not be called")
+  let neverGetReceiptJson = _ => Js.Exn.raiseError("getReceiptJson should not be called")
 
-  it("Panics with invalid schema", () => {
-    Assert.throws(
+  it("Panics with invalid schema", t => {
+    t.expect(
       () => {
         RpcSource.makeThrowingGetEventTransaction(
           ~getTransactionJson=neverGetTransactionJson,
@@ -64,34 +64,32 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
           ~lowercaseAddresses=false,
         )(mockLog(), ~transactionSchema=S.string)
       },
-      ~error={
-        "message": "Unexpected internal error: transactionSchema is not an object",
-      },
-    )
+    ).toThrowError("Unexpected internal error: transactionSchema is not an object")
   })
 
   Async.it(
     "Returns empty object when empty field selection. Doesn't make a transaction request",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
         ~getReceiptJson=neverGetReceiptJson,
         ~lowercaseAddresses=false,
       )
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
+      ).toEqual(
         %raw(`{}`),
       )
     },
   )
 
-  Async.it("Works with a single transactionIndex field", async () => {
+  Async.it("Works with a single transactionIndex field", async t => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionJson=neverGetTransactionJson,
       ~getReceiptJson=neverGetReceiptJson,
       ~lowercaseAddresses=false,
     )
-    Assert.deepEqual(
+    t.expect(
       await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
@@ -100,19 +98,20 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       ),
+    ).toEqual(
       {
         "transactionIndex": 1,
       },
     )
   })
 
-  Async.it("Works with a single hash field", async () => {
+  Async.it("Works with a single hash field", async t => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionJson=neverGetTransactionJson,
       ~getReceiptJson=neverGetReceiptJson,
       ~lowercaseAddresses=false,
     )
-    Assert.deepEqual(
+    t.expect(
       await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
@@ -121,19 +120,20 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       ),
+    ).toEqual(
       {
         "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
       },
     )
   })
 
-  Async.it("Works with a only transactionIndex & hash field", async () => {
+  Async.it("Works with a only transactionIndex & hash field", async t => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionJson=neverGetTransactionJson,
       ~getReceiptJson=neverGetReceiptJson,
       ~lowercaseAddresses=false,
     )
-    Assert.deepEqual(
+    t.expect(
       await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
@@ -143,6 +143,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       ),
+    ).toEqual(
       {
         "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
         "transactionIndex": 1,
@@ -155,7 +156,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       ~getReceiptJson=neverGetReceiptJson,
       ~lowercaseAddresses=false,
     )
-    Assert.deepEqual(
+    t.expect(
       await mockLog()->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
@@ -165,6 +166,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       ),
+    ).toEqual(
       {
         "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
         "transactionIndex": 1,
@@ -172,7 +174,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
   })
 
-  Async.it("Queries transaction fields from raw JSON (with real RPC)", async () => {
+  Async.it("Queries transaction fields from raw JSON (with real RPC)", async t => {
     let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
 
     let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
@@ -191,7 +193,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         },
       ~lowercaseAddresses=false,
     )
-    Assert.deepEqual(
+    t.expect(
       await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
         ~transactionSchema=S.schema(
           s =>
@@ -218,6 +220,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       ),
+    ).toEqual(
       {
         "hash": testTransactionHash,
         "transactionIndex": 1,
@@ -244,7 +247,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it(
     "Successfully fetches ZKSync EIP-712 transactions (type 0x71) with optional signature fields",
-    async () => {
+    async t => {
       // Transaction from Abstract Testnet (ZKSync-based) that lacks r/s/v signature fields
       let testTransactionHash = "0x245134326b7fecdcb7e0ed0a6cf090fc8881a63420ecd329ef645686b85647ed"
 
@@ -261,7 +264,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity).
       // Per-field parsing handles this — absent fields are simply not included.
-      Assert.deepEqual(
+      t.expect(
         await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -279,6 +282,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {
           "hash": testTransactionHash,
           "from": "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
@@ -299,7 +303,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   // Per-field parsing handles this — null fields are simply not included in the result.
   Async.it(
     "Contract creation transaction with null `to` field should parse successfully",
-    async () => {
+    async t => {
       // Mock a contract creation tx where `to` is null
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=_ =>
@@ -310,7 +314,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -320,6 +324,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {
           "from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
           "gas": 21000n,
@@ -332,14 +337,14 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   // Only the receipt JSON is fetched — transaction JSON is not needed.
   Async.it(
     "Fetches gasUsed from receipt only (no transaction call)",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
         ~getReceiptJson=_ => Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -348,6 +353,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {"gasUsed": 21000n},
       )
     },
@@ -355,14 +361,14 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it(
     "Fetches cumulativeGasUsed from receipt only (no transaction call)",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
         ~getReceiptJson=_ => Promise.resolve(%raw(`{"cumulativeGasUsed": "0x7a120"}`)),
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -371,6 +377,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {"cumulativeGasUsed": 500000n},
       )
     },
@@ -378,14 +385,14 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it(
     "Fetches effectiveGasPrice from receipt only (no transaction call)",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
         ~getReceiptJson=_ => Promise.resolve(%raw(`{"effectiveGasPrice": "0x41ef67ce5"}`)),
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -394,6 +401,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {"effectiveGasPrice": 17699339493n},
       )
     },
@@ -401,7 +409,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it(
     "Fetches from both transaction and receipt when fields from both are needed",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=_ =>
           Promise.resolve(%raw(`{"gas": "0x5208", "value": "0x3e8"}`)),
@@ -412,7 +420,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -425,6 +433,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {
           "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
           "gas": 21000n,
@@ -438,7 +447,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it(
     "Transaction-only fields don't call getReceiptJson",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=_ =>
           Promise.resolve(%raw(`{"gas": "0x5208", "input": "0xdeadbeef"}`)),
@@ -446,7 +455,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -456,6 +465,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {
           "gas": 21000n,
           "input": "0xdeadbeef",
@@ -466,7 +476,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it(
     "Unknown extra fields in JSON don't cause failures",
-    async () => {
+    async t => {
       // The RPC response has many extra fields (blockHash, blockNumber, chainId, etc.)
       // that the user didn't request. These should be silently ignored.
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
@@ -485,7 +495,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -494,6 +504,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {"gas": 21000n},
       )
     },
@@ -501,14 +512,14 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it(
     "Fetches l1FeeScalar from receipt (decimal string, not hex)",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
         ~getReceiptJson=_ => Promise.resolve(%raw(`{"l1FeeScalar": "0.684"}`)),
         ~lowercaseAddresses=false,
       )
 
-      Assert.deepEqual(
+      t.expect(
         await mockLog()->getEventTransactionOrThrow(
           ~transactionSchema=S.schema(
             s =>
@@ -517,12 +528,13 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
               },
           ),
         ),
+      ).toEqual(
         {"l1FeeScalar": 0.684},
       )
     },
   )
 
-  Async.it("Error with a value not matching the field schema", async () => {
+  Async.it("Error with a value not matching the field schema", async t => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionJson=_ => Promise.resolve(%raw(`{"gas": "not-a-hex-value"}`)),
       ~getReceiptJson=neverGetReceiptJson,
@@ -537,17 +549,18 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
             },
         ),
       )
-      Assert.fail("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Js.Exn.Error(e) =>
-      Assert.equal(
+      t.expect(
         e->Js.Exn.message->Belt.Option.getExn,
+      ).toBe(
         `Invalid transaction field "gas" found in the RPC response. Error: The string is not valid hex`,
       )
     }
   })
 
-  Async.it("Address fields are normalized with lowercaseAddresses=true", async () => {
+  Async.it("Address fields are normalized with lowercaseAddresses=true", async t => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionJson=neverGetTransactionJson,
       ~getReceiptJson=_ =>
@@ -566,8 +579,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
           },
       ),
     )
-    Assert.deepEqual(
+    t.expect(
       result,
+    ).toEqual(
       {
         "from": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"->Address.unsafeFromString,
         "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"->Address.unsafeFromString,
@@ -580,25 +594,26 @@ let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
 
-  it("Selection config for the most basic case with no wildcards", () => {
+  it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
       dependsOnAddresses: true,
       eventConfigs: [(Mock.evmEventConfig() :> Internal.eventConfig)],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(
         ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
+      ~message=`Should include only single topic0 address`,
+    ).toEqual(
       {
         addresses: Some([mockAddress0]),
         topicQuery: [Single(Mock.eventId)],
       },
-      ~message=`Should include only single topic0 address`,
     )
   })
 
-  it("Selection config with wildcard events", () => {
+  it("Selection config with wildcard events", t => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
@@ -607,17 +622,18 @@ describe("RpcSource - getSelectionConfig", () => {
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Js.Dict.empty()),
+      ~message=`Should include only topic0 addresses`,
+    ).toEqual(
       {
         addresses: None,
         topicQuery: [Multiple(["1", "2"])],
       },
-      ~message=`Should include only topic0 addresses`,
     )
   })
 
-  Async.it("Wildcard topic selection which depends on addresses", async () => {
+  Async.it("Wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
@@ -629,10 +645,11 @@ describe("RpcSource - getSelectionConfig", () => {
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(
         ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
+    ).toEqual(
       {
         addresses: None,
         topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
@@ -640,7 +657,7 @@ describe("RpcSource - getSelectionConfig", () => {
     )
   })
 
-  Async.it("Non-wildcard topic selection which depends on addresses", async () => {
+  Async.it("Non-wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
@@ -652,10 +669,11 @@ describe("RpcSource - getSelectionConfig", () => {
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(
         ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
+    ).toEqual(
       {
         addresses: Some([mockAddress0]),
         topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
@@ -663,24 +681,25 @@ describe("RpcSource - getSelectionConfig", () => {
     )
   })
 
-  it("Panics when selection has empty event configs", () => {
+  it("Panics when selection has empty event configs", t => {
     try {
       let _ = {
         dependsOnAddresses: true,
         eventConfigs: [],
       }->RpcSource.getSelectionConfig(~chain)
-      Assert.fail("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
-      Assert.equal(
+      t.expect(
         message,
+      ).toBe(
         "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
       )
-    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    | _ => Js.Exn.raiseError("Should have thrown UnsupportedSelection")
     }
   })
 
-  it("Panics when selection has normal event and event with filters", () => {
+  it("Panics when selection has normal event and event with filters", t => {
     try {
       let _ = {
         dependsOnAddresses: true,
@@ -689,14 +708,15 @@ describe("RpcSource - getSelectionConfig", () => {
           (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
         ],
       }->RpcSource.getSelectionConfig(~chain)
-      Assert.fail("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
-      Assert.equal(
+      t.expect(
         message,
+      ).toBe(
         "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
       )
-    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    | _ => Js.Exn.raiseError("Should have thrown UnsupportedSelection")
     }
   })
 })
@@ -704,7 +724,7 @@ describe("RpcSource - getSelectionConfig", () => {
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
 
-  it("Should handle retry with the range", () => {
+  it("Should handle retry with the range", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -730,14 +750,14 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
           "jsonrpc": "2.0"
         },
         "shortMessage": "could not coalesce error"
-    
+
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((510, false)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((510, false)))
   })
 
-  it("Shouldn't retry on height not available", () => {
+  it("Shouldn't retry on height not available", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -758,10 +778,10 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), None)
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(None)
   })
 
-  it("Should retry on block range too large", () => {
+  it("Should retry on block range too large", t => {
     let error = JsError(
       %raw(`{
         code: 'UNKNOWN_ERROR',
@@ -774,10 +794,10 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
   })
 
-  it("Should ignore invalid range errors where toBlock is less than fromBlock", () => {
+  it("Should ignore invalid range errors where toBlock is less than fromBlock", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -803,14 +823,14 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
           "jsonrpc": "2.0"
         },
         "shortMessage": "could not coalesce error"
-    
+
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), None)
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(None)
   })
 
-  it("Should handle block range limit from https://1rpc.io/eth", () => {
+  it("Should handle block range limit from https://1rpc.io/eth", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -822,7 +842,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
           "method": "eth_getLogs",
           "params": [
             {
-              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7", 
+              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
               "topics": [
                 [
                   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -839,10 +859,10 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
   })
 
-  it("Should handle block range limit from Alchemy", () => {
+  it("Should handle block range limit from Alchemy", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -869,22 +889,22 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((500, true)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((500, true)))
   })
 
-  it("Should handle Rpc.JsonRpcError with block range limit", () => {
+  it("Should handle Rpc.JsonRpcError with block range limit", t => {
     let error = Rpc.JsonRpcError({
       code: -32000,
       message: "eth_getLogs is limited to a 1000 blocks range",
     })
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
   })
 
-  it("Should handle Rpc.JsonRpcError with suggested range", () => {
+  it("Should handle Rpc.JsonRpcError with suggested range", t => {
     let error = Rpc.JsonRpcError({
       code: -32602,
       message: "query exceeds max results 20000, retry with the range 6000000-6000509",
     })
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((510, false)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((510, false)))
   })
 })
