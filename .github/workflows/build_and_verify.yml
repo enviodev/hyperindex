@@ -98,6 +98,18 @@ jobs:
       - name: Verify artifact
         run: node packages/build-envio/src/verify-artifact.ts envio-dist
 
+      # Simulate an end-user node_modules layout and verify bin.js can
+      # find and execute the platform binary via require.resolve.
+      # This is the exact path users hit; CI tests otherwise bypass it
+      # by putting the binary directly on PATH.
+      - name: Verify npm bin entry point
+        run: |
+          mkdir -p test-bin/node_modules
+          cp -r envio-dist test-bin/node_modules/envio
+          cp -r npm-pkg-envio-linux-x64 test-bin/node_modules/envio-linux-x64
+          node test-bin/node_modules/envio/bin.js --version
+          rm -rf test-bin
+
       - name: Upload envio npm package artifact
         uses: actions/upload-artifact@v4
         with:
