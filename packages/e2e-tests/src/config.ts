@@ -4,7 +4,7 @@
 
 import path from "path";
 import fs from "fs";
-import { execSync } from "child_process";
+
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,7 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio binary path.
- * Priority: ENVIO_BIN env var → local debug binary → `envio` on PATH (CI).
+ * Priority: ENVIO_BIN env var → cargo build output → packages/envio/bin.js (CI).
  */
 function resolveEnvioBin(): string {
   if (process.env.ENVIO_BIN) {
@@ -49,18 +49,18 @@ function resolveEnvioBin(): string {
     }
   }
 
-  try {
-    const whichResult = execSync("which envio", { encoding: "utf-8" }).trim();
-    if (whichResult) return whichResult;
-  } catch {
-    // not on PATH
+  // Fall back to the npm bin entry point (CI uses this after overlay).
+  // bin.js has #!/usr/bin/env node shebang, so spawn() works directly.
+  const binJs = path.join(rootDir, "packages/envio/bin.js");
+  if (fs.existsSync(binJs)) {
+    fs.chmodSync(binJs, 0o755);
+    return binJs;
   }
 
   throw new Error(
     "envio binary not found. Either:\n" +
       "  - Set ENVIO_BIN env var\n" +
-      "  - Run `cargo build` in packages/cli first\n" +
-      "  - Add envio to PATH"
+      "  - Run `cargo build` in packages/cli first"
   );
 }
 

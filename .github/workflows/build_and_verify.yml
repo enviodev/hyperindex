@@ -151,16 +151,13 @@ jobs:
           name: npm-pkg-envio
           path: ./envio-dist
 
-      # Overlay pre-built dist on packages/envio (switches bin to bin.js),
-      # place the platform binary where bin.js expects it (require.resolve),
-      # and symlink bin.js to PATH. This exercises the real npm entry point.
+      # Overlay pre-built dist on packages/envio (switches bin to bin.js)
+      # and place the platform binary where bin.js expects it (require.resolve).
+      # Tests resolve packages/envio/bin.js via config.ts — no PATH needed.
       - name: Install pre-built envio package
         run: |
           cp -r envio-dist/* packages/envio/
           cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
-          mkdir -p .bin
-          ln -s "${{ github.workspace }}/packages/envio/bin.js" .bin/envio
-          echo "${{ github.workspace }}/.bin" >> $GITHUB_PATH
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -235,9 +232,6 @@ jobs:
         run: |
           cp -r envio-dist/* packages/envio/
           cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
-          mkdir -p .bin
-          ln -s "${{ github.workspace }}/packages/envio/bin.js" .bin/envio
-          echo "${{ github.workspace }}/.bin" >> $GITHUB_PATH
 
       - name: Wait for Hasura
         run: |
@@ -249,13 +243,13 @@ jobs:
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
-          envio codegen
+          node "${{ github.workspace }}/packages/envio/bin.js" codegen
           pnpm test
 
       - name: fuel_test
         working-directory: scenarios/fuel_test
         run: |
-          envio codegen
+          node "${{ github.workspace }}/packages/envio/bin.js" codegen
           pnpm test
 
       - name: Test Failure Notification
@@ -334,9 +328,6 @@ jobs:
         run: |
           cp -r envio-dist/* packages/envio/
           cp -r npm-pkg-envio-linux-x64 node_modules/envio-linux-x64
-          mkdir -p .bin
-          ln -s "${{ github.workspace }}/packages/envio/bin.js" .bin/envio
-          echo "${{ github.workspace }}/.bin" >> $GITHUB_PATH
 
       - name: Wait for Hasura
         run: |
