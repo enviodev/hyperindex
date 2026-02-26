@@ -112,7 +112,7 @@ let pruneStaleEntityHistory = (
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
     makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [safeCheckpointId]->Utils.magic,
+    [safeCheckpointId]->(Utils.magic: array<float> => unknown),
   )
 }
 
@@ -151,7 +151,7 @@ let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckp
         ~entityName,
         ~entityIndex,
       )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId]->Utils.magic,
+    [rollbackTargetCheckpointId]->(Utils.magic: array<float> => unknown),
   )
   ->Promise.ignoreValue
 }
