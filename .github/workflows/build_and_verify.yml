@@ -125,10 +125,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Download directly to final locations before pnpm install.
-      # Overlay so pnpm sees bin: ./bin.js and wires the correct bin link.
+      # Replace packages/envio with the pre-built artifact so pnpm sees
+      # the publish-ready package.json (with bin: ./bin.js) and wires
+      # the correct bin link. Clear first to remove stale dev files.
       - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
+        run: rm -rf packages/envio
+      - uses: actions/download-artifact@v4
         with:
           name: npm-pkg-envio
           path: ./packages/envio
@@ -197,7 +199,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
+        run: rm -rf packages/envio
+      - uses: actions/download-artifact@v4
         with:
           name: npm-pkg-envio
           path: ./packages/envio
@@ -288,7 +291,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download pre-built envio package
-        uses: actions/download-artifact@v4
+        run: rm -rf packages/envio
+      - uses: actions/download-artifact@v4
         with:
           name: npm-pkg-envio
           path: ./packages/envio
