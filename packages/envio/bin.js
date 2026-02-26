@@ -2,6 +2,7 @@
 //@ts-check
 
 import { spawnSync } from "child_process";
+import { chmodSync } from "fs";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -26,12 +27,16 @@ function getExePath() {
     extension = ".exe";
   }
 
+  const pkg = `envio-${os}-${arch}`;
   try {
     // Since the bin will be located inside `node_modules`, we can simply call require.resolve
-    return require.resolve(`envio-${os}-${arch}/bin/envio${extension}`);
+    return require.resolve(`${pkg}/bin/envio${extension}`);
   } catch (e) {
     throw new Error(
-      `Couldn't find envio binary inside node_modules for ${os}-${arch}`
+      `Couldn't find envio binary package "${pkg}" inside node_modules.\n` +
+        `If you're using pnpm, yarn, or npm with --omit=optional, ensure optional ` +
+        `dependencies are installed:\n` +
+        `  npm install envio-${os}-${arch}\n`
     );
   }
 }
@@ -41,8 +46,22 @@ function getExePath() {
  */
 function runEnvio() {
   const args = process.argv.slice(2);
-  const processResult = spawnSync(getExePath(), args, { stdio: "inherit" });
-  process.exit(processResult.status ?? 0);
+  const exePath = getExePath();
+
+  // Ensure the binary is executable (npm tarballs may lose the execute bit)
+  try {
+    chmodSync(exePath, 0o755);
+  } catch (_) {
+    // Ignore chmod errors (e.g., read-only filesystem)
+  }
+
+  const processResult = spawnSync(exePath, args, { stdio: "inherit" });
+
+  if (processResult.error) {
+    console.error(`Failed to run envio binary at ${exePath}: ${processResult.error.message}`);
+    process.exit(1);
+  }
+  process.exit(processResult.status ?? 1);
 }
 
 runEnvio();
