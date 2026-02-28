@@ -338,6 +338,57 @@ FROM (
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }
 
+// Generate CREATE TABLE query for chains (using ReplacingMergeTree for upserts)
+let makeCreateChainsTableQuery = (~database: string) => {
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Chains.table.tableName}\` (
+  \`id\` Int32,
+  \`start_block\` Int32,
+  \`end_block\` Nullable(Int32),
+  \`max_reorg_depth\` Int32,
+  \`source_block\` Int32,
+  \`first_event_block\` Nullable(Int32),
+  \`buffer_block\` Int32,
+  \`progress_block\` Int32,
+  \`ready_at\` Nullable(DateTime64(3, 'UTC')),
+  \`events_processed\` Int32,
+  \`_is_hyper_sync\` Bool,
+  \`_num_batches_fetched\` Int32
+)
+ENGINE = ReplacingMergeTree()
+ORDER BY (id)`
+}
+
+// Generate CREATE TABLE query for raw events
+let makeCreateRawEventsTableQuery = (~database: string) => {
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.RawEvents.table.tableName}\` (
+  \`chain_id\` Int32,
+  \`event_id\` Int64,
+  \`event_name\` String,
+  \`contract_name\` String,
+  \`block_number\` Int32,
+  \`log_index\` Int32,
+  \`src_address\` String,
+  \`block_hash\` String,
+  \`block_timestamp\` Int32,
+  \`block_fields\` String,
+  \`transaction_fields\` String,
+  \`params\` String,
+  \`serial\` Nullable(Int32)
+)
+ENGINE = MergeTree()
+ORDER BY (chain_id, block_number, log_index)`
+}
+
+// Generate CREATE TABLE query for effect cache
+let makeCreateEffectCacheTableQuery = (~tableName: string, ~database: string) => {
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${tableName}\` (
+  \`id\` String,
+  \`output\` String
+)
+ENGINE = ReplacingMergeTree()
+ORDER BY (id)`
+}
+
 // Initialize ClickHouse tables for entities
 let initialize = async (
   client,
@@ -356,6 +407,8 @@ let initialize = async (
       ),
     )->Promise.ignoreValue
     await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
+    await client->exec({query: makeCreateChainsTableQuery(~database)})
+    await client->exec({query: makeCreateRawEventsTableQuery(~database)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
@@ -363,11 +416,301 @@ let initialize = async (
       ),
     )->Promise.ignoreValue
 
-    Logging.trace("ClickHouse sink initialization completed successfully")
+    Logging.trace("ClickHouse initialization completed successfully")
   } catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse sink")
+      Logging.errorWithExn(exn, "Failed to initialize ClickHouse")
       Js.Exn.raiseError("ClickHouse initialization failed")
+    }
+  }
+}
+
+// Helper to run a query and get JSON results
+let queryJson = async (client, ~query as q) => {
+  let result = await client->query({query: q})
+  await result->json
+}
+
+// Insert chains initial state
+let insertChainsOrThrow = async (
+  client,
+  ~database: string,
+  ~chainConfigs: array<Config.chain>,
+) => {
+  if chainConfigs->Array.length === 0 {
+    ()
+  } else {
+    let values = chainConfigs->Js.Array2.map((chainConfig: Config.chain) => {
+      let initial = InternalTable.Chains.initialFromConfig(chainConfig)
+      initial->(Utils.magic: InternalTable.Chains.t => Js.Json.t)
+    })
+
+    try {
+      await client->insert({
+        table: `${database}.\`${InternalTable.Chains.table.tableName}\``,
+        values,
+        format: "JSONEachRow",
+      })
+    } catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert chains into ClickHouse`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
+    }
+  }
+}
+
+// Update chain progress fields
+let setProgressedChainsOrThrow = async (
+  client,
+  ~database: string,
+  ~progressedChains: array<InternalTable.Chains.progressedChain>,
+) => {
+  // ClickHouse doesn't support UPDATE, so we insert new rows
+  // and ReplacingMergeTree will keep the latest version
+  if progressedChains->Array.length === 0 {
+    ()
+  } else {
+    // We need to read current chain data and merge with progress updates
+    let chainIds =
+      progressedChains->Js.Array2.map(c => c.chainId->Js.Int.toString)->Js.Array2.joinWith(",")
+
+    let existingResult: array<InternalTable.Chains.t> = await queryJson(
+      client,
+      ~query=`SELECT * FROM ${database}.\`${InternalTable.Chains.table.tableName}\` FINAL WHERE id IN (${chainIds})`,
+    )
+
+    let existingMap = Js.Dict.empty()
+    existingResult->Js.Array2.forEach(chain => {
+      existingMap->Js.Dict.set(chain.id->Js.Int.toString, chain)
+    })
+
+    let values = progressedChains->Belt.Array.keepMap(data => {
+      switch existingMap->Js.Dict.get(data.chainId->Js.Int.toString) {
+      | Some(existing) =>
+        Some(
+          {
+            ...existing,
+            progressBlockNumber: data.progressBlockNumber,
+            numEventsProcessed: data.totalEventsProcessed,
+            blockHeight: data.sourceBlockNumber,
+          }->(Utils.magic: InternalTable.Chains.t => Js.Json.t),
+        )
+      | None => None
+      }
+    })
+
+    if values->Array.length > 0 {
+      try {
+        await client->insert({
+          table: `${database}.\`${InternalTable.Chains.table.tableName}\``,
+          values,
+          format: "JSONEachRow",
+        })
+      } catch {
+      | exn =>
+        raise(
+          Persistence.StorageError({
+            message: `Failed to update chain progress in ClickHouse`,
+            reason: exn->Utils.prettifyExn,
+          }),
+        )
+      }
+    }
+  }
+}
+
+// Update chain metadata fields
+let setChainMetaOrThrow = async (
+  client,
+  ~database: string,
+  ~chainsData: dict<InternalTable.Chains.metaFields>,
+) => {
+  let chainIds =
+    chainsData->Js.Dict.keys->Js.Array2.joinWith(",")
+
+  if chainIds === "" {
+    ()
+  } else {
+    let existingResult: array<InternalTable.Chains.t> = await queryJson(
+      client,
+      ~query=`SELECT * FROM ${database}.\`${InternalTable.Chains.table.tableName}\` FINAL WHERE id IN (${chainIds})`,
+    )
+
+    let values = existingResult->Belt.Array.keepMap(existing => {
+      switch chainsData->Js.Dict.get(existing.id->Js.Int.toString) {
+      | Some(meta) =>
+        Some(
+          {
+            ...existing,
+            firstEventBlockNumber: meta.firstEventBlockNumber,
+            latestFetchedBlockNumber: meta.latestFetchedBlockNumber,
+            timestampCaughtUpToHeadOrEndblock: meta.timestampCaughtUpToHeadOrEndblock,
+            isHyperSync: meta.isHyperSync,
+            numBatchesFetched: meta.numBatchesFetched,
+          }->(Utils.magic: InternalTable.Chains.t => Js.Json.t),
+        )
+      | None => None
+      }
+    })
+
+    if values->Array.length > 0 {
+      try {
+        await client->insert({
+          table: `${database}.\`${InternalTable.Chains.table.tableName}\``,
+          values,
+          format: "JSONEachRow",
+        })
+      } catch {
+      | exn =>
+        raise(
+          Persistence.StorageError({
+            message: `Failed to update chain metadata in ClickHouse`,
+            reason: exn->Utils.prettifyExn,
+          }),
+        )
+      }
+    }
+  }
+}
+
+// Insert raw events
+let setRawEventsOrThrow = async (
+  client,
+  ~database: string,
+  ~rawEvents: array<InternalTable.RawEvents.t>,
+) => {
+  if rawEvents->Array.length === 0 {
+    ()
+  } else {
+    try {
+      await client->insert({
+        table: `${database}.\`${InternalTable.RawEvents.table.tableName}\``,
+        values: rawEvents->(Utils.magic: array<InternalTable.RawEvents.t> => array<Js.Json.t>),
+        format: "JSONEachRow",
+      })
+    } catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert raw events into ClickHouse`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
+    }
+  }
+}
+
+// Load entities by IDs from the view (current state)
+let loadByIdsOrThrow = async (
+  client,
+  ~database: string,
+  ~ids: array<string>,
+  ~table: Table.table,
+  ~rowsSchema: S.t<array<'item>>,
+) => {
+  if ids->Array.length === 0 {
+    []->S.parseOrThrow(rowsSchema)
+  } else {
+    let idsStr =
+      ids->Js.Array2.map(id => `'${id}'`)->Js.Array2.joinWith(",")
+
+    try {
+      let rows: array<unknown> = await queryJson(
+        client,
+        ~query=`SELECT * FROM ${database}.\`${table.tableName}\` WHERE id IN (${idsStr})`,
+      )
+      rows->(Utils.magic: array<unknown> => array<'item>)->S.parseOrThrow(rowsSchema)
+    } catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from ClickHouse by ids`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
+    }
+  }
+}
+
+// Load entities by field value
+let loadByFieldOrThrow = async (
+  client,
+  ~database: string,
+  ~fieldName: string,
+  ~fieldSchema: S.t<'value>,
+  ~fieldValue: 'value,
+  ~operator: Persistence.operator,
+  ~table: Table.table,
+  ~rowsSchema: S.t<array<'item>>,
+) => {
+  let serializedValue = try fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema) catch {
+  | exn =>
+    raise(
+      Persistence.StorageError({
+        message: `Failed loading "${table.tableName}" from ClickHouse by field "${fieldName}". Couldn't serialize provided value.`,
+        reason: exn,
+      }),
+    )
+  }
+  let operatorStr = (operator :> string)
+
+  // Format the value for ClickHouse query
+  let valueStr = switch Js.typeof(serializedValue->(Utils.magic: Js.Json.t => unknown)) {
+  | "string" => `'${serializedValue->(Utils.magic: Js.Json.t => string)}'`
+  | "number" => serializedValue->(Utils.magic: Js.Json.t => float)->Belt.Float.toString
+  | _ => Js.Json.stringify(serializedValue)
+  }
+
+  try {
+    let rows: array<unknown> = await queryJson(
+      client,
+      ~query=`SELECT * FROM ${database}.\`${table.tableName}\` WHERE \`${fieldName}\` ${operatorStr} ${valueStr}`,
+    )
+    rows->(Utils.magic: array<unknown> => array<'item>)->S.parseOrThrow(rowsSchema)
+  } catch {
+  | Persistence.StorageError(_) as exn => raise(exn)
+  | exn =>
+    raise(
+      Persistence.StorageError({
+        message: `Failed loading "${table.tableName}" from ClickHouse by field "${fieldName}"`,
+        reason: exn->Utils.prettifyExn,
+      }),
+    )
+  }
+}
+
+// Insert items into a table (generic set)
+let setItemsOrThrow = async (
+  client,
+  ~database: string,
+  ~items: array<'item>,
+  ~table: Table.table,
+  ~itemSchema: S.t<'item>,
+) => {
+  if items->Array.length === 0 {
+    ()
+  } else {
+    try {
+      let values = items->Js.Array2.map(item => {
+        item->S.reverseConvertToJsonOrThrow(itemSchema)
+      })
+      await client->insert({
+        table: `${database}.\`${table.tableName}\``,
+        values,
+        format: "JSONEachRow",
+      })
+    } catch {
+    | exn =>
+      raise(
+        Persistence.StorageError({
+          message: `Failed to insert items into ClickHouse table "${table.tableName}"`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
     }
   }
 }

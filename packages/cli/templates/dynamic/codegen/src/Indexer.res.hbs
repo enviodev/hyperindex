@@ -219,7 +219,7 @@ let allEntities = configWithoutRegistrations.allEntities
 
 let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema
-let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
+let makePgStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
   PgStorage.make(
     ~sql,
     ~pgSchema,
@@ -289,10 +289,36 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
   )
 }
 
+// Backwards compatibility alias
+let makeStorage = makePgStorage
+
+let makeClickHouseStorage = (~host, ~database, ~username, ~password) => {
+  let client = ClickHouse.createClient({
+    url: host,
+    username,
+    password,
+  })
+  let database = switch database {
+  | Some(database) => database
+  | None => "envio"
+  }
+  ClickHouseStorage.make(~client, ~database)
+}
+
 let codegenPersistence = Persistence.make(
   ~userEntities=configWithoutRegistrations.userEntities,
   ~allEnums=configWithoutRegistrations.allEnums,
-  ~storage=makeStorage(~sql=initialSql),
+  ~storage=switch Env.ClickHouseStorage.host {
+  | Some(host) =>
+    Logging.info("Using ClickHouse as primary storage backend")
+    makeClickHouseStorage(
+      ~host,
+      ~database=Env.ClickHouseStorage.database,
+      ~username=Env.ClickHouseStorage.username,
+      ~password=Env.ClickHouseStorage.password,
+    )
+  | None => makePgStorage(~sql=initialSql)
+  },
 )
 
 }

@@ -168,6 +168,19 @@ module ClickHouseSink = {
   }
 }
 
+module ClickHouseStorage = {
+  let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_HOST", S.option(S.string))
+  let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_DATABASE", S.option(S.string))
+  let username = switch host {
+  | None => ""
+  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_USERNAME", S.string, ~devFallback="default")
+  }
+  let password = switch host {
+  | None => ""
+  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_PASSWORD", S.string, ~devFallback="")
+  }
+}
+
 module Hasura = {
   // Disable it on HS indexer run, since we don't have Hasura credentials anyways
   // Also, it might be useful for some users who don't care about Hasura
