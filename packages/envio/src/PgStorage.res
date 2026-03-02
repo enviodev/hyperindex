@@ -1612,7 +1612,6 @@ let make = (
     resumeInitialState,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
-    setEffectCacheOrThrow,
     dumpEffectCache,
     reset,
     setChainMeta,

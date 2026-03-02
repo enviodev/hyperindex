@@ -43,7 +43,6 @@ module Storage = {
     | #initialize
     | #resumeInitialState
     | #dumpEffectCache
-    | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
   ]
@@ -94,7 +93,6 @@ module Storage = {
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
-    let setEffectCacheOrThrowCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
 
@@ -141,14 +139,6 @@ module Storage = {
         }),
         dumpEffectCache: implement(#dumpEffectCache, () => {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
-          Promise.resolve()
-        }),
-        setEffectCacheOrThrow: implement(#setEffectCacheOrThrow, (
-          ~effect as _,
-          ~items as _,
-          ~initialize as _,
-        ) => {
-          setEffectCacheOrThrowCalls := setEffectCacheOrThrowCalls.contents + 1
           Promise.resolve()
         }),
         loadByIdsOrThrow: (

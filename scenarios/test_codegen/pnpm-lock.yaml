@@ -3951,7 +3951,7 @@ snapshots:
       '@envio-dev/hyperfuel-client': 1.2.2
       '@envio-dev/hypersync-client': 1.1.0
       '@rescript/react': 0.14.1(react-dom@19.2.3(react@19.2.0))(react@19.2.0)
-      bignumber.js: 9.1.2
+      bignumber.js: 9.3.1
       date-fns: 3.3.1
       dotenv: 16.4.5
       eventsource: 4.1.0

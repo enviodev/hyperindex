@@ -75,12 +75,6 @@ type storage = {
     ~table: Table.table,
     ~rowsSchema: S.t<array<'item>>,
   ) => promise<array<'item>>,
-  @raises("StorageError")
-  setEffectCacheOrThrow: (
-    ~effect: Internal.effect,
-    ~items: array<Internal.effectCacheItem>,
-    ~initialize: bool,
-  ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
