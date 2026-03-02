@@ -125,22 +125,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Replace packages/envio with the pre-built artifact so pnpm sees
-      # the publish-ready package.json (with bin: ./bin.js) and wires
-      # the correct bin link. Clear first to remove stale dev files.
-      - name: Download pre-built envio package
-        run: rm -rf packages/envio
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./packages/envio
-
-      - name: Download platform binary
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./node_modules/envio-linux-x64
-
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -154,6 +138,22 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      # Replace packages/envio with the pre-built artifact after install
+      # so the lockfile stays valid. The bin symlink pnpm created still
+      # points to packages/envio/bin.js which now has the built version.
+      - name: Download pre-built envio package
+        run: rm -rf packages/envio
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./packages/envio
+
+      - name: Download platform binary
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./node_modules/envio-linux-x64
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -198,19 +198,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download pre-built envio package
-        run: rm -rf packages/envio
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./packages/envio
-
-      - name: Download platform binary
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./node_modules/envio-linux-x64
-
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -224,6 +211,19 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      - name: Download pre-built envio package
+        run: rm -rf packages/envio
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./packages/envio
+
+      - name: Download platform binary
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./node_modules/envio-linux-x64
 
       - name: Wait for Hasura
         run: |
@@ -290,19 +290,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download pre-built envio package
-        run: rm -rf packages/envio
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: ./packages/envio
-
-      - name: Download platform binary
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./node_modules/envio-linux-x64
-
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -316,6 +303,19 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      - name: Download pre-built envio package
+        run: rm -rf packages/envio
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./packages/envio
+
+      - name: Download platform binary
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: ./node_modules/envio-linux-x64
 
       - name: Wait for Hasura
         run: |
