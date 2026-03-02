@@ -108,10 +108,11 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
       : ""});`
 }
 
+let entityHistoryCache = Utils.WeakMap.make()
 let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgEntityHistory<
   'entity,
 > => {
-  switch entityConfig.pgEntityHistoryCache {
+  switch entityHistoryCache->Utils.WeakMap.get(entityConfig) {
   | Some(cache) => cache
   | None =>
     let cache = {
@@ -170,7 +171,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
       }
     }
 
-    entityConfig.pgEntityHistoryCache = Some(cache)
+    entityHistoryCache->Utils.WeakMap.set(entityConfig, cache)->ignore
     cache
   }
 }
