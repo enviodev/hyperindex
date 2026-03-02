@@ -493,13 +493,13 @@ let makeThrowingGetEventBlock = (
           })
 
           let fn = switch blockFieldItems {
-          | [] => _ => %raw(`{}`)->Promise.resolve
+          | [] => _ => (%raw(`{}`)->(Utils.magic: 'a => Internal.eventBlock))->Promise.resolve
           | _ =>
             (log: Rpc.GetLogs.log) => {
               getBlockJson(log.blockNumber)->Promise.thenResolve(json => {
                 let mutBlockAcc = Js.Dict.empty()
                 parseBlockFieldsFromJson(mutBlockAcc, fields, json)
-                mutBlockAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
+                mutBlockAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => Internal.eventBlock)
               })
             }
           }
@@ -1018,19 +1018,17 @@ let make = (
                     )
                   }
 
-                  let eventBlock = block->(Utils.magic: 'a => Internal.eventBlock)
-
                   Internal.Event({
                     eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: eventBlock->Evm.getTimestamp,
-                    blockNumber: eventBlock->Evm.getNumber,
+                    timestamp: block->Evm.getTimestamp,
+                    blockNumber: block->Evm.getNumber,
                     chain,
                     logIndex: log.logIndex,
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
                       transaction,
-                      block: eventBlock,
+                      block,
                       srcAddress: routedAddress,
                       logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,
