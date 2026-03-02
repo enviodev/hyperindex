@@ -241,7 +241,7 @@ let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOpera
         result->S.parseJsonOrThrow(bulkKeepGoingErrorsSchema)
       } catch {
       | S.Raised(error) => [error->S.Error.message]
-      | exn => [exn->Utils.prettifyExn->Utils.magic]
+      | exn => [exn->Utils.prettifyExn->(Utils.magic: exn => string)]
       }
 
       switch errors {

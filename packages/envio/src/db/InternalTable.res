@@ -132,8 +132,8 @@ module Chains = {
             initialValues->(Utils.magic: t => dict<unknown>)->Js.Dict.get((field :> string))
           switch Js.typeof(value) {
           | "object" => "NULL"
-          | "number" => value->Utils.magic->Belt.Int.toString
-          | "boolean" => value->Utils.magic ? "true" : "false"
+          | "number" => value->(Utils.magic: option<unknown> => int)->Belt.Int.toString
+          | "boolean" => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
           | _ => Js.Exn.raiseError("Invalid envio_chains value type")
           }
         })
@@ -415,7 +415,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
     sql
     ->Postgres.preparedUnsafe(
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
-      [rollbackTargetCheckpointId]->Utils.magic,
+      [rollbackTargetCheckpointId]->(Utils.magic: array<Internal.checkpointId> => unknown),
     )
     ->Promise.ignoreValue
   }

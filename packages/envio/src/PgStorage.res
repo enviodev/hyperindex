@@ -427,7 +427,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
       ),
       "convertOrThrow": S.compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
-          serializer: Utils.Array.flatten->Utils.magic,
+          serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
         }),
         ~input=Value,
         ~output=Unknown,
@@ -1544,14 +1544,14 @@ let make = (
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId]->Utils.magic,
+        [rollbackTargetCheckpointId]->(Utils.magic: array<Internal.checkpointId> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId]->Utils.magic,
+        [rollbackTargetCheckpointId]->(Utils.magic: array<Internal.checkpointId> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))

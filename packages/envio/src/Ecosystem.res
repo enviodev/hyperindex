@@ -18,8 +18,8 @@ let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onB
   | Svm => {slot: blockNumber, context}
   | _ => {
       let blockEvent = Js.Dict.empty()
-      blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->Utils.magic)
-      {block: blockEvent->Utils.magic, context}
+      blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
+      {block: blockEvent->(Utils.magic: Js.Dict.t<unknown> => Internal.blockEvent), context}
     }
   }
 }
