@@ -3,6 +3,7 @@ use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
+    docker_env,
     persisted_state::{PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
     project_paths::ParsedProjectPaths,
     scripts,
@@ -35,9 +36,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
 
         CommandType::Stop => {
-            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
-                .context("Failed parsing config")?;
-            commands::docker::docker_compose_down_v(&config).await?;
+            docker_env::down().await?;
         }
 
         CommandType::Start(start_args) => {

@@ -1,6 +1,7 @@
 use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
+    docker_env,
     persisted_state::{self, PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
@@ -64,15 +65,9 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
             .await
             .context("Failed running codegen")?;
     }
-    // if hasura healhz check returns not found assume docker isnt running and start it up {
-    let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();
-
-    if hasura_health_check_is_error {
-        //Run docker commands to spin up container
-        commands::docker::docker_compose_up_d(&config)
-            .await
-            .context("Failed running docker compose up after server liveness check")?;
-    }
+    docker_env::up(&config.parsed_project_paths.project_root)
+        .await
+        .context("Failed starting Docker containers")?;
 
     let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
 

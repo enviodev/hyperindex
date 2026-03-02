@@ -2,6 +2,7 @@ use crate::{
     cli_args::clap_definitions::{DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands},
     commands,
     config_parsing::system_config::SystemConfig,
+    docker_env,
     persisted_state::PersistedState,
     project_paths::ParsedProjectPaths,
 };
@@ -17,10 +18,10 @@ pub async fn run_local(
     match local_commands {
         LocalCommandTypes::Docker(subcommand) => match subcommand {
             LocalDockerSubcommands::Up => {
-                commands::docker::docker_compose_up_d(&config).await?;
+                docker_env::up(&config.parsed_project_paths.project_root).await?;
             }
             LocalDockerSubcommands::Down => {
-                commands::docker::docker_compose_down_v(&config).await?;
+                docker_env::down().await?;
             }
         },
         LocalCommandTypes::DbMigrate(subcommand) => {

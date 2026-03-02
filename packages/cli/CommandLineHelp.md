@@ -289,14 +289,14 @@ Local Envio environment commands
 
 ###### **Subcommands:**
 
-* `up` — Create docker images required for local environment
-* `down` — Delete existing docker images on local environment
+* `up` — Start Docker containers (Postgres + Hasura) for local environment
+* `down` — Stop and remove Docker containers for local environment
 
 
 
 ## `envio local docker up`
 
-Create docker images required for local environment
+Start Docker containers (Postgres + Hasura) for local environment
 
 **Usage:** `envio local docker up`
 
@@ -304,7 +304,7 @@ Create docker images required for local environment
 
 ## `envio local docker down`
 
-Delete existing docker images on local environment
+Stop and remove Docker containers for local environment
 
 **Usage:** `envio local docker down`
 

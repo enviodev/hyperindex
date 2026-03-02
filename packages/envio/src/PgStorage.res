@@ -206,9 +206,9 @@ let makeInitializeTransaction = (
       isEmptyPgSchema && pgSchema === "public"
       // Hosted Service already have a DB with the created public schema
       // It also doesn't allow to simply drop it,
-      // so we reuse the existing schema when it's empty
-      // (but only for public, since it's usually always exists)
-        ? ""
+      // so we reuse the existing schema when it's empty.
+      // IF NOT EXISTS handles the case where public was previously dropped.
+        ? `CREATE SCHEMA IF NOT EXISTS "${pgSchema}";\n`
         : `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;
 CREATE SCHEMA "${pgSchema}";\n`
     ) ++
@@ -574,18 +574,17 @@ type psqlExecState =
   Unknown | Pending(promise<result<string, string>>) | Resolved(result<string, string>)
 
 let getConnectedPsqlExec = {
-  let pgDockerServiceName = "envio-postgres"
   // Should use the default port, since we're executing the command
   // from the postgres container's network.
   let pgDockerServicePort = 5432
 
   // For development: We run the indexer process locally,
   //   and there might not be psql installed on the user's machine.
-  //   So we use docker-compose to run psql existing in the postgres container.
+  //   So we use docker exec to run psql inside the postgres container.
   // For production: We expect indexer to be running in a container,
   //   with psql installed. So we can call it directly.
   let psqlExecState = ref(Unknown)
-  async (~pgUser, ~pgHost, ~pgDatabase, ~pgPort) => {
+  async (~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) => {
     switch psqlExecState.contents {
     | Unknown => {
         let promise = Promise.make((resolve, _reject) => {
@@ -593,14 +592,14 @@ let getConnectedPsqlExec = {
           NodeJs.ChildProcess.exec(`${binary} --version`, (~error, ~stdout as _, ~stderr as _) => {
             switch error {
             | Value(_) => {
-                let binary = `docker-compose exec -T -u ${pgUser} ${pgDockerServiceName} psql`
+                let binary = `docker exec -i -u ${pgUser} ${containerName} psql`
                 NodeJs.ChildProcess.exec(
                   `${binary} --version`,
                   (~error, ~stdout as _, ~stderr as _) => {
                     switch error {
                     | Value(_) =>
                       resolve(
-                        Error(`Please check if "psql" binary is installed or docker-compose is running for the local indexer.`),
+                        Error(`Please check if "psql" binary is installed or Docker container "${containerName}" is running.`),
                       )
                     | Null =>
                       resolve(
@@ -1104,6 +1103,8 @@ let make = (
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
+  // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
+  let containerName = "envio-postgres"
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
     env: Js.Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
   }
@@ -1131,7 +1132,7 @@ let make = (
         NodeJs.Fs.Promises.readdir(cacheDirPath)
         ->Promise.thenResolve(e => Ok(e))
         ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
-        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort),
+        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName),
       )) {
       | (Ok(entries), Ok(psqlExec)) => {
           let cacheFiles = entries->Js.Array2.filter(entry => {
@@ -1416,10 +1417,10 @@ let make = (
           await NodeJs.Fs.Promises.mkdir(~path=cacheDirPath, ~options={recursive: true})
         }
 
-        // Command for testing. Run from generated
-        // docker-compose exec -T -u postgres envio-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
+        // Command for testing. Run from project root:
+        // docker exec -i -u postgres envio-{indexerName}-postgres psql -d envio-dev -c 'COPY "public"."envio_effect_getTokenMetadata" TO STDOUT (FORMAT text, HEADER);' > ../.envio/cache/getTokenMetadata.tsv
 
-        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort) {
+        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
         | Ok(psqlExec) => {
             Logging.info(
               `Dumping cache: ${cacheTableInfo
