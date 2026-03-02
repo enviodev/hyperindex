@@ -2,7 +2,6 @@
 //@ts-check
 
 import { spawnSync } from "child_process";
-import { chmodSync } from "fs";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -47,13 +46,6 @@ function getExePath() {
 function runEnvio() {
   const args = process.argv.slice(2);
   const exePath = getExePath();
-
-  // Ensure the binary is executable (npm tarballs may lose the execute bit)
-  try {
-    chmodSync(exePath, 0o755);
-  } catch (_) {
-    // Ignore chmod errors (e.g., read-only filesystem)
-  }
 
   const processResult = spawnSync(exePath, args, { stdio: "inherit" });
 

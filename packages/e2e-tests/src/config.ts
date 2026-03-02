@@ -53,7 +53,6 @@ function resolveEnvioBin(): string {
   // bin.js has #!/usr/bin/env node shebang, so spawn() works directly.
   const binJs = path.join(rootDir, "packages/envio/bin.js");
   if (fs.existsSync(binJs)) {
-    fs.chmodSync(binJs, 0o755);
     return binJs;
   }
 
