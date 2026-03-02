@@ -49,8 +49,19 @@ function resolveEnvio(): { command: string; args: string[] } {
     }
   }
 
-  // Fall back to pnpm exec (CI overlays the built package before tests)
-  return { command: "pnpm", args: ["exec", "envio"] };
+  // Fall back to running bin.mjs directly via node (CI overlays the built
+  // package before tests). Using node + absolute path avoids pnpm exec
+  // which fails outside the workspace (e.g. template tests in /tmp/).
+  const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
+  if (fs.existsSync(binMjs)) {
+    return { command: "node", args: [binMjs] };
+  }
+
+  throw new Error(
+    "envio binary not found. Either:\n" +
+      "  - Set ENVIO_BIN env var\n" +
+      "  - Run `cargo build` in packages/cli first"
+  );
 }
 
 const envio = resolveEnvio();
