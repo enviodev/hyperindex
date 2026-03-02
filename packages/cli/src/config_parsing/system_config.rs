@@ -387,14 +387,19 @@ pub fn get_envio_version() -> Result<String> {
         // version should be installable from npm
         Ok(crate_version.to_string())
     } else {
-        // Else install the local version for development and testing
-        match env::current_exe() {
-            // This should be something like "file:~/envio/hyperindex/target/debug/envio" or "file:.../target/debug/integration_tests"
-            Ok(exe_path) => Ok(format!(
-                "file:{}/../../../packages/envio",
-                exe_path.to_string_lossy()
-            )),
-            Err(e) => Err(anyhow!("failed to get current exe path: {e}")),
+        // Else install the local version for development and testing.
+        // Walk up from cwd to find the repo root containing packages/envio.
+        let cwd =
+            env::current_dir().context("failed to get current working directory")?;
+        let mut dir = cwd.as_path();
+        loop {
+            let candidate = dir.join("packages/envio");
+            if candidate.is_dir() {
+                return Ok(format!("file:{}", candidate.to_string_lossy()));
+            }
+            dir = dir
+                .parent()
+                .ok_or_else(|| anyhow!("could not find packages/envio above cwd: {}", cwd.display()))?;
         }
     }
 }
