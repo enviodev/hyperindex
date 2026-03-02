@@ -136,10 +136,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
     )
     response->S.parseOrThrow(rowsSchema)
   },
-  setOrThrow: async (~items as _, ~table as _, ~itemSchema as _) => {
-    // Not used anywhere, no-op
-    ()
-  },
   writeBatch: async (
     ~batch,
     ~rawEvents as _,
@@ -187,7 +183,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   setEffectCacheOrThrow: async (~effect as _, ~items as _, ~initialize as _) => (),
   dumpEffectCache: async () => (),
-  executeUnsafe: async _ => Obj.magic(),
+  reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
   pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>

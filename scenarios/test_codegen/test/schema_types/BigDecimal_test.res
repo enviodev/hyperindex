@@ -1,68 +1,51 @@
 open Vitest
 
 describe("Load and save an entity with a BigDecimal from DB", () => {
-  Async.beforeAll(() => {
-    DbHelpers.runUpDownMigration()
-  })
-
-  Async.afterAll(() => {
-    // It is probably overkill that we are running these 'after' also
-    DbHelpers.runUpDownMigration()
-  })
-
   Async.it("be able to set and read entities with BigDecimal from DB", async t => {
-
-    let sql = PgStorage.makeClient()
-    /// Setup DB
-    let testEntity1: Indexer.Entities.EntityWithBigDecimal.t = {
-      id: "testEntity",
-      bigDecimal: BigDecimal.fromFloat(123.456),
-    }
-    let testEntity2: Indexer.Entities.EntityWithBigDecimal.t = {
-      id: "testEntity2",
-      bigDecimal: BigDecimal.fromFloat(654.321),
-    }
-
-    let entityConfig = Mock.entityConfig(EntityWithBigDecimal)
-    await sql->PgStorage.setOrThrow(
-      ~items=[
-        testEntity1->(Utils.magic: Indexer.Entities.EntityWithBigDecimal.t => Internal.entity),
-        testEntity2->(Utils.magic: Indexer.Entities.EntityWithBigDecimal.t => Internal.entity),
-      ],
-      ~table=entityConfig.table,
-      ~itemSchema=entityConfig.schema,
-      ~pgSchema=Indexer.Generated.storagePgSchema,
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
     )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
 
-    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
-    let loadManager = LoadManager.make()
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 100,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.entityWithBigDecimal.set({
+              id: "testEntity",
+              bigDecimal: BigDecimal.fromFloat(123.456),
+            })
+            context.entityWithBigDecimal.set({
+              id: "testEntity2",
+              bigDecimal: BigDecimal.fromFloat(654.321),
+            })
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=100,
+    )
+    await indexerMock.getBatchWritePromise()
 
-    let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
-
-    let chains = Js.Dict.empty()
-    chains->Js.Dict.set("1", {id: 1, Internal.isLive: false})
-
-    let handlerContext = UserContext.getHandlerContext({
-      item,
-      loadManager,
-      persistence: Indexer.Generated.codegenPersistence,
-      inMemoryStore,
-      shouldSaveHistory: false,
-      isPreload: false,
-      checkpointId: 0.,
-      chains,
-      isResolved: false,
-      config: Indexer.Generated.configWithoutRegistrations,
-    })->(Utils.magic: Internal.handlerContext => Indexer.handlerContext)
-
-    let _ = handlerContext.entityWithBigDecimal.get(testEntity1.id)
-    let _ = handlerContext.entityWithBigDecimal.get(testEntity2.id)
-
-    switch await handlerContext.entityWithBigDecimal.get(testEntity1.id) {
+    let entities = await indexerMock.query(EntityWithBigDecimal)
+    switch entities->Js.Array2.find(e => e.id === "testEntity") {
     | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("123.456")
     | None => Js.Exn.raiseError("testEntity1 should exist")
     }
-    switch await handlerContext.entityWithBigDecimal.get(testEntity2.id) {
+    switch entities->Js.Array2.find(e => e.id === "testEntity2") {
     | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("654.321")
     | None => Js.Exn.raiseError("testEntity2 should exist")
     }

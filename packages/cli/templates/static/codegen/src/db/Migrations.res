@@ -1,15 +1,6 @@
-let deleteAllTables: unit => promise<unit> = async () => {
-  Logging.trace("Dropping all tables")
-  let query = `
-    DO $$ 
-    BEGIN
-      DROP SCHEMA IF EXISTS ${Env.Db.publicSchema} CASCADE;
-      CREATE SCHEMA ${Env.Db.publicSchema};
-      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO "${Env.Db.user}";
-      GRANT ALL ON SCHEMA ${Env.Db.publicSchema} TO public;
-    END $$;`
-
-  await Indexer.Generated.codegenPersistence.storage.executeUnsafe(query)->Promise.ignoreValue
+let resetStorage = async () => {
+  Logging.trace("Resetting storage")
+  await Indexer.Generated.codegenPersistence.storage.reset()
 }
 
 type t
@@ -41,7 +32,7 @@ let runUpMigrations = async (
 
 let runDownMigrations = async (~shouldExit) => {
   let exitCode = ref(Success)
-  await deleteAllTables()->Promise.catch(err => {
+  await resetStorage()->Promise.catch(err => {
     exitCode := Failure
     err
     ->ErrorHandling.make(~msg="Error dropping entity tables")

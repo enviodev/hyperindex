@@ -1505,7 +1505,10 @@ let make = (
     }
   }
 
-  let executeUnsafe = query => sql->Postgres.unsafe(query)
+  let reset = async () => {
+    let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
+    await sql->Postgres.unsafe(query)->Promise.ignoreValue
+  }
 
   let setChainMeta = chainsData =>
     InternalTable.Chains.setMeta(sql, ~pgSchema, ~chainsData)->Promise.thenResolve(_ =>
@@ -1609,10 +1612,9 @@ let make = (
     resumeInitialState,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
-    setOrThrow,
     setEffectCacheOrThrow,
     dumpEffectCache,
-    executeUnsafe,
+    reset,
     setChainMeta,
     pruneStaleCheckpoints,
     pruneStaleEntityHistory,

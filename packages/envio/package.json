@@ -49,7 +49,6 @@
     "@envio-dev/hyperfuel-client": "1.2.2",
     "bignumber.js": "9.3.1",
     "@envio-dev/hypersync-client": "1.1.0",
-    "bignumber.js": "9.1.2",
     "eventsource": "4.1.0",
     "express": "4.19.2",
     "pino": "10.3.1",

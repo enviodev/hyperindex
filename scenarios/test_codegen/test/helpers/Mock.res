@@ -46,7 +46,6 @@ module Storage = {
     | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
-    | #setOrThrow
   ]
 
   type t = {
@@ -188,10 +187,7 @@ module Storage = {
             Promise.resolve([])
           })
         },
-        setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
-          implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
-        },
-        executeUnsafe: _ => Js.Exn.raiseError("Not implemented"),
+        reset: () => Js.Exn.raiseError("Not implemented"),
         setChainMeta: _ => Js.Exn.raiseError("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not implemented"),
         pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
