@@ -388,19 +388,25 @@ pub fn get_envio_version() -> Result<String> {
         Ok(crate_version.to_string())
     } else {
         // Else install the local version for development and testing.
-        // Walk up from cwd to find the repo root containing packages/envio.
-        let cwd =
-            env::current_dir().context("failed to get current working directory")?;
-        let mut dir = cwd.as_path();
-        loop {
-            let candidate = dir.join("packages/envio");
+        // Walk up from the binary location to find the repo root containing
+        // packages/envio. Using current_exe() instead of current_dir() so
+        // this works even when cwd is outside the repo (e.g. template tests
+        // that run in /tmp/).
+        let exe = env::current_exe()
+            .and_then(|p| p.canonicalize())
+            .context("failed to resolve current executable path")?;
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("packages/envio");
             if candidate.is_dir() {
                 return Ok(format!("file:{}", candidate.to_string_lossy()));
             }
-            dir = dir
-                .parent()
-                .ok_or_else(|| anyhow!("could not find packages/envio above cwd: {}", cwd.display()))?;
+            dir = d.parent();
         }
+        Err(anyhow!(
+            "could not find packages/envio above executable: {}",
+            exe.display()
+        ))
     }
 }
 

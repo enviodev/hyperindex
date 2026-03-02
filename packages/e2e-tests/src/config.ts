@@ -34,7 +34,8 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → cargo build → platform binary (CI) → pnpm exec (local dev).
+ * Priority: ENVIO_BIN → cargo build → platform binary (CI).
+ * Must resolve to an absolute path (not pnpm exec) since tests may run in /tmp/.
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
@@ -62,8 +63,11 @@ function resolveEnvio(): { command: string; args: string[] } {
     return { command: platformBin, args: [] };
   }
 
-  // Local dev fallback: use pnpm to resolve the workspace envio bin
-  return { command: "pnpm", args: ["exec", "envio"] };
+  throw new Error(
+    "envio binary not found. Either:\n" +
+      "  - Set ENVIO_BIN env var\n" +
+      "  - Run `cargo build` in packages/cli first"
+  );
 }
 
 const envio = resolveEnvio();
