@@ -44,8 +44,8 @@ importers:
         specifier: 1.2.2
         version: 1.2.2
       '@envio-dev/hypersync-client':
-        specifier: 0.7.0
-        version: 0.7.0
+        specifier: 1.1.0
+        version: 1.1.0
       '@rescript/react':
         specifier: 0.14.0
         version: 0.14.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -116,32 +116,6 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
-
-  scenarios/erc20_multichain_factory:
-    dependencies:
-      envio:
-        specifier: file:../../packages/envio
-        version: link:../../packages/envio
-      helpers:
-        specifier: ../helpers
-        version: link:../helpers
-      rescript:
-        specifier: 11.1.3
-        version: 11.1.3
-      rescript-schema:
-        specifier: 9.3.4
-        version: 9.3.4(rescript@11.1.3)
-      tsx:
-        specifier: 4.21.0
-        version: 4.21.0
-    devDependencies:
-      vitest:
-        specifier: 4.0.18
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.10.9)(jsdom@16.7.0)(tsx@4.21.0)
     optionalDependencies:
       generated:
         specifier: ./generated
@@ -438,21 +412,18 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@envio-dev/hyperfuel-client-linux-x64-gnu@1.2.2':
     resolution: {integrity: sha512-XDkvkBG/frS+xiZkJdY4KqOaoAwyxPdi2MysDQgF8NmZdssi32SWch0r4LTqKWLLlCBg9/R55POeXL5UAjg2wQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@envio-dev/hyperfuel-client-linux-x64-musl@1.2.2':
     resolution: {integrity: sha512-DKnKJJSwsYtA7YT0EFGhFB5Eqoo42X0l0vZBv4lDuxngEXiiNjeLemXoKQVDzhcbILD7eyXNa5jWUc+2hpmkEg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@envio-dev/hyperfuel-client-win32-x64-msvc@1.2.2':
     resolution: {integrity: sha512-SwIgTAVM9QhCFPyHwL+e1yQ6o3paV6q25klESkXw+r/KW9QPhOOyA6Yr8nfnur3uqMTLJHAKHTLUnkyi/Nh7Aw==}
@@ -464,47 +435,38 @@ packages:
     resolution: {integrity: sha512-raKA6DshYSle0sAOHBV1OkSRFMN+Mkz8sFiMmS3k+m5nP6pP56E17CRRePBL5qmR6ZgSEvGOz/44QUiKNkK9Pg==}
     engines: {node: '>= 10'}
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.7.0':
-    resolution: {integrity: sha512-/CNHCekZdcMLGp8Q1uhmEhAzk/0YnRJNpHOdfQYJ81WiKuQbVtejD77liFBqG3zAGYRN6ZRMD/I1hOVnIz5ixw==}
+  '@envio-dev/hypersync-client-darwin-arm64@1.1.0':
+    resolution: {integrity: sha512-WO/yxYiN9nz7pHw7xLs/4hnEHQM5OVcTwvtxZTZHox7It3n7aeBzsJfrGYYqYW1bPxDwSYwb6x9l0/fQc59xeA==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-darwin-x64@0.7.0':
-    resolution: {integrity: sha512-SqqBuVozL0hclIPS6L4VQC4TNr4gIC4kzQpOhrszwrho73pqEvlqSKyH10u615tJIDD9lvqxjjiRPLs/mdcVWg==}
+  '@envio-dev/hypersync-client-darwin-x64@1.1.0':
+    resolution: {integrity: sha512-BOD4gaZ6NAyLDDVgfIhpD25ikjEQpTXNBqbIYuTjWS1D0NiQD5mmyZCFcSMmaJJ0j4iobBQV1LMiNX8nDLahPA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0':
-    resolution: {integrity: sha512-q09sfN4pDf82NPuh7xPZ+DZQZuO4vKG6qxbBCHPjK6KZkIw4sNfxIwSG08GG0iLKUxQdW/V3R6FIDM9+c5NTUg==}
+  '@envio-dev/hypersync-client-linux-arm64-gnu@1.1.0':
+    resolution: {integrity: sha512-TDRpAGbfuI4u83Swy50IkGZSMaWXZw/SNC8BiMqLBmYVt1GqFDB1VGrkecf4AhQBPlQk8iDTOxxIKNuOCsY//A==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
-    resolution: {integrity: sha512-Rpz3VSLqq2O9Qp3GiDXHmF3MPm7TcsTfRzSz2RkRVEfdchaKA7Ob86jQ2ueRyG1UEEu47V9JzL6mYmVs4gNa7w==}
+  '@envio-dev/hypersync-client-linux-x64-gnu@1.1.0':
+    resolution: {integrity: sha512-ooOdLfrhq8W3J76pcJDWuXIpu9cTBjZR86XkkHaheDNkYQlBZ7h5oG3IhNTLnooFkih+6+9dfcfOdG4NMmylGA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
-    resolution: {integrity: sha512-SZ8RHNaCEcPvubFGdA7gkbxJeJe4whhw0oaAvSyGEbUjL5byFI9nqMVzW8o8mPACqqjlOHIq77GYxbbUI+53vQ==}
+  '@envio-dev/hypersync-client-linux-x64-musl@1.1.0':
+    resolution: {integrity: sha512-WS717WyRyTZPRMfYmscRslRIhxWNKzdQR3SLugqQs0z1W7wo58WMufhr5EpzID5/GR10zexz+Y3a4HWMAGiu+Q==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
-    resolution: {integrity: sha512-R7M1IBcWfqx1TyBcK5Mc/VJmayGeK9woWPzSPzjTgYsHFl65gE1e0hXb8B/gi+km8GQDZYNcaHyBh6xSVHkrzg==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [win32]
-
-  '@envio-dev/hypersync-client@0.7.0':
-    resolution: {integrity: sha512-YDFN8XIQTOBztBe5Xr4oFu7PKdR93+7QjGxg4/Xx6+406tPOX9Lrir3cKD+cJpS1ZY1k4/l8l4C6L6D0gqJReQ==}
+  '@envio-dev/hypersync-client@1.1.0':
+    resolution: {integrity: sha512-tTCW/fvYPFYIcL6SLcWd5Fe6uPCcXQbLgZaYL3NSvkhvrpw5VSx3M2QbHdpIrhmzoDkZdpIYyFD+pdZhC6Y75g==}
     engines: {node: '>= 10'}
 
   '@esbuild/aix-ppc64@0.27.2':
@@ -802,79 +764,66 @@ packages:
     resolution: {integrity: sha512-Rn3n+FUk2J5VWx+ywrG/HGPTD9jXNbicRtTM11e/uorplArnXZYsVifnPPqNNP5BsO3roI4n8332ukpY/zN7rQ==}
     cpu: [arm]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.55.1':
     resolution: {integrity: sha512-grPNWydeKtc1aEdrJDWk4opD7nFtQbMmV7769hiAaYyUKCT1faPRm2av8CX1YJsZ4TLAZcg9gTR1KvEzoLjXkg==}
     cpu: [arm]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.55.1':
     resolution: {integrity: sha512-a59mwd1k6x8tXKcUxSyISiquLwB5pX+fJW9TkWU46lCqD/GRDe9uDN31jrMmVP3feI3mhAdvcCClhV8V5MhJFQ==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.55.1':
     resolution: {integrity: sha512-puS1MEgWX5GsHSoiAsF0TYrpomdvkaXm0CofIMG5uVkP6IBV+ZO9xhC5YEN49nsgYo1DuuMquF9+7EDBVYu4uA==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.55.1':
     resolution: {integrity: sha512-r3Wv40in+lTsULSb6nnoudVbARdOwb2u5fpeoOAZjFLznp6tDU8kd+GTHmJoqZ9lt6/Sys33KdIHUaQihFcu7g==}
     cpu: [loong64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-musl@4.55.1':
     resolution: {integrity: sha512-MR8c0+UxAlB22Fq4R+aQSPBayvYa3+9DrwG/i1TKQXFYEaoW3B5b/rkSRIypcZDdWjWnpcvxbNaAJDcSbJU3Lw==}
     cpu: [loong64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-gnu@4.55.1':
     resolution: {integrity: sha512-3KhoECe1BRlSYpMTeVrD4sh2Pw2xgt4jzNSZIIPLFEsnQn9gAnZagW9+VqDqAHgm1Xc77LzJOo2LdigS5qZ+gw==}
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-musl@4.55.1':
     resolution: {integrity: sha512-ziR1OuZx0vdYZZ30vueNZTg73alF59DicYrPViG0NEgDVN8/Jl87zkAPu4u6VjZST2llgEUjaiNl9JM6HH1Vdw==}
     cpu: [ppc64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-gnu@4.55.1':
     resolution: {integrity: sha512-uW0Y12ih2XJRERZ4jAfKamTyIHVMPQnTZcQjme2HMVDAHY4amf5u414OqNYC+x+LzRdRcnIG1YodLrrtA8xsxw==}
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.55.1':
     resolution: {integrity: sha512-u9yZ0jUkOED1BFrqu3BwMQoixvGHGZ+JhJNkNKY/hyoEgOwlqKb62qu+7UjbPSHYjiVy8kKJHvXKv5coH4wDeg==}
     cpu: [riscv64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.55.1':
     resolution: {integrity: sha512-/0PenBCmqM4ZUd0190j7J0UsQ/1nsi735iPRakO8iPciE7BQ495Y6msPzaOmvx0/pn+eJVVlZrNrSh4WSYLxNg==}
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.55.1':
     resolution: {integrity: sha512-a8G4wiQxQG2BAvo+gU6XrReRRqj+pLS2NGXKm8io19goR+K8lw269eTrPkSdDTALwMmJp4th2Uh0D8J9bEV1vg==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.55.1':
     resolution: {integrity: sha512-bD+zjpFrMpP/hqkfEcnjXWHMw5BIghGisOKPj+2NaNDuVT+8Ds4mPf3XcPHuat1tz89WRL+1wbcxKY3WSbiT7w==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-openbsd-x64@4.55.1':
     resolution: {integrity: sha512-eLXw0dOiqE4QmvikfQ6yjgkg/xDM+MdU9YJuP4ySTibXU0oAvnEWXt7UDJmD4UkYialMfOGFPJnIHSe/kdzPxg==}
@@ -3139,32 +3088,28 @@ snapshots:
       '@envio-dev/hyperfuel-client-linux-x64-musl': 1.2.2
       '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.2.2
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.7.0':
+  '@envio-dev/hypersync-client-darwin-arm64@1.1.0':
     optional: true
 
-  '@envio-dev/hypersync-client-darwin-x64@0.7.0':
+  '@envio-dev/hypersync-client-darwin-x64@1.1.0':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0':
+  '@envio-dev/hypersync-client-linux-arm64-gnu@1.1.0':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
+  '@envio-dev/hypersync-client-linux-x64-gnu@1.1.0':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
+  '@envio-dev/hypersync-client-linux-x64-musl@1.1.0':
     optional: true
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
-    optional: true
-
-  '@envio-dev/hypersync-client@0.7.0':
+  '@envio-dev/hypersync-client@1.1.0':
     optionalDependencies:
-      '@envio-dev/hypersync-client-darwin-arm64': 0.7.0
-      '@envio-dev/hypersync-client-darwin-x64': 0.7.0
-      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.7.0
-      '@envio-dev/hypersync-client-linux-x64-gnu': 0.7.0
-      '@envio-dev/hypersync-client-linux-x64-musl': 0.7.0
-      '@envio-dev/hypersync-client-win32-x64-msvc': 0.7.0
+      '@envio-dev/hypersync-client-darwin-arm64': 1.1.0
+      '@envio-dev/hypersync-client-darwin-x64': 1.1.0
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 1.1.0
+      '@envio-dev/hypersync-client-linux-x64-gnu': 1.1.0
+      '@envio-dev/hypersync-client-linux-x64-musl': 1.1.0
 
   '@esbuild/aix-ppc64@0.27.2':
     optional: true
