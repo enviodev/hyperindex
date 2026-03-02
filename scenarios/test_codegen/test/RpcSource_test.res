@@ -592,6 +592,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
 describe("RpcSource - getEventBlockOrThrow", () => {
   let neverGetBlockJson = _ => Js.Exn.raiseError("getBlockJson should not be called")
+  // Internal.eventBlock is opaque, cast to Js.Json.t for test assertions
+  let toJson = (block: Internal.eventBlock) =>
+    block->(Utils.magic: Internal.eventBlock => Js.Json.t)
 
   it("Panics with invalid schema", t => {
     t.expect(
@@ -612,7 +615,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         ~lowercaseAddresses=false,
       )
       t.expect(
-        await mockLog()->getEventBlockOrThrow(~blockSchema=S.object(_ => ())),
+        (await mockLog()->getEventBlockOrThrow(~blockSchema=S.object(_ => ())))->toJson,
       ).toEqual(
         %raw(`{}`),
       )
@@ -628,18 +631,16 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     t.expect(
-      await mockLog()->getEventBlockOrThrow(
+      (await mockLog()->getEventBlockOrThrow(
         ~blockSchema=S.schema(
           s =>
             {
               "number": s.matches(S.int),
             },
         ),
-      ),
+      ))->toJson,
     ).toEqual(
-      {
-        "number": 123456,
-      },
+      %raw(`{"number": 123456}`),
     )
   })
 
@@ -652,7 +653,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     t.expect(
-      await mockLog()->getEventBlockOrThrow(
+      (await mockLog()->getEventBlockOrThrow(
         ~blockSchema=S.schema(
           s =>
             {
@@ -661,13 +662,9 @@ describe("RpcSource - getEventBlockOrThrow", () => {
               "hash": s.matches(S.string),
             },
         ),
-      ),
+      ))->toJson,
     ).toEqual(
-      {
-        "number": 123456,
-        "timestamp": 100000000,
-        "hash": "0xabcdef",
-      },
+      %raw(`{"number": 123456, "timestamp": 100000000, "hash": "0xabcdef"}`),
     )
   })
 
@@ -688,7 +685,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     t.expect(
-      await mockLog()->getEventBlockOrThrow(
+      (await mockLog()->getEventBlockOrThrow(
         ~blockSchema=S.schema(
           s =>
             {
@@ -696,46 +693,11 @@ describe("RpcSource - getEventBlockOrThrow", () => {
               "gasLimit": s.matches(BigInt.nativeSchema),
             },
         ),
-      ),
+      ))->toJson,
     ).toEqual(
-      {
-        "gasUsed": 21000n,
-        "gasLimit": 30000000n,
-      },
+      %raw(`{"gasUsed": 21000n, "gasLimit": 30000000n}`),
     )
   })
-
-  Async.it(
-    "Doesn't fetch block when only infrastructure fields are selected",
-    async t => {
-      // number, timestamp, hash are infrastructure fields parsed from raw JSON
-      // When only these are selected, getBlockJson is still called because
-      // we always need the raw JSON for these fields
-      let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
-        ~getBlockJson=_ =>
-          Promise.resolve(
-            %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabcdef"}`),
-          ),
-        ~lowercaseAddresses=false,
-      )
-      t.expect(
-        await mockLog()->getEventBlockOrThrow(
-          ~blockSchema=S.schema(
-            s =>
-              {
-                "number": s.matches(S.int),
-                "hash": s.matches(S.string),
-              },
-          ),
-        ),
-      ).toEqual(
-        {
-          "number": 123456,
-          "hash": "0xabcdef",
-        },
-      )
-    },
-  )
 
   Async.it("Parses miner address with lowercaseAddresses=true", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
@@ -750,19 +712,16 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         ),
       ~lowercaseAddresses=true,
     )
-    t.expect(
-      await mockLog()->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "miner": s.matches(Address.schema),
-            },
-        ),
+    let result = await mockLog()->getEventBlockOrThrow(
+      ~blockSchema=S.schema(
+        s =>
+          {
+            "miner": s.matches(Address.schema),
+          },
       ),
-    ).toEqual(
-      {
-        "miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"->Address.unsafeFromString,
-      },
+    )
+    t.expect(result->toJson).toEqual(
+      %raw(`{"miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"}`),
     )
   })
 
@@ -779,19 +738,16 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         ),
       ~lowercaseAddresses=false,
     )
-    t.expect(
-      await mockLog()->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "miner": s.matches(Address.schema),
-            },
-        ),
+    let result = await mockLog()->getEventBlockOrThrow(
+      ~blockSchema=S.schema(
+        s =>
+          {
+            "miner": s.matches(Address.schema),
+          },
       ),
-    ).toEqual(
-      {
-        "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
-      },
+    )
+    t.expect(result->toJson).toEqual(
+      %raw(`{"miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"}`),
     )
   })
 
@@ -812,16 +768,16 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     t.expect(
-      await mockLog()->getEventBlockOrThrow(
+      (await mockLog()->getEventBlockOrThrow(
         ~blockSchema=S.schema(
           s =>
             {
               "gasUsed": s.matches(BigInt.nativeSchema),
             },
         ),
-      ),
+      ))->toJson,
     ).toEqual(
-      {"gasUsed": 21000n},
+      %raw(`{"gasUsed": 21000n}`),
     )
   })
 
@@ -872,7 +828,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         ),
       ~lowercaseAddresses=false,
     )
-    let result = await mockLog()->getEventBlockOrThrow(
+    let result = (await mockLog()->getEventBlockOrThrow(
       ~blockSchema=S.schema(
         s =>
           {
@@ -880,16 +836,9 @@ describe("RpcSource - getEventBlockOrThrow", () => {
             "difficulty": s.matches(S.nullable(BigInt.nativeSchema)),
           },
       ),
-    )
-    t.expect(
-      result["baseFeePerGas"],
-    ).toEqual(
-      Js.Nullable.return(1000000000n),
-    )
-    t.expect(
-      result["difficulty"],
-    ).toEqual(
-      Js.Nullable.return(17179869184n),
+    ))->toJson
+    t.expect(result).toEqual(
+      %raw(`{"baseFeePerGas": 1000000000n, "difficulty": 17179869184n}`),
     )
   })
 
@@ -913,7 +862,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     }
 
     t.expect(
-      await log->getEventBlockOrThrow(
+      (await log->getEventBlockOrThrow(
         ~blockSchema=S.schema(
           s =>
             {
@@ -926,17 +875,17 @@ describe("RpcSource - getEventBlockOrThrow", () => {
               "parentHash": s.matches(S.string),
             },
         ),
-      ),
+      ))->toJson,
     ).toEqual(
-      {
+      %raw(`{
         "number": 21758655,
         "timestamp": 1739276123,
         "hash": "0xbcdecbe3c3fe4db57b6c5ef1e2aeb4283c1f5b8a2dc5c7cd5ee3bfdd9c8159cc",
         "gasUsed": 10927953n,
         "gasLimit": 36000000n,
-        "baseFeePerGas": Js.Nullable.return(3614783944n),
-        "parentHash": "0x60cce08a34e9e12b40bb5a8fd39fbc0a78cd8e55f5e2efdb50e0b42e3aad6acc",
-      },
+        "baseFeePerGas": 3614783944n,
+        "parentHash": "0x60cce08a34e9e12b40bb5a8fd39fbc0a78cd8e55f5e2efdb50e0b42e3aad6acc"
+      }`),
     )
   })
 })
