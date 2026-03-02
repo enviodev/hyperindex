@@ -408,10 +408,11 @@ type blockFieldDef = {
 }
 
 // Block field registry: maps field location (= JS property name) to parsing info.
-// Only includes fields that require parsing from raw JSON.
-// Infrastructure fields (number, timestamp, hash) are special-cased.
 let makeBlockFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<blockFieldDef> =>
   [
+    {location: "number", jsonKey: "number", schema: Rpc.hexIntSchema->toFieldSchema},
+    {location: "timestamp", jsonKey: "timestamp", schema: Rpc.hexIntSchema->toFieldSchema},
+    {location: "hash", jsonKey: "hash", schema: S.string->toFieldSchema},
     {location: "parentHash", jsonKey: "parentHash", schema: S.string->toFieldSchema},
     {location: "nonce", jsonKey: "nonce", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
     {location: "sha3Uncles", jsonKey: "sha3Uncles", schema: S.string->toFieldSchema},
@@ -483,22 +484,11 @@ let makeThrowingGetEventBlock = (
           | _ => Js.Exn.raiseError("Unexpected internal error: blockSchema is not an object")
           }
 
-          // Classify fields: infrastructure (number/timestamp/hash) vs RPC-parsed fields
-          let hasNumber = ref(false)
-          let hasTimestamp = ref(false)
-          let hasHash = ref(false)
-          let rpcFields: array<blockFieldDef> = []
-
+          let fields: array<blockFieldDef> = []
           blockFieldItems->Array.forEach(item => {
-            switch item.location {
-            | "number" => hasNumber := true
-            | "timestamp" => hasTimestamp := true
-            | "hash" => hasHash := true
-            | _ =>
-              switch blockFieldRegistry->Js.Dict.get(item.location) {
-              | Some(def) => rpcFields->Js.Array2.push(def)->ignore
-              | None => () // Unknown field — skip silently
-              }
+            switch blockFieldRegistry->Js.Dict.get(item.location) {
+            | Some(def) => fields->Js.Array2.push(def)->ignore
+            | None => () // Unknown field — skip silently
             }
           })
 
@@ -508,40 +498,7 @@ let makeThrowingGetEventBlock = (
             (log: Rpc.GetLogs.log) => {
               getBlockJson(log.blockNumber)->Promise.thenResolve(json => {
                 let mutBlockAcc = Js.Dict.empty()
-
-                // Set infrastructure fields from raw JSON
-                let jsonDict = json->(Utils.magic: Js.Json.t => Js.Dict.t<Js.Json.t>)
-                if hasNumber.contents {
-                  mutBlockAcc->Js.Dict.set(
-                    "number",
-                    jsonDict
-                    ->Js.Dict.unsafeGet("number")
-                    ->S.parseOrThrow(Rpc.hexIntSchema)
-                    ->(Utils.magic: int => Js.Json.t),
-                  )
-                }
-                if hasTimestamp.contents {
-                  mutBlockAcc->Js.Dict.set(
-                    "timestamp",
-                    jsonDict
-                    ->Js.Dict.unsafeGet("timestamp")
-                    ->S.parseOrThrow(Rpc.hexIntSchema)
-                    ->(Utils.magic: int => Js.Json.t),
-                  )
-                }
-                if hasHash.contents {
-                  mutBlockAcc->Js.Dict.set(
-                    "hash",
-                    jsonDict
-                    ->Js.Dict.unsafeGet("hash")
-                    ->S.parseOrThrow(S.string)
-                    ->(Utils.magic: string => Js.Json.t),
-                  )
-                }
-
-                // Parse selected block fields from raw JSON
-                parseBlockFieldsFromJson(mutBlockAcc, rpcFields, json)
-
+                parseBlockFieldsFromJson(mutBlockAcc, fields, json)
                 mutBlockAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
               })
             }
