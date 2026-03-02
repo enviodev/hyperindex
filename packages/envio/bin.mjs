@@ -12,7 +12,7 @@ function runLocalEnvio() {
   const args = process.argv.slice(2);
 
   const caller = process.argv[1];
-  if (!caller.endsWith("/node_modules/envio/local-bin.mjs")) {
+  if (!caller.endsWith("/node_modules/envio/bin.mjs")) {
     throw new Error(
       `Unexpected call to local envio package. Either use cargo or use the local package via npm scripts. Caller: ${caller}`
     );

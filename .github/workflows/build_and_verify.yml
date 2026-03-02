@@ -141,7 +141,7 @@ jobs:
 
       # Replace packages/envio with the pre-built artifact after install
       # so the lockfile stays valid. The bin symlink pnpm created still
-      # points to packages/envio/bin.js which now has the built version.
+      # points to packages/envio/bin.mjs which now has the built version.
       - name: Download pre-built envio package
         run: rm -rf packages/envio
       - uses: actions/download-artifact@v4
