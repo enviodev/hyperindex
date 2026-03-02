@@ -49,12 +49,17 @@ function resolveEnvio(): { command: string; args: string[] } {
     }
   }
 
-  // Fall back to running bin.mjs directly via node (CI overlays the built
-  // package before tests). Using node + absolute path avoids pnpm exec
-  // which fails outside the workspace (e.g. template tests in /tmp/).
-  const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
-  if (fs.existsSync(binMjs)) {
-    return { command: "node", args: [binMjs] };
+  // Fall back to the platform-specific binary (CI downloads it into
+  // node_modules/envio-<platform>-<arch>/bin/envio). Using the binary
+  // directly avoids both pnpm exec (fails outside workspace) and
+  // node bin.mjs (createRequire can't find the platform package).
+  const platform = process.platform === "win32" ? "windows" : process.platform;
+  const platformBin = path.join(
+    rootDir,
+    `node_modules/envio-${platform}-${process.arch}/bin/envio`
+  );
+  if (fs.existsSync(platformBin)) {
+    return { command: platformBin, args: [] };
   }
 
   throw new Error(
