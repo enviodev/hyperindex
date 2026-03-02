@@ -590,6 +590,306 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   })
 })
 
+describe("RpcSource - getEventBlockOrThrow", () => {
+  let neverGetBlockJson = _ => Js.Exn.raiseError("getBlockJson should not be called")
+  // Internal.eventBlock is opaque, cast to Js.Json.t for test assertions
+  let toJson = (block: Internal.eventBlock) =>
+    block->(Utils.magic: Internal.eventBlock => Js.Json.t)
+
+  it("Panics with invalid schema", t => {
+    t.expect(
+      () => {
+        RpcSource.makeThrowingGetEventBlock(
+          ~getBlockJson=neverGetBlockJson,
+          ~lowercaseAddresses=false,
+        )(mockLog(), ~blockSchema=S.string)
+      },
+    ).toThrowError("Unexpected internal error: blockSchema is not an object")
+  })
+
+  Async.it(
+    "Returns empty object when empty field selection. Doesn't make a block request",
+    async t => {
+      let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+        ~getBlockJson=neverGetBlockJson,
+        ~lowercaseAddresses=false,
+      )
+      t.expect(
+        (await mockLog()->getEventBlockOrThrow(~blockSchema=S.object(_ => ())))->toJson,
+      ).toEqual(
+        %raw(`{}`),
+      )
+    },
+  )
+
+  Async.it("Works with a single number field", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabc"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "number": s.matches(S.int),
+            },
+        ),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"number": 123456}`),
+    )
+  })
+
+  Async.it("Works with number, timestamp, and hash fields", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabcdef"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "number": s.matches(S.int),
+              "timestamp": s.matches(S.int),
+              "hash": s.matches(S.string),
+            },
+        ),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"number": 123456, "timestamp": 100000000, "hash": "0xabcdef"}`),
+    )
+  })
+
+  Async.it("Parses selected block fields from raw JSON", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1e240",
+            "timestamp": "0x5f5e100",
+            "hash": "0xabcdef",
+            "gasUsed": "0x5208",
+            "gasLimit": "0x1c9c380",
+            "parentHash": "0xparent",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "gasUsed": s.matches(BigInt.nativeSchema),
+              "gasLimit": s.matches(BigInt.nativeSchema),
+            },
+        ),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"gasUsed": 21000n, "gasLimit": 30000000n}`),
+    )
+  })
+
+  Async.it("Parses miner address with lowercaseAddresses=true", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=true,
+    )
+    let result = await mockLog()->getEventBlockOrThrow(
+      ~blockSchema=S.schema(
+        s =>
+          {
+            "miner": s.matches(Address.schema),
+          },
+      ),
+    )
+    t.expect(result->toJson).toEqual(
+      %raw(`{"miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"}`),
+    )
+  })
+
+  Async.it("Parses miner address with lowercaseAddresses=false (checksum)", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    let result = await mockLog()->getEventBlockOrThrow(
+      ~blockSchema=S.schema(
+        s =>
+          {
+            "miner": s.matches(Address.schema),
+          },
+      ),
+    )
+    t.expect(result->toJson).toEqual(
+      %raw(`{"miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"}`),
+    )
+  })
+
+  Async.it("Unknown extra fields in JSON don't cause failures", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1e240",
+            "timestamp": "0x5f5e100",
+            "hash": "0xabcdef",
+            "gasUsed": "0x5208",
+            "unknownField": "some value",
+            "anotherUnknown": 42,
+            "transactions": ["0x123"]
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "gasUsed": s.matches(BigInt.nativeSchema),
+            },
+        ),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"gasUsed": 21000n}`),
+    )
+  })
+
+  Async.it("Error with a value not matching the field schema", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "gasUsed": "not-a-hex-value"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    try {
+      let _ = await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "gasUsed": s.matches(BigInt.nativeSchema),
+            },
+        ),
+      )
+      Js.Exn.raiseError("Should have thrown")
+    } catch {
+    | Js.Exn.Error(e) =>
+      t.expect(
+        e->Js.Exn.message->Belt.Option.getExn,
+      ).toBe(
+        `Invalid block field "gasUsed" found in the RPC response. Error: The string is not valid hex`,
+      )
+    }
+  })
+
+  Async.it("Parses optional fields correctly (nullable with value)", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "baseFeePerGas": "0x3b9aca00",
+            "difficulty": "0x400000000"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    let result = (await mockLog()->getEventBlockOrThrow(
+      ~blockSchema=S.schema(
+        s =>
+          {
+            "baseFeePerGas": s.matches(S.nullable(BigInt.nativeSchema)),
+            "difficulty": s.matches(S.nullable(BigInt.nativeSchema)),
+          },
+      ),
+    ))->toJson
+    t.expect(result).toEqual(
+      %raw(`{"baseFeePerGas": 1000000000n, "difficulty": 17179869184n}`),
+    )
+  })
+
+  Async.it("Queries block fields from raw JSON (with real RPC)", async t => {
+    let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
+    let client = Rpc.makeClient(rpcUrl)
+
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=async blockNumber =>
+        switch await Rpc.getRawBlock(~client, ~blockNumber) {
+        | Some(json) => json
+        | None => Js.Exn.raiseError(`Block not found for number: ${blockNumber->Belt.Int.toString}`)
+        },
+      ~lowercaseAddresses=false,
+    )
+
+    // Block 21758655 on Ethereum mainnet
+    let log = {
+      ...mockLog(),
+      blockNumber: 21758655,
+    }
+
+    t.expect(
+      (await log->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "number": s.matches(S.int),
+              "timestamp": s.matches(S.int),
+              "hash": s.matches(S.string),
+              "gasUsed": s.matches(BigInt.nativeSchema),
+              "gasLimit": s.matches(BigInt.nativeSchema),
+              "baseFeePerGas": s.matches(S.nullable(BigInt.nativeSchema)),
+              "parentHash": s.matches(S.string),
+            },
+        ),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{
+        "number": 21758655,
+        "timestamp": 1738497227,
+        "hash": "0x806a18dd9f7bb88e35e08658783c556974ea46a222f1f85a0bccb1da31bbde5f",
+        "gasUsed": 23618146n,
+        "gasLimit": 30352977n,
+        "baseFeePerGas": 3237306347n,
+        "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949"
+      }`),
+    )
+  })
+})
+
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
