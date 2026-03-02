@@ -879,12 +879,12 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     ).toEqual(
       %raw(`{
         "number": 21758655,
-        "timestamp": 1739276123,
-        "hash": "0xbcdecbe3c3fe4db57b6c5ef1e2aeb4283c1f5b8a2dc5c7cd5ee3bfdd9c8159cc",
-        "gasUsed": 10927953n,
-        "gasLimit": 36000000n,
-        "baseFeePerGas": 3614783944n,
-        "parentHash": "0x60cce08a34e9e12b40bb5a8fd39fbc0a78cd8e55f5e2efdb50e0b42e3aad6acc"
+        "timestamp": 1738497227,
+        "hash": "0x806a18dd9f7bb88e35e08658783c556974ea46a222f1f85a0bccb1da31bbde5f",
+        "gasUsed": 23618146n,
+        "gasLimit": 30352977n,
+        "baseFeePerGas": 3237306347n,
+        "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949"
       }`),
     )
   })
