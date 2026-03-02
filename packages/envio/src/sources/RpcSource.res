@@ -3,27 +3,49 @@ open Source
 
 exception QueryTimout(string)
 
-let getKnownBlock = async (~client, ~blockNumber) =>
-  switch await Rpc.getBlock(~client, ~blockNumber) {
-  | Some(block) => block
+// Minimal block data needed for infrastructure (reorg guard, timestamps, etc.)
+type blockInfo = {
+  number: int,
+  timestamp: int,
+  hash: string,
+}
+
+let getKnownRawBlock = async (~client, ~blockNumber) =>
+  switch await Rpc.getRawBlock(~client, ~blockNumber) {
+  | Some(json) => json
   | None =>
     Js.Exn.raiseError(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`)
   }
 
-let getKnownBlockWithBackoff = async (
+// Extract infrastructure fields (number, timestamp, hash) from raw block JSON
+let parseBlockInfo = (json: Js.Json.t): blockInfo => {
+  let jsonDict = json->(Utils.magic: Js.Json.t => Js.Dict.t<Js.Json.t>)
+  {
+    number: jsonDict
+    ->Js.Dict.unsafeGet("number")
+    ->S.parseOrThrow(Rpc.hexIntSchema),
+    timestamp: jsonDict
+    ->Js.Dict.unsafeGet("timestamp")
+    ->S.parseOrThrow(Rpc.hexIntSchema),
+    hash: jsonDict
+    ->Js.Dict.unsafeGet("hash")
+    ->S.parseOrThrow(S.string),
+  }
+}
+
+let getKnownRawBlockWithBackoff = async (
   ~client,
   ~sourceName,
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
-  ~lowercaseAddresses: bool,
 ) => {
   let currentBackoff = ref(backoffMsOnFailure)
   let result = ref(None)
 
   while result.contents->Option.isNone {
     Prometheus.SourceRequestCount.increment(~sourceName, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_getBlockByNumber")
-    switch await getKnownBlock(~client, ~blockNumber) {
+    switch await getKnownRawBlock(~client, ~blockNumber) {
     | exception err =>
       Logging.warn({
         "err": err->Utils.prettifyExn,
@@ -34,13 +56,7 @@ let getKnownBlockWithBackoff = async (
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
       currentBackoff := currentBackoff.contents * 2
-    | block =>
-      block.miner = if lowercaseAddresses {
-        block.miner->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        block.miner->Address.Evm.fromAddressOrThrow
-      }
-      result := Some(block)
+    | json => result := Some(json)
     }
   }
   result.contents->Option.getExn
@@ -197,7 +213,7 @@ let getSuggestedBlockIntervalFromExn = {
 
 type eventBatchQuery = {
   logs: array<Rpc.GetLogs.log>,
-  latestFetchedBlock: Rpc.GetBlockByNumber.block,
+  latestFetchedBlockInfo: blockInfo,
 }
 
 let maxSuggestedBlockIntervalKey = "max"
@@ -240,7 +256,7 @@ let getNextPage = (
     ->Promise.then(async logs => {
       {
         logs,
-        latestFetchedBlock: await latestFetchedBlockPromise,
+        latestFetchedBlockInfo: await latestFetchedBlockPromise,
       }
     })
 
@@ -367,22 +383,6 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
 let memoGetSelectionConfig = (~chain) =>
   Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
 
-let makeThrowingGetEventBlock = (~getBlock) => {
-  async (log: Rpc.GetLogs.log) => {
-    await getBlock(log.blockNumber)
-  }
-}
-
-// Field source classification for RPC calls
-type fieldSource = TransactionOnly | ReceiptOnly | Both
-
-type fieldDef = {
-  location: string,
-  jsonKey: string,
-  schema: S.t<Js.Json.t>, // Type-erased schema (S.nullable for optional fields)
-  source: fieldSource,
-}
-
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<Js.Json.t> = "%identity"
 
@@ -399,6 +399,170 @@ let checksumAddressSchema: S.t<Js.Json.t> =
     parser: str => str->Address.Evm.fromStringOrThrow,
   })
   ->toFieldSchema
+
+// Block field definition for per-field parsing
+type blockFieldDef = {
+  location: string,
+  jsonKey: string,
+  schema: S.t<Js.Json.t>, // Type-erased schema
+}
+
+// Block field registry: maps field location (= JS property name) to parsing info.
+// Only includes fields that require parsing from raw JSON.
+// Infrastructure fields (number, timestamp, hash) are special-cased.
+let makeBlockFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<blockFieldDef> =>
+  [
+    {location: "parentHash", jsonKey: "parentHash", schema: S.string->toFieldSchema},
+    {location: "nonce", jsonKey: "nonce", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: "sha3Uncles", jsonKey: "sha3Uncles", schema: S.string->toFieldSchema},
+    {location: "logsBloom", jsonKey: "logsBloom", schema: S.string->toFieldSchema},
+    {location: "transactionsRoot", jsonKey: "transactionsRoot", schema: S.string->toFieldSchema},
+    {location: "stateRoot", jsonKey: "stateRoot", schema: S.string->toFieldSchema},
+    {location: "receiptsRoot", jsonKey: "receiptsRoot", schema: S.string->toFieldSchema},
+    {location: "miner", jsonKey: "miner", schema: addressSchema},
+    {location: "difficulty", jsonKey: "difficulty", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: "totalDifficulty", jsonKey: "totalDifficulty", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: "extraData", jsonKey: "extraData", schema: S.string->toFieldSchema},
+    {location: "size", jsonKey: "size", schema: Rpc.hexBigintSchema->toFieldSchema},
+    {location: "gasLimit", jsonKey: "gasLimit", schema: Rpc.hexBigintSchema->toFieldSchema},
+    {location: "gasUsed", jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema},
+    {location: "uncles", jsonKey: "uncles", schema: S.nullable(S.array(S.string))->toFieldSchema},
+    {location: "baseFeePerGas", jsonKey: "baseFeePerGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: "blobGasUsed", jsonKey: "blobGasUsed", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: "excessBlobGas", jsonKey: "excessBlobGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: "parentBeaconBlockRoot", jsonKey: "parentBeaconBlockRoot", schema: S.nullable(S.string)->toFieldSchema},
+    {location: "withdrawalsRoot", jsonKey: "withdrawalsRoot", schema: S.nullable(S.string)->toFieldSchema},
+    {location: "l1BlockNumber", jsonKey: "l1BlockNumber", schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema},
+    {location: "sendCount", jsonKey: "sendCount", schema: S.nullable(S.string)->toFieldSchema},
+    {location: "sendRoot", jsonKey: "sendRoot", schema: S.nullable(S.string)->toFieldSchema},
+    {location: "mixHash", jsonKey: "mixHash", schema: S.nullable(S.string)->toFieldSchema},
+  ]->Array.map(def => (def.location, def))->Js.Dict.fromArray
+
+let blockFieldRegistryLowercase = makeBlockFieldRegistry(lowercaseAddressSchema)
+let blockFieldRegistryChecksum = makeBlockFieldRegistry(checksumAddressSchema)
+
+// Parse block fields from raw JSON, similar to parseFieldsFromJson for transactions
+let parseBlockFieldsFromJson = (
+  mutBlockAcc: Js.Dict.t<Js.Json.t>,
+  fields: array<blockFieldDef>,
+  json: Js.Json.t,
+) => {
+  let jsonDict = json->(Utils.magic: Js.Json.t => Js.Dict.t<Js.Json.t>)
+  fields->Array.forEach(def => {
+    let raw = jsonDict->Js.Dict.unsafeGet(def.jsonKey)
+    try {
+      let parsed = raw->S.parseOrThrow(def.schema)
+      mutBlockAcc->Js.Dict.set(def.location, parsed)
+    } catch {
+    | S.Raised(error) =>
+      Js.Exn.raiseError(
+        `Invalid block field "${def.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
+      )
+    }
+  })
+}
+
+let makeThrowingGetEventBlock = (
+  ~getBlockJson: int => promise<Js.Json.t>,
+  ~lowercaseAddresses: bool,
+) => {
+  let blockFieldRegistry = if lowercaseAddresses {
+    blockFieldRegistryLowercase
+  } else {
+    blockFieldRegistryChecksum
+  }
+  let fnsCache = Utils.WeakMap.make()
+  (log: Rpc.GetLogs.log, ~blockSchema) => {
+    (
+      switch fnsCache->Utils.WeakMap.get(blockSchema) {
+      | Some(fn) => fn
+      // Build per-field parser on first call, then cache in WeakMap
+      | None => {
+          let blockFieldItems = switch blockSchema->S.classify {
+          | Object({items}) => items
+          | _ => Js.Exn.raiseError("Unexpected internal error: blockSchema is not an object")
+          }
+
+          // Classify fields: infrastructure (number/timestamp/hash) vs RPC-parsed fields
+          let hasNumber = ref(false)
+          let hasTimestamp = ref(false)
+          let hasHash = ref(false)
+          let rpcFields: array<blockFieldDef> = []
+
+          blockFieldItems->Array.forEach(item => {
+            switch item.location {
+            | "number" => hasNumber := true
+            | "timestamp" => hasTimestamp := true
+            | "hash" => hasHash := true
+            | _ =>
+              switch blockFieldRegistry->Js.Dict.get(item.location) {
+              | Some(def) => rpcFields->Js.Array2.push(def)->ignore
+              | None => () // Unknown field — skip silently
+              }
+            }
+          })
+
+          let fn = switch blockFieldItems {
+          | [] => _ => %raw(`{}`)->Promise.resolve
+          | _ =>
+            (log: Rpc.GetLogs.log) => {
+              getBlockJson(log.blockNumber)->Promise.thenResolve(json => {
+                let mutBlockAcc = Js.Dict.empty()
+
+                // Set infrastructure fields from raw JSON
+                let jsonDict = json->(Utils.magic: Js.Json.t => Js.Dict.t<Js.Json.t>)
+                if hasNumber.contents {
+                  mutBlockAcc->Js.Dict.set(
+                    "number",
+                    jsonDict
+                    ->Js.Dict.unsafeGet("number")
+                    ->S.parseOrThrow(Rpc.hexIntSchema)
+                    ->(Utils.magic: int => Js.Json.t),
+                  )
+                }
+                if hasTimestamp.contents {
+                  mutBlockAcc->Js.Dict.set(
+                    "timestamp",
+                    jsonDict
+                    ->Js.Dict.unsafeGet("timestamp")
+                    ->S.parseOrThrow(Rpc.hexIntSchema)
+                    ->(Utils.magic: int => Js.Json.t),
+                  )
+                }
+                if hasHash.contents {
+                  mutBlockAcc->Js.Dict.set(
+                    "hash",
+                    jsonDict
+                    ->Js.Dict.unsafeGet("hash")
+                    ->S.parseOrThrow(S.string)
+                    ->(Utils.magic: string => Js.Json.t),
+                  )
+                }
+
+                // Parse selected block fields from raw JSON
+                parseBlockFieldsFromJson(mutBlockAcc, rpcFields, json)
+
+                mutBlockAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
+              })
+            }
+          }
+          let _ = fnsCache->Utils.WeakMap.set(blockSchema, fn)
+          fn
+        }
+      }
+    )(log)
+  }
+}
+
+// Field source classification for RPC calls
+type fieldSource = TransactionOnly | ReceiptOnly | Both
+
+type fieldDef = {
+  location: string,
+  jsonKey: string,
+  schema: S.t<Js.Json.t>, // Type-erased schema (S.nullable for optional fields)
+  source: fieldSource,
+}
 
 // Field registry: maps field location (= JS property name) to parsing info.
 // Only includes fields that require an RPC call. Log-derived fields (hash, transactionIndex) are special-cased.
@@ -649,13 +813,12 @@ let make = (
   let makeBlockLoader = () =>
     LazyLoader.make(
       ~loaderFn=blockNumber => {
-        getKnownBlockWithBackoff(
+        getKnownRawBlockWithBackoff(
           ~client,
           ~sourceName=name,
           ~chain,
           ~backoffMsOnFailure=1000,
           ~blockNumber,
-          ~lowercaseAddresses,
         )
       },
       ~onError=(am, ~exn) => {
@@ -702,8 +865,9 @@ let make = (
   let transactionLoader = ref(makeTransactionLoader())
   let receiptLoader = ref(makeReceiptLoader())
 
-  let getEventBlockOrThrow = makeThrowingGetEventBlock(~getBlock=blockNumber =>
-    blockLoader.contents->LazyLoader.get(blockNumber)
+  let getEventBlockOrThrow = makeThrowingGetEventBlock(
+    ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
+    ~lowercaseAddresses,
   )
   let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
     ~getTransactionJson=async transactionHash => {
@@ -782,18 +946,23 @@ let make = (
 
     let firstBlockParentPromise =
       fromBlock > 0
-        ? blockLoader.contents->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
+        ? blockLoader.contents
+          ->LazyLoader.get(fromBlock - 1)
+          ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
 
-    let {logs, latestFetchedBlock} = await getNextPage(
+    let {logs, latestFetchedBlockInfo} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
       ~addresses,
       ~topicQuery,
-      ~loadBlock=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
+      ~loadBlock=blockNumber =>
+        blockLoader.contents
+        ->LazyLoader.get(blockNumber)
+        ->Promise.thenResolve(parseBlockInfo),
       ~syncConfig,
       ~client,
       ~mutSuggestedBlockIntervals,
@@ -871,8 +1040,11 @@ let make = (
             Some(
               (
                 async () => {
+                  let blockJson = blockLoader.contents->LazyLoader.get(log.blockNumber)
                   let (block, transaction) = try await Promise.all2((
-                    log->getEventBlockOrThrow,
+                    log->getEventBlockOrThrow(
+                      ~blockSchema=eventConfig.blockSchema,
+                    ),
                     log->getEventTransactionOrThrow(
                       ~transactionSchema=eventConfig.transactionSchema,
                     ),
@@ -890,19 +1062,19 @@ let make = (
                     )
                   }
 
+                  let blockInfo = parseBlockInfo(await blockJson)
+
                   Internal.Event({
                     eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: block.timestamp,
-                    blockNumber: block.number,
+                    timestamp: blockInfo.timestamp,
+                    blockNumber: blockInfo.number,
                     chain,
                     logIndex: log.logIndex,
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
                       transaction,
-                      block: block->(
-                        Utils.magic: Rpc.GetBlockByNumber.block => Internal.eventBlock
-                      ),
+                      block: block->(Utils.magic: 'a => Internal.eventBlock),
                       srcAddress: routedAddress,
                       logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,
@@ -929,14 +1101,14 @@ let make = (
         blockHash: b.hash,
       }),
       rangeLastBlock: {
-        blockNumber: latestFetchedBlock.number,
-        blockHash: latestFetchedBlock.hash,
+        blockNumber: latestFetchedBlockInfo.number,
+        blockHash: latestFetchedBlockInfo.hash,
       },
     }
 
     {
-      latestFetchedBlockTimestamp: latestFetchedBlock.timestamp,
-      latestFetchedBlockNumber: latestFetchedBlock.number,
+      latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
+      latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
@@ -958,12 +1130,17 @@ let make = (
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
-    ->Promise.thenResolve(blocks => {
-      blocks
-      ->Array.map((b): ReorgDetection.blockDataWithTimestamp => {
-        blockNumber: b.number,
-        blockHash: b.hash,
-        blockTimestamp: b.timestamp,
+    ->Promise.thenResolve(rawBlocks => {
+      rawBlocks
+      ->Array.map(json => {
+        let b = parseBlockInfo(json)
+        (
+          {
+            blockNumber: b.number,
+            blockHash: b.hash,
+            blockTimestamp: b.timestamp,
+          }: ReorgDetection.blockDataWithTimestamp
+        )
       })
       ->Ok
     })

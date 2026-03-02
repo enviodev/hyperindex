@@ -590,6 +590,357 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   })
 })
 
+describe("RpcSource - getEventBlockOrThrow", () => {
+  let neverGetBlockJson = _ => Js.Exn.raiseError("getBlockJson should not be called")
+
+  it("Panics with invalid schema", t => {
+    t.expect(
+      () => {
+        RpcSource.makeThrowingGetEventBlock(
+          ~getBlockJson=neverGetBlockJson,
+          ~lowercaseAddresses=false,
+        )(mockLog(), ~blockSchema=S.string)
+      },
+    ).toThrowError("Unexpected internal error: blockSchema is not an object")
+  })
+
+  Async.it(
+    "Returns empty object when empty field selection. Doesn't make a block request",
+    async t => {
+      let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+        ~getBlockJson=neverGetBlockJson,
+        ~lowercaseAddresses=false,
+      )
+      t.expect(
+        await mockLog()->getEventBlockOrThrow(~blockSchema=S.object(_ => ())),
+      ).toEqual(
+        %raw(`{}`),
+      )
+    },
+  )
+
+  Async.it("Works with a single number field", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabc"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "number": s.matches(S.int),
+            },
+        ),
+      ),
+    ).toEqual(
+      {
+        "number": 123456,
+      },
+    )
+  })
+
+  Async.it("Works with number, timestamp, and hash fields", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabcdef"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "number": s.matches(S.int),
+              "timestamp": s.matches(S.int),
+              "hash": s.matches(S.string),
+            },
+        ),
+      ),
+    ).toEqual(
+      {
+        "number": 123456,
+        "timestamp": 100000000,
+        "hash": "0xabcdef",
+      },
+    )
+  })
+
+  Async.it("Parses selected block fields from raw JSON", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1e240",
+            "timestamp": "0x5f5e100",
+            "hash": "0xabcdef",
+            "gasUsed": "0x5208",
+            "gasLimit": "0x1c9c380",
+            "parentHash": "0xparent",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "gasUsed": s.matches(BigInt.nativeSchema),
+              "gasLimit": s.matches(BigInt.nativeSchema),
+            },
+        ),
+      ),
+    ).toEqual(
+      {
+        "gasUsed": 21000n,
+        "gasLimit": 30000000n,
+      },
+    )
+  })
+
+  Async.it(
+    "Doesn't fetch block when only infrastructure fields are selected",
+    async t => {
+      // number, timestamp, hash are infrastructure fields parsed from raw JSON
+      // When only these are selected, getBlockJson is still called because
+      // we always need the raw JSON for these fields
+      let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+        ~getBlockJson=_ =>
+          Promise.resolve(
+            %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabcdef"}`),
+          ),
+        ~lowercaseAddresses=false,
+      )
+      t.expect(
+        await mockLog()->getEventBlockOrThrow(
+          ~blockSchema=S.schema(
+            s =>
+              {
+                "number": s.matches(S.int),
+                "hash": s.matches(S.string),
+              },
+          ),
+        ),
+      ).toEqual(
+        {
+          "number": 123456,
+          "hash": "0xabcdef",
+        },
+      )
+    },
+  )
+
+  Async.it("Parses miner address with lowercaseAddresses=true", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=true,
+    )
+    t.expect(
+      await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "miner": s.matches(Address.schema),
+            },
+        ),
+      ),
+    ).toEqual(
+      {
+        "miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"->Address.unsafeFromString,
+      },
+    )
+  })
+
+  Async.it("Parses miner address with lowercaseAddresses=false (checksum)", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "miner": s.matches(Address.schema),
+            },
+        ),
+      ),
+    ).toEqual(
+      {
+        "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
+      },
+    )
+  })
+
+  Async.it("Unknown extra fields in JSON don't cause failures", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1e240",
+            "timestamp": "0x5f5e100",
+            "hash": "0xabcdef",
+            "gasUsed": "0x5208",
+            "unknownField": "some value",
+            "anotherUnknown": 42,
+            "transactions": ["0x123"]
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "gasUsed": s.matches(BigInt.nativeSchema),
+            },
+        ),
+      ),
+    ).toEqual(
+      {"gasUsed": 21000n},
+    )
+  })
+
+  Async.it("Error with a value not matching the field schema", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "gasUsed": "not-a-hex-value"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    try {
+      let _ = await mockLog()->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "gasUsed": s.matches(BigInt.nativeSchema),
+            },
+        ),
+      )
+      Js.Exn.raiseError("Should have thrown")
+    } catch {
+    | Js.Exn.Error(e) =>
+      t.expect(
+        e->Js.Exn.message->Belt.Option.getExn,
+      ).toBe(
+        `Invalid block field "gasUsed" found in the RPC response. Error: The string is not valid hex`,
+      )
+    }
+  })
+
+  Async.it("Parses optional fields correctly (nullable with value)", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "baseFeePerGas": "0x3b9aca00",
+            "difficulty": "0x400000000"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    let result = await mockLog()->getEventBlockOrThrow(
+      ~blockSchema=S.schema(
+        s =>
+          {
+            "baseFeePerGas": s.matches(S.nullable(BigInt.nativeSchema)),
+            "difficulty": s.matches(S.nullable(BigInt.nativeSchema)),
+          },
+      ),
+    )
+    t.expect(
+      result["baseFeePerGas"],
+    ).toEqual(
+      Js.Nullable.return(1000000000n),
+    )
+    t.expect(
+      result["difficulty"],
+    ).toEqual(
+      Js.Nullable.return(17179869184n),
+    )
+  })
+
+  Async.it("Queries block fields from raw JSON (with real RPC)", async t => {
+    let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
+    let client = Rpc.makeClient(rpcUrl)
+
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=async blockNumber =>
+        switch await Rpc.getRawBlock(~client, ~blockNumber) {
+        | Some(json) => json
+        | None => Js.Exn.raiseError(`Block not found for number: ${blockNumber->Belt.Int.toString}`)
+        },
+      ~lowercaseAddresses=false,
+    )
+
+    // Block 21758655 on Ethereum mainnet
+    let log = {
+      ...mockLog(),
+      blockNumber: 21758655,
+    }
+
+    t.expect(
+      await log->getEventBlockOrThrow(
+        ~blockSchema=S.schema(
+          s =>
+            {
+              "number": s.matches(S.int),
+              "timestamp": s.matches(S.int),
+              "hash": s.matches(S.string),
+              "gasUsed": s.matches(BigInt.nativeSchema),
+              "gasLimit": s.matches(BigInt.nativeSchema),
+              "baseFeePerGas": s.matches(S.nullable(BigInt.nativeSchema)),
+              "parentHash": s.matches(S.string),
+            },
+        ),
+      ),
+    ).toEqual(
+      {
+        "number": 21758655,
+        "timestamp": 1739276123,
+        "hash": "0xbcdecbe3c3fe4db57b6c5ef1e2aeb4283c1f5b8a2dc5c7cd5ee3bfdd9c8159cc",
+        "gasUsed": 10927953n,
+        "gasLimit": 36000000n,
+        "baseFeePerGas": Js.Nullable.return(3614783944n),
+        "parentHash": "0x60cce08a34e9e12b40bb5a8fd39fbc0a78cd8e55f5e2efdb50e0b42e3aad6acc",
+      },
+    )
+  })
+})
+
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
