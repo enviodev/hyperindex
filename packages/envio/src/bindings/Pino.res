@@ -40,21 +40,21 @@ external levels: t => 'a = "levels"
 @set external setLevel: (t, logLevel) => unit = "level"
 
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
-let createPinoMessage = (message): pinoMessageBlob => Utils.magic(message)
+let createPinoMessage = (message): pinoMessageBlob => message->(Utils.magic: 'a => pinoMessageBlob)
 let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {
   //See https://github.com/pinojs/pino-std-serializers for standard pino serializers
   //for common objects. We have also defined the serializer in this format in the
   // serializers type below: `type serializers = {err: Js.Json.t => Js.Json.t}`
-  Utils.magic({
+  {
     "msg": message,
     "err": err->Utils.prettifyExn,
-  })
+  }->(Utils.magic: 'a => pinoMessageBlobWithError)
 }
 
 module Transport = {
   type t
   type optionsObject
-  let makeTransportOptions: 'a => optionsObject = Utils.magic
+  let makeTransportOptions: 'a => optionsObject = v => v->(Utils.magic: 'a => optionsObject)
 
   // NOTE: this config is pretty polymorphic - so keeping this as all optional fields.
   type rec transportTarget = {
@@ -105,7 +105,7 @@ type options = {
 @module("pino") external makeWithOptionsAndTransport: (options, Transport.t) => t = "pino"
 
 type childParams
-let createChildParams: 'a => childParams = Utils.magic
+let createChildParams: 'a => childParams = v => v->(Utils.magic: 'a => childParams)
 @send external child: (t, childParams) => t = "child"
 
 module ECS = {
