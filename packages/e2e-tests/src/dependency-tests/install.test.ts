@@ -83,7 +83,7 @@ describe("Isolated dependency e2e", () => {
 
     // 2. Run envio codegen — generates code, pnpm-installs, builds rescript.
     //    Root package.json's "file:../../packages/envio" resolves to tmpRoot/packages/envio.
-    const codegenResult = await runCommand(config.envioBin, ["codegen"], {
+    const codegenResult = await runCommand(config.envioCommand, [...config.envioArgs, "codegen"], {
       cwd: baseProjectDir,
       timeout: 120_000,
       env: { ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "" },
@@ -177,7 +177,7 @@ describe("Isolated dependency e2e", () => {
       // envio dev: persisted state matches → skips codegen (and its pnpm install) →
       // starts docker → runs migrations → starts indexer.
       // Our isolated node_modules are preserved.
-      indexerProcess = startBackground(config.envioBin, ["dev"], {
+      indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
         cwd: projectDir,
         env: {
           TUI_OFF: "true",
@@ -204,7 +204,7 @@ describe("Isolated dependency e2e", () => {
       }
       await killProcessOnPort(config.indexerPort);
       // docker compose down -v (removes containers + volumes for clean next run)
-      await runCommand(config.envioBin, ["stop"], {
+      await runCommand(config.envioCommand, [...config.envioArgs, "stop"], {
         cwd: projectDir,
         timeout: 30_000,
       }).catch(() => {});

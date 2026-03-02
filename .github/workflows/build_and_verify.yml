@@ -157,7 +157,7 @@ jobs:
 
       # GitHub Actions artifacts don't preserve Unix permissions
       - name: Restore execute permissions
-        run: chmod +x packages/envio/bin.js node_modules/envio-linux-x64/bin/envio
+        run: chmod +x node_modules/envio-linux-x64/bin/envio
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -230,7 +230,7 @@ jobs:
           path: ./node_modules/envio-linux-x64
 
       - name: Restore execute permissions
-        run: chmod +x packages/envio/bin.js node_modules/envio-linux-x64/bin/envio
+        run: chmod +x node_modules/envio-linux-x64/bin/envio
 
       - name: Wait for Hasura
         run: |
@@ -325,7 +325,7 @@ jobs:
           path: ./node_modules/envio-linux-x64
 
       - name: Restore execute permissions
-        run: chmod +x packages/envio/bin.js node_modules/envio-linux-x64/bin/envio
+        run: chmod +x node_modules/envio-linux-x64/bin/envio
 
       - name: Wait for Hasura
         run: |
