@@ -997,7 +997,6 @@ let make = (
             Some(
               (
                 async () => {
-                  let blockJson = blockLoader.contents->LazyLoader.get(log.blockNumber)
                   let (block, transaction) = try await Promise.all2((
                     log->getEventBlockOrThrow(
                       ~blockSchema=eventConfig.blockSchema,
@@ -1019,19 +1018,19 @@ let make = (
                     )
                   }
 
-                  let blockInfo = parseBlockInfo(await blockJson)
+                  let eventBlock = block->(Utils.magic: 'a => Internal.eventBlock)
 
                   Internal.Event({
                     eventConfig: (eventConfig :> Internal.eventConfig),
-                    timestamp: blockInfo.timestamp,
-                    blockNumber: blockInfo.number,
+                    timestamp: eventBlock->Evm.getTimestamp,
+                    blockNumber: eventBlock->Evm.getNumber,
                     chain,
                     logIndex: log.logIndex,
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
                       transaction,
-                      block: block->(Utils.magic: 'a => Internal.eventBlock),
+                      block: eventBlock,
                       srcAddress: routedAddress,
                       logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,
