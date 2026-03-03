@@ -29,7 +29,7 @@ type insertParams<'a> = {
 @send
 external insert: (client, insertParams<'a>) => promise<unit> = "insert"
 
-type queryParams = {query: string}
+type queryParams = {query: string, format?: string}
 type queryResult<'a>
 
 @send
@@ -396,6 +396,7 @@ let resume = async (client, ~database: string, ~checkpointId: float) => {
     // Get all history tables
     let tablesResult = await client->query({
       query: `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%'`,
+      format: "JSONEachRow",
     })
     let tables: array<{"name": string}> = await tablesResult->json
 

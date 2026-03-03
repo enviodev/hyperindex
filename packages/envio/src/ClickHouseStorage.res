@@ -20,6 +20,7 @@ let make = (
     try {
       let result = await client->ClickHouse.query({
         query: `SELECT 1 FROM system.databases WHERE name = '${database}'`,
+        format: "JSONEachRow",
       })
       let rows: array<{"1": int}> = await result->ClickHouse.json
       rows->Array.length > 0
@@ -114,6 +115,7 @@ ORDER BY (id)`,
     // Get latest checkpoint
     let checkpointResult = await client->ClickHouse.query({
       query: `SELECT max(\`${(#id: InternalTable.Checkpoints.field :> string)}\`) as id FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
+      format: "JSONEachRow",
     })
     let checkpoints: array<{"id": float}> = await checkpointResult->ClickHouse.json
     let checkpointId = switch checkpoints->Belt.Array.get(0) {
@@ -124,6 +126,7 @@ ORDER BY (id)`,
     // Get chain states
     let chainsResult = await client->ClickHouse.query({
       query: `SELECT * FROM ${database}.\`envio_chains\` FINAL`,
+      format: "JSONEachRow",
     })
     let chains: array<{
       "id": int,
@@ -243,6 +246,7 @@ WHERE \`${chainIdField}\` = ${reorgChainId->Belt.Int.toString}
   AND \`${blockNumberField}\` <= ${lastKnownValidBlockNumber->Belt.Int.toString}
 ORDER BY \`${idField}\` DESC
 LIMIT 1`,
+      format: "JSONEachRow",
     })
     let rows: array<{"id": Internal.checkpointId}> = await result->ClickHouse.json
     rows
@@ -261,6 +265,7 @@ LIMIT 1`,
 FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\`
 WHERE \`${idField}\` > ${rollbackTargetCheckpointId->Belt.Float.toString}
 GROUP BY \`${chainIdField}\``,
+      format: "JSONEachRow",
     })
     let rows: array<{
       "chain_id": int,
@@ -292,6 +297,7 @@ AND \`${idField}\` NOT IN (
   FROM ${database}.\`${historyTableName}\`
   WHERE \`${checkpointIdField}\` <= ${rollbackTargetCheckpointId->Belt.Float.toString}
 )`,
+      format: "JSONEachRow",
     })
     let removedIds: array<{"id": string}> = await removedResult->ClickHouse.json
 
@@ -320,6 +326,7 @@ FROM (
     )
 )
 WHERE rn = 1 AND \`${changeField}\` = '${(EntityHistory.RowAction.SET :> string)}'`,
+      format: "JSONEachRow",
     })
     let restoredEntities: array<unknown> = await restoredResult->ClickHouse.json
 
