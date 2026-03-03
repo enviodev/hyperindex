@@ -810,17 +810,8 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
         let connector_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_CONNECTOR_IMAGE.to_string()),
             labels: Some(make_labels(&config_hash)),
-            healthcheck: Some(HealthConfig {
-                test: Some(vec![
-                    "CMD-SHELL".to_string(),
-                    "timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8080' || exit 1".to_string(),
-                ]),
-                interval: Some(5_000_000_000),
-                timeout: Some(10_000_000_000),
-                retries: Some(5),
-                start_period: Some(5_000_000_000),
-                start_interval: None,
-            }),
+            // No Docker healthcheck: the connector image is a minimal Alpine/scratch
+            // build without bash or curl. We poll /health from the host instead.
             host_config: Some(HostConfig {
                 port_bindings: Some(connector_port_bindings),
                 restart_policy: Some(RestartPolicy {
