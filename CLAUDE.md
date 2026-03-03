@@ -11,7 +11,7 @@
 ## Navigation
 
 - Rust CLI: `packages/cli`, entry at `lib.rs`, commands at `commands.rs`.
-- Config parsing pipeline: `human_config.rs` → `system_config.rs` → `hbs_templating/codegen_templates.rs`.
+- Config parsing pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
 - Shared runtime library: `packages/envio`.
 - To edit runtime code, edit templates under `packages/cli/templates/`, not files in `generated/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
@@ -20,7 +20,7 @@
 
 Prefer Public module API for testing.
 
-Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm vitest`. Use `_only` to specify which tests to run.
+Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm vitest run`.
 
 ## ReScript
 
