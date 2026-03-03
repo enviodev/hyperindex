@@ -65,9 +65,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
             .await
             .context("Failed running codegen")?;
     }
-    let up_result = docker_env::up(&config.parsed_project_paths.project_root, &config.storage)
-        .await
-        .context("Failed starting Docker containers")?;
+    let up_result =
+        docker_env::up(&config.parsed_project_paths.project_root, &config.storage, &config.name)
+            .await
+            .context("Failed starting Docker containers")?;
 
     if up_result.hasura_enabled {
         let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;

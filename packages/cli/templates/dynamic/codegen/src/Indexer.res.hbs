@@ -294,7 +294,7 @@ let makeStorage = () => {
   | Config.Clickhouse =>
     ClickHouseStorage.make(
       ~host=Env.ClickHouseStorage.host,
-      ~database=Env.ClickHouseStorage.database,
+      ~database=Env.ClickHouseStorage.database->Option.getWithDefault("envio-" ++ configWithoutRegistrations.name),
       ~username=Env.ClickHouseStorage.username,
       ~password=Env.ClickHouseStorage.password,
     )

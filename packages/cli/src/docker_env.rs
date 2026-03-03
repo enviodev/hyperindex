@@ -123,7 +123,7 @@ struct EnvConfig {
 }
 
 impl EnvConfig {
-    fn from_project(project_root: &Path) -> Self {
+    fn from_project(project_root: &Path, indexer_name: &str) -> Self {
         let dotenv = EnvLoader::with_path(project_root.join(".env"))
             .sequence(EnvSequence::InputOnly)
             .load()
@@ -138,6 +138,8 @@ impl EnvConfig {
             })
         };
 
+        let ch_database_default = format!("envio-{indexer_name}");
+
         Self {
             pg_host: var("ENVIO_PG_HOST", "localhost"),
             pg_port: var("ENVIO_PG_PORT", "5433"),
@@ -151,7 +153,7 @@ impl EnvConfig {
             clickhouse_port: var("ENVIO_CLICKHOUSE_PORT", "8123"),
             clickhouse_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
             clickhouse_password: var("ENVIO_CLICKHOUSE_PASSWORD", ""),
-            clickhouse_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio"),
+            clickhouse_database: var("ENVIO_CLICKHOUSE_DATABASE", &ch_database_default),
         }
     }
 
@@ -436,8 +438,8 @@ pub struct UpResult {
     pub hasura_enabled: bool,
 }
 
-pub async fn up(project_root: &Path, storage: &Storage) -> anyhow::Result<UpResult> {
-    let env = EnvConfig::from_project(project_root);
+pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> anyhow::Result<UpResult> {
+    let env = EnvConfig::from_project(project_root, indexer_name);
     let use_clickhouse = matches!(storage, Storage::Clickhouse);
     let pg_host_port: u16 = env.pg_port.parse().context("ENVIO_PG_PORT is not a valid port")?;
     let hasura_host_port: u16 = env
@@ -704,10 +706,8 @@ pub async fn up(project_root: &Path, storage: &Storage) -> anyhow::Result<UpResu
             healthcheck: Some(HealthConfig {
                 test: Some(vec![
                     "CMD-SHELL".to_string(),
-                    format!(
-                        "clickhouse-client --host 127.0.0.1 --user {} --query 'SELECT 1' || exit 1",
-                        env.clickhouse_user
-                    ),
+                    "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+                        .to_string(),
                 ]),
                 interval: Some(5_000_000_000),
                 timeout: Some(2_000_000_000),

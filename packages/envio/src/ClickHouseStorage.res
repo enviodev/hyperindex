@@ -4,7 +4,7 @@
 
 let make = (
   ~host: string,
-  ~database: option<string>,
+  ~database: string,
   ~username: string,
   ~password: string,
 ): Persistence.storage => {
@@ -13,11 +13,6 @@ let make = (
     username,
     password,
   })
-
-  let database = switch database {
-  | Some(database) => database
-  | None => "envio"
-  }
 
   let cache = Utils.WeakMap.make()
 
