@@ -457,50 +457,23 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
     let docker = connect_docker().await?;
     let config_hash = env.config_hash();
 
-    // Pull images in parallel.
-    {
-        let pg_pull = async {
-            if need_pg {
-                ensure_image(&docker, POSTGRES_IMAGE).await
-            } else {
-                Ok(())
-            }
-        };
-        let hasura_pull = async {
-            if need_hasura {
-                ensure_image(&docker, HASURA_IMAGE).await
-            } else {
-                Ok(())
-            }
-        };
-        let (pg_res, hasura_res) = tokio::join!(pg_pull, hasura_pull);
-        pg_res?;
-        hasura_res?;
-    }
-
-    // Create network and volume in parallel.
-    {
-        let net_fut = async {
-            if need_pg || need_hasura {
-                ensure_network(&docker, NETWORK).await
-            } else {
-                Ok(())
-            }
-        };
-        let vol_fut = async {
-            if need_pg {
-                ensure_volume(&docker, VOLUME).await
-            } else {
-                Ok(())
-            }
-        };
-        let (net_res, vol_res) = tokio::join!(net_fut, vol_fut);
+    // Run full pipelines for each container in parallel:
+    // pull image → create infra → ensure container.
+    // Network is shared so both pipelines may race to create it; ensure_network
+    // handles the "already exists" case, so the loser is a harmless no-op.
+    let pg_pipeline = async {
+        if !need_pg {
+            return Ok::<(), anyhow::Error>(());
+        }
+        ensure_image(&docker, POSTGRES_IMAGE).await?;
+        // Volume and network can be created in parallel.
+        let (net_res, vol_res) = tokio::join!(
+            ensure_network(&docker, NETWORK),
+            ensure_volume(&docker, VOLUME),
+        );
         net_res?;
         vol_res?;
-    }
 
-    // Build container configs (pure computation, no awaits).
-    let pg_body = if need_pg {
         let pg_port_bindings = {
             let mut map = HashMap::new();
             map.insert(
@@ -513,7 +486,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
             map
         };
 
-        Some(ContainerCreateBody {
+        let pg_body = ContainerCreateBody {
             image: Some(POSTGRES_IMAGE.to_string()),
             labels: Some(make_labels(&config_hash)),
             env: Some(vec![
@@ -537,12 +510,19 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
             }),
             networking_config: Some(make_networking_config(NETWORK)),
             ..Default::default()
-        })
-    } else {
-        None
+        };
+
+        ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, pg_body).await?;
+        Ok(())
     };
 
-    let hasura_body = if need_hasura {
+    let hasura_pipeline = async {
+        if !need_hasura {
+            return Ok::<(), anyhow::Error>(());
+        }
+        ensure_image(&docker, HASURA_IMAGE).await?;
+        ensure_network(&docker, NETWORK).await?;
+
         let hasura_port_bindings = {
             let mut map = HashMap::new();
             map.insert(
@@ -560,7 +540,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
             env.pg_user, env.pg_password, PG_CONTAINER, env.pg_database
         );
 
-        Some(ContainerCreateBody {
+        let hasura_body = ContainerCreateBody {
             image: Some(HASURA_IMAGE.to_string()),
             labels: Some(make_labels(&config_hash)),
             user: Some("1001:1001".to_string()),
@@ -601,37 +581,22 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
             }),
             networking_config: Some(make_networking_config(NETWORK)),
             ..Default::default()
-        })
-    } else {
-        None
+        };
+
+        ensure_container(
+            &docker,
+            HASURA_CONTAINER,
+            &config_hash,
+            hasura_host_port,
+            hasura_body,
+        )
+        .await?;
+        Ok(())
     };
 
-    // Start containers in parallel. Hasura retries PG connections internally,
-    // so it is safe to bring them up at the same time.
-    {
-        let pg_fut = async {
-            if let Some(body) = pg_body {
-                ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, body).await?;
-            }
-            Ok::<(), anyhow::Error>(())
-        };
-        let hasura_fut = async {
-            if let Some(body) = hasura_body {
-                ensure_container(
-                    &docker,
-                    HASURA_CONTAINER,
-                    &config_hash,
-                    hasura_host_port,
-                    body,
-                )
-                .await?;
-            }
-            Ok::<(), anyhow::Error>(())
-        };
-        let (pg_res, hasura_res) = tokio::join!(pg_fut, hasura_fut);
-        pg_res?;
-        hasura_res?;
-    }
+    let (pg_res, hasura_res) = tokio::join!(pg_pipeline, hasura_pipeline);
+    pg_res?;
+    hasura_res?;
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
