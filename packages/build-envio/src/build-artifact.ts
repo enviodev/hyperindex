@@ -60,6 +60,7 @@ const PRODUCTION_BIN_MJS = `#!/usr/bin/env node
 //@ts-check
 
 import { spawnSync } from "child_process";
+import { chmodSync, accessSync, constants } from "fs";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -101,11 +102,24 @@ function getExePath() {
 }
 
 /**
+ * Ensure the binary has the executable permission bit set.
+ * npm tarballs and GitHub Actions artifacts can lose permissions.
+ */
+function ensureExecutable(binPath) {
+  try {
+    accessSync(binPath, constants.X_OK);
+  } catch {
+    chmodSync(binPath, 0o755);
+  }
+}
+
+/**
  * Runs \`envio\` with args using nodejs spawn
  */
 function runEnvio() {
   const args = process.argv.slice(2);
   const exePath = getExePath();
+  ensureExecutable(exePath);
 
   const processResult = spawnSync(exePath, args, { stdio: "inherit" });
 

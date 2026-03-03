@@ -33,17 +33,32 @@ const rootDir = path.resolve(__dirname, "../../..");
 loadEnvFile(path.join(rootDir, ".env"));
 
 /**
+ * Ensure a binary file has the executable permission bit set.
+ * GitHub Actions artifacts lose file permissions on upload/download,
+ * so we fix them at resolution time instead of relying on chmod in CI.
+ */
+export function ensureExecutable(binPath: string): void {
+  try {
+    fs.accessSync(binPath, fs.constants.X_OK);
+  } catch {
+    fs.chmodSync(binPath, 0o755);
+  }
+}
+
+/**
  * Resolve the envio command and base args.
  * Priority: ENVIO_BIN → cargo build → node bin.mjs (published artifact).
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
+    ensureExecutable(process.env.ENVIO_BIN);
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
   for (const profile of ["release", "debug"]) {
     const bin = path.join(rootDir, `target/${profile}/envio`);
     if (fs.existsSync(bin)) {
+      ensureExecutable(bin);
       return { command: bin, args: [] };
     }
   }
@@ -51,6 +66,7 @@ function resolveEnvio(): { command: string; args: string[] } {
   // In CI the pre-built platform binary lives in .envio-artifacts/
   const artifactBin = path.join(rootDir, ".envio-artifacts/envio-linux-x64/bin/envio");
   if (fs.existsSync(artifactBin)) {
+    ensureExecutable(artifactBin);
     return { command: artifactBin, args: [] };
   }
 
