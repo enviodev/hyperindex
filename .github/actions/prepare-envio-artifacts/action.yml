@@ -1,8 +1,8 @@
 name: Prepare envio artifacts
 description: >
-  Download pre-built envio and platform artifacts, place the envio
-  package into packages/envio/, and add a pnpm override so that
-  envio-linux-x64 resolves from the local directory.
+  Download pre-built envio and platform artifacts and place the envio
+  package into packages/envio/. The committed .pnpmfile.cjs hook
+  detects .envio-artifacts/ and redirects envio-linux-x64 automatically.
   Must run BEFORE pnpm install.
 
 runs:
@@ -25,18 +25,3 @@ runs:
         rm -rf packages/envio
         cp -r .envio-artifacts/envio packages/envio
 
-    # Redirect the envio-linux-x64 optional dependency to the local
-    # artifact via a pnpm hook. Unlike pnpm.overrides in package.json,
-    # .pnpmfile.cjs doesn't conflict with the frozen lockfile check.
-    - name: Write .pnpmfile.cjs for envio-linux-x64
-      shell: bash
-      run: |
-        cat > .pnpmfile.cjs << 'EOF'
-        function readPackage(pkg) {
-          if (pkg.optionalDependencies?.["envio-linux-x64"]) {
-            pkg.optionalDependencies["envio-linux-x64"] = "file:.envio-artifacts/envio-linux-x64";
-          }
-          return pkg;
-        }
-        module.exports = { hooks: { readPackage } };
-        EOF

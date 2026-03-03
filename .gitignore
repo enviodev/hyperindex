@@ -17,6 +17,3 @@ scenarios/**/lib/*
 scenarios/**/node_modules/*
 
 rescript.lock
-
-# CI-only: written by prepare-envio-artifacts action
-.pnpmfile.cjs
