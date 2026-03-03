@@ -1,7 +1,7 @@
 name: Overlay envio artifact
 description: >
   Replace packages/envio with the pre-built artifact and place the
-  platform binary where createRequire can find it.
+  platform binary as a sibling directory inside the package.
 
 runs:
   using: composite
@@ -15,16 +15,16 @@ runs:
         name: npm-pkg-envio
         path: ./packages/envio
 
-    # Place platform binary inside packages/envio/node_modules/ so that
-    # createRequire(import.meta.url) in bin.mjs finds it on the first
-    # lookup. Placing it here (rather than root node_modules/) also
-    # prevents pnpm from pruning it during workspace installs.
+    # Place the platform binary as a sibling directory inside the envio
+    # package (packages/envio/envio-linux-x64/). This MUST be outside
+    # any node_modules/ directory because pnpm prunes packages placed
+    # there by non-pnpm tools during workspace installs.
     - uses: actions/download-artifact@v4
       with:
         name: npm-pkg-envio-linux-x64
-        path: ./packages/envio/node_modules/envio-linux-x64
+        path: ./packages/envio/envio-linux-x64
 
     # GitHub Actions artifacts don't preserve Unix permissions
     - name: Restore execute permissions
       shell: bash
-      run: chmod +x packages/envio/node_modules/envio-linux-x64/bin/envio
+      run: chmod +x packages/envio/envio-linux-x64/bin/envio
