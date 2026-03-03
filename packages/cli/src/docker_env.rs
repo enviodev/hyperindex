@@ -14,6 +14,8 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tokio::net::TcpStream;
+use tokio::time::Duration;
 
 const POSTGRES_IMAGE: &str = "postgres:18.3";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
@@ -101,10 +103,12 @@ async fn connect_docker() -> anyhow::Result<Docker> {
 }
 
 struct EnvConfig {
+    pg_host: String,
     pg_port: String,
     pg_password: String,
     pg_user: String,
     pg_database: String,
+    hasura_enabled: bool,
     hasura_port: String,
     hasura_enable_console: String,
     hasura_admin_secret: String,
@@ -127,10 +131,12 @@ impl EnvConfig {
         };
 
         Self {
+            pg_host: var("ENVIO_PG_HOST", "localhost"),
             pg_port: var("ENVIO_PG_PORT", "5433"),
             pg_password: var("ENVIO_PG_PASSWORD", "testing"),
             pg_user: var("ENVIO_PG_USER", "postgres"),
             pg_database: var("ENVIO_PG_DATABASE", "envio-dev"),
+            hasura_enabled: var("ENVIO_HASURA", "true") != "false",
             hasura_port: var("HASURA_EXTERNAL_PORT", "8080"),
             hasura_enable_console: var("HASURA_GRAPHQL_ENABLE_CONSOLE", "true"),
             hasura_admin_secret: var("HASURA_GRAPHQL_ADMIN_SECRET", "testing"),
@@ -239,6 +245,26 @@ async fn is_container_running(docker: &Docker, name: &str) -> bool {
 /// Returns true if container exists (running or stopped).
 async fn container_exists(docker: &Docker, name: &str) -> bool {
     docker.inspect_container(name, None).await.is_ok()
+}
+
+/// Try to connect to a TCP port to check if a service is already listening.
+async fn is_service_reachable(host: &str, port: u16) -> bool {
+    tokio::time::timeout(Duration::from_secs(2), TcpStream::connect((host, port)))
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
+}
+
+/// Check whether Hasura is reachable by hitting its healthz endpoint.
+async fn is_hasura_healthy(host: &str, port: u16) -> bool {
+    let url = format!("http://{}:{}/hasura/healthz?strict=true", host, port);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build();
+    match client {
+        Ok(c) => c.get(&url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
+        Err(_) => false,
+    }
 }
 
 async fn stop_and_remove(docker: &Docker, name: &str) {
@@ -382,135 +408,188 @@ async fn ensure_container(
     Ok(true)
 }
 
-pub async fn up(project_root: &Path) -> anyhow::Result<()> {
-    let docker = connect_docker().await?;
+/// Return value from `up()` so callers know whether Hasura is active.
+pub struct UpResult {
+    pub hasura_enabled: bool,
+}
 
+pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
     let env = EnvConfig::from_project(project_root);
-    let config_hash = env.config_hash();
-
-    ensure_image(&docker, POSTGRES_IMAGE).await?;
-    ensure_image(&docker, HASURA_IMAGE).await?;
-
-    ensure_network(&docker, NETWORK).await?;
-    ensure_volume(&docker, VOLUME).await?;
-
-    // --- Postgres ---
-    let pg_port_bindings = {
-        let mut map = HashMap::new();
-        map.insert(
-            "5432/tcp".to_string(),
-            Some(vec![PortBinding {
-                host_ip: Some("0.0.0.0".to_string()),
-                host_port: Some(env.pg_port.clone()),
-            }]),
-        );
-        map
-    };
-
-    let pg_body = ContainerCreateBody {
-        image: Some(POSTGRES_IMAGE.to_string()),
-        labels: Some(make_labels(&config_hash)),
-        env: Some(vec![
-            format!("POSTGRES_PASSWORD={}", env.pg_password),
-            format!("POSTGRES_USER={}", env.pg_user),
-            format!("POSTGRES_DB={}", env.pg_database),
-        ]),
-        host_config: Some(HostConfig {
-            port_bindings: Some(pg_port_bindings),
-            mounts: Some(vec![Mount {
-                target: Some("/var/lib/postgresql".to_string()),
-                source: Some(VOLUME.to_string()),
-                typ: Some(MountTypeEnum::VOLUME),
-                ..Default::default()
-            }]),
-            restart_policy: Some(RestartPolicy {
-                name: Some(RestartPolicyNameEnum::ALWAYS),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }),
-        networking_config: Some(make_networking_config(NETWORK)),
-        ..Default::default()
-    };
-
     let pg_host_port: u16 = env.pg_port.parse().context("ENVIO_PG_PORT is not a valid port")?;
-    ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, pg_body).await?;
-
-    // --- Hasura ---
-    let hasura_port_bindings = {
-        let mut map = HashMap::new();
-        map.insert(
-            "8080/tcp".to_string(),
-            Some(vec![PortBinding {
-                host_ip: Some("0.0.0.0".to_string()),
-                host_port: Some(env.hasura_port.clone()),
-            }]),
-        );
-        map
-    };
-
-    let db_url = format!(
-        "postgres://{}:{}@{}:5432/{}",
-        env.pg_user, env.pg_password, PG_CONTAINER, env.pg_database
-    );
-
-    let hasura_body = ContainerCreateBody {
-        image: Some(HASURA_IMAGE.to_string()),
-        labels: Some(make_labels(&config_hash)),
-        user: Some("1001:1001".to_string()),
-        env: Some(vec![
-            format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
-            format!(
-                "HASURA_GRAPHQL_ENABLE_CONSOLE={}",
-                env.hasura_enable_console
-            ),
-            "HASURA_GRAPHQL_ENABLED_LOG_TYPES=startup, http-log, webhook-log, websocket-log, \
-             query-log"
-                .to_string(),
-            "HASURA_GRAPHQL_NO_OF_RETRIES=10".to_string(),
-            format!("HASURA_GRAPHQL_ADMIN_SECRET={}", env.hasura_admin_secret),
-            "HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true".to_string(),
-            "PORT=8080".to_string(),
-            "HASURA_GRAPHQL_UNAUTHORIZED_ROLE=public".to_string(),
-        ]),
-        exposed_ports: Some(vec!["8080/tcp".to_string()]),
-        healthcheck: Some(HealthConfig {
-            test: Some(vec![
-                "CMD-SHELL".to_string(),
-                "timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8080' || exit 1".to_string(),
-            ]),
-            interval: Some(5_000_000_000),
-            timeout: Some(2_000_000_000),
-            retries: Some(50),
-            start_period: Some(5_000_000_000),
-            start_interval: None,
-        }),
-        host_config: Some(HostConfig {
-            port_bindings: Some(hasura_port_bindings),
-            restart_policy: Some(RestartPolicy {
-                name: Some(RestartPolicyNameEnum::ALWAYS),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }),
-        networking_config: Some(make_networking_config(NETWORK)),
-        ..Default::default()
-    };
-
     let hasura_host_port: u16 = env
         .hasura_port
         .parse()
         .context("HASURA_EXTERNAL_PORT is not a valid port")?;
-    ensure_container(
-        &docker,
-        HASURA_CONTAINER,
-        &config_hash,
-        hasura_host_port,
-        hasura_body,
-    )
-    .await?;
 
-    Ok(())
+    // Probe Postgres and Hasura in parallel to see if they are already running.
+    let pg_host = env.pg_host.clone();
+    let (pg_alive, hasura_alive) = tokio::join!(
+        is_service_reachable(&pg_host, pg_host_port),
+        async {
+            if !env.hasura_enabled {
+                return false;
+            }
+            is_hasura_healthy(&pg_host, hasura_host_port).await
+        }
+    );
+
+    let need_pg = !pg_alive;
+    let need_hasura = env.hasura_enabled && !hasura_alive;
+
+    if pg_alive {
+        println!("Postgres already reachable on port {pg_host_port}, skipping container");
+    }
+    if env.hasura_enabled && hasura_alive {
+        println!("Hasura already healthy on port {hasura_host_port}, skipping container");
+    }
+    if !env.hasura_enabled {
+        println!("Hasura disabled (ENVIO_HASURA=false), skipping");
+    }
+
+    // If both services are already running, nothing to do.
+    if !need_pg && !need_hasura {
+        return Ok(UpResult {
+            hasura_enabled: env.hasura_enabled,
+        });
+    }
+
+    // We need Docker for at least one container.
+    let docker = connect_docker().await?;
+    let config_hash = env.config_hash();
+
+    // Pull images, create network/volume only for what we need.
+    if need_pg {
+        ensure_image(&docker, POSTGRES_IMAGE).await?;
+    }
+    if need_hasura {
+        ensure_image(&docker, HASURA_IMAGE).await?;
+    }
+
+    if need_pg || need_hasura {
+        ensure_network(&docker, NETWORK).await?;
+    }
+    if need_pg {
+        ensure_volume(&docker, VOLUME).await?;
+    }
+
+    // --- Postgres ---
+    if need_pg {
+        let pg_port_bindings = {
+            let mut map = HashMap::new();
+            map.insert(
+                "5432/tcp".to_string(),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(env.pg_port.clone()),
+                }]),
+            );
+            map
+        };
+
+        let pg_body = ContainerCreateBody {
+            image: Some(POSTGRES_IMAGE.to_string()),
+            labels: Some(make_labels(&config_hash)),
+            env: Some(vec![
+                format!("POSTGRES_PASSWORD={}", env.pg_password),
+                format!("POSTGRES_USER={}", env.pg_user),
+                format!("POSTGRES_DB={}", env.pg_database),
+            ]),
+            host_config: Some(HostConfig {
+                port_bindings: Some(pg_port_bindings),
+                mounts: Some(vec![Mount {
+                    target: Some("/var/lib/postgresql".to_string()),
+                    source: Some(VOLUME.to_string()),
+                    typ: Some(MountTypeEnum::VOLUME),
+                    ..Default::default()
+                }]),
+                restart_policy: Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            networking_config: Some(make_networking_config(NETWORK)),
+            ..Default::default()
+        };
+
+        ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, pg_body).await?;
+    }
+
+    // --- Hasura ---
+    if need_hasura {
+        let hasura_port_bindings = {
+            let mut map = HashMap::new();
+            map.insert(
+                "8080/tcp".to_string(),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(env.hasura_port.clone()),
+                }]),
+            );
+            map
+        };
+
+        let db_url = format!(
+            "postgres://{}:{}@{}:5432/{}",
+            env.pg_user, env.pg_password, PG_CONTAINER, env.pg_database
+        );
+
+        let hasura_body = ContainerCreateBody {
+            image: Some(HASURA_IMAGE.to_string()),
+            labels: Some(make_labels(&config_hash)),
+            user: Some("1001:1001".to_string()),
+            env: Some(vec![
+                format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
+                format!(
+                    "HASURA_GRAPHQL_ENABLE_CONSOLE={}",
+                    env.hasura_enable_console
+                ),
+                "HASURA_GRAPHQL_ENABLED_LOG_TYPES=startup, http-log, webhook-log, websocket-log, \
+                 query-log"
+                    .to_string(),
+                "HASURA_GRAPHQL_NO_OF_RETRIES=10".to_string(),
+                format!("HASURA_GRAPHQL_ADMIN_SECRET={}", env.hasura_admin_secret),
+                "HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true".to_string(),
+                "PORT=8080".to_string(),
+                "HASURA_GRAPHQL_UNAUTHORIZED_ROLE=public".to_string(),
+            ]),
+            exposed_ports: Some(vec!["8080/tcp".to_string()]),
+            healthcheck: Some(HealthConfig {
+                test: Some(vec![
+                    "CMD-SHELL".to_string(),
+                    "timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8080' || exit 1".to_string(),
+                ]),
+                interval: Some(5_000_000_000),
+                timeout: Some(2_000_000_000),
+                retries: Some(50),
+                start_period: Some(5_000_000_000),
+                start_interval: None,
+            }),
+            host_config: Some(HostConfig {
+                port_bindings: Some(hasura_port_bindings),
+                restart_policy: Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            networking_config: Some(make_networking_config(NETWORK)),
+            ..Default::default()
+        };
+
+        ensure_container(
+            &docker,
+            HASURA_CONTAINER,
+            &config_hash,
+            hasura_host_port,
+            hasura_body,
+        )
+        .await?;
+    }
+
+    Ok(UpResult {
+        hasura_enabled: env.hasura_enabled,
+    })
 }
 
 pub async fn down() -> anyhow::Result<()> {
@@ -541,19 +620,23 @@ mod tests {
     #[test]
     fn config_hash_deterministic() {
         let env1 = EnvConfig {
+            pg_host: "localhost".into(),
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
             pg_database: "envio-dev".into(),
+            hasura_enabled: true,
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
         };
         let env2 = EnvConfig {
+            pg_host: "localhost".into(),
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
             pg_database: "envio-dev".into(),
+            hasura_enabled: true,
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
@@ -564,19 +647,23 @@ mod tests {
     #[test]
     fn config_hash_changes_on_diff() {
         let env1 = EnvConfig {
+            pg_host: "localhost".into(),
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
             pg_database: "envio-dev".into(),
+            hasura_enabled: true,
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
         };
         let env2 = EnvConfig {
+            pg_host: "localhost".into(),
             pg_port: "5434".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
             pg_database: "envio-dev".into(),
+            hasura_enabled: true,
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
