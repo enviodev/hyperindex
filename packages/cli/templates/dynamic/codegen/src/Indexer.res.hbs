@@ -217,9 +217,9 @@ let makeGeneratedConfig = () => {
 let configWithoutRegistrations = makeGeneratedConfig()
 let allEntities = configWithoutRegistrations.allEntities
 
-let initialSql = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema
-let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
+
+let makePgStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
   PgStorage.make(
     ~sql,
     ~pgSchema,
@@ -289,10 +289,25 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
   )
 }
 
+let makeStorage = () => {
+  switch configWithoutRegistrations.storage {
+  | Config.Clickhouse =>
+    ClickHouseStorage.make(
+      ~host=Env.ClickHouseStorage.host,
+      ~database=Env.ClickHouseStorage.database,
+      ~username=Env.ClickHouseStorage.username,
+      ~password=Env.ClickHouseStorage.password,
+    )
+  | Config.Postgres =>
+    let initialSql = PgStorage.makeClient()
+    makePgStorage(~sql=initialSql)
+  }
+}
+
 let codegenPersistence = Persistence.make(
   ~userEntities=configWithoutRegistrations.userEntities,
   ~allEnums=configWithoutRegistrations.allEnums,
-  ~storage=makeStorage(~sql=initialSql),
+  ~storage=makeStorage(),
 )
 
 }

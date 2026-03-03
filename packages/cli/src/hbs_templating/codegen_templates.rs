@@ -12,7 +12,7 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField, IndexFieldDirection},
         event_parsing::{abi_to_rescript_type, EthereumEventParam},
         field_types,
-        human_config::{evm::For, HumanConfig},
+        human_config::{evm::For, HumanConfig, Storage},
         system_config::{
             self, get_envio_version, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField,
             SystemConfig,
@@ -76,6 +76,8 @@ struct InternalConfigJson<'a> {
     save_full_history: bool,
     #[serde(skip_serializing_if = "is_false")]
     raw_events: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<InternalEvmConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1862,6 +1864,11 @@ type testIndexer = {{
                 })
                 .collect();
 
+            let storage = match &cfg.storage {
+                Storage::Postgres => None, // Default, skip serialization
+                Storage::Clickhouse => Some("clickhouse"),
+            };
+
             let config = InternalConfigJson {
                 version: CURRENT_CRATE_VERSION,
                 name: &cfg.name,
@@ -1872,6 +1879,7 @@ type testIndexer = {{
                 rollback_on_reorg: cfg.rollback_on_reorg,
                 save_full_history: cfg.save_full_history,
                 raw_events: cfg.enable_raw_events,
+                storage,
                 evm,
                 fuel,
                 svm,
