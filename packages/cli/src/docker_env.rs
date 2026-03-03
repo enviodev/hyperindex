@@ -539,6 +539,8 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
     let use_ch_connector = use_clickhouse && env.hasura_enabled;
 
     // Probe services in parallel to see if they are already running.
+    // This is used to skip the slow wait-for-healthy polling, NOT to skip
+    // the config hash check — a running container may have stale config.
     let pg_host = env.pg_host.clone();
     let (pg_alive, hasura_alive, ch_alive, ch_connector_alive) = tokio::join!(
         is_service_reachable(&pg_host, pg_host_port),
@@ -565,35 +567,12 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
         }
     );
 
-    let need_pg = !pg_alive;
-    let need_hasura = env.hasura_enabled && !hasura_alive;
-    let need_clickhouse = use_clickhouse && !ch_alive;
-    let need_ch_connector = use_ch_connector && !ch_connector_alive;
-
-    if pg_alive {
-        println!("Postgres already reachable on port {pg_host_port}, skipping container");
-    }
-    if env.hasura_enabled && hasura_alive {
-        println!("Hasura already healthy on port {hasura_host_port}, skipping container");
-    }
     if !env.hasura_enabled {
         println!("Hasura disabled (ENVIO_HASURA=false), skipping");
     }
-    if use_clickhouse && ch_alive {
-        println!("ClickHouse already reachable on port {ch_host_port}, skipping container");
-    }
-    if use_ch_connector && ch_connector_alive {
-        println!("ClickHouse connector already healthy on port {ch_connector_host_port}, skipping container");
-    }
 
-    // If all needed services are already running, nothing to do.
-    if !need_pg && !need_hasura && !need_clickhouse && !need_ch_connector {
-        return Ok(UpResult {
-            hasura_enabled: env.hasura_enabled,
-        });
-    }
-
-    // We need Docker for at least one container.
+    // Always connect to Docker so we can verify config hashes even for
+    // running containers — a port-reachable service may have stale config.
     let docker = connect_docker().await?;
     let config_hash = env.config_hash();
 
@@ -602,9 +581,6 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
     // Network is shared so both pipelines may race to create it; ensure_network
     // handles the "already exists" case, so the loser is a harmless no-op.
     let pg_pipeline = async {
-        if !need_pg {
-            return Ok::<(), anyhow::Error>(());
-        }
         // Image pull, network, and volume are all independent.
         let (img_res, net_res, vol_res) = tokio::join!(
             ensure_image(&docker, POSTGRES_IMAGE),
@@ -653,12 +629,15 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             ..Default::default()
         };
 
-        ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, pg_body).await?;
-        Ok(())
+        let fresh = ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, pg_body).await?;
+        if !fresh && pg_alive {
+            println!("Postgres already reachable on port {pg_host_port}, skipping");
+        }
+        Ok::<(), anyhow::Error>(())
     };
 
     let hasura_pipeline = async {
-        if !need_hasura {
+        if !env.hasura_enabled {
             return Ok::<(), anyhow::Error>(());
         }
         // Image pull and network creation are independent.
@@ -740,7 +719,7 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             ..Default::default()
         };
 
-        ensure_container(
+        let fresh = ensure_container(
             &docker,
             HASURA_CONTAINER,
             &config_hash,
@@ -748,11 +727,20 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             hasura_body,
         )
         .await?;
+
+        // If the container was recreated (config drift), wait for it to become
+        // healthy again even if it was previously reachable.
+        if fresh || !hasura_alive {
+            let url = format!("http://localhost:{}/hasura/healthz?strict=true", env.hasura_port);
+            wait_for_http_healthy(&url, "Hasura").await?;
+        } else {
+            println!("Hasura already healthy on port {hasura_host_port}, skipping");
+        }
         Ok(())
     };
 
     let clickhouse_pipeline = async {
-        if !need_clickhouse {
+        if !use_clickhouse {
             return Ok::<(), anyhow::Error>(());
         }
         // Image pull, network, and volume are all independent.
@@ -817,17 +805,21 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             ..Default::default()
         };
 
-        ensure_container(&docker, CLICKHOUSE_CONTAINER, &config_hash, ch_host_port, ch_body)
+        let fresh = ensure_container(&docker, CLICKHOUSE_CONTAINER, &config_hash, ch_host_port, ch_body)
             .await?;
 
-        // Wait for ClickHouse HTTP interface to become healthy
-        let ping_url = format!("http://localhost:{}/ping", env.clickhouse_port);
-        wait_for_http_healthy(&ping_url, "ClickHouse").await?;
+        if fresh || !ch_alive {
+            // Wait for ClickHouse HTTP interface to become healthy
+            let ping_url = format!("http://localhost:{}/ping", env.clickhouse_port);
+            wait_for_http_healthy(&ping_url, "ClickHouse").await?;
+        } else {
+            println!("ClickHouse already reachable on port {ch_host_port}, skipping");
+        }
         Ok(())
     };
 
     let ch_connector_pipeline = async {
-        if !need_ch_connector {
+        if !use_ch_connector {
             return Ok::<(), anyhow::Error>(());
         }
         let (img_res, net_res) = tokio::join!(
@@ -869,7 +861,7 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             ..Default::default()
         };
 
-        ensure_container(
+        let fresh = ensure_container(
             &docker,
             CLICKHOUSE_CONNECTOR_CONTAINER,
             &config_hash,
@@ -878,26 +870,30 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
         )
         .await?;
 
-        // Brief pause to let the container start, then verify it's still running.
-        // The connector is a statically-linked Rust binary that starts in <1s,
-        // so if it's already exited, something is fundamentally wrong.
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        if !is_container_running(&docker, CLICKHOUSE_CONNECTOR_CONTAINER).await {
-            let logs = get_container_logs(&docker, CLICKHOUSE_CONNECTOR_CONTAINER, 30).await;
-            anyhow::bail!(
-                "Container {CLICKHOUSE_CONNECTOR_CONTAINER} exited immediately after starting.\n\
-                 Image: {CLICKHOUSE_CONNECTOR_IMAGE}\n\
-                 Logs:\n{logs}\n\
-                 Run: docker logs {CLICKHOUSE_CONNECTOR_CONTAINER}"
-            );
-        }
+        if fresh || !ch_connector_alive {
+            // Brief pause to let the container start, then verify it's still running.
+            // The connector is a statically-linked Rust binary that starts in <1s,
+            // so if it's already exited, something is fundamentally wrong.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if !is_container_running(&docker, CLICKHOUSE_CONNECTOR_CONTAINER).await {
+                let logs = get_container_logs(&docker, CLICKHOUSE_CONNECTOR_CONTAINER, 30).await;
+                anyhow::bail!(
+                    "Container {CLICKHOUSE_CONNECTOR_CONTAINER} exited immediately after starting.\n\
+                     Image: {CLICKHOUSE_CONNECTOR_IMAGE}\n\
+                     Logs:\n{logs}\n\
+                     Run: docker logs {CLICKHOUSE_CONNECTOR_CONTAINER}"
+                );
+            }
 
-        // Wait for connector agent health endpoint
-        let health_url = format!(
-            "http://localhost:{}/health",
-            env.clickhouse_connector_port
-        );
-        wait_for_http_healthy(&health_url, "ClickHouse connector agent").await?;
+            // Wait for connector agent health endpoint
+            let health_url = format!(
+                "http://localhost:{}/health",
+                env.clickhouse_connector_port
+            );
+            wait_for_http_healthy(&health_url, "ClickHouse connector agent").await?;
+        } else {
+            println!("ClickHouse connector already healthy on port {ch_connector_host_port}, skipping");
+        }
         Ok(())
     };
 
