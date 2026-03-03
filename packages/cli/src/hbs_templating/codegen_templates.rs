@@ -18,7 +18,7 @@ use crate::{
             SystemConfig,
         },
     },
-    persisted_state::{PersistedState, PersistedStateJsonString, CURRENT_CRATE_VERSION},
+    persisted_state::{self, PersistedState, PersistedStateJsonString},
     project_paths::{
         path_utils::{add_leading_relative_dot, add_trailing_relative_dot},
         ParsedProjectPaths,
@@ -1863,7 +1863,7 @@ type testIndexer = {{
                 .collect();
 
             let config = InternalConfigJson {
-                version: CURRENT_CRATE_VERSION,
+                version: persisted_state::current_version(),
                 name: &cfg.name,
                 description: cfg.human_config.get_base_config().description.as_deref(),
                 handlers: cfg.handlers.as_deref(),
