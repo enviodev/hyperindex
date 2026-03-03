@@ -176,6 +176,9 @@ impl EnvConfig {
         hasher.update(&self.clickhouse_password);
         hasher.update(&self.clickhouse_database);
         hasher.update(&self.clickhouse_connector_port);
+        // Bump this version when container create configs change to force
+        // recreation of existing containers with stale settings.
+        hasher.update("config_v2");
         format!("{:x}", hasher.finalize())
     }
 }
@@ -849,6 +852,9 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
         let connector_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_CONNECTOR_IMAGE.to_string()),
             labels: Some(make_labels(&config_hash)),
+            // The connector image lacks an EXPOSE directive, so we must
+            // declare the port here for Docker to honour the port binding.
+            exposed_ports: Some(vec!["8080/tcp".to_string()]),
             // No Docker healthcheck: the connector image is a minimal Alpine/scratch
             // build without bash or curl. We poll /health from the host instead.
             host_config: Some(HostConfig {
