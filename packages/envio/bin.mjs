@@ -12,12 +12,13 @@ function runLocalEnvio() {
   const args = process.argv.slice(2);
 
   const caller = process.argv[1];
-  if (!caller.endsWith("/node_modules/envio/local-bin.mjs")) {
+  if (!caller.endsWith("/envio/bin.mjs")) {
     throw new Error(
       `Unexpected call to local envio package. Either use cargo or use the local package via npm scripts. Caller: ${caller}`
     );
   }
 
+  // Go up 3 levels: bin.mjs → envio/ → {node_modules,packages}/ → repo root
   let root = path.join(caller, "../../..");
 
   const pnpmListResult = spawnSync("pnpm", ["list", "envio", "--json"], {

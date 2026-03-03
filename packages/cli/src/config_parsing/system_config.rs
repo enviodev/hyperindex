@@ -387,15 +387,26 @@ pub fn get_envio_version() -> Result<String> {
         // version should be installable from npm
         Ok(crate_version.to_string())
     } else {
-        // Else install the local version for development and testing
-        match env::current_exe() {
-            // This should be something like "file:~/envio/hyperindex/target/debug/envio" or "file:.../target/debug/integration_tests"
-            Ok(exe_path) => Ok(format!(
-                "file:{}/../../../packages/envio",
-                exe_path.to_string_lossy()
-            )),
-            Err(e) => Err(anyhow!("failed to get current exe path: {e}")),
+        // Else install the local version for development and testing.
+        // Walk up from the binary location to find the repo root containing
+        // packages/envio. Using current_exe() instead of current_dir() so
+        // this works even when cwd is outside the repo (e.g. template tests
+        // that run in /tmp/).
+        let exe = env::current_exe()
+            .and_then(|p| p.canonicalize())
+            .context("failed to resolve current executable path")?;
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("packages/envio");
+            if candidate.is_dir() {
+                return Ok(format!("file:{}", candidate.to_string_lossy()));
+            }
+            dir = d.parent();
         }
+        Err(anyhow!(
+            "could not find packages/envio above executable: {}",
+            exe.display()
+        ))
     }
 }
 
