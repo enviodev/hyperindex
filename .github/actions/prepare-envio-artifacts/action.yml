@@ -1,6 +1,6 @@
 name: Prepare envio artifacts
 description: >
-  Download pre-built envio and platform artifacts into .envio-artifacts/.
+  Download pre-built envio artifacts and CI lockfile into the workspace.
   The committed .pnpmfile.cjs hook redirects envio dependencies to use
   these artifacts instead of the dev packages/envio workspace member.
   Must run BEFORE pnpm install.
@@ -21,3 +21,15 @@ runs:
     - name: Make binary executable
       shell: bash
       run: chmod +x .envio-artifacts/envio-linux-x64/bin/envio
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: ci-lockfile
+
+    - name: Verify CI lockfile
+      shell: bash
+      run: |
+        if ! head -1 pnpm-lock.yaml | grep -q 'lockfileVersion'; then
+          echo "ERROR: downloaded ci-lockfile does not look like a valid lockfile"
+          exit 1
+        fi

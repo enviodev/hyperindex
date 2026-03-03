@@ -93,6 +93,25 @@ jobs:
           name: npm-pkg-envio
           path: envio-dist
 
+      # Generate a CI lockfile with the pnpmfile hook active so test
+      # jobs can use --frozen-lockfile.
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio-linux-x64
+          path: .envio-artifacts/envio-linux-x64
+
+      - name: Generate CI lockfile
+        run: |
+          cp -r envio-dist .envio-artifacts/envio
+          chmod +x .envio-artifacts/envio-linux-x64/bin/envio
+          pnpm install --lockfile-only --no-frozen-lockfile
+
+      - name: Upload CI lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-lockfile
+          path: pnpm-lock.yaml
+
   # ── Verify ──────────────────────────────────────────────────────────
 
   # Cargo unit tests - no artifacts needed, independent compilation
@@ -139,7 +158,7 @@ jobs:
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -198,7 +217,7 @@ jobs:
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Wait for Hasura
         run: |
@@ -279,7 +298,7 @@ jobs:
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Wait for Hasura
         run: |
