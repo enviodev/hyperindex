@@ -28,7 +28,8 @@ impl PersistedState {
     async fn upsert_to_db_with_pool(&self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
         let mut env_state = EnvState::new(&std::env::current_dir().unwrap_or_default());
         let public_schema = env_state
-            .var("ENVIO_PG_PUBLIC_SCHEMA")
+            .var("ENVIO_PG_SCHEMA")
+            .or_else(|| env_state.var("ENVIO_PG_PUBLIC_SCHEMA"))
             .unwrap_or_else(|| "public".to_string());
 
         sqlx::query(&format!(
@@ -75,7 +76,8 @@ impl PersistedStateExists {
     ) -> Result<PersistedStateExists, sqlx::Error> {
         let mut env_state = EnvState::new(&std::env::current_dir().unwrap_or_default());
         let public_schema = env_state
-            .var("ENVIO_PG_PUBLIC_SCHEMA")
+            .var("ENVIO_PG_SCHEMA")
+            .or_else(|| env_state.var("ENVIO_PG_PUBLIC_SCHEMA"))
             .unwrap_or_else(|| "public".to_string());
 
         let val = sqlx::query_as::<_, PersistedState>(&format!(
