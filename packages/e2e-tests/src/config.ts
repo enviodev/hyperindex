@@ -48,9 +48,14 @@ function resolveEnvio(): { command: string; args: string[] } {
     }
   }
 
-  // Fall back to running bin.mjs via node. In CI this is the production
-  // shim (overlaid artifact) which resolves the platform binary itself.
-  // Works from any cwd since bin.mjs walks up from its own location.
+  // In CI the pre-built platform binary lives in .envio-artifacts/
+  const artifactBin = path.join(rootDir, ".envio-artifacts/envio-linux-x64/bin/envio");
+  if (fs.existsSync(artifactBin)) {
+    return { command: artifactBin, args: [] };
+  }
+
+  // Fall back to running bin.mjs via node (production shim that
+  // resolves the platform binary via require.resolve).
   const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
   if (fs.existsSync(binMjs)) {
     return { command: "node", args: [binMjs] };

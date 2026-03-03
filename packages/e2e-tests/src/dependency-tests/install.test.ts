@@ -54,9 +54,13 @@ describe("Isolated dependency e2e", () => {
     //    "file:../../packages/envio" relative path resolves naturally.
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "envio-iso-"));
 
-    // Copy packages/envio (skip node_modules to avoid workspace artifacts)
+    // Copy envio package — prefer the pre-built artifact when available
+    // (CI), fall back to the dev workspace member (local dev).
+    const envioSource = fs.existsSync(path.join(config.rootDir, ".envio-artifacts/envio"))
+      ? path.join(config.rootDir, ".envio-artifacts/envio")
+      : path.join(config.rootDir, "packages/envio");
     fs.cpSync(
-      path.join(config.rootDir, "packages/envio"),
+      envioSource,
       path.join(tmpRoot, "packages/envio"),
       {
         recursive: true,

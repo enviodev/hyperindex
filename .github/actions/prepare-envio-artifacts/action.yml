@@ -1,10 +1,8 @@
 name: Prepare envio artifacts
 description: >
-  Download pre-built envio and platform artifacts, overlay
-  the compiled sources and production bin.mjs into packages/envio/
-  while preserving the dev package.json (so the lockfile stays
-  consistent). The committed .pnpmfile.cjs hook adds the
-  envio-linux-x64 dependency during pnpm install.
+  Download pre-built envio and platform artifacts into .envio-artifacts/.
+  The committed .pnpmfile.cjs hook redirects envio dependencies to use
+  these artifacts instead of the dev packages/envio workspace member.
   Must run BEFORE pnpm install.
 
 runs:
@@ -20,16 +18,6 @@ runs:
         name: npm-pkg-envio-linux-x64
         path: .envio-artifacts/envio-linux-x64
 
-    # Overlay compiled sources and production bin.mjs into the
-    # workspace member, but keep the dev package.json untouched
-    # so pnpm's lockfile check passes.
-    - name: Overlay compiled envio files
+    - name: Make binary executable
       shell: bash
-      run: |
-        artifact=".envio-artifacts/envio"
-        target="packages/envio"
-        for f in src evm.schema.json fuel.schema.json svm.schema.json \
-                 rescript.json index.d.ts index.js bin.mjs; do
-          rm -rf "$target/$f"
-          cp -r "$artifact/$f" "$target/$f"
-        done
+      run: chmod +x .envio-artifacts/envio-linux-x64/bin/envio
