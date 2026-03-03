@@ -1,7 +1,7 @@
 ---
 name: test
 description: >-
-  Run ReScript compiler and mocha tests at scenarios/test_codegen.
+  Run ReScript compiler and vitest tests at scenarios/test_codegen.
   Address failing tests if relevant.
 ---
 
@@ -11,7 +11,7 @@ Run the following at `scenarios/test_codegen`:
 
 ```bash
 pnpm rescript
-pnpm mocha
+pnpm vitest
 ```
 
 Address failing tests if relevant.

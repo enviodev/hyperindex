@@ -38,7 +38,7 @@
 
 Prefer Public module API for testing.
 
-Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm mocha`. Use `_only` to specify which tests to run.
+Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm vitest`. Use `_only` to specify which tests to run.
 
 ## ReScript
 
