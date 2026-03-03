@@ -382,7 +382,7 @@ fn is_valid_release_version_number(version: &str) -> bool {
 
 /// Read version from the npm platform package's package.json.
 /// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
-pub(crate) fn read_version_from_package_json() -> Result<String> {
+pub fn read_version_from_package_json() -> Result<String> {
     let exe = env::current_exe()
         .and_then(|p| p.canonicalize())
         .context("Failed to resolve envio executable path")?;
