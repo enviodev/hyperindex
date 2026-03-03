@@ -228,27 +228,25 @@ module App = {
           </Text>
         </Box>
       | Postgres =>
-        <>
-          <Box flexDirection={Row}>
-            <Text> {"GraphQL: "->React.string} </Text>
-            <Text color={Info} underline=true> {Env.Hasura.url->React.string} </Text>
-            {
-              let defaultPassword = "testing"
-              if Env.Hasura.secret == defaultPassword {
-                <Text color={Gray}> {` (password: ${defaultPassword})`->React.string} </Text>
-              } else {
-                React.null
-              }
+        <Box flexDirection={Row}>
+          <Text> {"GraphQL: "->React.string} </Text>
+          <Text color={Info} underline=true> {Env.Hasura.url->React.string} </Text>
+          {
+            let defaultPassword = "testing"
+            if Env.Hasura.secret == defaultPassword {
+              <Text color={Gray}> {` (password: ${defaultPassword})`->React.string} </Text>
+            } else {
+              React.null
             }
-          </Box>
-          <Box flexDirection={Row}>
-            <Text> {"Dev Console: "->React.string} </Text>
-            <Text color={Info} underline=true>
-              {`${Env.envioAppUrl}/console`->React.string}
-            </Text>
-          </Box>
-        </>
+          }
+        </Box>
       }}
+      <Box flexDirection={Row}>
+        <Text> {"Dev Console: "->React.string} </Text>
+        <Text color={Info} underline=true>
+          {`${Env.envioAppUrl}/console`->React.string}
+        </Text>
+      </Box>
       <Messages config=state.ctx.config />
     </Box>
   }
