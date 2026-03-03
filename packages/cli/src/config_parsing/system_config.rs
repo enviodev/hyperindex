@@ -393,21 +393,14 @@ fn read_version_from_package_json() -> Option<String> {
 
 pub fn get_envio_version() -> Result<String> {
     // 1. Try the npm platform package's package.json (patched with
-    //    correct version at publish time, works even when the binary
-    //    was compiled with 0.0.1-dev).
+    //    correct version at publish time).
     if let Some(v) = read_version_from_package_json() {
         if is_valid_release_version_number(&v) {
             return Ok(v);
         }
     }
 
-    // 2. Fall back to compile-time version from Cargo.toml.
-    let crate_version = env!("CARGO_PKG_VERSION");
-    if is_valid_release_version_number(crate_version) {
-        return Ok(crate_version.to_string());
-    }
-
-    // 3. Dev mode: walk up from the binary to find the local packages/envio.
+    // 2. Dev mode: walk up from the binary to find the local packages/envio.
     // Using current_exe() instead of current_dir() so this works even when
     // cwd is outside the repo (e.g. template tests that run in /tmp/).
     let exe = env::current_exe()
