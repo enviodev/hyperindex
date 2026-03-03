@@ -380,34 +380,51 @@ fn is_valid_release_version_number(version: &str) -> bool {
     re_version_pattern.is_match(version) || version.contains("-main-")
 }
 
+/// Read version from the npm platform package's package.json.
+/// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
+fn read_version_from_package_json() -> Option<String> {
+    let exe = env::current_exe().ok()?.canonicalize().ok()?;
+    // exe = .../bin/envio → parent = .../bin/ → parent = .../<pkg>/
+    let pkg_json = exe.parent()?.parent()?.join("package.json");
+    let contents = std::fs::read_to_string(pkg_json).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    json.get("version")?.as_str().map(String::from)
+}
+
 pub fn get_envio_version() -> Result<String> {
+    // 1. Try the npm platform package's package.json (patched with
+    //    correct version at publish time, works even when the binary
+    //    was compiled with 0.0.1-dev).
+    if let Some(v) = read_version_from_package_json() {
+        if is_valid_release_version_number(&v) {
+            return Ok(v);
+        }
+    }
+
+    // 2. Fall back to compile-time version from Cargo.toml.
     let crate_version = env!("CARGO_PKG_VERSION");
     if is_valid_release_version_number(crate_version) {
-        // Check that crate version is not a dev release. In which case the
-        // version should be installable from npm
-        Ok(crate_version.to_string())
-    } else {
-        // Else install the local version for development and testing.
-        // Walk up from the binary location to find the repo root containing
-        // packages/envio. Using current_exe() instead of current_dir() so
-        // this works even when cwd is outside the repo (e.g. template tests
-        // that run in /tmp/).
-        let exe = env::current_exe()
-            .and_then(|p| p.canonicalize())
-            .context("failed to resolve current executable path")?;
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join("packages/envio");
-            if candidate.is_dir() {
-                return Ok(format!("file:{}", candidate.to_string_lossy()));
-            }
-            dir = d.parent();
-        }
-        Err(anyhow!(
-            "could not find packages/envio above executable: {}",
-            exe.display()
-        ))
+        return Ok(crate_version.to_string());
     }
+
+    // 3. Dev mode: walk up from the binary to find the local packages/envio.
+    // Using current_exe() instead of current_dir() so this works even when
+    // cwd is outside the repo (e.g. template tests that run in /tmp/).
+    let exe = env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .context("failed to resolve current executable path")?;
+    let mut dir = exe.parent();
+    while let Some(d) = dir {
+        let candidate = d.join("packages/envio");
+        if candidate.is_dir() {
+            return Ok(format!("file:{}", candidate.to_string_lossy()));
+        }
+        dir = d.parent();
+    }
+    Err(anyhow!(
+        "could not find packages/envio above executable: {}",
+        exe.display()
+    ))
 }
 
 #[derive(Debug)]
