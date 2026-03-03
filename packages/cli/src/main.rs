@@ -2,22 +2,8 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, FromArgMatches};
 use envio::{
     clap_definitions::CommandLineArgs,
-    config_parsing::system_config::read_version_from_package_json, executor,
+    config_parsing::system_config::runtime_version, executor,
 };
-
-fn runtime_version() -> &'static str {
-    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    VERSION.get_or_init(|| {
-        read_version_from_package_json().unwrap_or_else(|e| {
-            eprintln!(
-                "Failed to detect envio version: {e:#}\n\n\
-                 This usually means envio was not installed correctly.\n\
-                 Please reinstall with: pnpm add envio"
-            );
-            std::process::exit(1);
-        })
-    })
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {

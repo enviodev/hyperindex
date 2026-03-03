@@ -380,6 +380,23 @@ fn is_valid_release_version_number(version: &str) -> bool {
     re_version_pattern.is_match(version) || version.contains("-main-")
 }
 
+/// Returns the runtime version, reading it once from the platform package's
+/// package.json. Prints a user-friendly error and exits if the version cannot
+/// be determined.
+pub fn runtime_version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| {
+        read_version_from_package_json().unwrap_or_else(|e| {
+            eprintln!(
+                "Failed to detect envio version: {e:#}\n\n\
+                 This usually means envio was not installed correctly.\n\
+                 Please reinstall with: pnpm add envio"
+            );
+            std::process::exit(1);
+        })
+    })
+}
+
 /// Read version from the npm platform package's package.json.
 /// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
 pub fn read_version_from_package_json() -> Result<String> {

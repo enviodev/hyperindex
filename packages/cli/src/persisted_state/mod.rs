@@ -12,7 +12,6 @@ use sqlx::FromRow;
 use std::{
     fmt::{self, Display},
     path::PathBuf,
-    sync::OnceLock,
 };
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -27,10 +26,7 @@ pub struct PersistedState {
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
 pub fn current_version() -> &'static str {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION.get_or_init(|| {
-        system_config::read_version_from_package_json().unwrap_or_else(|_| "dev".to_string())
-    })
+    system_config::runtime_version()
 }
 
 #[derive(Debug, strum::Display, EnumIter, PartialEq, Clone)]
