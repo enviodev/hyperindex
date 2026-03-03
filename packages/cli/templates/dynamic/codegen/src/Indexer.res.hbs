@@ -297,7 +297,7 @@ let makeStorage = () => {
       ->Js.String2.replaceByRe(%re("/[^a-zA-Z0-9_]/g"), "_")
     ClickHouseStorage.make(
       ~host=Env.ClickHouseStorage.host,
-      ~database=Env.ClickHouseStorage.database->Option.getWithDefault("envio_" ++ sanitizedName),
+      ~database=Env.ClickHouseStorage.database->Belt.Option.getWithDefault("envio_" ++ sanitizedName),
       ~username=Env.ClickHouseStorage.username,
       ~password=Env.ClickHouseStorage.password,
     )
