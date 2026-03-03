@@ -21,12 +21,14 @@ use tokio::time::Duration;
 const POSTGRES_IMAGE: &str = "postgres:18.3";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
 const CLICKHOUSE_IMAGE: &str = "clickhouse:26.1.3";
+const CLICKHOUSE_CONNECTOR_IMAGE: &str = "hasura/clickhouse-data-connector:v2.43.0";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
 const PG_CONTAINER: &str = "envio-postgres";
 const HASURA_CONTAINER: &str = "envio-hasura";
 const CLICKHOUSE_CONTAINER: &str = "envio-clickhouse";
+const CLICKHOUSE_CONNECTOR_CONTAINER: &str = "envio-clickhouse-connector";
 const VOLUME: &str = "envio-postgres-data";
 const CLICKHOUSE_VOLUME: &str = "envio-clickhouse-data";
 const NETWORK: &str = "envio-network";
@@ -120,6 +122,7 @@ struct EnvConfig {
     clickhouse_user: String,
     clickhouse_password: String,
     clickhouse_database: String,
+    clickhouse_connector_port: String,
 }
 
 impl EnvConfig {
@@ -154,6 +157,7 @@ impl EnvConfig {
             clickhouse_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
             clickhouse_password: var("ENVIO_CLICKHOUSE_PASSWORD", ""),
             clickhouse_database: var("ENVIO_CLICKHOUSE_DATABASE", &ch_database_default),
+            clickhouse_connector_port: var("ENVIO_CLICKHOUSE_CONNECTOR_PORT", "8081"),
         }
     }
 
@@ -171,6 +175,7 @@ impl EnvConfig {
         hasher.update(&self.clickhouse_user);
         hasher.update(&self.clickhouse_password);
         hasher.update(&self.clickhouse_database);
+        hasher.update(&self.clickhouse_connector_port);
         format!("{:x}", hasher.finalize())
     }
 }
@@ -483,10 +488,17 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
         .clickhouse_port
         .parse()
         .context("ENVIO_CLICKHOUSE_PORT is not a valid port")?;
+    let ch_connector_host_port: u16 = env
+        .clickhouse_connector_port
+        .parse()
+        .context("ENVIO_CLICKHOUSE_CONNECTOR_PORT is not a valid port")?;
+
+    // ClickHouse connector agent is needed when both ClickHouse storage and Hasura are enabled
+    let use_ch_connector = use_clickhouse && env.hasura_enabled;
 
     // Probe services in parallel to see if they are already running.
     let pg_host = env.pg_host.clone();
-    let (pg_alive, hasura_alive, ch_alive) = tokio::join!(
+    let (pg_alive, hasura_alive, ch_alive, ch_connector_alive) = tokio::join!(
         is_service_reachable(&pg_host, pg_host_port),
         async {
             if !env.hasura_enabled {
@@ -501,12 +513,20 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             }
             let url = format!("http://{}:{}/ping", pg_host, ch_host_port);
             is_http_healthy(&url).await
+        },
+        async {
+            if !use_ch_connector {
+                return false;
+            }
+            let url = format!("http://{}:{}/health", pg_host, ch_connector_host_port);
+            is_http_healthy(&url).await
         }
     );
 
     let need_pg = !pg_alive;
     let need_hasura = env.hasura_enabled && !hasura_alive;
     let need_clickhouse = use_clickhouse && !ch_alive;
+    let need_ch_connector = use_ch_connector && !ch_connector_alive;
 
     if pg_alive {
         println!("Postgres already reachable on port {pg_host_port}, skipping container");
@@ -520,9 +540,12 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
     if use_clickhouse && ch_alive {
         println!("ClickHouse already reachable on port {ch_host_port}, skipping container");
     }
+    if use_ch_connector && ch_connector_alive {
+        println!("ClickHouse connector already healthy on port {ch_connector_host_port}, skipping container");
+    }
 
     // If all needed services are already running, nothing to do.
-    if !need_pg && !need_hasura && !need_clickhouse {
+    if !need_pg && !need_hasura && !need_clickhouse && !need_ch_connector {
         return Ok(UpResult {
             hasura_enabled: env.hasura_enabled,
         });
@@ -621,25 +644,36 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             env.pg_user, env.pg_password, PG_CONTAINER, env.pg_database
         );
 
+        let mut hasura_env = vec![
+            format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
+            format!(
+                "HASURA_GRAPHQL_ENABLE_CONSOLE={}",
+                env.hasura_enable_console
+            ),
+            "HASURA_GRAPHQL_ENABLED_LOG_TYPES=startup, http-log, webhook-log, websocket-log, \
+             query-log"
+                .to_string(),
+            "HASURA_GRAPHQL_NO_OF_RETRIES=10".to_string(),
+            format!("HASURA_GRAPHQL_ADMIN_SECRET={}", env.hasura_admin_secret),
+            "HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true".to_string(),
+            "PORT=8080".to_string(),
+            "HASURA_GRAPHQL_UNAUTHORIZED_ROLE=public".to_string(),
+        ];
+
+        // When ClickHouse storage is used, register the ClickHouse data connector agent
+        // so Hasura can expose ClickHouse views via GraphQL
+        if use_clickhouse {
+            hasura_env.push(format!(
+                r#"HASURA_GRAPHQL_METADATA_DEFAULTS={{"backend_configs":{{"dataconnector":{{"clickhouse":{{"uri":"http://{}:8080"}}}}}}}}"#,
+                CLICKHOUSE_CONNECTOR_CONTAINER
+            ));
+        }
+
         let hasura_body = ContainerCreateBody {
             image: Some(HASURA_IMAGE.to_string()),
             labels: Some(make_labels(&config_hash)),
             user: Some("1001:1001".to_string()),
-            env: Some(vec![
-                format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
-                format!(
-                    "HASURA_GRAPHQL_ENABLE_CONSOLE={}",
-                    env.hasura_enable_console
-                ),
-                "HASURA_GRAPHQL_ENABLED_LOG_TYPES=startup, http-log, webhook-log, websocket-log, \
-                 query-log"
-                    .to_string(),
-                "HASURA_GRAPHQL_NO_OF_RETRIES=10".to_string(),
-                format!("HASURA_GRAPHQL_ADMIN_SECRET={}", env.hasura_admin_secret),
-                "HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true".to_string(),
-                "PORT=8080".to_string(),
-                "HASURA_GRAPHQL_UNAUTHORIZED_ROLE=public".to_string(),
-            ]),
+            env: Some(hasura_env),
             exposed_ports: Some(vec!["8080/tcp".to_string()]),
             healthcheck: Some(HealthConfig {
                 test: Some(vec![
@@ -750,11 +784,79 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
         Ok(())
     };
 
-    let (pg_res, hasura_res, ch_res) =
-        tokio::join!(pg_pipeline, hasura_pipeline, clickhouse_pipeline);
+    let ch_connector_pipeline = async {
+        if !need_ch_connector {
+            return Ok::<(), anyhow::Error>(());
+        }
+        let (img_res, net_res) = tokio::join!(
+            ensure_image(&docker, CLICKHOUSE_CONNECTOR_IMAGE),
+            ensure_network(&docker, NETWORK),
+        );
+        img_res?;
+        net_res?;
+
+        let connector_port_bindings = {
+            let mut map = HashMap::new();
+            map.insert(
+                "8080/tcp".to_string(),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(env.clickhouse_connector_port.clone()),
+                }]),
+            );
+            map
+        };
+
+        let connector_body = ContainerCreateBody {
+            image: Some(CLICKHOUSE_CONNECTOR_IMAGE.to_string()),
+            labels: Some(make_labels(&config_hash)),
+            healthcheck: Some(HealthConfig {
+                test: Some(vec![
+                    "CMD-SHELL".to_string(),
+                    "timeout 1s bash -c ':> /dev/tcp/127.0.0.1/8080' || exit 1".to_string(),
+                ]),
+                interval: Some(5_000_000_000),
+                timeout: Some(10_000_000_000),
+                retries: Some(5),
+                start_period: Some(5_000_000_000),
+                start_interval: None,
+            }),
+            host_config: Some(HostConfig {
+                port_bindings: Some(connector_port_bindings),
+                restart_policy: Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            networking_config: Some(make_networking_config(NETWORK)),
+            ..Default::default()
+        };
+
+        ensure_container(
+            &docker,
+            CLICKHOUSE_CONNECTOR_CONTAINER,
+            &config_hash,
+            ch_connector_host_port,
+            connector_body,
+        )
+        .await?;
+
+        // Wait for connector agent health endpoint
+        let health_url = format!(
+            "http://localhost:{}/health",
+            env.clickhouse_connector_port
+        );
+        wait_for_http_healthy(&health_url, "ClickHouse connector agent").await?;
+        Ok(())
+    };
+
+    let (pg_res, hasura_res, ch_res, ch_connector_res) =
+        tokio::join!(pg_pipeline, hasura_pipeline, clickhouse_pipeline, ch_connector_pipeline);
     pg_res?;
     hasura_res?;
     ch_res?;
+    ch_connector_res?;
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
@@ -770,6 +872,7 @@ pub async fn down() -> anyhow::Result<()> {
         stop_and_remove(&docker, HASURA_CONTAINER),
         stop_and_remove(&docker, PG_CONTAINER),
         stop_and_remove(&docker, CLICKHOUSE_CONTAINER),
+        stop_and_remove(&docker, CLICKHOUSE_CONNECTOR_CONTAINER),
     );
 
     let (vol_res, ch_vol_res, net_res) = tokio::join!(
@@ -828,6 +931,7 @@ mod tests {
             clickhouse_user: "default".into(),
             clickhouse_password: "".into(),
             clickhouse_database: "envio".into(),
+            clickhouse_connector_port: "8081".into(),
         };
         let env2 = EnvConfig {
             pg_host: "localhost".into(),
@@ -843,6 +947,7 @@ mod tests {
             clickhouse_user: "default".into(),
             clickhouse_password: "".into(),
             clickhouse_database: "envio".into(),
+            clickhouse_connector_port: "8081".into(),
         };
         assert_eq!(env1.config_hash(), env2.config_hash());
     }
@@ -863,6 +968,7 @@ mod tests {
             clickhouse_user: "default".into(),
             clickhouse_password: "".into(),
             clickhouse_database: "envio".into(),
+            clickhouse_connector_port: "8081".into(),
         };
         let env2 = EnvConfig {
             pg_host: "localhost".into(),
@@ -878,6 +984,7 @@ mod tests {
             clickhouse_user: "default".into(),
             clickhouse_password: "".into(),
             clickhouse_database: "envio".into(),
+            clickhouse_connector_port: "8081".into(),
         };
         assert_ne!(env1.config_hash(), env2.config_hash());
     }

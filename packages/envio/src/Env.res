@@ -181,6 +181,10 @@ module ClickHouseStorage = {
   let password = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_PASSWORD", S.string, ~devFallback="")
 }
 
+module ClickHouseConnector = {
+  let port = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_CONNECTOR_PORT", S.int->S.port, ~devFallback=8081)
+}
+
 module Hasura = {
   // Disable it on HS indexer run, since we don't have Hasura credentials anyways
   // Also, it might be useful for some users who don't care about Hasura

@@ -352,3 +352,220 @@ let trackDatabase = async (
 
   await executeBulkKeepGoing(~endpoint, ~auth, ~operations=allOperations)
 }
+
+// ClickHouse data connector support for Hasura.
+// Uses the GDC (GraphQL Data Connector) interface to expose ClickHouse
+// views as read-only GraphQL queries.
+
+let clickHouseSourceName = "clickhouse"
+
+let addClickHouseSource = async (
+  ~endpoint,
+  ~auth,
+  ~clickHouseUrl: string,
+  ~clickHouseUser: string,
+  ~clickHousePassword: string,
+) => {
+  try {
+    let result = await rawBodyRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "bodyString": Js.Json.stringify(
+          {
+            "type": "clickhouse_add_source",
+            "args": {
+              "name": clickHouseSourceName,
+              "configuration": {
+                "template": Js.Null.empty,
+                "timeout": Js.Null.empty,
+                "value": {
+                  "url": clickHouseUrl,
+                  "username": clickHouseUser,
+                  "password": clickHousePassword,
+                  "tables": Js.Null.empty,
+                },
+              },
+            },
+          }->(Utils.magic: 'a => Js.Json.t),
+        ),
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => "ClickHouse source added to Hasura"
+    | AlreadyDone => "ClickHouse source already exists in Hasura"
+    }
+    Logging.trace(msg)
+  } catch {
+  | exn =>
+    Logging.error({
+      "msg": `Failed to add ClickHouse source to Hasura - you may have issues querying ClickHouse data via GraphQL.`,
+      "err": exn->Utils.prettifyExn,
+    })
+  }
+}
+
+let trackClickHouseTables = async (
+  ~endpoint,
+  ~auth,
+  ~tableNames: array<string>,
+) => {
+  // Track tables via bulk_keep_going since clickhouse_track_table
+  // doesn't support batch tracking like pg_track_tables
+  let operations = tableNames->Js.Array2.map((tableName): bulkOperation => {
+    {
+      \"type": "clickhouse_track_table",
+      args: {
+        "source": clickHouseSourceName,
+        "table": [tableName],
+        "configuration": {
+          "custom_name": tableName,
+        },
+      }->(Utils.magic: 'a => Js.Json.t),
+    }
+  })
+
+  Logging.trace({
+    "msg": "Tracking ClickHouse tables in Hasura",
+    "tableNames": tableNames,
+  })
+
+  await executeBulkKeepGoing(~endpoint, ~auth, ~operations)
+}
+
+let createClickHouseSelectPermissionOperation = (
+  ~tableName: string,
+  ~responseLimit,
+  ~aggregateEntities,
+): bulkOperation => {
+  {
+    \"type": "clickhouse_create_select_permission",
+    args: {
+      "table": [tableName],
+      "role": "public",
+      "source": clickHouseSourceName,
+      "permission": {
+        "columns": "*",
+        "filter": Js.Obj.empty(),
+        "limit": responseLimit,
+        "allow_aggregations": aggregateEntities->Js.Array2.includes(tableName),
+      },
+    }->(Utils.magic: 'a => Js.Json.t),
+  }
+}
+
+let createClickHouseEntityRelationshipOperation = (
+  ~tableName: string,
+  ~relationshipType: string,
+  ~relationalKey: string,
+  ~objectName: string,
+  ~mappedEntity: string,
+  ~isDerivedFrom: bool,
+): bulkOperation => {
+  let derivedFromTo = isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}_id" : "id"`
+
+  {
+    \"type": `clickhouse_create_${relationshipType}_relationship`,
+    args: {
+      "table": [tableName],
+      "name": objectName,
+      "source": clickHouseSourceName,
+      "using": {
+        "manual_configuration": {
+          "remote_table": [mappedEntity],
+          "column_mapping": Js.Json.parseExn(`{${derivedFromTo}}`),
+        },
+      },
+    }->(Utils.magic: 'a => Js.Json.t),
+  }
+}
+
+let trackClickHouseDatabase = async (
+  ~endpoint,
+  ~auth,
+  ~clickHouseUrl: string,
+  ~clickHouseUser: string,
+  ~clickHousePassword: string,
+  ~userEntities: array<Internal.entityConfig>,
+  ~aggregateEntities,
+  ~responseLimit,
+  ~schema,
+) => {
+  // Entity views (current state) are the main tables to expose
+  let userTableNames = userEntities->Js.Array2.map(entity => entity.name)
+  let tableNames = userTableNames
+
+  Logging.info("Tracking ClickHouse tables in Hasura")
+
+  let _ = await clearHasuraMetadata(~endpoint, ~auth)
+
+  // Add ClickHouse as a data source via the data connector
+  await addClickHouseSource(
+    ~endpoint,
+    ~auth,
+    ~clickHouseUrl,
+    ~clickHouseUser,
+    ~clickHousePassword,
+  )
+
+  // Track the entity views
+  await trackClickHouseTables(~endpoint, ~auth, ~tableNames)
+
+  // Collect all operations for bulk execution
+  let allOperations = []
+
+  // Add select permission operations
+  tableNames->Js.Array2.forEach(tableName => {
+    allOperations
+    ->Js.Array2.push(
+      createClickHouseSelectPermissionOperation(~tableName, ~responseLimit, ~aggregateEntities),
+    )
+    ->ignore
+  })
+
+  // Add relationship operations
+  userEntities->Js.Array2.forEach(entityConfig => {
+    let tableName = entityConfig.name
+
+    //Set array relationships
+    entityConfig.table
+    ->Table.getDerivedFromFields
+    ->Js.Array2.forEach(derivedFromField => {
+      let relationalFieldName =
+        schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+
+      allOperations
+      ->Js.Array2.push(
+        createClickHouseEntityRelationshipOperation(
+          ~tableName,
+          ~relationshipType="array",
+          ~isDerivedFrom=true,
+          ~objectName=derivedFromField.fieldName,
+          ~relationalKey=relationalFieldName,
+          ~mappedEntity=derivedFromField.derivedFromEntity,
+        ),
+      )
+      ->ignore
+    })
+
+    //Set object relationships
+    entityConfig.table
+    ->Table.getLinkedEntityFields
+    ->Js.Array2.forEach(((field, linkedEntityName)) => {
+      allOperations
+      ->Js.Array2.push(
+        createClickHouseEntityRelationshipOperation(
+          ~tableName,
+          ~relationshipType="object",
+          ~isDerivedFrom=false,
+          ~objectName=field.fieldName,
+          ~relationalKey=field.fieldName,
+          ~mappedEntity=linkedEntityName,
+        ),
+      )
+      ->ignore
+    })
+  })
+
+  await executeBulkKeepGoing(~endpoint, ~auth, ~operations=allOperations)
+}

@@ -7,6 +7,7 @@ let make = (
   ~database: string,
   ~username: string,
   ~password: string,
+  ~onInitialize=?,
 ): Persistence.storage => {
   let client = ClickHouse.createClient({
     url: host,
@@ -77,6 +78,12 @@ ORDER BY (id)`,
         values,
         format: JSONEachRow,
       })
+    }
+
+    // Integration with other tools like Hasura
+    switch onInitialize {
+    | Some(onInitialize) => await onInitialize()
+    | None => ()
     }
 
     {

@@ -295,11 +295,44 @@ let makeStorage = () => {
     // Sanitize name for ClickHouse: replace non-alphanumeric chars with underscores
     let sanitizedName = configWithoutRegistrations.name
       ->Js.String2.replaceByRe(%re("/[^a-zA-Z0-9_]/g"), "_")
+    let clickHouseDatabase = Env.ClickHouseStorage.database->Belt.Option.getWithDefault("envio_" ++ sanitizedName)
     ClickHouseStorage.make(
       ~host=Env.ClickHouseStorage.host,
-      ~database=Env.ClickHouseStorage.database->Belt.Option.getWithDefault("envio_" ++ sanitizedName),
+      ~database=clickHouseDatabase,
       ~username=Env.ClickHouseStorage.username,
       ~password=Env.ClickHouseStorage.password,
+      ~onInitialize=?{
+        if Env.Hasura.enabled {
+          Some(
+            () => {
+              // The ClickHouse connector agent connects to ClickHouse using the
+              // internal Docker network hostname. Construct the URL accordingly.
+              let clickHouseUrl = Env.ClickHouseStorage.host ++ "/" ++ clickHouseDatabase
+              Hasura.trackClickHouseDatabase(
+                ~endpoint=Env.Hasura.graphqlEndpoint,
+                ~auth={
+                  role: Env.Hasura.role,
+                  secret: Env.Hasura.secret,
+                },
+                ~clickHouseUrl,
+                ~clickHouseUser=Env.ClickHouseStorage.username,
+                ~clickHousePassword=Env.ClickHouseStorage.password,
+                ~userEntities=configWithoutRegistrations.userEntities,
+                ~responseLimit=Env.Hasura.responseLimit,
+                ~schema=Schema.make(allEntities->Belt.Array.map(e => e.table)),
+                ~aggregateEntities=Env.Hasura.aggregateEntities,
+              )->Promise.catch(err => {
+                Logging.errorWithExn(
+                  err->Utils.prettifyExn,
+                  `Error tracking ClickHouse tables in Hasura`,
+                )->Promise.resolve
+              })
+            },
+          )
+        } else {
+          None
+        }
+      },
     )
   | Config.Postgres =>
     let initialSql = PgStorage.makeClient()
