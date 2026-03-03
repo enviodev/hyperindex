@@ -1,0 +1,46 @@
+name: Prepare envio tarballs
+description: >
+  Download pre-built envio and platform tarballs, extract the envio
+  package into packages/envio/, and add a pnpm override so that
+  envio-linux-x64 resolves from the local tarball.
+  Must run BEFORE pnpm install.
+
+runs:
+  using: composite
+  steps:
+    # Download both tarballs into .envio-tarballs/
+    - uses: actions/download-artifact@v4
+      with:
+        name: tarball-envio
+        path: .envio-tarballs
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: tarball-envio-linux-x64
+        path: .envio-tarballs
+
+    # Replace the dev packages/envio with the production tarball content.
+    # npm pack puts files under a package/ prefix, --strip-components
+    # removes it so the contents land directly in packages/envio/.
+    - name: Extract envio tarball into packages/envio
+      shell: bash
+      run: |
+        rm -rf packages/envio
+        mkdir -p packages/envio
+        tar xzf .envio-tarballs/envio-*.tgz --strip-components=1 -C packages/envio/
+
+    # Add a pnpm override so that the envio-linux-x64 optional dependency
+    # resolves from the local tarball instead of the npm registry.
+    # This is the CI-only mechanism that replaces the old sibling-dir overlay.
+    - name: Add pnpm override for envio-linux-x64
+      shell: bash
+      run: |
+        PLATFORM_TGZ=$(cd .envio-tarballs && ls envio-linux-x64-*.tgz)
+        node -e '
+          const fs = require("fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          pkg.pnpm ??= {};
+          pkg.pnpm.overrides ??= {};
+          pkg.pnpm.overrides["envio-linux-x64"] = "file:.envio-tarballs/'"$PLATFORM_TGZ"'";
+          fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+        '
