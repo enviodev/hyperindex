@@ -465,12 +465,13 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         if !need_pg {
             return Ok::<(), anyhow::Error>(());
         }
-        ensure_image(&docker, POSTGRES_IMAGE).await?;
-        // Volume and network can be created in parallel.
-        let (net_res, vol_res) = tokio::join!(
+        // Image pull, network, and volume are all independent.
+        let (img_res, net_res, vol_res) = tokio::join!(
+            ensure_image(&docker, POSTGRES_IMAGE),
             ensure_network(&docker, NETWORK),
             ensure_volume(&docker, VOLUME),
         );
+        img_res?;
         net_res?;
         vol_res?;
 
@@ -520,8 +521,13 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         if !need_hasura {
             return Ok::<(), anyhow::Error>(());
         }
-        ensure_image(&docker, HASURA_IMAGE).await?;
-        ensure_network(&docker, NETWORK).await?;
+        // Image pull and network creation are independent.
+        let (img_res, net_res) = tokio::join!(
+            ensure_image(&docker, HASURA_IMAGE),
+            ensure_network(&docker, NETWORK),
+        );
+        img_res?;
+        net_res?;
 
         let hasura_port_bindings = {
             let mut map = HashMap::new();
