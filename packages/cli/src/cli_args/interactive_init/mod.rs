@@ -280,7 +280,7 @@ pub async fn prompt_missing_init_args(
         Some(args_name) => args_name,
         None => {
             if directory == DEFAULT_PROJECT_ROOT_PATH {
-                "envio-indexer".to_string()
+                "my-indexer".to_string()
             } else {
                 directory.to_string()
             }
