@@ -626,10 +626,24 @@ pub async fn down() -> anyhow::Result<()> {
         stop_and_remove(&docker, PG_CONTAINER),
     );
 
-    let _ = tokio::join!(
+    let (vol_res, net_res) = tokio::join!(
         docker.remove_volume(VOLUME, None::<bollard::query_parameters::RemoveVolumeOptions>),
         docker.remove_network(NETWORK),
     );
+
+    let mut failed = false;
+    if let Err(e) = vol_res {
+        eprintln!("Failed to remove volume {VOLUME}: {e}");
+        failed = true;
+    }
+    if let Err(e) = net_res {
+        eprintln!("Failed to remove network {NETWORK}: {e}");
+        failed = true;
+    }
+
+    if failed {
+        anyhow::bail!("Environment cleanup finished with errors (see above)");
+    }
 
     println!("Environment cleaned up");
 
