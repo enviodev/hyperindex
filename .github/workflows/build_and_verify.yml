@@ -93,25 +93,6 @@ jobs:
           name: npm-pkg-envio
           path: envio-dist
 
-      # Generate a CI lockfile with the pnpmfile hook active so test
-      # jobs can use --frozen-lockfile.
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: .envio-artifacts/envio-linux-x64
-
-      - name: Generate CI lockfile
-        run: |
-          cp -r envio-dist .envio-artifacts/envio
-          chmod +x .envio-artifacts/envio-linux-x64/bin/envio
-          pnpm install --lockfile-only --no-frozen-lockfile
-
-      - name: Upload CI lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-lockfile
-          path: pnpm-lock.yaml
-
   # ── Verify ──────────────────────────────────────────────────────────
 
   # Cargo unit tests - no artifacts needed, independent compilation
@@ -143,22 +124,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: "pnpm"
-
       - uses: ./.github/actions/prepare-envio-artifacts
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -202,22 +168,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: "pnpm"
-
       - uses: ./.github/actions/prepare-envio-artifacts
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Wait for Hasura
         run: |
@@ -283,22 +234,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: "pnpm"
-
       - uses: ./.github/actions/prepare-envio-artifacts
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Wait for Hasura
         run: |
