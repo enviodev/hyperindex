@@ -8,7 +8,14 @@ use envio::{
 fn runtime_version() -> &'static str {
     static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     VERSION.get_or_init(|| {
-        read_version_from_package_json().unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+        read_version_from_package_json().unwrap_or_else(|e| {
+            eprintln!(
+                "Failed to detect envio version: {e:#}\n\n\
+                 This usually means envio was not installed correctly.\n\
+                 Please reinstall with: pnpm add envio"
+            );
+            std::process::exit(1);
+        })
     })
 }
 
