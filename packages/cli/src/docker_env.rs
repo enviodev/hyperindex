@@ -7,7 +7,7 @@ use bollard::models::{
 };
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
-    RemoveContainerOptionsBuilder, StopContainerOptionsBuilder,
+    LogsOptionsBuilder, RemoveContainerOptionsBuilder, StopContainerOptionsBuilder,
 };
 use bollard::{Docker, API_DEFAULT_VERSION};
 use dotenvy::{EnvLoader, EnvMap, EnvSequence};
@@ -471,6 +471,22 @@ async fn ensure_container(
     Ok(true)
 }
 
+/// Fetch the last N lines of container logs for diagnostics.
+async fn get_container_logs(docker: &Docker, name: &str, tail: usize) -> String {
+    let options = LogsOptionsBuilder::default()
+        .stdout(true)
+        .stderr(true)
+        .tail(tail.to_string().as_str())
+        .build();
+
+    let mut stream = docker.logs(name, Some(options));
+    let mut output = String::new();
+    while let Some(Ok(chunk)) = stream.next().await {
+        output.push_str(&chunk.to_string());
+    }
+    output
+}
+
 /// Return value from `up()` so callers know whether Hasura is active.
 pub struct UpResult {
     pub hasura_enabled: bool,
@@ -832,6 +848,20 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             connector_body,
         )
         .await?;
+
+        // Brief pause to let the container start, then verify it's still running.
+        // The connector is a statically-linked Rust binary that starts in <1s,
+        // so if it's already exited, something is fundamentally wrong.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if !is_container_running(&docker, CLICKHOUSE_CONNECTOR_CONTAINER).await {
+            let logs = get_container_logs(&docker, CLICKHOUSE_CONNECTOR_CONTAINER, 30).await;
+            anyhow::bail!(
+                "Container {CLICKHOUSE_CONNECTOR_CONTAINER} exited immediately after starting.\n\
+                 Image: {CLICKHOUSE_CONNECTOR_IMAGE}\n\
+                 Logs:\n{logs}\n\
+                 Run: docker logs {CLICKHOUSE_CONNECTOR_CONTAINER}"
+            );
+        }
 
         // Wait for connector agent health endpoint
         let health_url = format!(
