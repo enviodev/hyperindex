@@ -1,9 +1,9 @@
 name: Prepare envio artifacts
 description: >
-  Download pre-built envio and platform artifacts, overlay
-  packages/envio/ with the production build, and place the
-  platform binary as a sibling so bin.mjs finds it via its
-  local-path fallback. Must run BEFORE pnpm install.
+  Download pre-built envio and platform artifacts and overlay
+  packages/envio/ with the production build. The committed
+  .pnpmfile.cjs hook redirects envio-linux-x64 to the local
+  artifact during pnpm install. Must run BEFORE pnpm install.
 
 runs:
   using: composite
@@ -24,24 +24,3 @@ runs:
       run: |
         rm -rf packages/envio
         cp -r .envio-artifacts/envio packages/envio
-
-    # The production package.json has optionalDependencies for all
-    # platforms. Strip them so the lockfile check passes — the binary
-    # is placed as a sibling directory instead (see next step).
-    - name: Strip platform optionalDependencies
-      shell: bash
-      run: |
-        node -e '
-          const fs = require("fs");
-          const p = "packages/envio/package.json";
-          const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
-          delete pkg.optionalDependencies;
-          fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
-        '
-
-    # bin.mjs resolves the binary via join(__dirname, pkg, "bin/envio")
-    # before trying node_modules, so a sibling directory works without
-    # any pnpm resolution.
-    - name: Place platform binary as sibling
-      shell: bash
-      run: cp -r .envio-artifacts/envio-linux-x64 packages/envio/envio-linux-x64

@@ -139,7 +139,7 @@ jobs:
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Run template tests
         working-directory: packages/e2e-tests
@@ -198,7 +198,7 @@ jobs:
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Wait for Hasura
         run: |
@@ -279,7 +279,7 @@ jobs:
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Wait for Hasura
         run: |
