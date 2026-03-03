@@ -50,7 +50,6 @@ jobs:
             --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
           mkdir -p envio-linux-x64/bin
           cp target/x86_64-unknown-linux-musl/release/envio envio-linux-x64/bin/
-          chmod +x envio-linux-x64/bin/envio
 
       - name: Upload linux-x64 platform npm package
         uses: actions/upload-artifact@v4
@@ -180,13 +179,13 @@ jobs:
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
-          pnpm exec envio codegen
+          ${{ github.workspace }}/.envio-artifacts/envio-linux-x64/bin/envio codegen
           pnpm test
 
       - name: fuel_test
         working-directory: scenarios/fuel_test
         run: |
-          pnpm exec envio codegen
+          ${{ github.workspace }}/.envio-artifacts/envio-linux-x64/bin/envio codegen
           pnpm test
 
       - name: Test Failure Notification

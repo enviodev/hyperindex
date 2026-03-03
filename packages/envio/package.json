@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
-  "bin": "./bin.mjs",
   "main": "./index.js",
   "types": "./index.d.ts",
   "repository": {
@@ -34,7 +33,6 @@
     "node": ">=22.0.0"
   },
   "files": [
-    "bin.mjs",
     "evm.schema.json",
     "fuel.schema.json",
     "svm.schema.json",
