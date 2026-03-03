@@ -287,13 +287,17 @@ async fn is_service_reachable(host: &str, port: u16) -> bool {
 
 /// Check whether an HTTP endpoint returns a success status.
 async fn is_http_healthy(url: &str) -> bool {
+    try_http_healthy(url).await.unwrap_or(false)
+}
+
+/// Try an HTTP GET and return Ok(true) if 2xx, Ok(false) if non-2xx, or the
+/// reqwest error so callers can log the reason (connection refused, timeout, …).
+async fn try_http_healthy(url: &str) -> Result<bool, reqwest::Error> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
-        .build();
-    match client {
-        Ok(c) => c.get(url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
-        Err(_) => false,
-    }
+        .build()?;
+    let resp = client.get(url).send().await?;
+    Ok(resp.status().is_success())
 }
 
 /// Poll an HTTP endpoint until it returns a success status.
@@ -301,11 +305,30 @@ async fn wait_for_http_healthy(url: &str, service_name: &str) -> anyhow::Result<
     let max_attempts = 30;
     let interval = Duration::from_secs(2);
     for attempt in 1..=max_attempts {
-        if is_http_healthy(url).await {
-            return Ok(());
+        match try_http_healthy(url).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => {
+                println!(
+                    "Waiting for {service_name} to become ready ({attempt}/{max_attempts}) \
+                     [non-success status]..."
+                );
+            }
+            Err(e) => {
+                // Show the actual error every 5th attempt to aid debugging
+                // without flooding the output.
+                if attempt % 5 == 1 || attempt == max_attempts {
+                    println!(
+                        "Waiting for {service_name} to become ready ({attempt}/{max_attempts}) \
+                         [{e}]..."
+                    );
+                } else {
+                    println!(
+                        "Waiting for {service_name} to become ready ({attempt}/{max_attempts})..."
+                    );
+                }
+            }
         }
         if attempt < max_attempts {
-            println!("Waiting for {service_name} to become ready ({attempt}/{max_attempts})...");
             tokio::time::sleep(interval).await;
         }
     }
