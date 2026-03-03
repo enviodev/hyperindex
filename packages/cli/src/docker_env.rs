@@ -187,6 +187,7 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
 }
 
 async fn ensure_network(docker: &Docker, name: &str) -> anyhow::Result<()> {
+    // Fast path: if the network already exists, skip creation entirely.
     if docker
         .inspect_network(name, None::<bollard::query_parameters::InspectNetworkOptions>)
         .await
@@ -195,16 +196,22 @@ async fn ensure_network(docker: &Docker, name: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    docker
+    // Tolerate a 409 "already exists" race from parallel pipelines both missing
+    // the inspect and then one losing the create.
+    match docker
         .create_network(NetworkCreateRequest {
             name: name.to_string(),
             driver: Some("bridge".to_string()),
             ..Default::default()
         })
         .await
-        .with_context(|| format!("Failed creating network {name}"))?;
-
-    Ok(())
+    {
+        Ok(_) => Ok(()),
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 409, ..
+        }) => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("Failed creating network {name}")),
+    }
 }
 
 async fn ensure_volume(docker: &Docker, name: &str) -> anyhow::Result<()> {
@@ -619,10 +626,24 @@ pub async fn down() -> anyhow::Result<()> {
         stop_and_remove(&docker, PG_CONTAINER),
     );
 
-    let _ = tokio::join!(
+    let (vol_res, net_res) = tokio::join!(
         docker.remove_volume(VOLUME, None::<bollard::query_parameters::RemoveVolumeOptions>),
         docker.remove_network(NETWORK),
     );
+
+    let mut failed = false;
+    if let Err(e) = vol_res {
+        eprintln!("Failed to remove volume {VOLUME}: {e}");
+        failed = true;
+    }
+    if let Err(e) = net_res {
+        eprintln!("Failed to remove network {NETWORK}: {e}");
+        failed = true;
+    }
+
+    if failed {
+        anyhow::bail!("Environment cleanup finished with errors (see above)");
+    }
 
     println!("Environment cleaned up");
 
