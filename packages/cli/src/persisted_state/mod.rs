@@ -29,7 +29,7 @@ const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 pub fn current_version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
-        system_config::read_version_from_package_json().unwrap_or_else(|| "dev".to_string())
+        system_config::read_version_from_package_json().unwrap_or_else(|_| "dev".to_string())
     })
 }
 

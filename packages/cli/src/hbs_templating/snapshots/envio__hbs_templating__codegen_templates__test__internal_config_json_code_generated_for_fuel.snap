@@ -1,9 +1,10 @@
 ---
-source: cli/src/hbs_templating/codegen_templates.rs
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2644
 expression: project_template.internal_config_json_code
 ---
 {
-  "version": "0.0.1-dev",
+  "version": "dev",
   "name": "Fuel indexer",
   "rollbackOnReorg": false,
   "fuel": {

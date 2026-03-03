@@ -382,19 +382,35 @@ fn is_valid_release_version_number(version: &str) -> bool {
 
 /// Read version from the npm platform package's package.json.
 /// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
-pub(crate) fn read_version_from_package_json() -> Option<String> {
-    let exe = env::current_exe().ok()?.canonicalize().ok()?;
+pub(crate) fn read_version_from_package_json() -> Result<String> {
+    let exe = env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .context("Failed to resolve envio executable path")?;
     // exe = .../bin/envio → parent = .../bin/ → parent = .../<pkg>/
-    let pkg_json = exe.parent()?.parent()?.join("package.json");
-    let contents = std::fs::read_to_string(pkg_json).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
-    json.get("version")?.as_str().map(String::from)
+    let pkg_dir = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .context("Envio binary is not inside a package directory")?;
+    let pkg_json_path = pkg_dir.join("package.json");
+    let contents = std::fs::read_to_string(&pkg_json_path).with_context(|| {
+        format!(
+            "Could not read package.json at {}. This usually means envio was not installed \
+             correctly. Try reinstalling with: pnpm add envio",
+            pkg_json_path.display()
+        )
+    })?;
+    let json: serde_json::Value =
+        serde_json::from_str(&contents).context("Failed to parse package.json")?;
+    json.get("version")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .context("package.json is missing a \"version\" field")
 }
 
 pub fn get_envio_version() -> Result<String> {
     // 1. Try the npm platform package's package.json (patched with
     //    correct version at publish time).
-    if let Some(v) = read_version_from_package_json() {
+    if let Ok(v) = read_version_from_package_json() {
         if is_valid_release_version_number(&v) {
             return Ok(v);
         }
