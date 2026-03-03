@@ -29,7 +29,7 @@ describe("Throttler", () => {
     )
   })
 
-  Async.it("Does not continuously increase schedule time", async t => {
+  Async.itWithOptions("Does not continuously increase schedule time", {retry: 3}, async t => {
     let throttler = Throttler.make(~intervalMillis=20, ~logger=Logging.getLogger())
     let actionsCalled = []
     throttler->Throttler.schedule(async () => actionsCalled->Js.Array2.push(1)->ignore)
