@@ -382,7 +382,7 @@ fn is_valid_release_version_number(version: &str) -> bool {
 
 /// Read version from the npm platform package's package.json.
 /// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
-fn read_version_from_package_json() -> Option<String> {
+pub(crate) fn read_version_from_package_json() -> Option<String> {
     let exe = env::current_exe().ok()?.canonicalize().ok()?;
     // exe = .../bin/envio → parent = .../bin/ → parent = .../<pkg>/
     let pkg_json = exe.parent()?.parent()?.join("package.json");

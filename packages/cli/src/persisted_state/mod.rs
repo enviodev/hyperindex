@@ -1,7 +1,10 @@
 mod db;
 mod hash_string;
 
-use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
+use crate::{
+    config_parsing::system_config::{self, SystemConfig},
+    project_paths::ParsedProjectPaths,
+};
 use anyhow::Context;
 use hash_string::HashString;
 use serde::{Deserialize, Serialize};
@@ -9,6 +12,7 @@ use sqlx::FromRow;
 use std::{
     fmt::{self, Display},
     path::PathBuf,
+    sync::OnceLock,
 };
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -21,7 +25,14 @@ pub struct PersistedState {
     pub abi_files_hash: HashString,
 }
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
-pub static CURRENT_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub fn current_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        system_config::read_version_from_package_json()
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+    })
+}
 
 #[derive(Debug, strum::Display, EnumIter, PartialEq, Clone)]
 ///An enum representation of the fields stored in persisted state
@@ -77,7 +88,7 @@ impl PersistedState {
         const ABI_FILES_MUST_EXIST: bool = true;
 
         Ok(PersistedState {
-            envio_version: CURRENT_CRATE_VERSION.to_string(),
+            envio_version: current_version().to_string(),
             config_hash: HashString::from_string(config.human_config.to_string()),
             schema_hash: HashString::from_file_path(schema_path.clone())
                 .context("Failed hashing schema file")?,

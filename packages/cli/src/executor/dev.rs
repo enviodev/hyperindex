@@ -2,7 +2,7 @@ use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
     docker_env,
-    persisted_state::{self, PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
+    persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -45,11 +45,11 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         }
 
         match persisted_state_file {
-            PersistedStateExists::Exists(ps) if ps.envio_version != CURRENT_CRATE_VERSION => {
+            PersistedStateExists::Exists(ps) if ps.envio_version != persisted_state::current_version() => {
                 println!(
                     "Envio version '{}' does not match the previous version '{}' used in the \
                      generated directory",
-                    CURRENT_CRATE_VERSION, &ps.envio_version
+                    persisted_state::current_version(), &ps.envio_version
                 );
                 println!("Purging generated directory",);
                 commands::codegen::remove_files_except_git(&config.parsed_project_paths.generated)
