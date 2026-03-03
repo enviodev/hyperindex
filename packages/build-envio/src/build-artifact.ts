@@ -61,6 +61,7 @@ const PRODUCTION_BIN_MJS = `#!/usr/bin/env node
 
 import { spawnSync } from "child_process";
 import { createRequire } from "module";
+import { chmodSync, accessSync, constants } from "fs";
 
 const require = createRequire(import.meta.url);
 
@@ -101,11 +102,24 @@ function getExePath() {
 }
 
 /**
+ * npm/pnpm may strip execute permissions from the binary during install.
+ * Ensure the binary is executable before spawning it.
+ */
+function ensureExecutable(filePath) {
+  try {
+    accessSync(filePath, constants.X_OK);
+  } catch {
+    chmodSync(filePath, 0o755);
+  }
+}
+
+/**
  * Runs \`envio\` with args using nodejs spawn
  */
 function runEnvio() {
   const args = process.argv.slice(2);
   const exePath = getExePath();
+  ensureExecutable(exePath);
 
   const processResult = spawnSync(exePath, args, { stdio: "inherit" });
 
