@@ -60,9 +60,13 @@ const PRODUCTION_BIN_MJS = `#!/usr/bin/env node
 //@ts-check
 
 import { spawnSync } from "child_process";
+import { dirname, join } from "path";
+import { existsSync } from "fs";
 import { createRequire } from "module";
+import { fileURLToPath } from "url";
 
 const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Returns the executable path for envio located inside node_modules
@@ -85,17 +89,29 @@ function getExePath() {
   }
 
   const pkg = \`envio-\${os}-\${arch}\`;
+  const bin = \`bin/envio\${extension}\`;
+
+  // Try require.resolve first (works when installed as a regular dependency)
   try {
-    // Since the bin will be located inside \`node_modules\`, we can simply call require.resolve
-    return require.resolve(\`\${pkg}/bin/envio\${extension}\`);
-  } catch (e) {
-    throw new Error(
-      \`Couldn't find envio binary package "\${pkg}" inside node_modules.\\n\` +
-        \`If you're using pnpm, yarn, or npm with --omit=optional, ensure optional \` +
-        \`dependencies are installed:\\n\` +
-        \`  npm install envio-\${os}-\${arch}\\n\`
-    );
+    return require.resolve(\`\${pkg}/\${bin}\`);
+  } catch {}
+
+  // Fallback: walk up from this file looking for node_modules/<pkg>
+  // (handles pnpm workspaces where the platform package isn't in the
+  // require.resolve chain but exists on disk)
+  let dir = __dirname;
+  while (dir !== dirname(dir)) {
+    const candidate = join(dir, "node_modules", pkg, bin);
+    if (existsSync(candidate)) return candidate;
+    dir = dirname(dir);
   }
+
+  throw new Error(
+    \`Couldn't find envio binary package "\${pkg}" inside node_modules.\\n\` +
+      \`If you're using pnpm, yarn, or npm with --omit=optional, ensure optional \` +
+      \`dependencies are installed:\\n\` +
+      \`  npm install \${pkg}\\n\`
+  );
 }
 
 /**

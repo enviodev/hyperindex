@@ -34,15 +34,13 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → cargo build → platform binary (CI).
- * Must resolve to an absolute path (not pnpm exec) since tests may run in /tmp/.
+ * Priority: ENVIO_BIN → cargo build → node bin.mjs (published artifact).
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  // Check release first (CI builds --release), then debug (local dev)
   for (const profile of ["release", "debug"]) {
     const bin = path.join(rootDir, `target/${profile}/envio`);
     if (fs.existsSync(bin)) {
@@ -50,17 +48,12 @@ function resolveEnvio(): { command: string; args: string[] } {
     }
   }
 
-  // Fall back to the platform-specific binary (CI downloads it into
-  // node_modules/envio-<platform>-<arch>/bin/envio). Using the binary
-  // directly avoids both pnpm exec (fails outside workspace) and
-  // node bin.mjs (createRequire can't find the platform package).
-  const platform = process.platform === "win32" ? "windows" : process.platform;
-  const platformBin = path.join(
-    rootDir,
-    `node_modules/envio-${platform}-${process.arch}/bin/envio`
-  );
-  if (fs.existsSync(platformBin)) {
-    return { command: platformBin, args: [] };
+  // Fall back to running bin.mjs via node. In CI this is the production
+  // shim (overlaid artifact) which resolves the platform binary itself.
+  // Works from any cwd since bin.mjs walks up from its own location.
+  const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
+  if (fs.existsSync(binMjs)) {
+    return { command: "node", args: [binMjs] };
   }
 
   throw new Error(
