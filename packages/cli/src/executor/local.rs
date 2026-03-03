@@ -18,7 +18,9 @@ pub async fn run_local(
     match local_commands {
         LocalCommandTypes::Docker(subcommand) => match subcommand {
             LocalDockerSubcommands::Up => {
-                docker_env::up(&config.parsed_project_paths.project_root).await.map(|_| ())?;
+                docker_env::up(&config.parsed_project_paths.project_root, &config.storage)
+                    .await
+                    .map(|_| ())?;
             }
             LocalDockerSubcommands::Down => {
                 docker_env::down().await?;

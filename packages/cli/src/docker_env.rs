@@ -1,3 +1,4 @@
+use crate::config_parsing::human_config::Storage;
 use anyhow::Context;
 use bollard::models::{
     ContainerCreateBody, EndpointSettings, HealthConfig, HostConfig, Mount, MountTypeEnum,
@@ -19,12 +20,15 @@ use tokio::time::Duration;
 
 const POSTGRES_IMAGE: &str = "postgres:18.3";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
+const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:24.8";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
 const PG_CONTAINER: &str = "envio-postgres";
 const HASURA_CONTAINER: &str = "envio-hasura";
+const CLICKHOUSE_CONTAINER: &str = "envio-clickhouse";
 const VOLUME: &str = "envio-postgres-data";
+const CLICKHOUSE_VOLUME: &str = "envio-clickhouse-data";
 const NETWORK: &str = "envio-network";
 
 fn podman_socket_candidates() -> Vec<PathBuf> {
@@ -112,6 +116,10 @@ struct EnvConfig {
     hasura_port: String,
     hasura_enable_console: String,
     hasura_admin_secret: String,
+    clickhouse_port: String,
+    clickhouse_user: String,
+    clickhouse_password: String,
+    clickhouse_database: String,
 }
 
 impl EnvConfig {
@@ -140,6 +148,10 @@ impl EnvConfig {
             hasura_port: var("HASURA_EXTERNAL_PORT", "8080"),
             hasura_enable_console: var("HASURA_GRAPHQL_ENABLE_CONSOLE", "true"),
             hasura_admin_secret: var("HASURA_GRAPHQL_ADMIN_SECRET", "testing"),
+            clickhouse_port: var("ENVIO_CLICKHOUSE_PORT", "8123"),
+            clickhouse_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
+            clickhouse_password: var("ENVIO_CLICKHOUSE_PASSWORD", ""),
+            clickhouse_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio"),
         }
     }
 
@@ -153,6 +165,10 @@ impl EnvConfig {
         hasher.update(&self.hasura_port);
         hasher.update(&self.hasura_enable_console);
         hasher.update(&self.hasura_admin_secret);
+        hasher.update(&self.clickhouse_port);
+        hasher.update(&self.clickhouse_user);
+        hasher.update(&self.clickhouse_password);
+        hasher.update(&self.clickhouse_database);
         format!("{:x}", hasher.finalize())
     }
 }
@@ -420,28 +436,40 @@ pub struct UpResult {
     pub hasura_enabled: bool,
 }
 
-pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
+pub async fn up(project_root: &Path, storage: &Storage) -> anyhow::Result<UpResult> {
     let env = EnvConfig::from_project(project_root);
+    let use_clickhouse = matches!(storage, Storage::Clickhouse);
     let pg_host_port: u16 = env.pg_port.parse().context("ENVIO_PG_PORT is not a valid port")?;
     let hasura_host_port: u16 = env
         .hasura_port
         .parse()
         .context("HASURA_EXTERNAL_PORT is not a valid port")?;
+    let ch_host_port: u16 = env
+        .clickhouse_port
+        .parse()
+        .context("ENVIO_CLICKHOUSE_PORT is not a valid port")?;
 
-    // Probe Postgres and Hasura in parallel to see if they are already running.
+    // Probe services in parallel to see if they are already running.
     let pg_host = env.pg_host.clone();
-    let (pg_alive, hasura_alive) = tokio::join!(
+    let (pg_alive, hasura_alive, ch_alive) = tokio::join!(
         is_service_reachable(&pg_host, pg_host_port),
         async {
             if !env.hasura_enabled {
                 return false;
             }
             is_hasura_healthy(&pg_host, hasura_host_port).await
+        },
+        async {
+            if !use_clickhouse {
+                return false;
+            }
+            is_service_reachable(&pg_host, ch_host_port).await
         }
     );
 
     let need_pg = !pg_alive;
     let need_hasura = env.hasura_enabled && !hasura_alive;
+    let need_clickhouse = use_clickhouse && !ch_alive;
 
     if pg_alive {
         println!("Postgres already reachable on port {pg_host_port}, skipping container");
@@ -452,9 +480,12 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
     if !env.hasura_enabled {
         println!("Hasura disabled (ENVIO_HASURA=false), skipping");
     }
+    if use_clickhouse && ch_alive {
+        println!("ClickHouse already reachable on port {ch_host_port}, skipping container");
+    }
 
-    // If both services are already running, nothing to do.
-    if !need_pg && !need_hasura {
+    // If all needed services are already running, nothing to do.
+    if !need_pg && !need_hasura && !need_clickhouse {
         return Ok(UpResult {
             hasura_enabled: env.hasura_enabled,
         });
@@ -607,9 +638,96 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         Ok(())
     };
 
-    let (pg_res, hasura_res) = tokio::join!(pg_pipeline, hasura_pipeline);
+    let clickhouse_pipeline = async {
+        if !need_clickhouse {
+            return Ok::<(), anyhow::Error>(());
+        }
+        // Image pull, network, and volume are all independent.
+        let (img_res, net_res, vol_res) = tokio::join!(
+            ensure_image(&docker, CLICKHOUSE_IMAGE),
+            ensure_network(&docker, NETWORK),
+            ensure_volume(&docker, CLICKHOUSE_VOLUME),
+        );
+        img_res?;
+        net_res?;
+        vol_res?;
+
+        let ch_port_bindings = {
+            let mut map = HashMap::new();
+            map.insert(
+                "8123/tcp".to_string(),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(env.clickhouse_port.clone()),
+                }]),
+            );
+            map
+        };
+
+        let mut ch_env = vec![
+            format!("CLICKHOUSE_DB={}", env.clickhouse_database),
+            format!("CLICKHOUSE_USER={}", env.clickhouse_user),
+        ];
+        if !env.clickhouse_password.is_empty() {
+            ch_env.push(format!("CLICKHOUSE_PASSWORD={}", env.clickhouse_password));
+        } else {
+            ch_env.push("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1".to_string());
+        }
+
+        let ch_body = ContainerCreateBody {
+            image: Some(CLICKHOUSE_IMAGE.to_string()),
+            labels: Some(make_labels(&config_hash)),
+            env: Some(ch_env),
+            host_config: Some(HostConfig {
+                port_bindings: Some(ch_port_bindings),
+                mounts: Some(vec![Mount {
+                    target: Some("/var/lib/clickhouse".to_string()),
+                    source: Some(CLICKHOUSE_VOLUME.to_string()),
+                    typ: Some(MountTypeEnum::VOLUME),
+                    ..Default::default()
+                }]),
+                restart_policy: Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    ..Default::default()
+                }),
+                // ClickHouse needs ulimits for production-like performance
+                ulimits: Some(vec![
+                    bollard::models::ResourcesUlimits {
+                        name: Some("nofile".to_string()),
+                        soft: Some(262144),
+                        hard: Some(262144),
+                    },
+                ]),
+                ..Default::default()
+            }),
+            networking_config: Some(make_networking_config(NETWORK)),
+            healthcheck: Some(HealthConfig {
+                test: Some(vec![
+                    "CMD-SHELL".to_string(),
+                    format!(
+                        "clickhouse-client --host 127.0.0.1 --user {} --query 'SELECT 1' || exit 1",
+                        env.clickhouse_user
+                    ),
+                ]),
+                interval: Some(5_000_000_000),
+                timeout: Some(2_000_000_000),
+                retries: Some(30),
+                start_period: Some(5_000_000_000),
+                start_interval: None,
+            }),
+            ..Default::default()
+        };
+
+        ensure_container(&docker, CLICKHOUSE_CONTAINER, &config_hash, ch_host_port, ch_body)
+            .await?;
+        Ok(())
+    };
+
+    let (pg_res, hasura_res, ch_res) =
+        tokio::join!(pg_pipeline, hasura_pipeline, clickhouse_pipeline);
     pg_res?;
     hasura_res?;
+    ch_res?;
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
@@ -624,10 +742,15 @@ pub async fn down() -> anyhow::Result<()> {
     tokio::join!(
         stop_and_remove(&docker, HASURA_CONTAINER),
         stop_and_remove(&docker, PG_CONTAINER),
+        stop_and_remove(&docker, CLICKHOUSE_CONTAINER),
     );
 
-    let (vol_res, net_res) = tokio::join!(
+    let (vol_res, ch_vol_res, net_res) = tokio::join!(
         docker.remove_volume(VOLUME, None::<bollard::query_parameters::RemoveVolumeOptions>),
+        docker.remove_volume(
+            CLICKHOUSE_VOLUME,
+            None::<bollard::query_parameters::RemoveVolumeOptions>
+        ),
         docker.remove_network(NETWORK),
     );
 
@@ -635,6 +758,14 @@ pub async fn down() -> anyhow::Result<()> {
     if let Err(e) = vol_res {
         eprintln!("Failed to remove volume {VOLUME}: {e}");
         failed = true;
+    }
+    if let Err(e) = ch_vol_res {
+        // Only warn if the volume existed (not an error if it was never created)
+        let msg = e.to_string();
+        if !msg.contains("No such volume") && !msg.contains("not found") {
+            eprintln!("Failed to remove volume {CLICKHOUSE_VOLUME}: {e}");
+            failed = true;
+        }
     }
     if let Err(e) = net_res {
         eprintln!("Failed to remove network {NETWORK}: {e}");
@@ -666,6 +797,10 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         let env2 = EnvConfig {
             pg_host: "localhost".into(),
@@ -677,6 +812,10 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         assert_eq!(env1.config_hash(), env2.config_hash());
     }
@@ -693,6 +832,10 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         let env2 = EnvConfig {
             pg_host: "localhost".into(),
@@ -704,6 +847,10 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         assert_ne!(env1.config_hash(), env2.config_hash());
     }

@@ -65,7 +65,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
             .await
             .context("Failed running codegen")?;
     }
-    let up_result = docker_env::up(&config.parsed_project_paths.project_root)
+    let up_result = docker_env::up(&config.parsed_project_paths.project_root, &config.storage)
         .await
         .context("Failed starting Docker containers")?;
 
