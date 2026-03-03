@@ -292,9 +292,12 @@ let makePgStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasur
 let makeStorage = () => {
   switch configWithoutRegistrations.storage {
   | Config.Clickhouse =>
+    // Sanitize name for ClickHouse: replace non-alphanumeric chars with underscores
+    let sanitizedName = configWithoutRegistrations.name
+      ->Js.String2.replaceByRe(%re("/[^a-zA-Z0-9_]/g"), "_")
     ClickHouseStorage.make(
       ~host=Env.ClickHouseStorage.host,
-      ~database=Env.ClickHouseStorage.database->Option.getWithDefault("envio-" ++ configWithoutRegistrations.name),
+      ~database=Env.ClickHouseStorage.database->Option.getWithDefault("envio_" ++ sanitizedName),
       ~username=Env.ClickHouseStorage.username,
       ~password=Env.ClickHouseStorage.password,
     )

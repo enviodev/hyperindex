@@ -138,7 +138,7 @@ impl EnvConfig {
             })
         };
 
-        let ch_database_default = format!("envio-{indexer_name}");
+        let ch_database_default = format!("envio_{}", sanitize_for_db_name(indexer_name));
 
         Self {
             pg_host: var("ENVIO_PG_HOST", "localhost"),
@@ -280,15 +280,48 @@ async fn is_service_reachable(host: &str, port: u16) -> bool {
         .unwrap_or(false)
 }
 
-/// Check whether Hasura is reachable by hitting its healthz endpoint.
-async fn is_hasura_healthy(host: &str, port: u16) -> bool {
-    let url = format!("http://{}:{}/hasura/healthz?strict=true", host, port);
+/// Check whether an HTTP endpoint returns a success status.
+async fn is_http_healthy(url: &str) -> bool {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build();
     match client {
-        Ok(c) => c.get(&url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
+        Ok(c) => c.get(url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
         Err(_) => false,
+    }
+}
+
+/// Poll an HTTP endpoint until it returns a success status.
+async fn wait_for_http_healthy(url: &str, service_name: &str) -> anyhow::Result<()> {
+    let max_attempts = 30;
+    let interval = Duration::from_secs(2);
+    for attempt in 1..=max_attempts {
+        if is_http_healthy(url).await {
+            return Ok(());
+        }
+        if attempt < max_attempts {
+            println!("Waiting for {service_name} to become ready ({attempt}/{max_attempts})...");
+            tokio::time::sleep(interval).await;
+        }
+    }
+    anyhow::bail!("{service_name} did not become healthy after {max_attempts} attempts at {url}")
+}
+
+/// Sanitize an indexer name into a valid ClickHouse database identifier.
+/// Replaces non-alphanumeric characters with underscores and ensures it
+/// doesn't start with a digit.
+fn sanitize_for_db_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    // Ensure it doesn't start with a digit
+    if sanitized.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("_{sanitized}")
+    } else if sanitized.is_empty() {
+        "indexer".to_string()
+    } else {
+        sanitized
     }
 }
 
@@ -459,13 +492,15 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
             if !env.hasura_enabled {
                 return false;
             }
-            is_hasura_healthy(&pg_host, hasura_host_port).await
+            let url = format!("http://{}:{}/hasura/healthz?strict=true", pg_host, hasura_host_port);
+            is_http_healthy(&url).await
         },
         async {
             if !use_clickhouse {
                 return false;
             }
-            is_service_reachable(&pg_host, ch_host_port).await
+            let url = format!("http://{}:{}/ping", pg_host, ch_host_port);
+            is_http_healthy(&url).await
         }
     );
 
@@ -703,23 +738,15 @@ pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> a
                 ..Default::default()
             }),
             networking_config: Some(make_networking_config(NETWORK)),
-            healthcheck: Some(HealthConfig {
-                test: Some(vec![
-                    "CMD-SHELL".to_string(),
-                    "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
-                        .to_string(),
-                ]),
-                interval: Some(5_000_000_000),
-                timeout: Some(2_000_000_000),
-                retries: Some(30),
-                start_period: Some(5_000_000_000),
-                start_interval: None,
-            }),
             ..Default::default()
         };
 
         ensure_container(&docker, CLICKHOUSE_CONTAINER, &config_hash, ch_host_port, ch_body)
             .await?;
+
+        // Wait for ClickHouse HTTP interface to become healthy
+        let ping_url = format!("http://localhost:{}/ping", env.clickhouse_port);
+        wait_for_http_healthy(&ping_url, "ClickHouse").await?;
         Ok(())
     };
 
@@ -853,5 +880,30 @@ mod tests {
             clickhouse_database: "envio".into(),
         };
         assert_ne!(env1.config_hash(), env2.config_hash());
+    }
+
+    #[test]
+    fn sanitize_simple_name() {
+        assert_eq!(sanitize_for_db_name("my_indexer"), "my_indexer");
+    }
+
+    #[test]
+    fn sanitize_dashes_and_spaces() {
+        assert_eq!(sanitize_for_db_name("my-cool indexer"), "my_cool_indexer");
+    }
+
+    #[test]
+    fn sanitize_special_chars() {
+        assert_eq!(sanitize_for_db_name("app@v2.0!"), "app_v2_0_");
+    }
+
+    #[test]
+    fn sanitize_leading_digit() {
+        assert_eq!(sanitize_for_db_name("123abc"), "_123abc");
+    }
+
+    #[test]
+    fn sanitize_empty() {
+        assert_eq!(sanitize_for_db_name(""), "indexer");
     }
 }
