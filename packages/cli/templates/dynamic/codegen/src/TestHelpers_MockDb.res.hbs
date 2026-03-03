@@ -575,10 +575,8 @@ and makeMockStorage = (mockDb: t): Persistence.storage => {
       })
       ->Promise.resolve
     },
-    setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => Js.Exn.raiseError("Not used yet"),
-    setEffectCacheOrThrow: (~effect as _, ~items as _, ~initialize as _) => Promise.resolve(),
     dumpEffectCache: () => Js.Exn.raiseError("Not used yet"),
-    executeUnsafe: _ => Js.Exn.raiseError("Not used yet"),
+    reset: () => Js.Exn.raiseError("Not used yet"),
     setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
     pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not used yet"),
     pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
