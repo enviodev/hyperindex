@@ -27,6 +27,8 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   | None => "envio_sink"
   }
 
+  let cache = Utils.WeakMap.make()
+
   {
     name: "ClickHouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
@@ -38,7 +40,7 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
     writeBatch: async (~batch, ~updatedEntities) => {
       await Promise.all(
         updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~updates, ~entityConfig, ~database)
+          ClickHouse.setUpdatesOrThrow(client, ~cache, ~updates, ~entityConfig, ~database)
         }),
       )->Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)

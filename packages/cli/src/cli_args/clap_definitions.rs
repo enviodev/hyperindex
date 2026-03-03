@@ -111,9 +111,9 @@ pub enum LocalCommandTypes {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum LocalDockerSubcommands {
-    ///Create docker images required for local environment
+    ///Start Docker containers (Postgres + Hasura) for local environment
     Up,
-    ///Delete existing docker images on local environment
+    ///Stop and remove Docker containers for local environment
     Down,
 }
 

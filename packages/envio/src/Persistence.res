@@ -75,22 +75,9 @@ type storage = {
     ~table: Table.table,
     ~rowsSchema: S.t<array<'item>>,
   ) => promise<array<'item>>,
-  @raises("StorageError")
-  setOrThrow: 'item. (
-    ~items: array<'item>,
-    ~table: Table.table,
-    ~itemSchema: S.t<'item>,
-  ) => promise<unit>,
-  @raises("StorageError")
-  setEffectCacheOrThrow: (
-    ~effect: Internal.effect,
-    ~items: array<Internal.effectCacheItem>,
-    ~initialize: bool,
-  ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
-  // Execute raw SQL query
-  executeUnsafe: string => promise<unknown>,
+  reset: unit => promise<unit>,
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints

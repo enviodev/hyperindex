@@ -43,10 +43,8 @@ module Storage = {
     | #initialize
     | #resumeInitialState
     | #dumpEffectCache
-    | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
-    | #setOrThrow
   ]
 
   type t = {
@@ -95,7 +93,6 @@ module Storage = {
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
-    let setEffectCacheOrThrowCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
 
@@ -144,14 +141,6 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        setEffectCacheOrThrow: implement(#setEffectCacheOrThrow, (
-          ~effect as _,
-          ~items as _,
-          ~initialize as _,
-        ) => {
-          setEffectCacheOrThrowCalls := setEffectCacheOrThrowCalls.contents + 1
-          Promise.resolve()
-        }),
         loadByIdsOrThrow: (
           type item,
           ~ids,
@@ -188,10 +177,7 @@ module Storage = {
             Promise.resolve([])
           })
         },
-        setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
-          implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
-        },
-        executeUnsafe: _ => Js.Exn.raiseError("Not implemented"),
+        reset: () => Js.Exn.raiseError("Not implemented"),
         setChainMeta: _ => Js.Exn.raiseError("Not implemented"),
         pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not implemented"),
         pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>

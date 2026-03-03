@@ -28,6 +28,7 @@ type middleware = (req, res, unit => unit) => unit
 type server
 
 @send external listen: (app, int) => server = "listen"
+@send external onError: (server, @as("error") _, Js.Exn.t => unit) => unit = "on"
 
 // res methods
 @send external sendStatus: (res, int) => unit = "sendStatus"

@@ -3,6 +3,7 @@ pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
 mod commands;
 pub mod config_parsing;
+pub mod docker_env;
 pub mod constants;
 mod evm;
 pub mod executor;
