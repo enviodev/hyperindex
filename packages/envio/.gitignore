@@ -134,3 +134,6 @@ lib
 *.res.js
 *.res.mjs
 .pnpm-store
+
+# Auto-compiled native module (built by core.js on first run)
+envio.node
