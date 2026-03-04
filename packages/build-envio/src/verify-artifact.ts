@@ -11,6 +11,7 @@ import * as path from "node:path";
 
 const REQUIRED_FILES = [
   "package.json",
+  "bin.mjs",
   "evm.schema.json",
   "fuel.schema.json",
   "svm.schema.json",
@@ -64,7 +65,7 @@ function verify(dir: string): void {
     }
     if (pkg) {
       if (pkg.private) errors.push("package.json still has private: true");
-      if (pkg.bin) errors.push(`package.json should not have bin field, found "${pkg.bin}"`);
+      if (pkg.bin !== "./bin.mjs") errors.push(`package.json bin is "${pkg.bin}", expected "./bin.mjs"`);
       if (!pkg.optionalDependencies) errors.push("package.json missing optionalDependencies");
       if (!pkg.dependencies) errors.push("package.json missing dependencies");
     }

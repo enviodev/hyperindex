@@ -34,7 +34,7 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → cargo build → CI artifact.
+ * Priority: ENVIO_BIN → cargo build → node bin.mjs (published artifact).
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
@@ -52,6 +52,13 @@ function resolveEnvio(): { command: string; args: string[] } {
   const artifactBin = path.join(rootDir, ".envio-artifacts/envio-linux-x64/bin/envio");
   if (fs.existsSync(artifactBin)) {
     return { command: artifactBin, args: [] };
+  }
+
+  // Fall back to running bin.mjs via node (production shim that
+  // resolves the platform binary via require.resolve).
+  const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
+  if (fs.existsSync(binMjs)) {
+    return { command: "node", args: [binMjs] };
   }
 
   throw new Error(
