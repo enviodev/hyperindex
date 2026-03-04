@@ -10,18 +10,19 @@ description: >-
 This repo is public, so unauthenticated GitHub API calls work. Use `gh` if
 available, otherwise fall back to `curl` + `python3`.
 
-## Step 1: Find the failed run and its jobs
+## Step 1: Find the latest run and its jobs
 
 ```bash
 branch=$(git rev-parse --abbrev-ref HEAD) && \
-curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs?branch=${branch}&status=failure&per_page=5" \
+curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs?branch=${branch}&per_page=5" \
   | python3 -c "
 import sys, json
 runs = json.load(sys.stdin)['workflow_runs']
 if not runs:
-    print('No failed runs found'); sys.exit(0)
+    print('No runs found'); sys.exit(0)
 for r in runs[:5]:
-    print(f'{r[\"id\"]}  {r[\"name\"]}  {r[\"created_at\"]}  {r[\"html_url\"]}')"
+    status = 'FAIL' if r['conclusion'] == 'failure' else 'PASS' if r['conclusion'] == 'success' else r['status']
+    print(f'[{status}]  {r[\"id\"]}  {r[\"name\"]}  {r[\"created_at\"]}')"
 ```
 
 Then list jobs for the failed run:
