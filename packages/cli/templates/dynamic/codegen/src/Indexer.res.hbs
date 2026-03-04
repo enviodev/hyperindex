@@ -307,7 +307,8 @@ let makeStorage = () => {
             () => {
               // The ClickHouse connector agent runs inside Docker and reaches ClickHouse
               // via the shared Docker network — use the internal hostname, not localhost.
-              let clickHouseUrl = Env.ClickHouseStorage.dockerHost ++ "/" ++ clickHouseDatabase
+              // Database is passed as a query parameter (ClickHouse HTTP interface format).
+              let clickHouseUrl = Env.ClickHouseStorage.dockerHost ++ "?database=" ++ clickHouseDatabase
               Hasura.trackClickHouseDatabase(
                 ~endpoint=Env.Hasura.graphqlEndpoint,
                 ~auth={
