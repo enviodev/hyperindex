@@ -30,3 +30,4 @@
 *.res.mjs
 logs/*
 *BenchmarkCache.json
+.pnpm-store

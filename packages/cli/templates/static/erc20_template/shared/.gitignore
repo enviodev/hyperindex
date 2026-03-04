@@ -33,3 +33,4 @@ cache
 *.res.mjs
 generated
 .env
+.pnpm-store

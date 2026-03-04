@@ -1,9 +1,0 @@
-{
-  "setup-worktree": [
-    "cd packages/envio && pnpm install && pnpm rescript",
-    "cd scenarios/test_codegen && pnpm install",
-    "pnpm codegen",
-    "pnpm rescript",
-    "pnpm ts:build"
-  ]
-}

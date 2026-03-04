@@ -1,0 +1,36 @@
+name: Prepare envio artifacts
+description: >
+  Set up pnpm + Node.js, download pre-built envio artifacts, and install
+  dependencies. The committed .pnpmfile.cjs hook redirects envio
+  dependencies to these artifacts instead of the dev workspace member.
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10
+        run_install: false
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: "pnpm"
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: npm-pkg-envio
+        path: .envio-artifacts/envio
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: npm-pkg-envio-linux-x64
+        path: .envio-artifacts/envio-linux-x64
+
+    - name: Make binary executable
+      shell: bash
+      run: chmod +x .envio-artifacts/envio-linux-x64/bin/envio
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --no-frozen-lockfile

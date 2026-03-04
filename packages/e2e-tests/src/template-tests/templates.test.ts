@@ -71,8 +71,8 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
   it("initializes successfully", async () => {
     const apiToken = process.env.ENVIO_API_TOKEN ?? "";
     const result = await runCommand(
-      config.envioBin,
-      ["init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
+      config.envioCommand,
+      [...config.envioArgs, "init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
       {
         cwd: projectDir,
         timeout: config.timeouts.install,
@@ -99,7 +99,7 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
   });
 
   it("runs codegen successfully", async () => {
-    const result = await runCommand(config.envioBin, ["codegen"], {
+    const result = await runCommand(config.envioCommand, [...config.envioArgs, "codegen"], {
       cwd: projectDir,
       timeout: config.timeouts.codegen,
     });
