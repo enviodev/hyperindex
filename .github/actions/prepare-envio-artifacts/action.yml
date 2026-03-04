@@ -1,8 +1,8 @@
 name: Prepare envio artifacts
 description: >
-  Set up pnpm + Node.js, download pre-built envio artifacts, and install
-  dependencies. The committed .pnpmfile.cjs hook redirects envio
-  dependencies to these artifacts instead of the dev workspace member.
+  Set up pnpm + Node.js, download the pre-built native module into the
+  workspace, and install dependencies. core.js picks up envio.node via
+  its local-file fallback.
 
 runs:
   using: composite
@@ -19,13 +19,13 @@ runs:
 
     - uses: actions/download-artifact@v4
       with:
-        name: npm-pkg-envio
-        path: .envio-artifacts/envio
+        name: envio-native
+        path: packages/envio
 
-    - uses: actions/download-artifact@v4
-      with:
-        name: npm-pkg-envio-linux-x64
-        path: .envio-artifacts/envio-linux-x64
+    # Rename the cargo cdylib to the .node extension that core.js expects
+    - name: Rename native module
+      shell: bash
+      run: mv packages/envio/libenvio.so packages/envio/envio.node
 
     - name: Install dependencies
       shell: bash
