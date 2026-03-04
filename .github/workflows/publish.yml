@@ -67,9 +67,6 @@ jobs:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
 
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@latest --activate
-
       # linux-x64 comes from the Build & Verify workflow, others from build-platforms
       - name: Download platform package (linux-x64 from Build & Verify)
         if: matrix.pkg == 'envio-linux-x64'
@@ -106,7 +103,7 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "Publishing $(node -p "require('./package.json').name")@${VERSION}"
-          pnpm publish --access public --tag latest --no-git-checks
+          npm publish --access public --tag latest
 
   # Publish the base envio package to npm
   publish-envio-package:
@@ -118,9 +115,6 @@ jobs:
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Download envio base package from Build & Verify
         uses: actions/download-artifact@v4
@@ -150,4 +144,4 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "Publishing envio@${VERSION} with tag ${NPM_TAG}"
-          pnpm publish --access public --tag "$NPM_TAG" --no-git-checks
+          npm publish --access public --tag "$NPM_TAG"
