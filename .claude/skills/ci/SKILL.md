@@ -7,50 +7,49 @@ description: >-
 
 # Investigating CI Failures
 
-## Quick: fetch latest failed job logs for current branch
+Start by running the commands below directly (not as a script) to fetch the latest CI status.
 
-```bash
-# 1. Get current branch
-branch=$(git rev-parse --abbrev-ref HEAD)
-
-# 2. Fetch latest run for branch
-run_id=$(curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs?branch=${branch}&per_page=1" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['workflow_runs'][0]['id'])")
-
-# 3. Get failed jobs
-curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs/${run_id}/jobs" \
-  | python3 -c "
-import sys, json
-jobs = json.load(sys.stdin)['jobs']
-for j in jobs:
-    if j['conclusion'] == 'failure':
-        print(f\"FAILED: {j['name']} (id: {j['id']})\")"
-
-# 4. Fetch logs for a failed job (replace JOB_ID)
-curl -sfL "https://api.github.com/repos/enviodev/hyperindex/actions/jobs/JOB_ID/logs" | tail -80
-```
-
-## One-liner: show all failed step logs
+## Step 1: Get run ID and failed jobs
 
 ```bash
 branch=$(git rev-parse --abbrev-ref HEAD) && \
 run_id=$(curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs?branch=${branch}&per_page=1" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['workflow_runs'][0]['id'])") && \
+echo "Run ID: $run_id" && \
 curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs/${run_id}/jobs" \
   | python3 -c "
 import sys, json
 jobs = json.load(sys.stdin)['jobs']
 for j in jobs:
+    status = '✓' if j['conclusion'] == 'success' else '✗' if j['conclusion'] == 'failure' else '?'
+    print(f'{status} {j[\"name\"]} (id: {j[\"id\"]})')
     if j['conclusion'] == 'failure':
-        print(f'--- {j[\"name\"]} (id: {j[\"id\"]}) ---')
         for s in j['steps']:
             if s['conclusion'] == 'failure':
                 print(f'  Step failed: {s[\"name\"]}')"
 ```
 
-Then fetch logs: `curl -sfL "https://api.github.com/repos/enviodev/hyperindex/actions/jobs/<JOB_ID>/logs" | tail -80`
+## Step 2: Get error annotations for a failed job
+
+```bash
+curl -sf "https://api.github.com/repos/enviodev/hyperindex/check-runs/JOB_ID/annotations" \
+  | python3 -c "
+import sys, json
+for a in json.load(sys.stdin):
+    print(f'{a[\"path\"]}:{a[\"start_line\"]} - {a[\"message\"][:300]}')"
+```
+
+## Step 3: Get full logs (requires auth)
+
+```bash
+# If gh is available and authenticated:
+gh run view RUN_ID --log-failed
+
+# Otherwise use WebFetch on the job URL for a summary:
+# https://github.com/enviodev/hyperindex/actions/runs/RUN_ID/job/JOB_ID
+```
 
 ## Notes
-- GitHub public API is unauthenticated — no token needed for public repos
-- Log downloads redirect to Azure blob storage (use `-L` to follow)
-- If `gh` is available: `gh run view --log-failed` is simpler
+- Steps 1-2 use unauthenticated GitHub API (works for public repos)
+- Log downloads (step 3) require authentication
+- Annotations give exact file:line and error messages — usually enough to diagnose

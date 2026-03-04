@@ -423,10 +423,19 @@ pub fn get_envio_version() -> Result<String> {
         }
     }
 
-    // 2. Dev mode: walk up from the binary (and cwd as fallback) to find
-    // packages/envio. Tries current_exe() first (works when cwd is outside
-    // the repo, e.g. template tests in /tmp/), then current_dir() (works
-    // when running via napi where current_exe() is the Node.js binary).
+    // 2. Dev mode: if ENVIO_PKG_DIR is set (napi wrapper sets this),
+    // use it directly. This is needed because current_exe() returns
+    // the Node.js binary and cwd may be outside the workspace (e.g.
+    // template tests in /tmp/).
+    if let Ok(dir) = env::var("ENVIO_PKG_DIR") {
+        let pkg_dir = std::path::PathBuf::from(dir);
+        if pkg_dir.is_dir() {
+            return Ok(format!("file:{}", pkg_dir.to_string_lossy()));
+        }
+    }
+
+    // 3. Dev mode fallback: walk up from the binary (and cwd) to find
+    // packages/envio.
     let start_paths = [
         env::current_exe().ok().and_then(|p| p.canonicalize().ok()),
         env::current_dir().ok(),
