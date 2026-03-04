@@ -176,6 +176,9 @@ module ClickHouseSink = {
 
 module ClickHouseStorage = {
   let host = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_HOST", S.string, ~devFallback="http://localhost:8123")
+  // The Docker-internal URL for ClickHouse, used by the Hasura connector agent
+  // (which runs inside Docker) to reach ClickHouse on the shared network.
+  let dockerHost = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_DOCKER_HOST", S.string, ~devFallback="http://envio-clickhouse:8123")
   let database = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_DATABASE", S.option(S.string))
   let username = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_USERNAME", S.string, ~devFallback="default")
   let password = envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_PASSWORD", S.string, ~devFallback="")
