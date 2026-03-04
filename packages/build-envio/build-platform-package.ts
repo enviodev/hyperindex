@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generates a publish-ready package.json for a platform-specific binary package.
+ * Generates a publish-ready package.json for a platform-specific native module package.
  *
  * Usage:
  *   node build-platform-package.ts --version <version> --platform <os> --arch <arch> --out <dir>
@@ -35,7 +35,6 @@ const pkg = {
   version,
   description:
     "A latency and sync speed optimized, developer friendly blockchain data indexer.",
-  main: "envio.node",
   repository: {
     type: "git",
     url: "git+https://github.com/enviodev/hyperindex.git",

@@ -16,7 +16,6 @@ const require = createRequire(import.meta.url);
 const PLATFORM_MAP = {
   darwin: "darwin",
   linux: "linux",
-  win32: "windows",
 };
 
 const ARCH_MAP = {

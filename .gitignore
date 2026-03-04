@@ -1,5 +1,6 @@
 target
 .envio-artifacts
+*.node
 .DS_Store
 .env
 # vim files
