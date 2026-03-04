@@ -30,12 +30,12 @@ if (!values.version || !values.platform || !values.arch || !values.out) {
 const { version, platform, arch, out } = values;
 const name = `envio-${platform}-${arch}`;
 
-const binName = platform === "windows" ? "bin/envio.exe" : "bin/envio";
 const pkg = {
   name,
   version,
   description:
     "A latency and sync speed optimized, developer friendly blockchain data indexer.",
+  main: "envio.node",
   repository: {
     type: "git",
     url: "git+https://github.com/enviodev/hyperindex.git",
@@ -45,8 +45,7 @@ const pkg = {
   license: "GPL-3.0",
   bugs: { url: "https://github.com/enviodev/hyperindex/issues" },
   homepage: "https://envio.dev",
-  // The bin field ensures pnpm publish preserves the executable bit in the tarball
-  bin: { envio: binName },
+  files: ["envio.node"],
   os: [platform],
   cpu: [arch],
 };

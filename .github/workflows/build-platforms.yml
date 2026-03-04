@@ -44,10 +44,10 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: Build binaries
+      - name: Build native module
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
-        run: cargo build --release --bins --target ${{ matrix.job.target }}
+        run: cargo build --release --lib --features napi --target ${{ matrix.job.target }}
 
       - name: Install node
         uses: actions/setup-node@v4
@@ -66,8 +66,12 @@ jobs:
           node_pkg="packages/cli/npm/envio-${node_os}-${node_arch}"
           node packages/build-envio/build-platform-package.ts \
             --version "${VERSION}" --platform "${node_os}" --arch "${node_arch}" --out "${node_pkg}"
-          mkdir -p "${node_pkg}/bin"
-          cp "target/${TARGET}/release/envio" "${node_pkg}/bin"
+          # Copy the cdylib as envio.node (extension varies by OS)
+          if [ "${node_os}" = "darwin" ]; then
+            cp "target/${TARGET}/release/libenvio.dylib" "${node_pkg}/envio.node"
+          else
+            cp "target/${TARGET}/release/libenvio.so" "${node_pkg}/envio.node"
+          fi
 
       - name: Upload platform npm package artifact
         uses: actions/upload-artifact@v4

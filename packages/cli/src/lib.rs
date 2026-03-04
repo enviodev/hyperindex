@@ -1,3 +1,6 @@
+#[cfg(feature = "napi")]
+mod napi;
+
 mod cli_args;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;

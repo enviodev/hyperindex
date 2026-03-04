@@ -17,6 +17,9 @@ const REQUIRED_FILES = [
   "rescript.json",
   "index.d.ts",
   "index.js",
+  "core.js",
+  "core.d.ts",
+  "bin",
   "README.md",
   "src",
 ];
@@ -64,7 +67,7 @@ function verify(dir: string): void {
     }
     if (pkg) {
       if (pkg.private) errors.push("package.json still has private: true");
-      if (pkg.bin) errors.push(`package.json should not have bin field, found "${pkg.bin}"`);
+      if (!pkg.bin) errors.push("package.json missing bin field");
       if (!pkg.optionalDependencies) errors.push("package.json missing optionalDependencies");
       if (!pkg.dependencies) errors.push("package.json missing dependencies");
     }

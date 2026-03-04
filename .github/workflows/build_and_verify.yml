@@ -13,7 +13,7 @@ env:
 jobs:
   # ── Build ───────────────────────────────────────────────────────────
 
-  # Build envio CLI binary for linux-x64 and wrap it in a platform npm package
+  # Build envio napi native module for linux-x64 and wrap it in a platform npm package
   build-linux-package:
     runs-on: ubuntu-22.04
     timeout-minutes: 9
@@ -34,10 +34,10 @@ jobs:
         with:
           packages: musl-tools
 
-      - name: Build envio CLI
+      - name: Build envio native module
         env:
           SVM_TARGET_PLATFORM: linux-amd64
-        run: cargo build --release --bins --target x86_64-unknown-linux-musl
+        run: cargo build --release --lib --features napi --target x86_64-unknown-linux-musl
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -48,8 +48,7 @@ jobs:
         run: |
           node packages/build-envio/build-platform-package.ts \
             --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
-          mkdir -p envio-linux-x64/bin
-          cp target/x86_64-unknown-linux-musl/release/envio envio-linux-x64/bin/
+          cp target/x86_64-unknown-linux-musl/release/libenvio.so envio-linux-x64/envio.node
 
       - name: Upload linux-x64 platform npm package
         uses: actions/upload-artifact@v4
@@ -179,13 +178,13 @@ jobs:
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
-          ${{ github.workspace }}/.envio-artifacts/envio-linux-x64/bin/envio codegen
+          pnpm envio codegen
           pnpm test
 
       - name: fuel_test
         working-directory: scenarios/fuel_test
         run: |
-          ${{ github.workspace }}/.envio-artifacts/envio-linux-x64/bin/envio codegen
+          pnpm envio codegen
           pnpm test
 
       - name: Test Failure Notification

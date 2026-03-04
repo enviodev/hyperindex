@@ -6,6 +6,9 @@
   "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
   "main": "./index.js",
   "types": "./index.d.ts",
+  "bin": {
+    "envio": "bin/envio.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/enviodev/hyperindex.git"
@@ -39,6 +42,9 @@
     "rescript.json",
     "index.d.ts",
     "index.js",
+    "core.js",
+    "core.d.ts",
+    "bin",
     "src"
   ],
   "dependencies": {

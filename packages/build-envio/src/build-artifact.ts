@@ -52,6 +52,9 @@ const PUBLISH_FILES = [
   "rescript.json",
   "index.d.ts",
   "index.js",
+  "core.js",
+  "core.d.ts",
+  "bin",
   "src",
 ];
 
@@ -73,9 +76,10 @@ export function buildPackageJson(
   delete pkg.private;
   delete pkg.scripts;
 
-  delete pkg.bin;
+  // Keep bin field — the JS wrapper invokes the napi native module
+  pkg.bin = { envio: "bin/envio.js" };
 
-  // Add optional platform-specific dependencies
+  // Add optional platform-specific dependencies (each ships envio.node)
   pkg.optionalDependencies = {
     "envio-linux-x64": platformPkgVersion,
     "envio-linux-arm64": platformPkgVersion,

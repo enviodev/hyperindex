@@ -34,7 +34,7 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → cargo build → CI artifact.
+ * Priority: ENVIO_BIN → cargo build → napi (via pnpm envio bin).
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
@@ -48,17 +48,8 @@ function resolveEnvio(): { command: string; args: string[] } {
     }
   }
 
-  // In CI the pre-built platform binary lives in .envio-artifacts/
-  const artifactBin = path.join(rootDir, ".envio-artifacts/envio-linux-x64/bin/envio");
-  if (fs.existsSync(artifactBin)) {
-    return { command: artifactBin, args: [] };
-  }
-
-  throw new Error(
-    "envio binary not found. Either:\n" +
-      "  - Set ENVIO_BIN env var\n" +
-      "  - Run `cargo build` in packages/cli first"
-  );
+  // Use the napi module via the envio bin entry point (works in CI and locally)
+  return { command: "pnpm", args: ["envio"] };
 }
 
 const envio = resolveEnvio();
