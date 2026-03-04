@@ -34,7 +34,7 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → cargo build → napi (via pnpm envio bin).
+ * Priority: ENVIO_BIN → cargo binary → napi bin entry point.
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
@@ -48,8 +48,10 @@ function resolveEnvio(): { command: string; args: string[] } {
     }
   }
 
-  // Use the napi module via the envio bin entry point (works in CI and locally)
-  return { command: "pnpm", args: ["envio"] };
+  // Use the napi module via absolute path to the bin entry point.
+  // Must be absolute so it works even when cwd is outside the workspace
+  // (e.g. template tests that run in /tmp).
+  return { command: "node", args: [path.join(rootDir, "packages/envio/bin/envio.js")] };
 }
 
 const envio = resolveEnvio();
