@@ -8,6 +8,7 @@ pub mod constants;
 mod evm;
 pub mod executor;
 mod fuel;
+pub mod graphql_server;
 mod hbs_templating;
 mod persisted_state;
 mod project_paths;

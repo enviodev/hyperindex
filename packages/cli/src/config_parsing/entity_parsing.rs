@@ -1160,7 +1160,7 @@ impl UserDefinedFieldType {
         Ok(composed_type_name)
     }
 
-    fn get_underlying_scalar(&self) -> GqlScalar {
+    pub fn get_underlying_scalar(&self) -> GqlScalar {
         match self {
             Self::Single(gql_scalar) => gql_scalar.clone(),
             Self::ListType(field_type) | Self::NonNullType(field_type) => {
@@ -1381,7 +1381,7 @@ impl FieldType {
         self.to_user_defined_field_type().to_rescript_type(schema)
     }
 
-    fn get_underlying_scalar(&self) -> GqlScalar {
+    pub fn get_underlying_scalar(&self) -> GqlScalar {
         self.to_user_defined_field_type().get_underlying_scalar()
     }
 

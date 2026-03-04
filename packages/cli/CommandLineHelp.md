@@ -29,6 +29,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
+* [`envio serve`↴](#envio-serve)
 
 ## `envio`
 
@@ -43,6 +44,7 @@ This document contains the help content for the `envio` command-line program.
 * `benchmark-summary` — Prints a summary of the benchmark data after running the indexer with envio start --bench flag or setting 'ENVIO_SAVE_BENCHMARK_DATA=true'
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer without any automatic codegen
+* `serve` — Start a GraphQL API server for querying indexed data
 
 ###### **Options:**
 
@@ -358,6 +360,20 @@ Start the indexer without any automatic codegen
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
 * `-b`, `--bench` — Saves benchmark data to a file during indexing
+
+
+
+## `envio serve`
+
+Start a GraphQL API server for querying indexed data
+
+**Usage:** `envio serve [OPTIONS]`
+
+###### **Options:**
+
+* `-p`, `--port <PORT>` — Port to run the GraphQL server on
+
+  Default value: `8080`
 
 
 

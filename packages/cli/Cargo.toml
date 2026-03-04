@@ -49,6 +49,10 @@ convert_case = "0.6.0"
 dotenvy = { git = "https://github.com/enviodev/dotenvy", rev = "e2da110668572cf2d67178f192eb1fc285224040" }
 bollard = "0.20"
 futures-util = "0.3"
+async-graphql = "7"
+async-graphql-axum = "7"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
 
 [features]
 integration_tests = []

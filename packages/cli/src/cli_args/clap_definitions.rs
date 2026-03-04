@@ -66,6 +66,9 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
+    ///Start a GraphQL API server for querying indexed data
+    Serve(ServeArgs),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
@@ -97,6 +100,13 @@ pub struct StartArgs {
     ///Saves benchmark data to a file during indexing
     #[arg(short = 'b', long, action)]
     pub bench: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ServeArgs {
+    ///Port to run the GraphQL server on
+    #[arg(short, long, default_value_t = 8080)]
+    pub port: u16,
 }
 
 #[derive(Debug, Subcommand)]

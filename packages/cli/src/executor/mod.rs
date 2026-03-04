@@ -4,6 +4,7 @@ use crate::{
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
     docker_env,
+    graphql_server,
     persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     scripts,
@@ -80,6 +81,12 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
         CommandType::Local(local_commands) => {
             local::run_local(&local_commands, &parsed_project_paths).await?;
+        }
+
+        CommandType::Serve(serve_args) => {
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
+            graphql_server::start_server(&config, serve_args.port).await?;
         }
 
         CommandType::BenchmarkSummary => {
