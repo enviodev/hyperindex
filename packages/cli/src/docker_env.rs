@@ -1,3 +1,4 @@
+use crate::config_parsing::human_config::Storage;
 use anyhow::Context;
 use bollard::models::{
     ContainerCreateBody, EndpointSettings, HealthConfig, HostConfig, Mount, MountTypeEnum,
@@ -19,12 +20,15 @@ use tokio::time::Duration;
 
 const POSTGRES_IMAGE: &str = "postgres:18.3";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
+const CLICKHOUSE_IMAGE: &str = "clickhouse:26.1.3";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
 const PG_CONTAINER: &str = "envio-postgres";
 const HASURA_CONTAINER: &str = "envio-hasura";
+const CLICKHOUSE_CONTAINER: &str = "envio-clickhouse";
 const VOLUME: &str = "envio-postgres-data";
+const CLICKHOUSE_VOLUME: &str = "envio-clickhouse-data";
 const NETWORK: &str = "envio-network";
 
 fn podman_socket_candidates() -> Vec<PathBuf> {
@@ -112,10 +116,14 @@ struct EnvConfig {
     hasura_port: String,
     hasura_enable_console: String,
     hasura_admin_secret: String,
+    clickhouse_port: String,
+    clickhouse_user: String,
+    clickhouse_password: String,
+    clickhouse_database: String,
 }
 
 impl EnvConfig {
-    fn from_project(project_root: &Path) -> Self {
+    fn from_project(project_root: &Path, indexer_name: &str) -> Self {
         let dotenv = EnvLoader::with_path(project_root.join(".env"))
             .sequence(EnvSequence::InputOnly)
             .load()
@@ -130,6 +138,8 @@ impl EnvConfig {
             })
         };
 
+        let ch_database_default = format!("envio_{}", sanitize_for_db_name(indexer_name));
+
         Self {
             pg_host: var("ENVIO_PG_HOST", "localhost"),
             pg_port: var("ENVIO_PG_PORT", "5433"),
@@ -140,6 +150,10 @@ impl EnvConfig {
             hasura_port: var("HASURA_EXTERNAL_PORT", "8080"),
             hasura_enable_console: var("HASURA_GRAPHQL_ENABLE_CONSOLE", "true"),
             hasura_admin_secret: var("HASURA_GRAPHQL_ADMIN_SECRET", "testing"),
+            clickhouse_port: var("ENVIO_CLICKHOUSE_PORT", "8123"),
+            clickhouse_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
+            clickhouse_password: var("ENVIO_CLICKHOUSE_PASSWORD", ""),
+            clickhouse_database: var("ENVIO_CLICKHOUSE_DATABASE", &ch_database_default),
         }
     }
 
@@ -153,6 +167,10 @@ impl EnvConfig {
         hasher.update(&self.hasura_port);
         hasher.update(&self.hasura_enable_console);
         hasher.update(&self.hasura_admin_secret);
+        hasher.update(&self.clickhouse_port);
+        hasher.update(&self.clickhouse_user);
+        hasher.update(&self.clickhouse_password);
+        hasher.update(&self.clickhouse_database);
         format!("{:x}", hasher.finalize())
     }
 }
@@ -262,15 +280,48 @@ async fn is_service_reachable(host: &str, port: u16) -> bool {
         .unwrap_or(false)
 }
 
-/// Check whether Hasura is reachable by hitting its healthz endpoint.
-async fn is_hasura_healthy(host: &str, port: u16) -> bool {
-    let url = format!("http://{}:{}/hasura/healthz?strict=true", host, port);
+/// Check whether an HTTP endpoint returns a success status.
+async fn is_http_healthy(url: &str) -> bool {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build();
     match client {
-        Ok(c) => c.get(&url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
+        Ok(c) => c.get(url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
         Err(_) => false,
+    }
+}
+
+/// Poll an HTTP endpoint until it returns a success status.
+async fn wait_for_http_healthy(url: &str, service_name: &str) -> anyhow::Result<()> {
+    let max_attempts = 30;
+    let interval = Duration::from_secs(2);
+    for attempt in 1..=max_attempts {
+        if is_http_healthy(url).await {
+            return Ok(());
+        }
+        if attempt < max_attempts {
+            println!("Waiting for {service_name} to become ready ({attempt}/{max_attempts})...");
+            tokio::time::sleep(interval).await;
+        }
+    }
+    anyhow::bail!("{service_name} did not become healthy after {max_attempts} attempts at {url}")
+}
+
+/// Sanitize an indexer name into a valid ClickHouse database identifier.
+/// Replaces non-alphanumeric characters with underscores and ensures it
+/// doesn't start with a digit.
+fn sanitize_for_db_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    // Ensure it doesn't start with a digit
+    if sanitized.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("_{sanitized}")
+    } else if sanitized.is_empty() {
+        "indexer".to_string()
+    } else {
+        sanitized
     }
 }
 
@@ -420,28 +471,42 @@ pub struct UpResult {
     pub hasura_enabled: bool,
 }
 
-pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
-    let env = EnvConfig::from_project(project_root);
+pub async fn up(project_root: &Path, storage: &Storage, indexer_name: &str) -> anyhow::Result<UpResult> {
+    let env = EnvConfig::from_project(project_root, indexer_name);
+    let use_clickhouse = matches!(storage, Storage::Clickhouse);
     let pg_host_port: u16 = env.pg_port.parse().context("ENVIO_PG_PORT is not a valid port")?;
     let hasura_host_port: u16 = env
         .hasura_port
         .parse()
         .context("HASURA_EXTERNAL_PORT is not a valid port")?;
+    let ch_host_port: u16 = env
+        .clickhouse_port
+        .parse()
+        .context("ENVIO_CLICKHOUSE_PORT is not a valid port")?;
 
-    // Probe Postgres and Hasura in parallel to see if they are already running.
+    // Probe services in parallel to see if they are already running.
     let pg_host = env.pg_host.clone();
-    let (pg_alive, hasura_alive) = tokio::join!(
+    let (pg_alive, hasura_alive, ch_alive) = tokio::join!(
         is_service_reachable(&pg_host, pg_host_port),
         async {
             if !env.hasura_enabled {
                 return false;
             }
-            is_hasura_healthy(&pg_host, hasura_host_port).await
+            let url = format!("http://{}:{}/hasura/healthz?strict=true", pg_host, hasura_host_port);
+            is_http_healthy(&url).await
+        },
+        async {
+            if !use_clickhouse {
+                return false;
+            }
+            let url = format!("http://{}:{}/ping", pg_host, ch_host_port);
+            is_http_healthy(&url).await
         }
     );
 
     let need_pg = !pg_alive;
     let need_hasura = env.hasura_enabled && !hasura_alive;
+    let need_clickhouse = use_clickhouse && !ch_alive;
 
     if pg_alive {
         println!("Postgres already reachable on port {pg_host_port}, skipping container");
@@ -452,9 +517,12 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
     if !env.hasura_enabled {
         println!("Hasura disabled (ENVIO_HASURA=false), skipping");
     }
+    if use_clickhouse && ch_alive {
+        println!("ClickHouse already reachable on port {ch_host_port}, skipping container");
+    }
 
-    // If both services are already running, nothing to do.
-    if !need_pg && !need_hasura {
+    // If all needed services are already running, nothing to do.
+    if !need_pg && !need_hasura && !need_clickhouse {
         return Ok(UpResult {
             hasura_enabled: env.hasura_enabled,
         });
@@ -607,9 +675,86 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         Ok(())
     };
 
-    let (pg_res, hasura_res) = tokio::join!(pg_pipeline, hasura_pipeline);
+    let clickhouse_pipeline = async {
+        if !need_clickhouse {
+            return Ok::<(), anyhow::Error>(());
+        }
+        // Image pull, network, and volume are all independent.
+        let (img_res, net_res, vol_res) = tokio::join!(
+            ensure_image(&docker, CLICKHOUSE_IMAGE),
+            ensure_network(&docker, NETWORK),
+            ensure_volume(&docker, CLICKHOUSE_VOLUME),
+        );
+        img_res?;
+        net_res?;
+        vol_res?;
+
+        let ch_port_bindings = {
+            let mut map = HashMap::new();
+            map.insert(
+                "8123/tcp".to_string(),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(env.clickhouse_port.clone()),
+                }]),
+            );
+            map
+        };
+
+        let mut ch_env = vec![
+            format!("CLICKHOUSE_DB={}", env.clickhouse_database),
+            format!("CLICKHOUSE_USER={}", env.clickhouse_user),
+        ];
+        if !env.clickhouse_password.is_empty() {
+            ch_env.push(format!("CLICKHOUSE_PASSWORD={}", env.clickhouse_password));
+        } else {
+            ch_env.push("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1".to_string());
+        }
+
+        let ch_body = ContainerCreateBody {
+            image: Some(CLICKHOUSE_IMAGE.to_string()),
+            labels: Some(make_labels(&config_hash)),
+            env: Some(ch_env),
+            host_config: Some(HostConfig {
+                port_bindings: Some(ch_port_bindings),
+                mounts: Some(vec![Mount {
+                    target: Some("/var/lib/clickhouse".to_string()),
+                    source: Some(CLICKHOUSE_VOLUME.to_string()),
+                    typ: Some(MountTypeEnum::VOLUME),
+                    ..Default::default()
+                }]),
+                restart_policy: Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    ..Default::default()
+                }),
+                // ClickHouse needs ulimits for production-like performance
+                ulimits: Some(vec![
+                    bollard::models::ResourcesUlimits {
+                        name: Some("nofile".to_string()),
+                        soft: Some(262144),
+                        hard: Some(262144),
+                    },
+                ]),
+                ..Default::default()
+            }),
+            networking_config: Some(make_networking_config(NETWORK)),
+            ..Default::default()
+        };
+
+        ensure_container(&docker, CLICKHOUSE_CONTAINER, &config_hash, ch_host_port, ch_body)
+            .await?;
+
+        // Wait for ClickHouse HTTP interface to become healthy
+        let ping_url = format!("http://localhost:{}/ping", env.clickhouse_port);
+        wait_for_http_healthy(&ping_url, "ClickHouse").await?;
+        Ok(())
+    };
+
+    let (pg_res, hasura_res, ch_res) =
+        tokio::join!(pg_pipeline, hasura_pipeline, clickhouse_pipeline);
     pg_res?;
     hasura_res?;
+    ch_res?;
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
@@ -624,10 +769,15 @@ pub async fn down() -> anyhow::Result<()> {
     tokio::join!(
         stop_and_remove(&docker, HASURA_CONTAINER),
         stop_and_remove(&docker, PG_CONTAINER),
+        stop_and_remove(&docker, CLICKHOUSE_CONTAINER),
     );
 
-    let (vol_res, net_res) = tokio::join!(
+    let (vol_res, ch_vol_res, net_res) = tokio::join!(
         docker.remove_volume(VOLUME, None::<bollard::query_parameters::RemoveVolumeOptions>),
+        docker.remove_volume(
+            CLICKHOUSE_VOLUME,
+            None::<bollard::query_parameters::RemoveVolumeOptions>
+        ),
         docker.remove_network(NETWORK),
     );
 
@@ -635,6 +785,14 @@ pub async fn down() -> anyhow::Result<()> {
     if let Err(e) = vol_res {
         eprintln!("Failed to remove volume {VOLUME}: {e}");
         failed = true;
+    }
+    if let Err(e) = ch_vol_res {
+        // Only warn if the volume existed (not an error if it was never created)
+        let msg = e.to_string();
+        if !msg.contains("No such volume") && !msg.contains("not found") {
+            eprintln!("Failed to remove volume {CLICKHOUSE_VOLUME}: {e}");
+            failed = true;
+        }
     }
     if let Err(e) = net_res {
         eprintln!("Failed to remove network {NETWORK}: {e}");
@@ -666,6 +824,10 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         let env2 = EnvConfig {
             pg_host: "localhost".into(),
@@ -677,6 +839,10 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         assert_eq!(env1.config_hash(), env2.config_hash());
     }
@@ -693,6 +859,10 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         let env2 = EnvConfig {
             pg_host: "localhost".into(),
@@ -704,7 +874,36 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
+            clickhouse_port: "8123".into(),
+            clickhouse_user: "default".into(),
+            clickhouse_password: "".into(),
+            clickhouse_database: "envio".into(),
         };
         assert_ne!(env1.config_hash(), env2.config_hash());
+    }
+
+    #[test]
+    fn sanitize_simple_name() {
+        assert_eq!(sanitize_for_db_name("my_indexer"), "my_indexer");
+    }
+
+    #[test]
+    fn sanitize_dashes_and_spaces() {
+        assert_eq!(sanitize_for_db_name("my-cool indexer"), "my_cool_indexer");
+    }
+
+    #[test]
+    fn sanitize_special_chars() {
+        assert_eq!(sanitize_for_db_name("app@v2.0!"), "app_v2_0_");
+    }
+
+    #[test]
+    fn sanitize_leading_digit() {
+        assert_eq!(sanitize_for_db_name("123abc"), "_123abc");
+    }
+
+    #[test]
+    fn sanitize_empty() {
+        assert_eq!(sanitize_for_db_name(""), "indexer");
     }
 }
