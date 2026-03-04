@@ -30,7 +30,6 @@ if (!values.version || !values.platform || !values.arch || !values.out) {
 const { version, platform, arch, out } = values;
 const name = `envio-${platform}-${arch}`;
 
-const binName = platform === "windows" ? "bin/envio.exe" : "bin/envio";
 const pkg = {
   name,
   version,
@@ -45,8 +44,6 @@ const pkg = {
   license: "GPL-3.0",
   bugs: { url: "https://github.com/enviodev/hyperindex/issues" },
   homepage: "https://envio.dev",
-  // The bin field ensures pnpm publish preserves the executable bit in the tarball
-  bin: { envio: binName },
   os: [platform],
   cpu: [arch],
 };

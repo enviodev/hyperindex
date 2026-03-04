@@ -4,7 +4,7 @@ assertion_line: 2636
 expression: project_template.internal_config_json_code
 ---
 {
-  "version": "dev",
+  "version": "0.0.1-dev",
   "name": "config1",
   "description": "Gravatar for Ethereum",
   "evm": {
