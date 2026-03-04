@@ -105,7 +105,7 @@ pub struct StartArgs {
 #[derive(Debug, Args)]
 pub struct ServeArgs {
     ///Port to run the GraphQL server on
-    #[arg(short, long, default_value_t = 8080)]
+    #[arg(short, long, default_value_t = 8081)]
     pub port: u16,
 }
 
