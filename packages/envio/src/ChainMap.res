@@ -27,7 +27,11 @@ let get: (t<'a>, Chain.t) => 'a = (self, chain) =>
   | None =>
     // Should be unreachable, since we validate on Chain.t creation
     // Still throw just in case something went wrong
-    Js.Exn.raiseError("No chain with id " ++ chain->Chain.toString ++ " found in chain map")
+    let availableChains = self->Map.keysToArray->Array.map(Chain.toString)->Js.Array2.joinWith(", ")
+    Js.Exn.raiseError(
+      `No chain with id ${chain->Chain.toString} found in chain map. ` ++
+      `Available chain ids: [${availableChains}]`,
+    )
   }
 
 let set: (t<'a>, Chain.t, 'a) => t<'a> = (map, chain, v) => Map.set(map, chain, v)
