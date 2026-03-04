@@ -380,17 +380,24 @@ fn is_valid_release_version_number(version: &str) -> bool {
     re_version_pattern.is_match(version) || version.contains("-main-")
 }
 
-/// Read version from the npm platform package's package.json.
-/// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
+/// Read version from the envio npm package's package.json.
+///
+/// Resolution order:
+///   1. ENVIO_PKG_DIR env var (set by the JS wrapper when running via napi)
+///   2. Walk up from the binary: exe = .../bin/envio → ../../package.json
 pub(crate) fn read_version_from_package_json() -> Result<String> {
-    let exe = env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .context("Failed to resolve envio executable path")?;
-    // exe = .../bin/envio → parent = .../bin/ → parent = .../<pkg>/
-    let pkg_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .context("Envio binary is not inside a package directory")?;
+    let pkg_dir = if let Ok(dir) = env::var("ENVIO_PKG_DIR") {
+        std::path::PathBuf::from(dir)
+    } else {
+        let exe = env::current_exe()
+            .and_then(|p| p.canonicalize())
+            .context("Failed to resolve envio executable path")?;
+        // exe = .../bin/envio → parent = .../bin/ → parent = .../<pkg>/
+        exe.parent()
+            .and_then(|p| p.parent())
+            .context("Envio binary is not inside a package directory")?
+            .to_path_buf()
+    };
     let pkg_json_path = pkg_dir.join("package.json");
     let contents = std::fs::read_to_string(&pkg_json_path).with_context(|| {
         format!(
@@ -416,23 +423,26 @@ pub fn get_envio_version() -> Result<String> {
         }
     }
 
-    // 2. Dev mode: walk up from the binary to find the local packages/envio.
-    // Using current_exe() instead of current_dir() so this works even when
-    // cwd is outside the repo (e.g. template tests that run in /tmp/).
-    let exe = env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .context("failed to resolve current executable path")?;
-    let mut dir = exe.parent();
-    while let Some(d) = dir {
-        let candidate = d.join("packages/envio");
-        if candidate.is_dir() {
-            return Ok(format!("file:{}", candidate.to_string_lossy()));
+    // 2. Dev mode: walk up from the binary (and cwd as fallback) to find
+    // packages/envio. Tries current_exe() first (works when cwd is outside
+    // the repo, e.g. template tests in /tmp/), then current_dir() (works
+    // when running via napi where current_exe() is the Node.js binary).
+    let start_paths = [
+        env::current_exe().ok().and_then(|p| p.canonicalize().ok()),
+        env::current_dir().ok(),
+    ];
+    for start in start_paths.into_iter().flatten() {
+        let mut dir = Some(start.as_path());
+        while let Some(d) = dir {
+            let candidate = d.join("packages/envio");
+            if candidate.is_dir() {
+                return Ok(format!("file:{}", candidate.to_string_lossy()));
+            }
+            dir = d.parent();
         }
-        dir = d.parent();
     }
     Err(anyhow!(
-        "could not find packages/envio above executable: {}",
-        exe.display()
+        "could not find packages/envio above executable or working directory"
     ))
 }
 

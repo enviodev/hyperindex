@@ -23,21 +23,15 @@ jobs:
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
 
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: musl-tools
-
       - name: Build envio native module
         env:
           SVM_TARGET_PLATFORM: linux-amd64
-        run: cargo build --release --lib --features napi --target x86_64-unknown-linux-musl
+        run: cargo build --release --lib --features napi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -48,7 +42,7 @@ jobs:
         run: |
           node packages/build-envio/build-platform-package.ts \
             --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
-          cp target/x86_64-unknown-linux-musl/release/libenvio.so envio-linux-x64/envio.node
+          cp target/release/libenvio.so envio-linux-x64/envio.node
 
       - name: Upload linux-x64 platform npm package
         uses: actions/upload-artifact@v4
@@ -60,7 +54,6 @@ jobs:
   build-envio-package:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: build-linux-package
 
     steps:
       - uses: actions/checkout@v4
