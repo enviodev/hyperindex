@@ -11,13 +11,15 @@
 
 import { createRequire } from "node:module";
 import { execSync } from "node:child_process";
-import { existsSync, copyFileSync } from "node:fs";
+import { existsSync, copyFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { platform, arch } from "node:process";
 
 const require = createRequire(import.meta.url);
 const __dirname = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
+// Resolve symlinks so we find the real repo when installed via pnpm link / file: protocol
+const __realdir = realpathSync(__dirname);
 
 const PLATFORM_MAP = {
   darwin: "darwin",
@@ -52,13 +54,21 @@ function loadNativeModule() {
     return require("./envio.node");
   } catch (_) {}
 
+  // Also check the real path (pnpm installs via symlinks, so ./envio.node
+  // relative to __dirname may not find the file at __realdir)
+  if (__realdir !== __dirname) {
+    try {
+      return require(join(__realdir, "envio.node"));
+    } catch (_) {}
+  }
+
   // Auto-compile: build from source and copy the cdylib
   return buildAndLoad(os);
 }
 
 function buildAndLoad(os) {
-  // Walk up from packages/envio to find the workspace root (has Cargo.toml)
-  let dir = __dirname;
+  // Walk up from the real path (resolves pnpm symlinks) to find the workspace root
+  let dir = __realdir;
   while (dir !== dirname(dir)) {
     if (existsSync(join(dir, "Cargo.toml")) && existsSync(join(dir, "packages", "cli"))) {
       break;
@@ -74,7 +84,7 @@ function buildAndLoad(os) {
 
   const ext = os === "darwin" ? "dylib" : "so";
   const cdylib = join(dir, "target", "debug", `libenvio.${ext}`);
-  const dest = join(__dirname, "envio.node");
+  const dest = join(__realdir, "envio.node");
 
   // Always run cargo build — it's a no-op (~200ms) when nothing changed,
   // but picks up source changes automatically (like cargo run would).
