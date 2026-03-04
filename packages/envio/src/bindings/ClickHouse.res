@@ -124,7 +124,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
       | DerivedFrom(_) => () // Skip derived fields
       }
     })
-    dict->Utils.magic
+    dict->(Utils.magic: Js.Dict.t<unknown> => Internal.entity)
   })
 }
 
@@ -165,8 +165,14 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
   }
 }
 
+type setUpdatesCache = {
+  tableName: string,
+  convertOrThrow: Change.t<Internal.entity> => Js.Json.t,
+}
+
 let setUpdatesOrThrow = async (
   client,
+  ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
   ~updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~database: string,
@@ -174,10 +180,10 @@ let setUpdatesOrThrow = async (
   if updates->Array.length === 0 {
     ()
   } else {
-    let {convertOrThrow, tableName} = switch entityConfig.clickHouseSetUpdatesCache {
-    | Some(cache) => cache
+    let {convertOrThrow, tableName} = switch cache->Utils.WeakMap.get(entityConfig) {
+    | Some(cached) => cached
     | None =>
-      let cache: Internal.clickHouseSetUpdatesCache = {
+      let cached: setUpdatesCache = {
         tableName: `${database}.\`${EntityHistory.historyTableName(
             ~entityName=entityConfig.name,
             ~entityIndex=entityConfig.index,
@@ -203,8 +209,8 @@ let setUpdatesOrThrow = async (
         ),
       }
 
-      entityConfig.clickHouseSetUpdatesCache = Some(cache)
-      cache
+      cache->Utils.WeakMap.set(entityConfig, cached)->ignore
+      cached
     }
 
     try {

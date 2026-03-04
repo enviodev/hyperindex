@@ -1,7 +1,8 @@
 use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
-    persisted_state::{self, PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
+    docker_env,
+    persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -44,11 +45,11 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         }
 
         match persisted_state_file {
-            PersistedStateExists::Exists(ps) if ps.envio_version != CURRENT_CRATE_VERSION => {
+            PersistedStateExists::Exists(ps) if ps.envio_version != persisted_state::current_version() => {
                 println!(
                     "Envio version '{}' does not match the previous version '{}' used in the \
                      generated directory",
-                    CURRENT_CRATE_VERSION, &ps.envio_version
+                    persisted_state::current_version(), &ps.envio_version
                 );
                 println!("Purging generated directory",);
                 commands::codegen::remove_files_except_git(&config.parsed_project_paths.generated)
@@ -64,65 +65,61 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
             .await
             .context("Failed running codegen")?;
     }
-    // if hasura healhz check returns not found assume docker isnt running and start it up {
-    let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();
+    let up_result = docker_env::up(&config.parsed_project_paths.project_root)
+        .await
+        .context("Failed starting Docker containers")?;
 
-    if hasura_health_check_is_error {
-        //Run docker commands to spin up container
-        commands::docker::docker_compose_up_d(&config)
-            .await
-            .context("Failed running docker compose up after server liveness check")?;
-    }
+    if up_result.hasura_enabled {
+        let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
 
-    let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
-
-    match hasura_health {
-        EndpointHealth::Unhealthy(err_message) => {
-            Err(anyhow!(err_message)).context("Failed to start hasura")?;
-        }
-        EndpointHealth::Healthy => {
-            //Get the persisted state from the db
-            let persisted_state_db = PersistedStateExists::read_from_db()
-                .await
-                .context("Failed to read persisted state from the DB")?;
-
-            let (should_run_db_migrations, changes_detected) = match &persisted_state_db {
-                PersistedStateExists::Exists(persisted_state) =>
-                //In the case where the persisted state exists, compare it to current state
-                //determine whether to run migrations and which changes have occured to
-                //cause that.
-                {
-                    let (should_run_db_migrations, changes_detected) =
-                        current_state.should_run_db_migrations(persisted_state);
-
-                    (should_run_db_migrations, changes_detected)
-                }
-                //Otherwise we should run db migrations
-                PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
-            };
-
-            if should_run_db_migrations {
-                match persisted_state_db {
-                    PersistedStateExists::NotExists => {
-                        println!("Db Migrations have not been run")
-                    }
-                    PersistedStateExists::Corrupted => println!("Invalid DB persisted state"),
-                    PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
-                }
-                println!("Running db migrations");
-
-                commands::db_migrate::run_db_setup(&config, &current_state)
-                    .await
-                    .context("Failed running db setup command")?;
+        match hasura_health {
+            EndpointHealth::Unhealthy(err_message) => {
+                Err(anyhow!(err_message)).context("Failed to start hasura")?;
             }
-
-            println!("Starting indexer");
-
-            commands::start::start_indexer(&config)
-                .await
-                .context("Failed running start on the indexer")?;
+            EndpointHealth::Healthy => {}
         }
     }
+
+    //Get the persisted state from the db
+    let persisted_state_db = PersistedStateExists::read_from_db()
+        .await
+        .context("Failed to read persisted state from the DB")?;
+
+    let (should_run_db_migrations, changes_detected) = match &persisted_state_db {
+        PersistedStateExists::Exists(persisted_state) =>
+        //In the case where the persisted state exists, compare it to current state
+        //determine whether to run migrations and which changes have occured to
+        //cause that.
+        {
+            let (should_run_db_migrations, changes_detected) =
+                current_state.should_run_db_migrations(persisted_state);
+
+            (should_run_db_migrations, changes_detected)
+        }
+        //Otherwise we should run db migrations
+        PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
+    };
+
+    if should_run_db_migrations {
+        match persisted_state_db {
+            PersistedStateExists::NotExists => {
+                println!("Db Migrations have not been run")
+            }
+            PersistedStateExists::Corrupted => println!("Invalid DB persisted state"),
+            PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
+        }
+        println!("Running db migrations");
+
+        commands::db_migrate::run_db_setup(&config, &current_state)
+            .await
+            .context("Failed running db setup command")?;
+    }
+
+    println!("Starting indexer");
+
+    commands::start::start_indexer(&config)
+        .await
+        .context("Failed running start on the indexer")?;
 
     Ok(())
 }

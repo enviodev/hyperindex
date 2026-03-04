@@ -170,7 +170,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->ignore
   indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
 
-  indexer->Utils.magic
+  indexer->(Utils.magic: 'a => 'indexer)
 }
 
 let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
@@ -243,7 +243,20 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
       ->Promise.thenResolve(metrics => res->endWithData(metrics))
   })
 
-  let _ = app->listen(Env.serverPort)
+  let server = app->listen(Env.serverPort)
+  server->Express.onError(err => {
+    let code = (err->(Utils.magic: Js.Exn.t => {..}))["code"]
+    if code === "EADDRINUSE" {
+      Logging.error(
+        `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
+        `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++
+        `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
+      )
+    } else {
+      Logging.errorWithExn(err, "Failed to start indexer server")
+    }
+    NodeJs.process->NodeJs.exitWithCode(Failure)
+  })
 }
 
 type args = {@as("tui-off") tuiOff?: bool}

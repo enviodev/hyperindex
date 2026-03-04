@@ -48,7 +48,7 @@ let makeHexSchema = fromStr =>
       | Some(v) => v
       | None => s.fail("The string is not valid hex")
       },
-    serializer: value => value->Viem.toHex->Utils.magic,
+    serializer: value => value->Viem.toHex->(Utils.magic: EvmTypes.Hex.t => 'a),
   })
 
 let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)
@@ -214,6 +214,12 @@ module GetBlockByNumber = {
     paramsSchema,
     resultSchema,
   )
+
+  let rawRoute = makeRpcRoute(
+    "eth_getBlockByNumber",
+    paramsSchema,
+    S.null(S.json(~validate=false)),
+  )
 }
 
 module GetBlockHeight = {
@@ -242,6 +248,13 @@ let getLogs = async (~client: Rest.client, ~param: GetLogs.param) => {
 
 let getBlock = async (~client: Rest.client, ~blockNumber: int) => {
   await GetBlockByNumber.route->Rest.fetch(
+    {"blockNumber": blockNumber, "includeTransactions": false},
+    ~client,
+  )
+}
+
+let getRawBlock = async (~client: Rest.client, ~blockNumber: int) => {
+  await GetBlockByNumber.rawRoute->Rest.fetch(
     {"blockNumber": blockNumber, "includeTransactions": false},
     ~client,
   )

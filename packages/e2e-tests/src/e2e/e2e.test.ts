@@ -34,7 +34,7 @@ describe("E2E: Indexer with GraphQL", () => {
     await killProcessOnPort(config.indexerPort);
 
     // envio dev handles codegen, pnpm install, rescript build, migrations, and indexer start
-    indexerProcess = startBackground(config.envioBin, ["dev"], {
+    indexerProcess = startBackground(config.envioCommand, [...config.envioArgs, "dev"], {
       cwd: PROJECT_DIR,
       env: {
         TUI_OFF: "true",
@@ -60,7 +60,7 @@ describe("E2E: Indexer with GraphQL", () => {
       indexerProcess = null;
     }
     await killProcessOnPort(config.indexerPort);
-    await runCommand(config.envioBin, ["stop"], {
+    await runCommand(config.envioCommand, [...config.envioArgs, "stop"], {
       cwd: PROJECT_DIR,
       timeout: 30000,
     }).catch(() => {});

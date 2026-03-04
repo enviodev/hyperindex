@@ -3,7 +3,8 @@ use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
-    persisted_state::{PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
+    docker_env,
+    persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     scripts,
 };
@@ -35,21 +36,19 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
 
         CommandType::Stop => {
-            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
-                .context("Failed parsing config")?;
-            commands::docker::docker_compose_down_v(&config).await?;
+            docker_env::down().await?;
         }
 
         CommandType::Start(start_args) => {
             //Add warnings to start command
             match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
-                PersistedStateExists::Exists(ps) if ps.envio_version != CURRENT_CRATE_VERSION => {
+                PersistedStateExists::Exists(ps) if ps.envio_version != persisted_state::current_version() => {
                     println!(
                         "WARNING: Envio version '{}' is currently being used. It does not match \
                          the version '{}' that was used to create generated directory previously. \
                          Please consider rerunning envio codegen, or running the same version of \
                          envio. ",
-                        CURRENT_CRATE_VERSION, &ps.envio_version
+                        persisted_state::current_version(), &ps.envio_version
                     )
                 }
                 PersistedStateExists::NotExists => println!(

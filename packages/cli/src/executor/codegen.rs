@@ -1,7 +1,7 @@
 use crate::{
     commands,
     config_parsing::system_config::SystemConfig,
-    persisted_state::{PersistedStateExists, CURRENT_CRATE_VERSION},
+    persisted_state::{self, PersistedStateExists},
     project_paths::ParsedProjectPaths,
 };
 use anyhow::{Context, Result};
@@ -9,11 +9,11 @@ use anyhow::{Context, Result};
 pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
     //Manage purging of gengerated folder
     match PersistedStateExists::get_persisted_state_file(project_paths) {
-        PersistedStateExists::Exists(ps) if ps.envio_version != CURRENT_CRATE_VERSION => {
+        PersistedStateExists::Exists(ps) if ps.envio_version != persisted_state::current_version() => {
             println!(
                 "Envio version '{}' does not match the previous version '{}' used in the \
                  generated directory",
-                CURRENT_CRATE_VERSION, &ps.envio_version
+                persisted_state::current_version(), &ps.envio_version
             );
             println!("Purging generated directory",);
             commands::codegen::remove_files_except_git(&project_paths.generated)
