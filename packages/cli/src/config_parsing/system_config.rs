@@ -380,60 +380,19 @@ fn is_valid_release_version_number(version: &str) -> bool {
     re_version_pattern.is_match(version) || version.contains("-main-")
 }
 
-/// Returns the runtime version, reading it once from the platform package's
-/// package.json. Prints a user-friendly error and exits if the version cannot
-/// be determined.
-pub fn runtime_version() -> &'static str {
-    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    VERSION.get_or_init(|| {
-        read_version_from_package_json().unwrap_or_else(|e| {
-            eprintln!(
-                "Failed to detect envio version: {e:#}\n\n\
-                 This usually means envio was not installed correctly.\n\
-                 Please reinstall with: pnpm add envio"
-            );
-            std::process::exit(1);
-        })
-    })
-}
+/// Version baked into the binary at compile time from Cargo.toml.
+/// CI patches Cargo.toml with the release version before building.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Read version from the npm platform package's package.json.
-/// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
-pub fn read_version_from_package_json() -> Result<String> {
-    let exe = env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .context("Failed to resolve envio executable path")?;
-    // exe = .../bin/envio → parent = .../bin/ → parent = .../<pkg>/
-    let pkg_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .context("Envio binary is not inside a package directory")?;
-    let pkg_json_path = pkg_dir.join("package.json");
-    let contents = std::fs::read_to_string(&pkg_json_path).with_context(|| {
-        format!(
-            "Could not read package.json at {}. This usually means envio was not installed \
-             correctly. Try reinstalling with: pnpm add envio",
-            pkg_json_path.display()
-        )
-    })?;
-    let json: serde_json::Value =
-        serde_json::from_str(&contents).context("Failed to parse package.json")?;
-    json.get("version")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .context("package.json is missing a \"version\" field")
-}
-
+/// Returns the envio npm package specifier for codegen.
+/// Release builds (valid semver) → version string for npm.
+/// Dev builds → `file:` path to the local packages/envio directory.
 pub fn get_envio_version() -> Result<String> {
-    // 1. Try the npm platform package's package.json (patched with
-    //    correct version at publish time).
-    if let Ok(v) = read_version_from_package_json() {
-        if is_valid_release_version_number(&v) {
-            return Ok(v);
-        }
+    if is_valid_release_version_number(VERSION) {
+        return Ok(VERSION.to_string());
     }
 
-    // 2. Dev mode: walk up from the binary to find the local packages/envio.
+    // Dev mode: walk up from the binary to find the local packages/envio.
     // Using current_exe() instead of current_dir() so this works even when
     // cwd is outside the repo (e.g. template tests that run in /tmp/).
     let exe = env::current_exe()

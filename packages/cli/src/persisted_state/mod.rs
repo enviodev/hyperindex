@@ -26,7 +26,7 @@ pub struct PersistedState {
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
 pub fn current_version() -> &'static str {
-    system_config::runtime_version()
+    system_config::VERSION
 }
 
 #[derive(Debug, strum::Display, EnumIter, PartialEq, Clone)]
