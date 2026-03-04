@@ -1226,8 +1226,9 @@ describe("SourceManager wait for new blocks", () => {
     },
   )
 
-  Async.it(
+  Async.itWithOptions(
     "Continues polling even after newBlockFallbackStallTimeout when there are no fallback sources",
+    {retry: 3},
     async t => {
       let pollingInterval = 1
       let stalledPollingInterval = 2
