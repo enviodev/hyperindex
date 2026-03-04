@@ -5,7 +5,7 @@
  *
  * Resolution order:
  *   1. Platform package installed as optional dependency (envio-{os}-{arch})
- *   2. Local build at envio.node next to this file (for development)
+ *   2. Local envio.node next to this file (CI artifacts or local dev build)
  */
 
 import { createRequire } from "node:module";
@@ -41,7 +41,7 @@ function loadNativeModule() {
     return require(`${pkgName}/envio.node`);
   } catch (_) {}
 
-  // Fallback: local build (development)
+  // Fallback: local .node file (CI artifacts or local dev build)
   try {
     return require("./envio.node");
   } catch (_) {}

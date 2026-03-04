@@ -1206,6 +1206,7 @@ dependencies = [
  "insta",
  "itertools 0.11.0",
  "napi",
+ "napi-build",
  "napi-derive",
  "open",
  "openssl",

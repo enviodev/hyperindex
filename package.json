@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:native": "cargo build --lib --features napi && node -e \"const p=process.platform==='darwin'?'dylib':'so'; require('fs').copyFileSync('target/debug/libenvio.'+p, 'packages/envio/envio.node')\"",
     "test:templates": "pnpm --filter e2e-tests test:templates",
     "test:e2e": "pnpm --filter e2e-tests test:e2e",
     "test": "pnpm --filter e2e-tests test"
