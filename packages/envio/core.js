@@ -76,14 +76,12 @@ function buildAndLoad(os) {
   const cdylib = join(dir, "target", "debug", `libenvio.${ext}`);
   const dest = join(__dirname, "envio.node");
 
-  // Only rebuild if the cdylib doesn't exist yet
-  if (!existsSync(cdylib)) {
-    console.error("Native module not found — compiling from source (first run may take a few minutes)...");
-    execSync("cargo build --lib --features napi", {
-      cwd: dir,
-      stdio: "inherit",
-    });
-  }
+  // Always run cargo build — it's a no-op (~200ms) when nothing changed,
+  // but picks up source changes automatically (like cargo run would).
+  execSync("cargo build --lib --features napi", {
+    cwd: dir,
+    stdio: "inherit",
+  });
 
   copyFileSync(cdylib, dest);
   return require(dest);
