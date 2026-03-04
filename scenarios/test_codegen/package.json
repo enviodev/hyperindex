@@ -24,15 +24,14 @@
     "tsx": "4.21.0",
     "vitest": "4.0.18",
     "rescript": "11.1.3",
-    "rescript-schema": "9.3.4",
-    "sinon": "^15.0.4"
+    "rescript-schema": "9.3.4"
   },
   "dependencies": {
     "bignumber.js": "^9.1.2",
     "helpers": "workspace:*",
     "typescript": "5.9.3",
     "ts-expect": "1.3.0",
-    "viem": "2.21.0",
+    "viem": "2.46.2",
     "envio": "file:../../packages/envio"
   },
   "optionalDependencies": {

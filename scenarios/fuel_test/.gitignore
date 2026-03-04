@@ -34,3 +34,4 @@ build
 *.bs.js
 generated
 .env
+.pnpm-store
