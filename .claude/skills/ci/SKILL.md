@@ -7,28 +7,49 @@ description: >-
 
 # Investigating CI Failures
 
-Use `gh` CLI for all GitHub API calls — it handles auth and repo detection.
+This repo is public, so unauthenticated GitHub API calls work. Use `gh` if
+available, otherwise fall back to `curl` + `python3`.
 
-## Step 1: Find the failed run
+## Step 1: Find the failed run and its jobs
 
 ```bash
-# Get the latest failed run for the current branch
-gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --status failure --limit 5
+branch=$(git rev-parse --abbrev-ref HEAD) && \
+curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs?branch=${branch}&status=failure&per_page=5" \
+  | python3 -c "
+import sys, json
+runs = json.load(sys.stdin)['workflow_runs']
+if not runs:
+    print('No failed runs found'); sys.exit(0)
+for r in runs[:5]:
+    print(f'{r[\"id\"]}  {r[\"name\"]}  {r[\"created_at\"]}  {r[\"html_url\"]}')"
 ```
 
-If the user mentions a PR number, use `--commit` with the PR's head SHA instead,
-or look up the PR branch:
+Then list jobs for the failed run:
 
 ```bash
-gh pr view PR_NUMBER --json headRefName --jq .headRefName
+curl -sf "https://api.github.com/repos/enviodev/hyperindex/actions/runs/RUN_ID/jobs" \
+  | python3 -c "
+import sys, json
+jobs = json.load(sys.stdin)['jobs']
+for j in jobs:
+    mark = 'FAIL' if j['conclusion'] == 'failure' else 'ok'
+    print(f'[{mark}] {j[\"name\"]} (job id: {j[\"id\"]})')
+    if j['conclusion'] == 'failure':
+        for s in j['steps']:
+            if s['conclusion'] == 'failure':
+                print(f'       step failed: {s[\"name\"]}')"
 ```
 
-## Step 2: View failed job logs
+## Step 2: Get failed job logs
 
-This is the most useful command — shows only output from failed steps:
+Use `gh` if available (best output), otherwise use WebFetch on the job URL:
 
 ```bash
+# Option A: gh (if available)
 gh run view RUN_ID --log-failed
+
+# Option B: WebFetch the job page for a summary
+# https://github.com/enviodev/hyperindex/actions/runs/RUN_ID/job/JOB_ID
 ```
 
 The output can be large. Focus on the last 200 lines per job, or grep for
@@ -40,11 +61,19 @@ Annotations give file:line locations when available (e.g., lint errors, compiler
 errors), but many failures (tests, build) produce no annotations:
 
 ```bash
-gh api "repos/{owner}/{repo}/check-runs/JOB_ID/annotations"
+curl -sf "https://api.github.com/repos/enviodev/hyperindex/check-runs/JOB_ID/annotations" \
+  | python3 -c "
+import sys, json
+anns = json.load(sys.stdin)
+if not anns:
+    print('No annotations found')
+else:
+    for a in anns:
+        print(f'{a[\"path\"]}:{a[\"start_line\"]} - {a[\"message\"][:300]}')"
 ```
 
 ## Diagnosis checklist
 
 - Read the error message carefully — most CI failures are test failures or build errors
 - Check if the failure is flaky by looking at the same workflow on the base branch
-- If logs are truncated, re-run with `gh run rerun RUN_ID --failed` and watch live
+- If logs are truncated and `gh` is available, re-run with `gh run rerun RUN_ID --failed`
