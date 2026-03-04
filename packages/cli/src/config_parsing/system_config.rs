@@ -380,43 +380,19 @@ fn is_valid_release_version_number(version: &str) -> bool {
     re_version_pattern.is_match(version) || version.contains("-main-")
 }
 
-/// Read version from the npm platform package's package.json.
-/// The binary lives at `<pkg>/bin/envio`, so `package.json` is at `<pkg>/package.json`.
-pub(crate) fn read_version_from_package_json() -> Result<String> {
-    let exe = env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .context("Failed to resolve envio executable path")?;
-    // exe = .../bin/envio → parent = .../bin/ → parent = .../<pkg>/
-    let pkg_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .context("Envio binary is not inside a package directory")?;
-    let pkg_json_path = pkg_dir.join("package.json");
-    let contents = std::fs::read_to_string(&pkg_json_path).with_context(|| {
-        format!(
-            "Could not read package.json at {}. This usually means envio was not installed \
-             correctly. Try reinstalling with: pnpm add envio",
-            pkg_json_path.display()
-        )
-    })?;
-    let json: serde_json::Value =
-        serde_json::from_str(&contents).context("Failed to parse package.json")?;
-    json.get("version")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .context("package.json is missing a \"version\" field")
-}
-
+/// Returns the envio version to use in generated package.json dependencies.
+///
+/// Published builds have a valid semver baked in at compile time via ENVIO_VERSION,
+/// so that's returned directly.  Dev builds (CARGO_PKG_VERSION = "0.0.1-dev")
+/// walk up from the binary to find the local packages/envio workspace member
+/// and return a `file:` reference instead.
 pub fn get_envio_version() -> Result<String> {
-    // 1. Try the npm platform package's package.json (patched with
-    //    correct version at publish time).
-    if let Ok(v) = read_version_from_package_json() {
-        if is_valid_release_version_number(&v) {
-            return Ok(v);
-        }
+    let v = crate::persisted_state::current_version();
+    if is_valid_release_version_number(v) {
+        return Ok(v.to_string());
     }
 
-    // 2. Dev mode: walk up from the binary to find the local packages/envio.
+    // Dev mode: walk up from the binary to find the local packages/envio.
     // Using current_exe() instead of current_dir() so this works even when
     // cwd is outside the repo (e.g. template tests that run in /tmp/).
     let exe = env::current_exe()

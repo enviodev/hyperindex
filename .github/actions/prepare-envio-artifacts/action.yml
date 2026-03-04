@@ -1,8 +1,8 @@
 name: Prepare envio artifacts
 description: >
   Set up pnpm + Node.js, download pre-built envio artifacts, and install
-  dependencies. The committed .pnpmfile.cjs hook redirects envio
-  dependencies to these artifacts instead of the dev workspace member.
+  dependencies. Replaces the dev packages/envio workspace member with the
+  pre-built artifact so that all workspace dependents use the tested build.
 
 runs:
   using: composite
@@ -30,6 +30,22 @@ runs:
     - name: Make binary executable
       shell: bash
       run: chmod +x .envio-artifacts/envio-linux-x64/bin/envio
+
+    # Replace the dev workspace member with the pre-built artifact.
+    # Remove optionalDependencies (platform packages aren't needed for
+    # workspace testing — the binary is used directly from artifacts).
+    - name: Replace packages/envio with artifact
+      shell: bash
+      run: |
+        rm -rf packages/envio/src packages/envio/*.json packages/envio/index.*
+        cp -r .envio-artifacts/envio/* packages/envio/
+        node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('packages/envio/package.json', 'utf-8'));
+          delete pkg.optionalDependencies;
+          pkg.private = true;
+          fs.writeFileSync('packages/envio/package.json', JSON.stringify(pkg, null, 2) + '\n');
+        "
 
     - name: Install dependencies
       shell: bash

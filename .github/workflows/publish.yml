@@ -46,7 +46,7 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "Found run: $run_id"
 
-  # Build the 3 remaining platform packages (linux-x64 is reused from Build & Verify)
+  # Build all 4 platform packages with the release version baked in
   build-platforms:
     needs: prepare
     uses: ./.github/workflows/build-platforms.yml
@@ -70,18 +70,7 @@ jobs:
       - name: Enable pnpm
         run: corepack enable && corepack prepare pnpm@latest --activate
 
-      # linux-x64 comes from the Build & Verify workflow, others from build-platforms
-      - name: Download platform package (linux-x64 from Build & Verify)
-        if: matrix.pkg == 'envio-linux-x64'
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: ./pkg
-          run-id: ${{ needs.prepare.outputs.build_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download platform package (from Build Platforms)
-        if: matrix.pkg != 'envio-linux-x64'
+      - name: Download platform package
         uses: actions/download-artifact@v4
         with:
           name: npm-pkg-${{ matrix.pkg }}

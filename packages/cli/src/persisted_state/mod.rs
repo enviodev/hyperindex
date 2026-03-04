@@ -2,7 +2,7 @@ mod db;
 mod hash_string;
 
 use crate::{
-    config_parsing::system_config::{self, SystemConfig},
+    config_parsing::system_config::SystemConfig,
     project_paths::ParsedProjectPaths,
 };
 use anyhow::Context;
@@ -12,7 +12,6 @@ use sqlx::FromRow;
 use std::{
     fmt::{self, Display},
     path::PathBuf,
-    sync::OnceLock,
 };
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -26,11 +25,10 @@ pub struct PersistedState {
 }
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
+/// Returns the version baked into the binary at compile time.
+/// CI sets ENVIO_VERSION; local builds fall back to CARGO_PKG_VERSION ("0.0.1-dev").
 pub fn current_version() -> &'static str {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION.get_or_init(|| {
-        system_config::read_version_from_package_json().unwrap_or_else(|_| "dev".to_string())
-    })
+    option_env!("ENVIO_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
 #[derive(Debug, strum::Display, EnumIter, PartialEq, Clone)]

@@ -13,84 +13,10 @@ env:
 jobs:
   # ── Build ───────────────────────────────────────────────────────────
 
-  # Build envio CLI binary for linux-x64 and wrap it in a platform npm package
-  build-linux-package:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 9
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: musl-tools
-
-      - name: Build envio CLI
-        env:
-          SVM_TARGET_PLATFORM: linux-amd64
-        run: cargo build --release --bins --target x86_64-unknown-linux-musl
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Build platform npm package
-        run: |
-          node packages/build-envio/build-platform-package.ts \
-            --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
-          mkdir -p envio-linux-x64/bin
-          cp target/x86_64-unknown-linux-musl/release/envio envio-linux-x64/bin/
-
-      - name: Upload linux-x64 platform npm package
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-pkg-envio-linux-x64
-          path: envio-linux-x64
-
-  # Build envio base npm package (ReScript compilation, package.json rewrite)
-  build-envio-package:
-    runs-on: ubuntu-latest
-    timeout-minutes: 9
-    needs: build-linux-package
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build envio package
-        run: node packages/build-envio/src/build-artifact.ts --version 0.0.1-dev --out envio-dist
-
-      - name: Verify artifact
-        run: node packages/build-envio/src/verify-artifact.ts envio-dist
-
-      - name: Upload envio npm package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-pkg-envio
-          path: envio-dist
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      version: "0.0.1-dev"
 
   # ── Verify ──────────────────────────────────────────────────────────
 
@@ -118,7 +44,7 @@ jobs:
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: build
     timeout-minutes: 9
 
     steps:
@@ -133,7 +59,7 @@ jobs:
   # Requires DB services (postgres + hasura)
   scenarios-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: build
     timeout-minutes: 9
 
     services:
@@ -199,7 +125,7 @@ jobs:
   # E2E test - runs envio dev with a real indexer scenario
   e2e-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: build
     timeout-minutes: 9
 
     services:

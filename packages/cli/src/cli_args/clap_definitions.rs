@@ -8,7 +8,7 @@ use subenum::subenum;
 use super::init_config::{self};
 
 #[derive(Debug, Parser)]
-#[clap(author, version, about)]
+#[clap(author, version = crate::persisted_state::current_version(), about)]
 pub struct CommandLineArgs {
     #[clap(subcommand)]
     pub command: CommandType,
