@@ -1,3 +1,4 @@
+mod dataloader;
 mod schema;
 mod server;
 

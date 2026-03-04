@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use async_graphql::dataloader::DataLoader;
 use async_graphql::dynamic::{
     Enum, Field, FieldFuture, FieldValue, InputObject, InputValue, Object, Schema, SchemaBuilder,
     TypeRef,
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use crate::config_parsing::entity_parsing::{
     Entity, FieldType, GqlScalar, GraphQLEnum, Schema as ParsedSchema,
 };
+use super::dataloader::{DerivedKey, DerivedLoader, FkKey, FkLoader};
 
 /// Shared context available to all resolvers.
 pub struct ServerContext {
@@ -98,6 +100,15 @@ pub fn build_schema(
         parsed_schema: parsed_schema.clone(),
     });
 
+    let fk_loader = DataLoader::new(
+        FkLoader { ctx: ctx.clone() },
+        tokio::spawn,
+    );
+    let derived_loader = DataLoader::new(
+        DerivedLoader { ctx: ctx.clone() },
+        tokio::spawn,
+    );
+
     let mut builder = Schema::build("Query", None, None);
 
     // Register enum types
@@ -122,7 +133,11 @@ pub fn build_schema(
         query = register_entity_queries(query, entity, parsed_schema);
     }
 
-    builder = builder.data(ctx).register(query);
+    builder = builder
+        .data(ctx)
+        .data(fk_loader)
+        .data(derived_loader)
+        .register(query);
 
     builder
         .finish()
@@ -205,47 +220,24 @@ fn register_entity_type(
                                 }
                             };
 
-                            let cols = server_ctx
-                                .entity_columns
-                                .get(&target_entity)
-                                .ok_or_else(|| {
-                                    async_graphql::Error::new(format!(
-                                        "Unknown entity {}",
-                                        target_entity
-                                    ))
-                                })?;
+                            let loader = ctx.data::<DataLoader<DerivedLoader>>()?;
+                            let key = DerivedKey {
+                                target_entity: target_entity.clone(),
+                                filter_column: filter_col,
+                                parent_id: parent_id.to_string(),
+                            };
 
-                            let col_list = cols
-                                .iter()
-                                .map(|c| format!("\"{}\"", c))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-
-                            let query = format!(
-                                "SELECT {} FROM \"{}\".\"{}\" WHERE \"{}\" = $1",
-                                col_list,
-                                server_ctx.pg_schema,
-                                target_entity,
-                                filter_col
-                            );
-
-                            let rows = sqlx::query(&query)
-                                .bind(parent_id)
-                                .fetch_all(&server_ctx.pool)
-                                .await
-                                .map_err(|e| {
-                                    async_graphql::Error::new(format!("DB error: {}", e))
-                                })?;
-
-                            let items: Vec<FieldValue> = rows
-                                .into_iter()
-                                .map(|row| {
-                                    let json = row_to_json(&row, cols);
-                                    FieldValue::owned_any(json)
-                                })
-                                .collect();
-
-                            Ok(Some(FieldValue::list(items)))
+                            match loader.load_one(key).await {
+                                Ok(Some(rows)) => {
+                                    let items: Vec<FieldValue> = rows
+                                        .into_iter()
+                                        .map(FieldValue::owned_any)
+                                        .collect();
+                                    Ok(Some(FieldValue::list(items)))
+                                }
+                                Ok(None) => Ok(Some(FieldValue::list(Vec::<FieldValue>::new()))),
+                                Err(e) => Err(async_graphql::Error::new(format!("DB error: {}", e))),
+                            }
                         })
                     },
                 );
@@ -274,7 +266,6 @@ fn register_entity_type(
                             let related_entity = related_entity.clone();
                             let fk_col = fk_col.clone();
                             FieldFuture::new(async move {
-                                let server_ctx = ctx.data::<Arc<ServerContext>>()?;
                                 let parent =
                                     ctx.parent_value.try_downcast_ref::<JsonValue>()?;
 
@@ -286,41 +277,16 @@ fn register_entity_type(
                                     Some(other) => other.to_string().trim_matches('"').to_string(),
                                 };
 
-                                let cols = server_ctx
-                                    .entity_columns
-                                    .get(&related_entity)
-                                    .ok_or_else(|| {
-                                        async_graphql::Error::new(format!(
-                                            "Unknown entity {}",
-                                            related_entity
-                                        ))
-                                    })?;
+                                let loader = ctx.data::<DataLoader<FkLoader>>()?;
+                                let key = FkKey {
+                                    entity_name: related_entity,
+                                    id: fk_val,
+                                };
 
-                                let col_list = cols
-                                    .iter()
-                                    .map(|c| format!("\"{}\"", c))
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-
-                                let query = format!(
-                                    "SELECT {} FROM \"{}\".\"{}\" WHERE id = $1 LIMIT 1",
-                                    col_list, server_ctx.pg_schema, related_entity,
-                                );
-
-                                let row = sqlx::query(&query)
-                                    .bind(&fk_val)
-                                    .fetch_optional(&server_ctx.pool)
-                                    .await
-                                    .map_err(|e| {
-                                        async_graphql::Error::new(format!("DB error: {}", e))
-                                    })?;
-
-                                match row {
-                                    Some(row) => {
-                                        let json = row_to_json(&row, cols);
-                                        Ok(Some(FieldValue::owned_any(json)))
-                                    }
-                                    None => Ok(None),
+                                match loader.load_one(key).await {
+                                    Ok(Some(json)) => Ok(Some(FieldValue::owned_any(json))),
+                                    Ok(None) => Ok(None),
+                                    Err(e) => Err(async_graphql::Error::new(format!("DB error: {}", e))),
                                 }
                             })
                         });
@@ -651,7 +617,7 @@ fn register_entity_queries(
 }
 
 /// Convert a sqlx Row to a serde_json::Value (Object).
-fn row_to_json(row: &sqlx::postgres::PgRow, columns: &[String]) -> JsonValue {
+pub fn row_to_json(row: &sqlx::postgres::PgRow, columns: &[String]) -> JsonValue {
     let mut map = serde_json::Map::new();
     for col_name in columns {
         // Try to get the column value as various types
