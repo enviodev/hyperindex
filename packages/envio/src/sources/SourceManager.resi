@@ -1,5 +1,7 @@
 type t
 
+let fallbackRecoveryThreshold: int
+
 let make: (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency: int,
