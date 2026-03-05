@@ -212,13 +212,16 @@ let getSourceNewHeight = async (
     | None =>
       // No subscription, use REST polling
       try {
-        // Use to detect if the source is taking too long to respond
-        let endTimer = Prometheus.SourceGetHeightDuration.startTimer({
+        let timerRef = Hrtime.makeTimer()
+        let height = await source.getHeightOrThrow()
+        let labels = {
           "source": source.name,
           "chainId": source.chain->ChainMap.Chain.toChainId,
-        })
-        let height = await source.getHeightOrThrow()
-        endTimer()
+        }
+        Prometheus.SourceGetHeightDuration.increment(
+          ~labels,
+          ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+        )
 
         newHeight := height
         if height <= knownHeight {
