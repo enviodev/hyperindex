@@ -128,6 +128,11 @@ module ProcessingBatch = {
     "help": "Cumulative time spent writing batch data to storage.",
   })
 
+  let writeSumTimeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_storage_write_seconds_total",
+    "help": "Cumulative time spent on storage write operations during the indexing process.",
+  })
+
   let writeCount = PromClient.Counter.makeCounter({
     "name": "envio_storage_write_total",
     "help": "Total number of batch writes to storage.",
@@ -137,6 +142,7 @@ module ProcessingBatch = {
     loadTimeCounter->PromClient.Counter.incMany(loadDuration->(Utils.magic: float => int))
     handlerTimeCounter->PromClient.Counter.incMany(handlerDuration->(Utils.magic: float => int))
     writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration->(Utils.magic: float => int))
+    writeSumTimeCounter->PromClient.Counter.incMany(dbWriteDuration->(Utils.magic: float => int))
     writeCount->PromClient.Counter.inc
   }
 }
