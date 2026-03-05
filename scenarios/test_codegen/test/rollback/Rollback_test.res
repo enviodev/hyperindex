@@ -1087,7 +1087,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     t.expect(
       {
-        let metrics = await indexerMock.metric("envio_progress_events_total")
+        let metrics = await indexerMock.metric("envio_progress_events")
         // For some reason the test returns the metrics in different order
         metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
       },
@@ -1155,7 +1155,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getRollbackReadyPromise()
 
     t.expect(
-      await indexerMock.metric("envio_progress_events_total"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Events count after rollback",
     ).toEqual(
       [
@@ -1984,7 +1984,7 @@ Sorted by timestamp and chain id`,
       )
 
       t.expect(
-        await indexerMock.metric("envio_progress_events_total"),
+        await indexerMock.metric("envio_progress_events"),
         ~message="Events count before rollback",
       ).toEqual(
         [
@@ -2034,7 +2034,7 @@ Sorted by timestamp and chain id`,
       await indexerMock.getRollbackReadyPromise()
 
       t.expect(
-        await indexerMock.metric("envio_progress_events_total"),
+        await indexerMock.metric("envio_progress_events"),
         ~message="Events count after rollback",
       ).toEqual(
         [
@@ -2243,7 +2243,7 @@ Sorted by timestamp and chain id`,
 
     // Check initial metrics - should have 3 events processed
     t.expect(
-      await indexerMock.metric("envio_progress_events_total"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Should have 1 event processed initially",
     ).toEqual(
       [{value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
@@ -2277,7 +2277,7 @@ Sorted by timestamp and chain id`,
 
     // Check metrics after first rollback - should have rolled back all 3 events
     t.expect(
-      await indexerMock.metric("envio_progress_events_total"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Should have 0 events after first rollback",
     ).toEqual(
       [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
@@ -2307,7 +2307,7 @@ Sorted by timestamp and chain id`,
 
     // Check metrics after processing - should have 2 events
     t.expect(
-      await indexerMock.metric("envio_progress_events_total"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Shouldn't go to negative with the counter",
     ).toEqual(
       [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],

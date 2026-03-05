@@ -352,7 +352,7 @@ describe("E2E tests", () => {
       ~message="should have no effect calls in the beginning",
     ).toEqual([])
     t.expect(
-      await indexerMock.metric("envio_effect_cache_total"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="should have no effect cache in the beginning",
     ).toEqual([])
 
@@ -390,7 +390,7 @@ describe("E2E tests", () => {
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_effect_cache_total"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="should increment effect cache count",
     ).toEqual(
       [
@@ -417,7 +417,7 @@ describe("E2E tests", () => {
       ~message="Should reset the calls metric on restart",
     ).toEqual([])
     t.expect(
-      await indexerMock.metric("envio_effect_cache_total"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="should resume effect cache count on restart",
     ).toEqual(
       [
@@ -482,7 +482,7 @@ describe("E2E tests", () => {
     t.expect(
       await Promise.all2((
         indexerMock.metric("envio_effect_calls_total"),
-        indexerMock.metric("envio_effect_cache_total"),
+        indexerMock.metric("envio_effect_cache"),
       )),
       ~message="Should increment effect calls count and cache count",
     ).toEqual(
@@ -549,7 +549,7 @@ describe("E2E tests", () => {
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_effect_cache_total"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="Shouldn't increment on invalidation",
     ).toEqual(
       [
@@ -689,7 +689,7 @@ describe("E2E tests", () => {
             // Check metrics while effects are executing
             await Utils.delay(3)
             let (queueMetric, activeMetric) = await Promise.all2((
-              indexerMock.metric("envio_effect_queue_total"),
+              indexerMock.metric("envio_effect_queue"),
               indexerMock.metric("envio_effect_active_calls_total"),
             ))
             queueMetricDuringExecution := Some(queueMetric)
@@ -726,7 +726,7 @@ describe("E2E tests", () => {
 
     // Final check - queue should be empty
     t.expect(
-      await indexerMock.metric("envio_effect_queue_total"),
+      await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all windows complete",
     ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
   })
@@ -787,7 +787,7 @@ describe("E2E tests", () => {
             // Check metrics while effects are executing (shortly after trigger)
             await Utils.delay(3)
             let (queueMetric1, activeMetric1) = await Promise.all2((
-              indexerMock.metric("envio_effect_queue_total"),
+              indexerMock.metric("envio_effect_queue"),
               indexerMock.metric("envio_effect_active_calls_total"),
             ))
             queueMetricDuringExecution := Some(queueMetric1)
@@ -796,7 +796,7 @@ describe("E2E tests", () => {
             // Check again after first window should complete
             await Utils.delay(14)
             queueMetricAfterFirstWindow :=
-              Some(await indexerMock.metric("envio_effect_queue_total"))
+              Some(await indexerMock.metric("envio_effect_queue"))
 
             let _ = await resultsPromise
           },
@@ -840,7 +840,7 @@ describe("E2E tests", () => {
 
     // Final check - queue should be empty
     t.expect(
-      await indexerMock.metric("envio_effect_queue_total"),
+      await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all batches complete",
     ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
   })
