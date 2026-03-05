@@ -1112,7 +1112,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_rollback_events_total"),
+      await indexerMock.metric("envio_rollback_events"),
       ~message="Rollbacked events count before rollback",
     ).toEqual(
       [{value: "0", labels: Js.Dict.empty()}],
@@ -1173,7 +1173,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_rollback_events_total"),
+      await indexerMock.metric("envio_rollback_events"),
       ~message="Rollbacked events count after rollback",
     ).toEqual(
       [{value: "3", labels: Js.Dict.empty()}],
