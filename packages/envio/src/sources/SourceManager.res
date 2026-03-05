@@ -27,6 +27,10 @@ type t = {
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
+  // Counts consecutive successful queries while active source is not a Sync source.
+  // After reaching a threshold, we attempt to switch back to a Sync source
+  // to check if it has recovered.
+  mutable consecutiveFallbackSuccesses: int,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
@@ -86,6 +90,7 @@ let make = (
     getHeightRetryInterval,
     statusStart: Hrtime.makeTimer(),
     status: Idle,
+    consecutiveFallbackSuccesses: 0,
   }
 }
 
@@ -409,6 +414,14 @@ let getNextSyncSourceState = (
   }
 }
 
+let fallbackRecoveryThreshold = 10
+
+let getFirstSyncSourceState = (sourceManager: t) => {
+  sourceManager.sourcesState->Js.Array2.find(s =>
+    !s.disabled && s.source.sourceFor === Sync
+  )
+}
+
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight) => {
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
@@ -596,6 +609,33 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
   if shouldUpdateActiveSource.contents {
     sourceManager.activeSource = sourceStateRef.contents.source
+  }
+
+  // After a successful query on a non-Sync source, check if we should
+  // attempt switching back to a Sync source that may have recovered
+  if sourceManager.activeSource.sourceFor === Sync {
+    sourceManager.consecutiveFallbackSuccesses = 0
+  } else {
+    sourceManager.consecutiveFallbackSuccesses =
+      sourceManager.consecutiveFallbackSuccesses + 1
+    if sourceManager.consecutiveFallbackSuccesses >= fallbackRecoveryThreshold {
+      sourceManager.consecutiveFallbackSuccesses = 0
+      switch sourceManager->getFirstSyncSourceState {
+      | Some(syncSourceState) =>
+        let logger = Logging.createChild(
+          ~params={
+            "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+          },
+        )
+        logger->Logging.childInfo({
+          "msg": "Attempting to switch back to primary sync source after fallback recovery period",
+          "source": syncSourceState.source.name,
+          "previousSource": sourceManager.activeSource.name,
+        })
+        sourceManager.activeSource = syncSourceState.source
+      | None => ()
+      }
+    }
   }
 
   responseRef.contents->Option.getUnsafe
