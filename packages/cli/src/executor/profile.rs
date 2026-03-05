@@ -808,6 +808,99 @@ fn compute_effect_deltas(
 }
 
 // ---------------------------------------------------------------------------
+//  Markdown table alignment
+// ---------------------------------------------------------------------------
+
+/// Align markdown tables so all `|` gutters sit on the same vertical line.
+fn align_md_tables(md: &str) -> String {
+    let lines: Vec<&str> = md.lines().collect();
+    let mut result = String::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Detect start of a table (line starts with |)
+        if lines[i].starts_with('|') {
+            let table_start = i;
+            while i < lines.len() && lines[i].starts_with('|') {
+                i += 1;
+            }
+            let table_lines = &lines[table_start..i];
+
+            // Parse cells for each row
+            let parsed: Vec<Vec<String>> = table_lines
+                .iter()
+                .map(|line| {
+                    let trimmed = line.trim_start_matches('|').trim_end_matches('|');
+                    trimmed.split('|').map(|c| c.trim().to_string()).collect()
+                })
+                .collect();
+
+            // Detect which row index is the separator (second row, all cells are dashes)
+            let sep_row = if parsed.len() >= 2 {
+                let row = &parsed[1];
+                if row.iter().all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-')) {
+                    Some(1)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Find max width per column
+            let col_count = parsed.iter().map(|r| r.len()).max().unwrap_or(0);
+            let mut widths = vec![3usize; col_count]; // minimum 3 for "---"
+            for (row_idx, row) in parsed.iter().enumerate() {
+                if Some(row_idx) == sep_row {
+                    continue;
+                }
+                for (j, cell) in row.iter().enumerate() {
+                    if j < col_count {
+                        widths[j] = widths[j].max(cell.len());
+                    }
+                }
+            }
+
+            // Rebuild rows with padding
+            for (row_idx, row) in parsed.iter().enumerate() {
+                result.push('|');
+                for (j, cell) in row.iter().enumerate() {
+                    let w = widths.get(j).copied().unwrap_or(3);
+                    let is_sep = Some(row_idx) == sep_row;
+                    if is_sep {
+                        result.push(' ');
+                        for _ in 0..w {
+                            result.push('-');
+                        }
+                        result.push(' ');
+                    } else {
+                        result.push(' ');
+                        result.push_str(cell);
+                        for _ in 0..(w - cell.len()) {
+                            result.push(' ');
+                        }
+                        result.push(' ');
+                    }
+                    result.push('|');
+                }
+                result.push('\n');
+            }
+        } else {
+            result.push_str(lines[i]);
+            result.push('\n');
+            i += 1;
+        }
+    }
+
+    // Remove trailing newline added by the loop if original didn't have one
+    if !md.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
 //  Markdown report generation
 // ---------------------------------------------------------------------------
 
@@ -1365,22 +1458,7 @@ fn generate_report(
 
     md.push('\n');
 
-    // Add spaces to table separators for readability: |---|---| → | --- | --- |
-    let mut result = String::new();
-    let mut chars = md.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '|' {
-            // Check for |---
-            let rest: String = chars.clone().take(3).collect();
-            if rest == "---" {
-                result.push_str("| --- ");
-                chars.nth(2); // skip the three dashes
-                continue;
-            }
-        }
-        result.push(c);
-    }
-    result
+    align_md_tables(&md)
 }
 
 // ---------------------------------------------------------------------------

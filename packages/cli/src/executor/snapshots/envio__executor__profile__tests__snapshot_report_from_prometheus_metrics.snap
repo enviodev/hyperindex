@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/executor/profile.rs
-assertion_line: 1615
+assertion_line: 1693
 expression: report
 ---
 # Envio Indexer Profile
@@ -9,22 +9,22 @@ expression: report
 
 **Envio version**: 0.0.1-dev
 
-| Metric | Value |
-| --- | --- |
+| Metric                 | Value  |
+| ---------------------- | ------ |
 | Total Events Processed | 10,041 |
-| Total Batches | 4 |
-| Max Batch Size | 5,000 |
+| Total Batches          | 4      |
+| Max Batch Size         | 5,000  |
 
 ## Processing Pipeline
 
 Cumulative time spent in each processing stage.
 
-| Stage | Time |
-| --- | --- |
-| Loaders (preload) | 66ms |
-| Handlers (processing) | 35ms |
-| DB Writes | 145ms |
-| **Total** | **246ms** |
+| Stage                 | Time      |
+| --------------------- | --------- |
+| Loaders (preload)     | 66ms      |
+| Handlers (processing) | 35ms      |
+| DB Writes             | 145ms     |
+| **Total**             | **246ms** |
 
 Pipeline split: Loaders 27% | Handlers 14% | DB Writes 59%
 
@@ -32,32 +32,32 @@ Pipeline split: Loaders 27% | Handlers 14% | DB Writes 59%
 
 Per-handler timing sorted by total time (handler + preload).
 
-| Handler | Handler Time | Calls | Preload Time | Preload Calls |
-| --- | --- | --- | --- | --- |
-| ERC20 Transfer | 19ms | 6,607 | 65ms | 6,607 |
-| ERC20 Approval | 8ms | 3,434 | 29ms | 3,434 |
+| Handler        | Handler Time | Calls | Preload Time | Preload Calls |
+| -------------- | ------------ | ----- | ------------ | ------------- |
+| ERC20 Transfer | 19ms         | 6,607 | 65ms         | 6,607         |
+| ERC20 Approval | 8ms          | 3,434 | 29ms         | 3,434         |
 
 ## Chain Progress
 
-| Chain | Block | Events | Latency | Synced |
-| --- | --- | --- | --- | --- |
-| 1 | 18,732,689 | 10,041 | 34679m 7s | No |
+| Chain | Block      | Events | Latency   | Synced |
+| ----- | ---------- | ------ | --------- | ------ |
+| 1     | 18,732,689 | 10,041 | 34679m 7s | No     |
 
 ## Fetching Performance
 
 Per-chain data fetching statistics.
 
 | Chain | Fetch Time | Parse Time | Fetches | Events Fetched | Blocks Covered | Avg Events/Fetch |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | 19.4s | 138ms | 2 | 10,041 | 132,690 | 5020 |
+| ----- | ---------- | ---------- | ------- | -------------- | -------------- | ---------------- |
+| 1     | 19.4s      | 138ms      | 2       | 10,041         | 132,690        | 5020             |
 
 ## Indexing Status
 
 Per-chain indexing configuration and timing.
 
 | Chain | Known Height | Buffer | Concurrency | Partitions | Addresses | Idle Time | Waiting | Querying |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 24,592,713 | 0 | 6/10 | 1 | 1 | 116ms | 1.7s | 19.5s |
+| ----- | ------------ | ------ | ----------- | ---------- | --------- | --------- | ------- | -------- |
+| 1     | 24,592,713   | 0      | 6/10        | 1          | 1         | 116ms     | 1.7s    | 19.5s    |
 
 Target buffer size: 50,000
 
@@ -65,18 +65,18 @@ Target buffer size: 50,000
 
 Sorted by processing time (descending).
 
-| Operation | Time | Avg/Query | Calls | Batched % | Found % |
-| --- | --- | --- | --- | --- | --- |
-| Account.get | 27ms | 7ms | 2,477 | 99.8% | 10.8% |
+| Operation   | Time | Avg/Query | Calls | Batched % | Found % |
+| ----------- | ---- | --------- | ----- | --------- | ------- |
+| Account.get | 27ms | 7ms       | 2,477 | 99.8%     | 10.8%   |
 
 ## System Resources
 
-| Resource | Value |
-| --- | --- |
-| CPU Usage | - |
-| Memory (RSS) | - |
-| Heap Usage | - |
-| Event Loop Lag | - |
+| Resource       | Value |
+| -------------- | ----- |
+| CPU Usage      | -     |
+| Memory (RSS)   | -     |
+| Heap Usage     | -     |
+| Event Loop Lag | -     |
 
 ## Insights & Suggestions
 
