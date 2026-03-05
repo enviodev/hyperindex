@@ -124,26 +124,20 @@ module ProcessingBatch = {
   })
 
   let writeTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_write_seconds",
+    "name": "envio_storage_write_seconds",
     "help": "Cumulative time spent writing batch data to storage.",
   })
 
   let writeCount = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_write_count",
+    "name": "envio_storage_write_total",
     "help": "Total number of batch writes to storage.",
   })
 
-  let batchSizeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_size",
-    "help": "Cumulative number of items across all processed batches. Divide by envio_processing_batch_write_count for average batch size.",
-  })
-
-  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration, ~batchSize) => {
+  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration) => {
     loadTimeCounter->PromClient.Counter.incMany(loadDuration->(Utils.magic: float => int))
     handlerTimeCounter->PromClient.Counter.incMany(handlerDuration->(Utils.magic: float => int))
     writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration->(Utils.magic: float => int))
     writeCount->PromClient.Counter.inc
-    batchSizeCounter->PromClient.Counter.incMany(batchSize)
   }
 }
 
@@ -167,8 +161,8 @@ module SyncedToHead = {
 
 let handlerLabelsSchema = S.schema(s =>
   {
-    "contractName": s.matches(S.string),
-    "eventName": s.matches(S.string),
+    "contract": s.matches(S.string),
+    "event": s.matches(S.string),
   }
 )
 
@@ -180,13 +174,13 @@ module ProcessingHandler = {
   )
 
   let count = SafeCounter.makeOrThrow(
-    ~name="envio_processing_handler_count",
+    ~name="envio_processing_handler_total",
     ~help="Total number of individual event handler executions.",
     ~labelSchema=handlerLabelsSchema,
   )
 
-  let increment = (~contractName, ~eventName, ~duration) => {
-    let labels = {"contractName": contractName, "eventName": eventName}
+  let increment = (~contract, ~event, ~duration) => {
+    let labels = {"contract": contract, "event": event}
     timeCounter->SafeCounter.handleFloat(~labels, ~value=duration)
     count->SafeCounter.increment(~labels)
   }
@@ -210,13 +204,13 @@ module FetchingBlockRange = {
   )
 
   let count = SafeCounter.makeOrThrow(
-    ~name="envio_fetching_block_range_count",
+    ~name="envio_fetching_block_range_total",
     ~help="Total number of block range fetch operations.",
     ~labelSchema=chainIdLabelsSchema,
   )
 
   let eventsCount = SafeCounter.makeOrThrow(
-    ~name="envio_fetching_block_range_events_count",
+    ~name="envio_fetching_block_range_events_total",
     ~help="Cumulative number of events fetched across all block range operations.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -367,7 +361,7 @@ module IndexingTargetBufferSize = {
 
 module IndexingBufferBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_buffer_block_number",
+    ~name="envio_indexing_buffer_block",
     ~help="The highest block number that has been fully fetched by the indexer.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -406,7 +400,7 @@ let sourceRequestLabelsSchema = S.schema(s =>
 
 module SourceRequestCount = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_source_request_count",
+    ~name="envio_source_request_total",
     ~help="The number of requests made to data sources.",
     ~labelSchema=sourceRequestLabelsSchema,
   )
@@ -450,7 +444,7 @@ module SourceHeight = {
 
 module ReorgCount = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_reorg_count",
+    ~name="envio_reorg_total",
     ~help="Total number of reorgs detected",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -462,7 +456,7 @@ module ReorgCount = {
 
 module ReorgDetectionBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_reorg_detection_block_number",
+    ~name="envio_reorg_detection_block",
     ~help="The block number where reorg was detected the last time. This doesn't mean that the block was reorged, this is simply where we found block hash to be different.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -501,12 +495,12 @@ module RollbackSuccess = {
   })
 
   let counter = PromClient.Counter.makeCounter({
-    "name": "envio_rollback_count",
+    "name": "envio_rollback_total",
     "help": "Number of successful rollbacks on reorg",
   })
 
   let eventsCounter = PromClient.Counter.makeCounter({
-    "name": "envio_rollback_events_count",
+    "name": "envio_rollback_events_total",
     "help": "Number of events rollbacked on reorg",
   })
 
@@ -527,7 +521,7 @@ module RollbackHistoryPrune = {
   )
 
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_rollback_history_prune_count",
+    ~name="envio_rollback_history_prune_total",
     ~help="Number of successful entity history prunes",
     ~labelSchema=entityNameLabelsSchema,
   )
@@ -543,7 +537,7 @@ module RollbackHistoryPrune = {
 
 module RollbackTargetBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_rollback_target_block_number",
+    ~name="envio_rollback_target_block",
     ~help="The block number reorg was rollbacked to the last time.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -566,7 +560,7 @@ module ProcessingMaxBatchSize = {
 
 module ProgressBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_block_number",
+    ~name="envio_progress_block",
     ~help="The block number of the latest block processed and stored in the database.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -578,7 +572,7 @@ module ProgressBlockNumber = {
 
 module ProgressEventsCount = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_events_count",
+    ~name="envio_progress_events_total",
     ~help="The number of events processed and reflected in the database.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -590,7 +584,7 @@ module ProgressEventsCount = {
 
 module ProgressBatchCount = {
   let counter = PromClient.Counter.makeCounter({
-    "name": "envio_progress_batches_count",
+    "name": "envio_progress_batches_total",
     "help": "The number of batches processed and reflected in the database.",
   })
 
@@ -629,13 +623,13 @@ module EffectCalls = {
   )
 
   let totalCallsCount = SafeCounter.makeOrThrow(
-    ~name="envio_effect_calls_count",
+    ~name="envio_effect_calls_total",
     ~help="Cumulative number of resolved Effect function calls during the indexing process.",
     ~labelSchema=effectLabelsSchema,
   )
 
   let activeCallsCount = SafeGauge.makeOrThrow(
-    ~name="envio_effect_active_calls_count",
+    ~name="envio_effect_active_calls_total",
     ~help="The number of Effect function calls that are currently running.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -643,7 +637,7 @@ module EffectCalls = {
 
 module EffectCacheCount = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_effect_cache_count",
+    ~name="envio_effect_cache_total",
     ~help="The number of items in the effect cache.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -655,7 +649,7 @@ module EffectCacheCount = {
 
 module EffectCacheInvalidationsCount = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_cache_invalidations_count",
+    ~name="envio_effect_cache_invalidations_total",
     ~help="The number of effect cache invalidations.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -667,7 +661,7 @@ module EffectCacheInvalidationsCount = {
 
 module EffectQueueCount = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_effect_queue_count",
+    ~name="envio_effect_queue_total",
     ~help="The number of effect calls waiting in the rate limit queue.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -699,7 +693,7 @@ module StorageLoad = {
   )
 
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_storage_load_count",
+    ~name="envio_storage_load_total",
     ~help="Cumulative number of successful storage load operations during the indexing process.",
     ~labelSchema=operationLabelsSchema,
   )
@@ -769,7 +763,7 @@ module SinkWrite = {
   )
 
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_sink_write_count",
+    ~name="envio_sink_write_total",
     ~help="Cumulative number of successful sink write operations during the indexing process.",
     ~labelSchema=sinkLabelsSchema,
   )

@@ -156,8 +156,8 @@ let runEventHandlerOrThrow = async (
   }
   let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toSecondsFloat
   Prometheus.ProcessingHandler.increment(
-    ~contractName=eventItem.eventConfig.contractName,
-    ~eventName=eventItem.eventConfig.name,
+    ~contract=eventItem.eventConfig.contractName,
+    ~event=eventItem.eventConfig.name,
     ~duration=handlerDuration,
   )
 }
@@ -353,7 +353,6 @@ let registerProcessEventBatchMetrics = (
   ~loadDuration,
   ~handlerDuration,
   ~dbWriteDuration,
-  ~batchSize,
 ) => {
   logger->Logging.childTrace({
     "msg": "Finished processing batch",
@@ -366,7 +365,6 @@ let registerProcessEventBatchMetrics = (
     ~loadDuration,
     ~handlerDuration,
     ~dbWriteDuration,
-    ~batchSize,
   )
 }
 
@@ -446,7 +444,6 @@ let processEventBatch = async (
         ~loadDuration=loaderDuration,
         ~handlerDuration,
         ~dbWriteDuration,
-        ~batchSize=totalBatchSize,
       )
       Ok()
     } catch {
