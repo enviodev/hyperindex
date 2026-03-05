@@ -115,17 +115,17 @@ module SafeGauge = MakeSafePromMetric({
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
     "name": "envio_processing_batch_load_seconds",
-    "help": "Cumulative time spent on preloading entities during batch processing. (seconds)",
+    "help": "Cumulative time spent on preloading entities during batch processing.",
   })
 
   let handlerTimeCounter = PromClient.Counter.makeCounter({
     "name": "envio_processing_batch_handler_seconds",
-    "help": "Cumulative time spent executing event handlers during batch processing. (seconds)",
+    "help": "Cumulative time spent executing event handlers during batch processing.",
   })
 
   let writeTimeCounter = PromClient.Counter.makeCounter({
     "name": "envio_processing_batch_write_seconds",
-    "help": "Cumulative time spent writing batch data to storage. (seconds)",
+    "help": "Cumulative time spent writing batch data to storage.",
   })
 
   let writeCount = PromClient.Counter.makeCounter({
@@ -175,7 +175,7 @@ let handlerLabelsSchema = S.schema(s =>
 module ProcessingHandler = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_processing_handler_seconds",
-    ~help="Cumulative time spent inside individual event handler executions. (seconds)",
+    ~help="Cumulative time spent inside individual event handler executions.",
     ~labelSchema=handlerLabelsSchema,
   )
 
@@ -199,13 +199,13 @@ let chainIdLabelsSchema = S.object(s => {
 module FetchingBlockRange = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_fetching_block_range_seconds",
-    ~help="Cumulative time spent fetching block ranges. (seconds)",
+    ~help="Cumulative time spent fetching block ranges.",
     ~labelSchema=chainIdLabelsSchema,
   )
 
   let parseTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_fetching_block_range_parse_seconds",
-    ~help="Cumulative time spent parsing block range fetch responses. (seconds)",
+    ~help="Cumulative time spent parsing block range fetch responses.",
     ~labelSchema=chainIdLabelsSchema,
   )
 
@@ -321,7 +321,7 @@ module IndexingPartitions = {
 module IndexingIdleTime = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_indexing_idle_seconds",
-    ~help="The time in seconds the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
+    ~help="The time the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
     ~labelSchema=chainIdLabelsSchema,
   )
 }
@@ -329,7 +329,7 @@ module IndexingIdleTime = {
 module IndexingSourceWaitingTime = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_indexing_source_waiting_seconds",
-    ~help="The time in seconds the indexer has been waiting for new blocks.",
+    ~help="The time the indexer has been waiting for new blocks.",
     ~labelSchema=chainIdLabelsSchema,
   )
 }
@@ -337,7 +337,7 @@ module IndexingSourceWaitingTime = {
 module IndexingQueryTime = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_indexing_query_seconds",
-    ~help="The time in seconds spent performing queries to the chain data-source.",
+    ~help="The time spent performing queries to the chain data-source.",
     ~labelSchema=chainIdLabelsSchema,
   )
 }
@@ -413,7 +413,7 @@ module SourceRequestCount = {
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_source_request_seconds_total",
-    ~help="Cumulative time spent on data source requests. (seconds)",
+    ~help="Cumulative time spent on data source requests.",
     ~labelSchema=sourceRequestLabelsSchema,
   )
 
@@ -497,7 +497,7 @@ module RollbackEnabled = {
 module RollbackSuccess = {
   let timeCounter = PromClient.Counter.makeCounter({
     "name": "envio_rollback_seconds",
-    "help": "Rollback on reorg total time in seconds",
+    "help": "Rollback on reorg total time.",
   })
 
   let counter = PromClient.Counter.makeCounter({
@@ -522,7 +522,7 @@ module RollbackHistoryPrune = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_rollback_history_prune_seconds",
-    ~help="The total time spent pruning entity history which is not in the reorg threshold. (seconds)",
+    ~help="The total time spent pruning entity history which is not in the reorg threshold.",
     ~labelSchema=entityNameLabelsSchema,
   )
 
@@ -618,13 +618,13 @@ let effectLabelsSchema = S.object(s => {
 module EffectCalls = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_calls_seconds",
-    ~help="Processing time taken to call the Effect function. (seconds)",
+    ~help="Processing time taken to call the Effect function.",
     ~labelSchema=effectLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_calls_seconds_total",
-    ~help="Cumulative time spent calling the Effect function during the indexing process. (seconds)",
+    ~help="Cumulative time spent calling the Effect function during the indexing process.",
     ~labelSchema=effectLabelsSchema,
   )
 
@@ -674,7 +674,7 @@ module EffectQueueCount = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_queue_seconds",
-    ~help="The time spent waiting in the rate limit queue. (seconds)",
+    ~help="The time spent waiting in the rate limit queue.",
     ~labelSchema=effectLabelsSchema,
   )
 
@@ -688,13 +688,13 @@ module StorageLoad = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_seconds",
-    ~help="Processing time taken to load data from storage. (seconds)",
+    ~help="Processing time taken to load data from storage.",
     ~labelSchema=operationLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_seconds_total",
-    ~help="Cumulative time spent loading data from storage during the indexing process. (seconds)",
+    ~help="Cumulative time spent loading data from storage during the indexing process.",
     ~labelSchema=operationLabelsSchema,
   )
 
@@ -764,7 +764,7 @@ module SinkWrite = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_sink_write_seconds",
-    ~help="Processing time taken to write data to sink. (seconds)",
+    ~help="Processing time taken to write data to sink.",
     ~labelSchema=sinkLabelsSchema,
   )
 
