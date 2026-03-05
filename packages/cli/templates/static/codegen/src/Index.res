@@ -1,9 +1,9 @@
 // Catch unhandled promise rejections before they crash the process with an opaque "#<Object>" message.
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js can't display them.
 NodeJs.process->NodeJs.onUnhandledRejection(reason => {
-  reason
-  ->ErrorHandling.make(~msg="Unhandled promise rejection")
-  ->ErrorHandling.logAndRaise
+  let exn = reason->ErrorHandling.make(~msg="Unhandled promise rejection")
+  exn->ErrorHandling.log
+  raise(exn.exn)
 })
 
 let main = async () => {
