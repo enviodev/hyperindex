@@ -449,14 +449,14 @@ module SourceHeight = {
 
 
 module ReorgCount = {
-  let gauge = SafeGauge.makeOrThrow(
+  let counter = SafeCounter.makeOrThrow(
     ~name="envio_reorg_count",
     ~help="Total number of reorgs detected",
     ~labelSchema=chainIdLabelsSchema,
   )
 
   let increment = (~chain) => {
-    gauge->SafeGauge.increment(~labels=chain->ChainMap.Chain.toChainId)
+    counter->SafeCounter.increment(~labels=chain->ChainMap.Chain.toChainId)
   }
 }
 
