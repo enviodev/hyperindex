@@ -1365,7 +1365,22 @@ fn generate_report(
 
     md.push('\n');
 
-    md
+    // Add spaces to table separators for readability: |---|---| → | --- | --- |
+    let mut result = String::new();
+    let mut chars = md.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '|' {
+            // Check for |---
+            let rest: String = chars.clone().take(3).collect();
+            if rest == "---" {
+                result.push_str("| --- ");
+                chars.nth(2); // skip the three dashes
+                continue;
+            }
+        }
+        result.push(c);
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
