@@ -114,17 +114,17 @@ module SafeGauge = MakeSafePromMetric({
 
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_load_time",
+    "name": "envio_processing_batch_load_seconds",
     "help": "Cumulative time spent on preloading entities during batch processing. (milliseconds)",
   })
 
   let handlerTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_handler_time",
+    "name": "envio_processing_batch_handler_seconds",
     "help": "Cumulative time spent executing event handlers during batch processing. (milliseconds)",
   })
 
   let writeTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_write_time",
+    "name": "envio_processing_batch_write_seconds",
     "help": "Cumulative time spent writing batch data to storage. (milliseconds)",
   })
 
@@ -174,7 +174,7 @@ let handlerLabelsSchema = S.schema(s =>
 
 module ProcessingHandler = {
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_processing_handler_time",
+    ~name="envio_processing_handler_seconds",
     ~help="Cumulative time spent inside individual event handler executions. (milliseconds)",
     ~labelSchema=handlerLabelsSchema,
   )
@@ -198,13 +198,13 @@ let chainIdLabelsSchema = S.object(s => {
 
 module FetchingBlockRange = {
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_fetching_block_range_time",
+    ~name="envio_fetching_block_range_seconds",
     ~help="Cumulative time spent fetching block ranges. (milliseconds)",
     ~labelSchema=chainIdLabelsSchema,
   )
 
   let parseTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_fetching_block_range_parse_time",
+    ~name="envio_fetching_block_range_parse_seconds",
     ~help="Cumulative time spent parsing block range fetch responses. (milliseconds)",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -320,7 +320,7 @@ module IndexingPartitions = {
 
 module IndexingIdleTime = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_indexing_idle_time",
+    ~name="envio_indexing_idle_seconds",
     ~help="The number of milliseconds the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -328,7 +328,7 @@ module IndexingIdleTime = {
 
 module IndexingSourceWaitingTime = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_indexing_source_waiting_time",
+    ~name="envio_indexing_source_waiting_seconds",
     ~help="The number of milliseconds the indexer has been waiting for new blocks.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -336,7 +336,7 @@ module IndexingSourceWaitingTime = {
 
 module IndexingQueryTime = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_indexing_query_time",
+    ~name="envio_indexing_query_seconds",
     ~help="The number of milliseconds spent performing queries to the chain data-source.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -412,7 +412,7 @@ module SourceRequestCount = {
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_source_request_sum_time",
+    ~name="envio_source_request_seconds_total",
     ~help="Cumulative time spent on data source requests. (milliseconds)",
     ~labelSchema=sourceRequestLabelsSchema,
   )
@@ -496,7 +496,7 @@ module RollbackEnabled = {
 
 module RollbackSuccess = {
   let timeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_rollback_time",
+    "name": "envio_rollback_seconds",
     "help": "Rollback on reorg total time in milliseconds",
   })
 
@@ -521,7 +521,7 @@ module RollbackHistoryPrune = {
   let entityNameLabelsSchema = S.object(s => s.field("entity", S.string))
 
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_rollback_history_prune_time",
+    ~name="envio_rollback_history_prune_seconds",
     ~help="The total time spent pruning entity history which is not in the reorg threshold. (milliseconds)",
     ~labelSchema=entityNameLabelsSchema,
   )
@@ -617,13 +617,13 @@ let effectLabelsSchema = S.object(s => {
 
 module EffectCalls = {
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_calls_time",
+    ~name="envio_effect_calls_seconds",
     ~help="Processing time taken to call the Effect function. (milliseconds)",
     ~labelSchema=effectLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_calls_sum_time",
+    ~name="envio_effect_calls_seconds_total",
     ~help="Cumulative time spent calling the Effect function during the indexing process. (milliseconds)",
     ~labelSchema=effectLabelsSchema,
   )
@@ -673,7 +673,7 @@ module EffectQueueCount = {
   )
 
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_queue_time",
+    ~name="envio_effect_queue_seconds",
     ~help="The time spent waiting in the rate limit queue. (milliseconds)",
     ~labelSchema=effectLabelsSchema,
   )
@@ -687,13 +687,13 @@ module StorageLoad = {
   let operationLabelsSchema = S.object(s => s.field("operation", S.string))
 
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_storage_load_time",
+    ~name="envio_storage_load_seconds",
     ~help="Processing time taken to load data from storage. (milliseconds)",
     ~labelSchema=operationLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_storage_load_sum_time",
+    ~name="envio_storage_load_seconds_total",
     ~help="Cumulative time spent loading data from storage during the indexing process. (milliseconds)",
     ~labelSchema=operationLabelsSchema,
   )
@@ -763,7 +763,7 @@ module SinkWrite = {
   let sinkLabelsSchema = S.object(s => s.field("sink", S.string))
 
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_sink_write_time",
+    ~name="envio_sink_write_seconds",
     ~help="Processing time taken to write data to sink. (milliseconds)",
     ~labelSchema=sinkLabelsSchema,
   )
