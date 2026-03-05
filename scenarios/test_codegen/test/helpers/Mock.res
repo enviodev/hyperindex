@@ -781,7 +781,7 @@ module Source = {
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
                     stats: {
-                      totalTimeElapsed: 0,
+                      totalTimeElapsed: 0.,
                     },
                   })
                 },

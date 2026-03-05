@@ -1087,7 +1087,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     t.expect(
       {
-        let metrics = await indexerMock.metric("envio_progress_events_count")
+        let metrics = await indexerMock.metric("envio_progress_events")
         // For some reason the test returns the metrics in different order
         metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
       },
@@ -1100,7 +1100,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     )
     t.expect(
       {
-        let metrics = await indexerMock.metric("envio_progress_block_number")
+        let metrics = await indexerMock.metric("envio_progress_block")
         // For some reason the test returns the metrics in different order
         metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
       },
@@ -1112,13 +1112,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_rollback_events_count"),
+      await indexerMock.metric("envio_rollback_events"),
       ~message="Rollbacked events count before rollback",
     ).toEqual(
       [{value: "0", labels: Js.Dict.empty()}],
     )
     t.expect(
-      await indexerMock.metric("envio_rollback_count"),
+      await indexerMock.metric("envio_rollback_total"),
       ~message="Rollbacks count before rollback",
     ).toEqual(
       [{value: "0", labels: Js.Dict.empty()}],
@@ -1155,7 +1155,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getRollbackReadyPromise()
 
     t.expect(
-      await indexerMock.metric("envio_progress_events_count"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Events count after rollback",
     ).toEqual(
       [
@@ -1164,7 +1164,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_progress_block_number"),
+      await indexerMock.metric("envio_progress_block"),
       ~message="Progress block number after rollback",
     ).toEqual(
       [
@@ -1173,13 +1173,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_rollback_events_count"),
+      await indexerMock.metric("envio_rollback_events"),
       ~message="Rollbacked events count after rollback",
     ).toEqual(
       [{value: "3", labels: Js.Dict.empty()}],
     )
     t.expect(
-      await indexerMock.metric("envio_rollback_count"),
+      await indexerMock.metric("envio_rollback_total"),
       ~message="Rollbacks count after rollback",
     ).toEqual(
       [{value: "1", labels: Js.Dict.empty()}],
@@ -1984,7 +1984,7 @@ Sorted by timestamp and chain id`,
       )
 
       t.expect(
-        await indexerMock.metric("envio_progress_events_count"),
+        await indexerMock.metric("envio_progress_events"),
         ~message="Events count before rollback",
       ).toEqual(
         [
@@ -1993,7 +1993,7 @@ Sorted by timestamp and chain id`,
         ],
       )
       t.expect(
-        await indexerMock.metric("envio_progress_block_number"),
+        await indexerMock.metric("envio_progress_block"),
         ~message="Progress block number before rollback",
       ).toEqual(
         [
@@ -2034,7 +2034,7 @@ Sorted by timestamp and chain id`,
       await indexerMock.getRollbackReadyPromise()
 
       t.expect(
-        await indexerMock.metric("envio_progress_events_count"),
+        await indexerMock.metric("envio_progress_events"),
         ~message="Events count after rollback",
       ).toEqual(
         [
@@ -2043,7 +2043,7 @@ Sorted by timestamp and chain id`,
         ],
       )
       t.expect(
-        await indexerMock.metric("envio_progress_block_number"),
+        await indexerMock.metric("envio_progress_block"),
         ~message="Progress block number after rollback",
       ).toEqual(
         [
@@ -2243,7 +2243,7 @@ Sorted by timestamp and chain id`,
 
     // Check initial metrics - should have 3 events processed
     t.expect(
-      await indexerMock.metric("envio_progress_events_count"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Should have 1 event processed initially",
     ).toEqual(
       [{value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])}],
@@ -2277,7 +2277,7 @@ Sorted by timestamp and chain id`,
 
     // Check metrics after first rollback - should have rolled back all 3 events
     t.expect(
-      await indexerMock.metric("envio_progress_events_count"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Should have 0 events after first rollback",
     ).toEqual(
       [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
@@ -2307,7 +2307,7 @@ Sorted by timestamp and chain id`,
 
     // Check metrics after processing - should have 2 events
     t.expect(
-      await indexerMock.metric("envio_progress_events_count"),
+      await indexerMock.metric("envio_progress_events"),
       ~message="Shouldn't go to negative with the counter",
     ).toEqual(
       [{value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])}],
@@ -2581,9 +2581,12 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
 
       // Resolve chunk2's second half: continuation from 116+ resolves to 118
       // This stores a reorg checkpoint at block 118
-      let continuationCall = sourceMock.getItemsOrThrowCalls->Array.getUnsafe(1)
-      t.expect(
-        continuationCall.payload["fromBlock"] >= 116, ~message=`Continuation should start from >= 116, got ${continuationCall.payload["fromBlock"]->Int.toString}`).toBeTruthy()
+      let continuationCall = switch sourceMock.getItemsOrThrowCalls->Js.Array2.find(call => {
+        call.payload["fromBlock"] == 116
+      }) {
+      | Some(call) => call
+      | None => Js.Exn.raiseError("Should have a pending continuation call with fromBlock == 116")
+      }
       continuationCall.resolve([], ~latestFetchedBlockNumber=118)
       await Utils.delay(0)
 

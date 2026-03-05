@@ -178,8 +178,6 @@ Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
 let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ctx: Ctx.t) => {
-  Prometheus.ProgressBatchCount.increment()
-
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
@@ -318,7 +316,14 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     ->Array.every(cf => cf->ChainFetcher.isLive)
 
   if allChainsSyncedAtHead {
-    Prometheus.setAllChainsSyncedToHead()
+    chainFetchers
+    ->ChainMap.mapWithKey((chain, cf) => {
+      if cf->ChainFetcher.isLive {
+        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+      }
+    })
+    ->ignore
+    Prometheus.ProgressReady.setAllReady()
   }
 
   {
@@ -333,7 +338,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
 let validatePartitionQueryResponse = (
   state,
-  {chain, response, query} as partitionQueryResponse: partitionQueryResponse,
+  {chain, response} as partitionQueryResponse: partitionQueryResponse,
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
@@ -356,22 +361,13 @@ let validatePartitionQueryResponse = (
     )
   }
 
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addBlockRangeFetched(
-      ~totalTimeElapsed=stats.totalTimeElapsed,
-      ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
-      ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~fromBlock=fromBlockQueried,
-      ~toBlock=latestFetchedBlockNumber,
-      ~numEvents=parsedQueueItems->Array.length,
-      ~numAddresses=query.addressesByContractName->FetchState.addressesByContractNameCount,
-      ~queryName=switch query {
-      | {selection: {dependsOnAddresses: false}} => `Wildcard Query`
-      | {selection: {dependsOnAddresses: true}} => `Normal Query`
-      },
-    )
-  }
+  Prometheus.FetchingBlockRange.increment(
+    ~chainId=chain->ChainMap.Chain.toChainId,
+    ~totalTimeElapsed=stats.totalTimeElapsed,
+    ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
+    ~numEvents=parsedQueueItems->Array.length,
+    ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
+  )
 
   let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
     chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~reorgGuard, ~knownHeight)
@@ -858,7 +854,7 @@ let injectedTaskReducer = (
             )
           }
           Prometheus.RollbackHistoryPrune.increment(
-            ~timeMillis=Hrtime.timeSince(timeRef)->Hrtime.toMillis,
+            ~timeSeconds=Hrtime.timeSince(timeRef)->Hrtime.toSecondsFloat,
             ~entityName=entityConfig.name,
           )
         }
@@ -918,7 +914,6 @@ let injectedTaskReducer = (
         )
 
       let progressedChainsById = batch.progressedChainsById
-      let totalBatchSize = batch.totalBatchSize
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let shouldSaveHistory = state.ctx.config->Config.shouldSaveHistory(~isInReorgThreshold)
@@ -958,15 +953,6 @@ let injectedTaskReducer = (
           }
         }
       } else {
-        if Env.Benchmark.shouldSaveData {
-          let group = "Other"
-          Benchmark.addSummaryData(
-            ~group,
-            ~label=`Batch Size`,
-            ~value=totalBatchSize->Belt.Int.toFloat,
-          )
-        }
-
         dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
@@ -1160,7 +1146,7 @@ let injectedTaskReducer = (
         "targetCheckpointId": rollbackTargetCheckpointId,
       })
       Prometheus.RollbackSuccess.increment(
-        ~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis,
+        ~timeSeconds=Hrtime.timeSince(startTime)->Hrtime.toSecondsFloat,
         ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
       )
 

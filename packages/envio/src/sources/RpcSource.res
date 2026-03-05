@@ -1047,7 +1047,7 @@ let make = (
     let optFirstBlockParent = await firstBlockParentPromise
 
     let totalTimeElapsed =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let reorgGuard: ReorgDetection.reorgGuard = {
       prevRangeLastBlock: optFirstBlockParent->Option.map(b => {
@@ -1112,13 +1112,21 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
-    getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-      )
-      Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+    getHeightOrThrow: async () => {
+      let timerRef = Hrtime.makeTimer()
+      let height = try {
+        await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+      } catch {
+      | exn =>
+        let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+        Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber")
+        Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber", ~seconds)
+        exn->raise
+      }
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber")
+      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber", ~seconds)
+      height
     },
     getItemsOrThrow,
     ?createHeightSubscription,

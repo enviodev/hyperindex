@@ -34,12 +34,25 @@ let toMillis = ((sec, nano): timeElapsed): milliseconds => {
   sec->secToMilli +. nano->nanoToMilli
 }
 
+let toSeconds = ((sec, nano): timeElapsed): seconds => {
+  sec +. nano /. 1_000_000_000.
+}
+
+let toSecondsFloat = (elapsed: timeElapsed): float => {
+  elapsed->toSeconds->(Utils.magic: seconds => float)
+}
+
 let toInt = float => float->Belt.Int.fromFloat
 let intFromMillis = toInt
 let intFromNanos = toInt
 let intFromSeconds = toInt
 let floatFromMillis: milliseconds => float = v => v->(Utils.magic: milliseconds => float)
+let floatFromSeconds: seconds => float = v => v->(Utils.magic: seconds => float)
 
 let millisBetween = (~from: timeRef, ~to: timeRef): int => {
   to->toMillis->intFromMillis - from->toMillis->intFromMillis
+}
+
+let secondsBetween = (~from: timeRef, ~to: timeRef): float => {
+  to->toSecondsFloat -. from->toSecondsFloat
 }
