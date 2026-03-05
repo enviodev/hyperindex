@@ -512,7 +512,7 @@ module SourceHeight = {
 
 module ReorgCount = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_reorg_detections",
+    ~name="envio_reorg_detected_total",
     ~help="Total number of reorgs detected",
     ~labelSchema=chainIdLabelsSchema,
   )
