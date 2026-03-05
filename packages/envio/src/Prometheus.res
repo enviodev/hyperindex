@@ -141,11 +141,16 @@ module ProcessingBatch = {
   }
 }
 
-module SyncedToHead = {
-  let gauge = PromClient.Gauge.makeGauge({
-    "name": "envio_synced_to_head",
-    "help": "All chains fully synced",
-  })
+let chainIdLabelsSchema = S.object(s => {
+  s.field("chainId", S.string->S.coerce(S.int))
+})
+
+module ProgressReady = {
+  let gauge = SafeGauge.makeOrThrow(
+    ~name="envio_progress_ready",
+    ~help="Whether the chain is fully synced to the head.",
+    ~labelSchema=chainIdLabelsSchema,
+  )
 
   // Keep legacy metric name for backward compatibility
   let legacyGauge = PromClient.Gauge.makeGauge({
@@ -153,8 +158,11 @@ module SyncedToHead = {
     "help": "All chains fully synced",
   })
 
-  let set = () => {
-    gauge->PromClient.Gauge.set(1)
+  let set = (~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=1)
+  }
+
+  let setAllReady = () => {
     legacyGauge->PromClient.Gauge.set(1)
   }
 }
@@ -249,9 +257,6 @@ module PreloadHandler = {
   }
 }
 
-let chainIdLabelsSchema = S.object(s => {
-  s.field("chainId", S.string->S.coerce(S.int))
-})
 
 module FetchingBlockRange = {
   let timeCounter = SafeCounter.makeOrThrow(
@@ -393,7 +398,7 @@ module IndexingSourceWaitingTime = {
 
 module IndexingQueryTime = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_indexing_query_seconds",
+    ~name="envio_indexing_source_querying_seconds",
     ~help="The time spent performing queries to the chain data-source.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -490,7 +495,7 @@ module SourceRequestCount = {
 
 module SourceHeight = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_source_height",
+    ~name="envio_source_known_height",
     ~help="The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.",
     ~labelSchema=sourceLabelsSchema,
   )
@@ -507,7 +512,7 @@ module SourceHeight = {
 
 module ReorgCount = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_reorg_total",
+    ~name="envio_reorg_detections",
     ~help="Total number of reorgs detected",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -519,7 +524,7 @@ module ReorgCount = {
 
 module ReorgDetectionBlockNumber = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_reorg_detection_block",
+    ~name="envio_reorg_detected_block",
     ~help="The block number where reorg was detected the last time. This doesn't mean that the block was reorged, this is simply where we found block hash to be different.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -635,7 +640,7 @@ module ProgressBlockNumber = {
 
 module ProgressEventsCount = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_progress_events_total",
+    ~name="envio_progress_events",
     ~help="The number of events processed and reflected in the database.",
     ~labelSchema=chainIdLabelsSchema,
   )
@@ -681,7 +686,7 @@ module EffectCalls = {
   )
 
   let activeCallsCount = SafeGauge.makeOrThrow(
-    ~name="envio_effect_active_call_total",
+    ~name="envio_effect_active_calls",
     ~help="The number of Effect function calls that are currently running.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -689,7 +694,7 @@ module EffectCalls = {
 
 module EffectCacheCount = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_effect_cache_total",
+    ~name="envio_effect_cache",
     ~help="The number of items in the effect cache.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -701,7 +706,7 @@ module EffectCacheCount = {
 
 module EffectCacheInvalidationsCount = {
   let counter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_cache_invalidations_total",
+    ~name="envio_effect_cache_invalidations",
     ~help="The number of effect cache invalidations.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -713,7 +718,7 @@ module EffectCacheInvalidationsCount = {
 
 module EffectQueueCount = {
   let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_effect_queue_total",
+    ~name="envio_effect_queue",
     ~help="The number of effect calls waiting in the rate limit queue.",
     ~labelSchema=effectLabelsSchema,
   )

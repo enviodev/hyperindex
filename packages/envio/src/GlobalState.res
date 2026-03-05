@@ -315,8 +315,16 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     ->ChainMap.values
     ->Array.every(cf => cf->ChainFetcher.isLive)
 
+  chainFetchers
+  ->ChainMap.mapWithKey((chain, cf) => {
+    if cf->ChainFetcher.isLive {
+      Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+    }
+  })
+  ->ignore
+
   if allChainsSyncedAtHead {
-    Prometheus.SyncedToHead.set()
+    Prometheus.ProgressReady.setAllReady()
   }
 
   {
