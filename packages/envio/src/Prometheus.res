@@ -111,20 +111,6 @@ module SafeGauge = MakeSafePromMetric({
   let handleFloat = PromClient.Gauge.setFloat
 })
 
-let makeSafeHistogramOrThrow = (~name, ~help, ~labelSchema, ~backets=?) => {
-  let histogram = PromClient.Histogram.make({
-    "name": name,
-    "help": help,
-    "labelNames": labelSchema->Labels.getLabelNames->Belt.Result.getExn,
-    "buckets": backets,
-  })
-
-  labels => {
-    histogram
-    ->PromClient.Histogram.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
-    ->PromClient.Histogram.startTimer
-  }
-}
 
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
@@ -167,8 +153,15 @@ module SyncedToHead = {
     "help": "All chains fully synced",
   })
 
+  // Keep legacy metric name for backward compatibility
+  let legacyGauge = PromClient.Gauge.makeGauge({
+    "name": "hyperindex_synced_to_head",
+    "help": "All chains fully synced",
+  })
+
   let set = () => {
     gauge->PromClient.Gauge.set(1)
+    legacyGauge->PromClient.Gauge.set(1)
   }
 }
 
@@ -441,12 +434,22 @@ module SourceHeight = {
 }
 
 module SourceGetHeightDuration = {
-  let startTimer = makeSafeHistogramOrThrow(
-    ~name="envio_source_get_height_duration",
-    ~help="Duration of the source get height requests in seconds",
+  let sumTimeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_source_get_height_duration_sum_time",
+    ~help="Cumulative time spent on source get height requests. (milliseconds)",
     ~labelSchema=sourceLabelsSchema,
-    ~backets=[0.1, 0.5, 1., 10.],
   )
+
+  let count = SafeCounter.makeOrThrow(
+    ~name="envio_source_get_height_duration_count",
+    ~help="Total number of source get height requests.",
+    ~labelSchema=sourceLabelsSchema,
+  )
+
+  let increment = (~labels, ~timeMillis) => {
+    sumTimeCounter->SafeCounter.handleInt(~labels, ~value=timeMillis)
+    count->SafeCounter.increment(~labels)
+  }
 }
 
 module ReorgCount = {
