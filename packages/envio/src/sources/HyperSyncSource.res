@@ -314,7 +314,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -461,7 +461,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     })
 
-    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let rangeLastBlock = await lastBlockQueriedPromise
 
@@ -473,7 +473,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }),
     }
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let stats = {
       totalTimeElapsed,
@@ -525,9 +525,9 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         0
       | ErrorMessage(m) => Js.Exn.raiseError(m)
       }
-      let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
-      Prometheus.SourceRequestCount.addSumTime(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~timeMillis)
+      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~seconds)
       result
     },
     getItemsOrThrow,

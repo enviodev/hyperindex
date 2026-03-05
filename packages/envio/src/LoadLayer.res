@@ -78,11 +78,11 @@ let callEffect = (
   )
 
   if hadActiveCalls {
-    let elapsed = Hrtime.millisBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
-    if elapsed > 0 {
-      Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
+    let elapsed = Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
+    if elapsed > 0. {
+      Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
         ~labels=effectName,
-        ~value=Hrtime.millisBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef),
+        ~value=elapsed,
       )
     }
   }
@@ -105,16 +105,16 @@ let callEffect = (
       ~value=effect.activeCallsCount,
     )
     let newTimer = Hrtime.makeTimer()
-    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.incrementMany(
+    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
       ~labels=effectName,
-      ~value=Hrtime.millisBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
+      ~value=Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
     )
     effect.prevCallStartTimerRef = newTimer
 
     Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
-    Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.incrementMany(
+    Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
       ~labels=effectName,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
     )
   })
 }
@@ -212,9 +212,9 @@ let rec executeWithRateLimit = (
         nextWindowPromise
         ->Promise.then(() => {
           if millisUntilReset.contents > 0 {
-            Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.incrementMany(
+            Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.handleFloat(
               ~labels=effectName,
-              ~value=millisUntilReset.contents,
+              ~value=millisUntilReset.contents->Int.toFloat /. 1000.,
             )
           }
           executeWithRateLimit(

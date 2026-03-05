@@ -95,9 +95,9 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
   | Querieng => Prometheus.IndexingQueryTime.counter
   }
-  promCounter->Prometheus.SafeCounter.incrementMany(
+  promCounter->Prometheus.SafeCounter.handleFloat(
     ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toSecondsFloat,
   )
   sourceManager.statusStart = Hrtime.makeTimer()
   sourceManager.status = newStatus

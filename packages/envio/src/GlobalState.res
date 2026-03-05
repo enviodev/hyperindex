@@ -359,7 +359,7 @@ let validatePartitionQueryResponse = (
   Prometheus.FetchingBlockRange.increment(
     ~chainId=chain->ChainMap.Chain.toChainId,
     ~totalTimeElapsed=stats.totalTimeElapsed,
-    ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
+    ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
     ~numEvents=parsedQueueItems->Array.length,
     ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried,
   )
@@ -849,7 +849,7 @@ let injectedTaskReducer = (
             )
           }
           Prometheus.RollbackHistoryPrune.increment(
-            ~timeMillis=Hrtime.timeSince(timeRef)->Hrtime.toMillis,
+            ~timeSeconds=Hrtime.timeSince(timeRef)->Hrtime.toSecondsFloat,
             ~entityName=entityConfig.name,
           )
         }
@@ -1141,7 +1141,7 @@ let injectedTaskReducer = (
         "targetCheckpointId": rollbackTargetCheckpointId,
       })
       Prometheus.RollbackSuccess.increment(
-        ~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis,
+        ~timeSeconds=Hrtime.timeSince(startTime)->Hrtime.toSecondsFloat,
         ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
       )
 

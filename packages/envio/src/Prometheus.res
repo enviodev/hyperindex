@@ -115,17 +115,17 @@ module SafeGauge = MakeSafePromMetric({
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
     "name": "envio_processing_batch_load_seconds",
-    "help": "Cumulative time spent on preloading entities during batch processing. (milliseconds)",
+    "help": "Cumulative time spent on preloading entities during batch processing. (seconds)",
   })
 
   let handlerTimeCounter = PromClient.Counter.makeCounter({
     "name": "envio_processing_batch_handler_seconds",
-    "help": "Cumulative time spent executing event handlers during batch processing. (milliseconds)",
+    "help": "Cumulative time spent executing event handlers during batch processing. (seconds)",
   })
 
   let writeTimeCounter = PromClient.Counter.makeCounter({
     "name": "envio_processing_batch_write_seconds",
-    "help": "Cumulative time spent writing batch data to storage. (milliseconds)",
+    "help": "Cumulative time spent writing batch data to storage. (seconds)",
   })
 
   let writeCount = PromClient.Counter.makeCounter({
@@ -139,9 +139,9 @@ module ProcessingBatch = {
   })
 
   let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration, ~batchSize) => {
-    loadTimeCounter->PromClient.Counter.incMany(loadDuration)
-    handlerTimeCounter->PromClient.Counter.incMany(handlerDuration)
-    writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration)
+    loadTimeCounter->PromClient.Counter.incMany(loadDuration->(Utils.magic: float => int))
+    handlerTimeCounter->PromClient.Counter.incMany(handlerDuration->(Utils.magic: float => int))
+    writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration->(Utils.magic: float => int))
     writeCount->PromClient.Counter.inc
     batchSizeCounter->PromClient.Counter.incMany(batchSize)
   }
@@ -175,7 +175,7 @@ let handlerLabelsSchema = S.schema(s =>
 module ProcessingHandler = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_processing_handler_seconds",
-    ~help="Cumulative time spent inside individual event handler executions. (milliseconds)",
+    ~help="Cumulative time spent inside individual event handler executions. (seconds)",
     ~labelSchema=handlerLabelsSchema,
   )
 
@@ -187,7 +187,7 @@ module ProcessingHandler = {
 
   let increment = (~contractName, ~eventName, ~duration) => {
     let labels = {"contractName": contractName, "eventName": eventName}
-    timeCounter->SafeCounter.handleInt(~labels, ~value=duration)
+    timeCounter->SafeCounter.handleFloat(~labels, ~value=duration)
     count->SafeCounter.increment(~labels)
   }
 }
@@ -199,13 +199,13 @@ let chainIdLabelsSchema = S.object(s => {
 module FetchingBlockRange = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_fetching_block_range_seconds",
-    ~help="Cumulative time spent fetching block ranges. (milliseconds)",
+    ~help="Cumulative time spent fetching block ranges. (seconds)",
     ~labelSchema=chainIdLabelsSchema,
   )
 
   let parseTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_fetching_block_range_parse_seconds",
-    ~help="Cumulative time spent parsing block range fetch responses. (milliseconds)",
+    ~help="Cumulative time spent parsing block range fetch responses. (seconds)",
     ~labelSchema=chainIdLabelsSchema,
   )
 
@@ -234,8 +234,8 @@ module FetchingBlockRange = {
     ~numEvents,
     ~blockRangeSize,
   ) => {
-    timeCounter->SafeCounter.handleInt(~labels=chainId, ~value=totalTimeElapsed)
-    parseTimeCounter->SafeCounter.handleInt(~labels=chainId, ~value=parsingTimeElapsed)
+    timeCounter->SafeCounter.handleFloat(~labels=chainId, ~value=totalTimeElapsed)
+    parseTimeCounter->SafeCounter.handleFloat(~labels=chainId, ~value=parsingTimeElapsed)
     count->SafeCounter.increment(~labels=chainId)
     eventsCount->SafeCounter.handleInt(~labels=chainId, ~value=numEvents)
     sizeCounter->SafeCounter.handleInt(~labels=chainId, ~value=blockRangeSize)
@@ -321,7 +321,7 @@ module IndexingPartitions = {
 module IndexingIdleTime = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_indexing_idle_seconds",
-    ~help="The number of milliseconds the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
+    ~help="The time in seconds the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
     ~labelSchema=chainIdLabelsSchema,
   )
 }
@@ -329,7 +329,7 @@ module IndexingIdleTime = {
 module IndexingSourceWaitingTime = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_indexing_source_waiting_seconds",
-    ~help="The number of milliseconds the indexer has been waiting for new blocks.",
+    ~help="The time in seconds the indexer has been waiting for new blocks.",
     ~labelSchema=chainIdLabelsSchema,
   )
 }
@@ -337,7 +337,7 @@ module IndexingSourceWaitingTime = {
 module IndexingQueryTime = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_indexing_query_seconds",
-    ~help="The number of milliseconds spent performing queries to the chain data-source.",
+    ~help="The time in seconds spent performing queries to the chain data-source.",
     ~labelSchema=chainIdLabelsSchema,
   )
 }
@@ -413,7 +413,7 @@ module SourceRequestCount = {
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_source_request_seconds_total",
-    ~help="Cumulative time spent on data source requests. (milliseconds)",
+    ~help="Cumulative time spent on data source requests. (seconds)",
     ~labelSchema=sourceRequestLabelsSchema,
   )
 
@@ -423,10 +423,10 @@ module SourceRequestCount = {
     )
   }
 
-  let addSumTime = (~sourceName, ~chainId, ~method, ~timeMillis) => {
-    sumTimeCounter->SafeCounter.handleInt(
+  let addSeconds = (~sourceName, ~chainId, ~method, ~seconds) => {
+    sumTimeCounter->SafeCounter.handleFloat(
       ~labels={"source": sourceName, "chainId": chainId, "method": method},
-      ~value=timeMillis,
+      ~value=seconds,
     )
   }
 }
@@ -497,7 +497,7 @@ module RollbackEnabled = {
 module RollbackSuccess = {
   let timeCounter = PromClient.Counter.makeCounter({
     "name": "envio_rollback_seconds",
-    "help": "Rollback on reorg total time in milliseconds",
+    "help": "Rollback on reorg total time in seconds",
   })
 
   let counter = PromClient.Counter.makeCounter({
@@ -510,8 +510,8 @@ module RollbackSuccess = {
     "help": "Number of events rollbacked on reorg",
   })
 
-  let increment = (~timeMillis: Hrtime.milliseconds, ~rollbackedProcessedEvents) => {
-    timeCounter->PromClient.Counter.incMany(timeMillis->Hrtime.intFromMillis)
+  let increment = (~timeSeconds: float, ~rollbackedProcessedEvents) => {
+    timeCounter->PromClient.Counter.incMany(timeSeconds->(Utils.magic: float => int))
     counter->PromClient.Counter.inc
     eventsCounter->PromClient.Counter.incMany(rollbackedProcessedEvents)
   }
@@ -522,7 +522,7 @@ module RollbackHistoryPrune = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_rollback_history_prune_seconds",
-    ~help="The total time spent pruning entity history which is not in the reorg threshold. (milliseconds)",
+    ~help="The total time spent pruning entity history which is not in the reorg threshold. (seconds)",
     ~labelSchema=entityNameLabelsSchema,
   )
 
@@ -532,10 +532,10 @@ module RollbackHistoryPrune = {
     ~labelSchema=entityNameLabelsSchema,
   )
 
-  let increment = (~timeMillis, ~entityName) => {
-    timeCounter->SafeCounter.handleInt(
+  let increment = (~timeSeconds, ~entityName) => {
+    timeCounter->SafeCounter.handleFloat(
       ~labels={entityName},
-      ~value=timeMillis->Hrtime.intFromMillis,
+      ~value=timeSeconds,
     )
     counter->SafeCounter.increment(~labels={entityName})
   }
@@ -618,13 +618,13 @@ let effectLabelsSchema = S.object(s => {
 module EffectCalls = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_calls_seconds",
-    ~help="Processing time taken to call the Effect function. (milliseconds)",
+    ~help="Processing time taken to call the Effect function. (seconds)",
     ~labelSchema=effectLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_calls_seconds_total",
-    ~help="Cumulative time spent calling the Effect function during the indexing process. (milliseconds)",
+    ~help="Cumulative time spent calling the Effect function during the indexing process. (seconds)",
     ~labelSchema=effectLabelsSchema,
   )
 
@@ -674,7 +674,7 @@ module EffectQueueCount = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_queue_seconds",
-    ~help="The time spent waiting in the rate limit queue. (milliseconds)",
+    ~help="The time spent waiting in the rate limit queue. (seconds)",
     ~labelSchema=effectLabelsSchema,
   )
 
@@ -688,13 +688,13 @@ module StorageLoad = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_seconds",
-    ~help="Processing time taken to load data from storage. (milliseconds)",
+    ~help="Processing time taken to load data from storage. (seconds)",
     ~labelSchema=operationLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_storage_load_seconds_total",
-    ~help="Cumulative time spent loading data from storage during the indexing process. (milliseconds)",
+    ~help="Cumulative time spent loading data from storage during the indexing process. (seconds)",
     ~labelSchema=operationLabelsSchema,
   )
 
@@ -743,15 +743,15 @@ module StorageLoad = {
     let operationRef = operations->Js.Dict.unsafeGet(operation)
     operationRef.pendingCount = operationRef.pendingCount - 1
     if operationRef.pendingCount === 0 {
-      timeCounter->SafeCounter.handleInt(
+      timeCounter->SafeCounter.handleFloat(
         ~labels={operation},
-        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
       )
       operations->Utils.Dict.deleteInPlace(operation)
     }
-    sumTimeCounter->SafeCounter.handleInt(
+    sumTimeCounter->SafeCounter.handleFloat(
       ~labels={operation},
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
     )
     counter->SafeCounter.increment(~labels={operation})
     whereSizeCounter->SafeCounter.handleInt(~labels={operation}, ~value=whereSize)
@@ -764,7 +764,7 @@ module SinkWrite = {
 
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_sink_write_seconds",
-    ~help="Processing time taken to write data to sink. (milliseconds)",
+    ~help="Processing time taken to write data to sink. (seconds)",
     ~labelSchema=sinkLabelsSchema,
   )
 
@@ -774,8 +774,8 @@ module SinkWrite = {
     ~labelSchema=sinkLabelsSchema,
   )
 
-  let increment = (~sinkName, ~timeMillis) => {
-    timeCounter->SafeCounter.handleInt(~labels={sinkName}, ~value=timeMillis)
+  let increment = (~sinkName, ~timeSeconds) => {
+    timeCounter->SafeCounter.handleFloat(~labels={sinkName}, ~value=timeSeconds)
     counter->SafeCounter.increment(~labels={sinkName})
   }
 }

@@ -154,7 +154,7 @@ let runEventHandlerOrThrow = async (
       }),
     )
   }
-  let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+  let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toSecondsFloat
   Prometheus.ProcessingHandler.increment(
     ~contractName=eventItem.eventConfig.contractName,
     ~eventName=eventItem.eventConfig.name,
@@ -414,7 +414,7 @@ let processEventBatch = async (
       )
     }
 
-    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(
@@ -427,7 +427,7 @@ let processEventBatch = async (
     }
 
     let elapsedTimeAfterProcessing =
-      timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     try {
       await ctx.persistence->Persistence.writeBatch(
@@ -437,10 +437,10 @@ let processEventBatch = async (
         ~isInReorgThreshold,
       )
 
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       let loaderDuration = elapsedTimeAfterLoaders
-      let handlerDuration = elapsedTimeAfterProcessing - loaderDuration
-      let dbWriteDuration = elapsedTimeAfterDbWrite - elapsedTimeAfterProcessing
+      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
+      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
       registerProcessEventBatchMetrics(
         ~logger,
         ~loadDuration=loaderDuration,

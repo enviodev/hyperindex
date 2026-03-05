@@ -1047,7 +1047,7 @@ let make = (
     let optFirstBlockParent = await firstBlockParentPromise
 
     let totalTimeElapsed =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let reorgGuard: ReorgDetection.reorgGuard = {
       prevRangeLastBlock: optFirstBlockParent->Option.map(b => {
@@ -1115,9 +1115,9 @@ let make = (
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
       let height = await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
-      let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber")
-      Prometheus.SourceRequestCount.addSumTime(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber", ~timeMillis)
+      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber", ~seconds)
       height
     },
     getItemsOrThrow,

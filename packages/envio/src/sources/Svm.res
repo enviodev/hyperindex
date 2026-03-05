@@ -56,9 +56,9 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
       let height = await GetFinalizedSlot.route->Rest.fetch((), ~client)
-      let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
-      Prometheus.SourceRequestCount.addSumTime(~sourceName=name, ~chainId, ~method="getSlot", ~timeMillis)
+      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId, ~method="getSlot", ~seconds)
       height
     },
     getItemsOrThrow: (
