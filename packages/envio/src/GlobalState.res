@@ -315,15 +315,14 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     ->ChainMap.values
     ->Array.every(cf => cf->ChainFetcher.isLive)
 
-  chainFetchers
-  ->ChainMap.mapWithKey((chain, cf) => {
-    if cf->ChainFetcher.isLive {
-      Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
-    }
-  })
-  ->ignore
-
   if allChainsSyncedAtHead {
+    chainFetchers
+    ->ChainMap.mapWithKey((chain, cf) => {
+      if cf->ChainFetcher.isLive {
+        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+      }
+    })
+    ->ignore
     Prometheus.ProgressReady.setAllReady()
   }
 
@@ -367,7 +366,7 @@ let validatePartitionQueryResponse = (
     ~totalTimeElapsed=stats.totalTimeElapsed,
     ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
     ~numEvents=parsedQueueItems->Array.length,
-    ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried,
+    ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
   )
 
   let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
