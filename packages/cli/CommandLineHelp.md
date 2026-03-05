@@ -28,6 +28,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
+* [`envio profile`↴](#envio-profile)
 
 ## `envio`
 
@@ -41,6 +42,7 @@ This document contains the help content for the `envio` command-line program.
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer without any automatic codegen
+* `profile` — Profile the running indexer by fetching and analyzing /metrics
 
 ###### **Options:**
 
@@ -347,6 +349,19 @@ Start the indexer without any automatic codegen
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
+
+
+
+## `envio profile`
+
+Profile the running indexer by fetching and analyzing /metrics
+
+**Usage:** `envio profile [OPTIONS]`
+
+###### **Options:**
+
+* `-u`, `--url <URL>` — Full URL of the indexer (e.g. http://localhost:9898). Overrides host/port env vars
+* `--duration <DURATION>` — Sample metrics over this many seconds for rate-based insights (e.g. events/sec, effect RPS). Without this flag, a single snapshot is taken
 
 
 
