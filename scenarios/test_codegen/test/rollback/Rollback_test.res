@@ -2582,14 +2582,11 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       // Resolve chunk2's second half: continuation from 116+ resolves to 118
       // This stores a reorg checkpoint at block 118
       let continuationCall = switch sourceMock.getItemsOrThrowCalls->Js.Array2.find(call => {
-        let fromBlock = call.payload["fromBlock"]
-        fromBlock >= 116 && fromBlock <= 118
+        call.payload["fromBlock"] == 116
       }) {
       | Some(call) => call
-      | None => Js.Exn.raiseError("Should have a pending continuation call with fromBlock in 116..118")
+      | None => Js.Exn.raiseError("Should have a pending continuation call with fromBlock == 116")
       }
-      t.expect(
-        continuationCall.payload["fromBlock"] >= 116, ~message=`Continuation should start from >= 116, got ${continuationCall.payload["fromBlock"]->Int.toString}`).toBeTruthy()
       continuationCall.resolve([], ~latestFetchedBlockNumber=118)
       await Utils.delay(0)
 
