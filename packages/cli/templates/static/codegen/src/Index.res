@@ -3,7 +3,7 @@
 NodeJs.process->NodeJs.onUnhandledRejection(reason => {
   reason
   ->ErrorHandling.make(~msg="Unhandled promise rejection")
-  ->ErrorHandling.log
+  ->ErrorHandling.logAndRaise
 })
 
 let main = async () => {
