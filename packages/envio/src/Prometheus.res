@@ -114,12 +114,12 @@ module SafeGauge = MakeSafePromMetric({
 
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_load_seconds",
+    "name": "envio_preload_seconds",
     "help": "Cumulative time spent on preloading entities during batch processing.",
   })
 
   let handlerTimeCounter = PromClient.Counter.makeCounter({
-    "name": "envio_processing_batch_handler_seconds",
+    "name": "envio_processing_seconds",
     "help": "Cumulative time spent executing event handlers during batch processing.",
   })
 
@@ -182,6 +182,69 @@ module ProcessingHandler = {
   let increment = (~contract, ~event, ~duration) => {
     let labels = {"contract": contract, "event": event}
     timeCounter->SafeCounter.handleFloat(~labels, ~value=duration)
+    count->SafeCounter.increment(~labels)
+  }
+}
+
+module PreloadHandler = {
+  let timeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_preload_handler_seconds",
+    ~help="Wall-clock time spent inside individual preload handler executions.",
+    ~labelSchema=handlerLabelsSchema,
+  )
+
+  let count = SafeCounter.makeOrThrow(
+    ~name="envio_preload_handler_total",
+    ~help="Total number of individual preload handler executions.",
+    ~labelSchema=handlerLabelsSchema,
+  )
+
+  let sumTimeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_preload_handler_seconds_total",
+    ~help="Cumulative time spent inside individual preload handler executions. Can exceed wall-clock time due to parallel execution.",
+    ~labelSchema=handlerLabelsSchema,
+  )
+
+  type operationRef = {
+    mutable pendingCount: int,
+    timerRef: Hrtime.timeRef,
+  }
+  let operations: Js.Dict.t<operationRef> = Js.Dict.empty()
+
+  let makeKey = (~contract, ~event) => contract ++ ":" ++ event
+
+  let startOperation = (~contract, ~event) => {
+    let key = makeKey(~contract, ~event)
+    switch operations->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(operationRef) => operationRef.pendingCount = operationRef.pendingCount + 1
+    | None =>
+      operations->Js.Dict.set(
+        key,
+        {
+          pendingCount: 1,
+          timerRef: Hrtime.makeTimer(),
+        },
+      )
+    }
+    Hrtime.makeTimer()
+  }
+
+  let endOperation = (timerRef, ~contract, ~event) => {
+    let key = makeKey(~contract, ~event)
+    let labels = {"contract": contract, "event": event}
+    let operationRef = operations->Js.Dict.unsafeGet(key)
+    operationRef.pendingCount = operationRef.pendingCount - 1
+    if operationRef.pendingCount === 0 {
+      timeCounter->SafeCounter.handleFloat(
+        ~labels,
+        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+      )
+      operations->Utils.Dict.deleteInPlace(key)
+    }
+    sumTimeCounter->SafeCounter.handleFloat(
+      ~labels,
+      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+    )
     count->SafeCounter.increment(~labels)
   }
 }

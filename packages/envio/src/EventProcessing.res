@@ -253,11 +253,15 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler}, event}) =>
+      | Event({eventConfig: {handler, contractName, name: eventName}, event}) =>
         switch handler {
         | None => ()
         | Some(handler) =>
           try {
+            let timerRef = Prometheus.PreloadHandler.startOperation(
+              ~contract=contractName,
+              ~event=eventName,
+            )
             promises->Array.push(
               handler({
                 event,
@@ -273,7 +277,14 @@ let preloadBatchOrThrow = async (
                   isResolved: false,
                   config,
                 }),
-              })->Promise.silentCatch,
+              })
+              ->Promise.thenResolve(_ => {
+                timerRef->Prometheus.PreloadHandler.endOperation(
+                  ~contract=contractName,
+                  ~event=eventName,
+                )
+              })
+              ->Promise.silentCatch,
               // Must have Promise.catch as well as normal catch,
               // because if user throws an error before await in the handler,
               // it won't create a rejected promise
