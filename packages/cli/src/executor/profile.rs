@@ -38,28 +38,78 @@ struct Metric {
 
 fn parse_prometheus_metrics(text: &str) -> Vec<Metric> {
     let selected: std::collections::HashSet<&str> = [
-        "benchmark_summary_data",
-        "benchmark_counters",
+        // System resources
         "process_cpu_user_seconds_total",
         "process_cpu_system_seconds_total",
         "process_resident_memory_bytes",
         "nodejs_heap_size_used_bytes",
         "nodejs_heap_size_total_bytes",
         "nodejs_eventloop_lag_seconds",
-        "envio_effect_calls_count",
-        "envio_effect_cache_count",
-        "envio_effect_calls_time",
-        "envio_effect_calls_sum_time",
-        "envio_effect_active_calls_count",
-        "envio_effect_queue_count",
-        "envio_effect_queue_time",
-        "envio_storage_load_time",
-        "envio_storage_load_sum_time",
-        "envio_storage_load_count",
+        // Processing pipeline counters
+        "envio_preload_seconds",
+        "envio_processing_seconds",
+        "envio_storage_write_seconds",
+        "envio_storage_write_total",
+        "envio_processing_max_batch_size",
+        // Per-handler metrics
+        "envio_processing_handler_seconds",
+        "envio_processing_handler_total",
+        "envio_preload_handler_seconds",
+        "envio_preload_handler_total",
+        "envio_preload_handler_seconds_total",
+        // Fetching metrics (per chain)
+        "envio_fetching_block_range_seconds",
+        "envio_fetching_block_range_parse_seconds",
+        "envio_fetching_block_range_total",
+        "envio_fetching_block_range_events_total",
+        "envio_fetching_block_range_size",
+        // Indexing metrics (per chain)
+        "envio_indexing_known_height",
+        "envio_indexing_addresses",
+        "envio_indexing_max_concurrency",
+        "envio_indexing_concurrency",
+        "envio_indexing_partitions",
+        "envio_indexing_idle_seconds",
+        "envio_indexing_source_waiting_seconds",
+        "envio_indexing_source_querying_seconds",
+        "envio_indexing_buffer_size",
+        "envio_indexing_target_buffer_size",
+        "envio_indexing_buffer_block",
+        "envio_indexing_end_block",
+        // Source metrics
+        "envio_source_request_total",
+        "envio_source_request_seconds_total",
+        "envio_source_known_height",
+        // Progress metrics
+        "envio_progress_block",
+        "envio_progress_events",
+        "envio_progress_latency",
+        "envio_progress_ready",
+        // Info
+        "envio_info",
+        // Effect API metrics
+        "envio_effect_call_total",
+        "envio_effect_cache",
+        "envio_effect_call_seconds",
+        "envio_effect_call_seconds_total",
+        "envio_effect_active_calls",
+        "envio_effect_queue",
+        "envio_effect_queue_wait_seconds",
+        "envio_effect_cache_invalidations",
+        // Storage load metrics
+        "envio_storage_load_seconds",
+        "envio_storage_load_seconds_total",
+        "envio_storage_load_total",
         "envio_storage_load_where_size",
         "envio_storage_load_size",
-        "envio_effect_cache_invalidations_count",
-        "envio_progress_latency",
+        // Sink metrics
+        "envio_sink_write_seconds",
+        "envio_sink_write_total",
+        // Reorg metrics
+        "envio_reorg_detected_total",
+        "envio_rollback_total",
+        "envio_rollback_seconds",
+        "envio_rollback_events",
     ]
     .into_iter()
     .collect();
@@ -151,7 +201,7 @@ fn split_labels(s: &str) -> Vec<&str> {
 }
 
 // ---------------------------------------------------------------------------
-//  Structured metric types (mirrors UI ConsolePage.res types)
+//  Structured metric types
 // ---------------------------------------------------------------------------
 
 fn parse_f64(s: &str) -> Option<f64> {
@@ -165,25 +215,9 @@ fn parse_i64(s: &str) -> Option<i64> {
         .or_else(|| s.parse::<f64>().ok().map(|f| f as i64))
 }
 
-#[derive(Debug, Default)]
-struct Duration {
-    max: Option<f64>,
-    mean: Option<f64>,
-    sum: Option<f64>,
-}
-
-#[derive(Debug, Default)]
-struct BatchSize {
-    max: Option<i64>,
-    mean: Option<i64>,
-    sum: Option<i64>,
-    number: Option<i64>,
-}
-
-#[derive(Debug, Default)]
-struct Handler {
-    label: String,
-    sum: i64,
+/// Convert seconds (float from counter) to milliseconds
+fn secs_to_ms(s: &str) -> Option<f64> {
+    parse_f64(s).map(|v| v * 1000.0)
 }
 
 #[derive(Debug, Default)]
@@ -196,17 +230,31 @@ struct ResourceMetrics {
     event_loop_lag: Option<f64>,
 }
 
+/// Per-handler timing from envio_processing_handler_* and envio_preload_handler_*
+#[derive(Debug, Default)]
+struct HandlerMetric {
+    label: String,
+    handler_seconds: f64,
+    handler_count: i64,
+    preload_seconds: f64,
+    preload_count: i64,
+    preload_sum_seconds: f64,
+}
+
+/// Processing pipeline data from the new counter-based metrics
 #[derive(Debug, Default)]
 struct PerformanceData {
-    batch_size: BatchSize,
-    contract_register_duration: Duration,
-    load_duration: Duration,
-    handler_duration: Duration,
-    db_write_duration: Duration,
-    total_time_elapsed: Duration,
-    handlers: Vec<Handler>,
-    total_run_time: Option<f64>,
+    // Cumulative pipeline durations (seconds converted to ms for display)
+    preload_ms: Option<f64>,
+    processing_ms: Option<f64>,
+    storage_write_ms: Option<f64>,
+    storage_write_count: Option<i64>,
+    max_batch_size: Option<i64>,
+    // Per-handler breakdown
+    handlers: Vec<HandlerMetric>,
     resources: ResourceMetrics,
+    // Info
+    version: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -214,12 +262,12 @@ struct EffectItem {
     name: String,
     call_count: i64,
     cache_count: i64,
-    calls_time: i64,
-    sum_time: i64,
+    call_seconds: f64,
+    sum_seconds: f64,
     active_calls: i64,
     queue_count: i64,
-    queue_time: i64,
-    cache_load_time: i64,
+    queue_wait_seconds: f64,
+    cache_load_seconds: f64,
     cache_load_count: Option<i64>,
     cache_load_where_size: Option<i64>,
     cache_load_hits: Option<i64>,
@@ -229,72 +277,114 @@ struct EffectItem {
 #[derive(Debug, Default)]
 struct StorageReadItem {
     name: String,
-    load_time: i64,
-    sum_time: i64,
+    load_seconds: f64,
+    sum_seconds: f64,
     count: i64,
     where_size: i64,
     size: i64,
 }
 
+/// Per-chain fetching stats from envio_fetching_block_range_*
 #[derive(Debug, Default)]
-struct ChainLatency {
+struct FetchingChainData {
     chain_id: String,
-    latency_ms: i64,
+    fetch_seconds: f64,
+    parse_seconds: f64,
+    fetch_count: i64,
+    events_fetched: i64,
+    blocks_covered: i64,
+}
+
+/// Per-chain indexing status from envio_indexing_*
+#[derive(Debug, Default)]
+struct IndexingChainData {
+    chain_id: String,
+    known_height: Option<i64>,
+    addresses: Option<i64>,
+    max_concurrency: Option<i64>,
+    concurrency: Option<i64>,
+    partitions: Option<i64>,
+    idle_seconds: f64,
+    source_waiting_seconds: f64,
+    source_querying_seconds: f64,
+    buffer_size: Option<i64>,
+    buffer_block: Option<i64>,
+    end_block: Option<i64>,
+}
+
+/// Per-chain progress from envio_progress_*
+#[derive(Debug, Default)]
+struct ProgressChainData {
+    chain_id: String,
+    block: Option<i64>,
+    events: Option<i64>,
+    latency_ms: Option<i64>,
+    ready: bool,
+}
+
+/// Sink write metrics
+#[derive(Debug, Default)]
+struct SinkItem {
+    name: String,
+    write_seconds: f64,
+    write_count: i64,
+}
+
+/// Reorg/rollback summary
+#[derive(Debug, Default)]
+struct ReorgData {
+    reorgs_detected: i64,
+    rollbacks: i64,
+    rollback_seconds: f64,
+    rollback_events: i64,
 }
 
 // ---------------------------------------------------------------------------
-//  Grouping functions (mirrors UI ConsolePage.res grouping logic)
+//  Grouping functions
 // ---------------------------------------------------------------------------
 
 fn group_performance(metrics: &[Metric]) -> PerformanceData {
     let mut data = PerformanceData::default();
+    let mut handler_map: HashMap<String, HandlerMetric> = HashMap::new();
 
     for m in metrics {
         match m.name.as_str() {
-            "benchmark_summary_data" => {
-                let group = m.labels.get("group").map(|s| s.as_str()).unwrap_or("");
-                let label = m.labels.get("label").map(|s| s.as_str()).unwrap_or("");
-                let stat = m.labels.get("stat").map(|s| s.as_str()).unwrap_or("");
-
-                if group == "EventProcessing Summary" {
-                    let dur = match label {
-                        "Contract Register Duration (ms)" => {
-                            Some(&mut data.contract_register_duration)
-                        }
-                        "Load Duration (ms)" => Some(&mut data.load_duration),
-                        "Handler Duration (ms)" => Some(&mut data.handler_duration),
-                        "DB Write Duration (ms)" => Some(&mut data.db_write_duration),
-                        "Total Time Elapsed (ms)" => Some(&mut data.total_time_elapsed),
-                        _ => None,
-                    };
-                    if let Some(dur) = dur {
-                        match stat {
-                            "max" => dur.max = parse_f64(&m.value),
-                            "mean" => dur.mean = parse_f64(&m.value),
-                            "sum" => dur.sum = parse_f64(&m.value),
-                            _ => {}
-                        }
+            "envio_preload_seconds" => data.preload_ms = secs_to_ms(&m.value),
+            "envio_processing_seconds" => data.processing_ms = secs_to_ms(&m.value),
+            "envio_storage_write_seconds" => data.storage_write_ms = secs_to_ms(&m.value),
+            "envio_storage_write_total" => data.storage_write_count = parse_i64(&m.value),
+            "envio_processing_max_batch_size" => data.max_batch_size = parse_i64(&m.value),
+            "envio_processing_handler_seconds" | "envio_processing_handler_total"
+            | "envio_preload_handler_seconds" | "envio_preload_handler_total"
+            | "envio_preload_handler_seconds_total" => {
+                let contract = m.labels.get("contract").map(|s| s.as_str()).unwrap_or("?");
+                let event = m.labels.get("event").map(|s| s.as_str()).unwrap_or("?");
+                let key = format!("{} {}", contract, event);
+                let h = handler_map.entry(key.clone()).or_insert_with(|| HandlerMetric {
+                    label: key,
+                    ..Default::default()
+                });
+                match m.name.as_str() {
+                    "envio_processing_handler_seconds" => {
+                        h.handler_seconds = parse_f64(&m.value).unwrap_or(0.0)
                     }
-                    if label == "Batch Size" {
-                        match stat {
-                            "n" => data.batch_size.number = parse_i64(&m.value),
-                            "max" => data.batch_size.max = parse_i64(&m.value),
-                            "mean" => data.batch_size.mean = parse_i64(&m.value),
-                            "sum" => data.batch_size.sum = parse_i64(&m.value),
-                            _ => {}
-                        }
+                    "envio_processing_handler_total" => {
+                        h.handler_count = parse_i64(&m.value).unwrap_or(0)
                     }
-                } else if group == "Handlers Per Event" && stat == "sum" {
-                    data.handlers.push(Handler {
-                        label: label.to_string(),
-                        sum: parse_i64(&m.value).unwrap_or(0),
-                    });
+                    "envio_preload_handler_seconds" => {
+                        h.preload_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                    }
+                    "envio_preload_handler_total" => {
+                        h.preload_count = parse_i64(&m.value).unwrap_or(0)
+                    }
+                    "envio_preload_handler_seconds_total" => {
+                        h.preload_sum_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                    }
+                    _ => {}
                 }
             }
-            "benchmark_counters" => {
-                if m.labels.get("label").map(|s| s.as_str()) == Some("Total Run Time (ms)") {
-                    data.total_run_time = parse_f64(&m.value);
-                }
+            "envio_info" => {
+                data.version = m.labels.get("version").cloned();
             }
             "process_cpu_user_seconds_total" => data.resources.cpu_user = parse_f64(&m.value),
             "process_cpu_system_seconds_total" => data.resources.cpu_system = parse_f64(&m.value),
@@ -306,8 +396,16 @@ fn group_performance(metrics: &[Metric]) -> PerformanceData {
         }
     }
 
-    // Sort handlers by sum descending
-    data.handlers.sort_by(|a, b| b.sum.cmp(&a.sum));
+    let mut handlers: Vec<HandlerMetric> = handler_map.into_values().collect();
+    // Sort by total time (handler + preload) descending
+    handlers.sort_by(|a, b| {
+        let total_a = a.handler_seconds + a.preload_seconds;
+        let total_b = b.handler_seconds + b.preload_seconds;
+        total_b
+            .partial_cmp(&total_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    data.handlers = handlers;
     data
 }
 
@@ -315,7 +413,6 @@ fn group_effects(metrics: &[Metric]) -> Vec<EffectItem> {
     let mut effects: HashMap<String, EffectItem> = HashMap::new();
 
     for m in metrics {
-        // Effect API metrics (keyed by "effect" label)
         if let Some(effect_name) = m.labels.get("effect") {
             let item = effects
                 .entry(effect_name.clone())
@@ -324,28 +421,28 @@ fn group_effects(metrics: &[Metric]) -> Vec<EffectItem> {
                     ..Default::default()
                 });
             match m.name.as_str() {
-                "envio_effect_calls_count" => {
+                "envio_effect_call_total" => {
                     item.call_count = parse_i64(&m.value).unwrap_or(0)
                 }
-                "envio_effect_cache_count" => {
+                "envio_effect_cache" => {
                     item.cache_count = parse_i64(&m.value).unwrap_or(0)
                 }
-                "envio_effect_calls_time" => {
-                    item.calls_time = parse_i64(&m.value).unwrap_or(0)
+                "envio_effect_call_seconds" => {
+                    item.call_seconds = parse_f64(&m.value).unwrap_or(0.0)
                 }
-                "envio_effect_calls_sum_time" => {
-                    item.sum_time = parse_i64(&m.value).unwrap_or(0)
+                "envio_effect_call_seconds_total" => {
+                    item.sum_seconds = parse_f64(&m.value).unwrap_or(0.0)
                 }
-                "envio_effect_active_calls_count" => {
+                "envio_effect_active_calls" => {
                     item.active_calls = parse_i64(&m.value).unwrap_or(0)
                 }
-                "envio_effect_queue_count" => {
+                "envio_effect_queue" => {
                     item.queue_count = parse_i64(&m.value).unwrap_or(0)
                 }
-                "envio_effect_queue_time" => {
-                    item.queue_time = parse_i64(&m.value).unwrap_or(0)
+                "envio_effect_queue_wait_seconds" => {
+                    item.queue_wait_seconds = parse_f64(&m.value).unwrap_or(0.0)
                 }
-                "envio_effect_cache_invalidations_count" => {
+                "envio_effect_cache_invalidations" => {
                     item.cache_invalidations = parse_i64(&m.value).unwrap_or(0)
                 }
                 _ => {}
@@ -363,10 +460,10 @@ fn group_effects(metrics: &[Metric]) -> Vec<EffectItem> {
                         ..Default::default()
                     });
                 match m.name.as_str() {
-                    "envio_storage_load_time" => {
-                        item.cache_load_time = parse_i64(&m.value).unwrap_or(0)
+                    "envio_storage_load_seconds" => {
+                        item.cache_load_seconds = parse_f64(&m.value).unwrap_or(0.0)
                     }
-                    "envio_storage_load_count" => {
+                    "envio_storage_load_total" => {
                         item.cache_load_count = parse_i64(&m.value)
                     }
                     "envio_storage_load_where_size" => {
@@ -383,9 +480,11 @@ fn group_effects(metrics: &[Metric]) -> Vec<EffectItem> {
 
     let mut sorted: Vec<EffectItem> = effects.into_values().collect();
     sorted.sort_by(|a, b| {
-        let total_a = a.calls_time + a.cache_load_time + a.queue_time;
-        let total_b = b.calls_time + b.cache_load_time + b.queue_time;
-        total_b.cmp(&total_a)
+        let total_a = a.call_seconds + a.cache_load_seconds + a.queue_wait_seconds;
+        let total_b = b.call_seconds + b.cache_load_seconds + b.queue_wait_seconds;
+        total_b
+            .partial_cmp(&total_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     sorted
 }
@@ -395,7 +494,6 @@ fn group_storage_reads(metrics: &[Metric]) -> Vec<StorageReadItem> {
 
     for m in metrics {
         if let Some(operation) = m.labels.get("operation") {
-            // Skip .effect operations (those are grouped under effects)
             if operation.ends_with(".effect") {
                 continue;
             }
@@ -406,13 +504,13 @@ fn group_storage_reads(metrics: &[Metric]) -> Vec<StorageReadItem> {
                     ..Default::default()
                 });
             match m.name.as_str() {
-                "envio_storage_load_time" => {
-                    item.load_time = parse_i64(&m.value).unwrap_or(0)
+                "envio_storage_load_seconds" => {
+                    item.load_seconds = parse_f64(&m.value).unwrap_or(0.0)
                 }
-                "envio_storage_load_sum_time" => {
-                    item.sum_time = parse_i64(&m.value).unwrap_or(0)
+                "envio_storage_load_seconds_total" => {
+                    item.sum_seconds = parse_f64(&m.value).unwrap_or(0.0)
                 }
-                "envio_storage_load_count" => item.count = parse_i64(&m.value).unwrap_or(0),
+                "envio_storage_load_total" => item.count = parse_i64(&m.value).unwrap_or(0),
                 "envio_storage_load_where_size" => {
                     item.where_size = parse_i64(&m.value).unwrap_or(0)
                 }
@@ -423,23 +521,172 @@ fn group_storage_reads(metrics: &[Metric]) -> Vec<StorageReadItem> {
     }
 
     let mut sorted: Vec<StorageReadItem> = operations.into_values().collect();
-    sorted.sort_by(|a, b| b.load_time.cmp(&a.load_time));
+    sorted.sort_by(|a, b| {
+        b.load_seconds
+            .partial_cmp(&a.load_seconds)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     sorted
 }
 
-fn group_chain_latencies(metrics: &[Metric]) -> Vec<ChainLatency> {
-    let mut latencies = Vec::new();
+fn group_fetching(metrics: &[Metric]) -> Vec<FetchingChainData> {
+    let mut chains: HashMap<String, FetchingChainData> = HashMap::new();
+
     for m in metrics {
-        if m.name == "envio_progress_latency" {
-            if let Some(chain_id) = m.labels.get("chainId") {
-                latencies.push(ChainLatency {
+        if let Some(chain_id) = m.labels.get("chainId") {
+            let entry = chains
+                .entry(chain_id.clone())
+                .or_insert_with(|| FetchingChainData {
                     chain_id: chain_id.clone(),
-                    latency_ms: parse_i64(&m.value).unwrap_or(0),
+                    ..Default::default()
                 });
+            match m.name.as_str() {
+                "envio_fetching_block_range_seconds" => {
+                    entry.fetch_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                }
+                "envio_fetching_block_range_parse_seconds" => {
+                    entry.parse_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                }
+                "envio_fetching_block_range_total" => {
+                    entry.fetch_count = parse_i64(&m.value).unwrap_or(0)
+                }
+                "envio_fetching_block_range_events_total" => {
+                    entry.events_fetched = parse_i64(&m.value).unwrap_or(0)
+                }
+                "envio_fetching_block_range_size" => {
+                    entry.blocks_covered = parse_i64(&m.value).unwrap_or(0)
+                }
+                _ => {}
             }
         }
     }
-    latencies
+
+    let mut sorted: Vec<FetchingChainData> = chains.into_values().collect();
+    sorted.sort_by(|a, b| a.chain_id.cmp(&b.chain_id));
+    sorted
+}
+
+fn group_indexing(metrics: &[Metric]) -> (Vec<IndexingChainData>, Option<i64>) {
+    let mut chains: HashMap<String, IndexingChainData> = HashMap::new();
+    let mut target_buffer_size: Option<i64> = None;
+
+    for m in metrics {
+        if m.name == "envio_indexing_target_buffer_size" {
+            target_buffer_size = parse_i64(&m.value);
+            continue;
+        }
+
+        if let Some(chain_id) = m.labels.get("chainId") {
+            let entry = chains
+                .entry(chain_id.clone())
+                .or_insert_with(|| IndexingChainData {
+                    chain_id: chain_id.clone(),
+                    ..Default::default()
+                });
+            match m.name.as_str() {
+                "envio_indexing_known_height" => entry.known_height = parse_i64(&m.value),
+                "envio_indexing_addresses" => entry.addresses = parse_i64(&m.value),
+                "envio_indexing_max_concurrency" => entry.max_concurrency = parse_i64(&m.value),
+                "envio_indexing_concurrency" => entry.concurrency = parse_i64(&m.value),
+                "envio_indexing_partitions" => entry.partitions = parse_i64(&m.value),
+                "envio_indexing_idle_seconds" => {
+                    entry.idle_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                }
+                "envio_indexing_source_waiting_seconds" => {
+                    entry.source_waiting_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                }
+                "envio_indexing_source_querying_seconds" => {
+                    entry.source_querying_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                }
+                "envio_indexing_buffer_size" => entry.buffer_size = parse_i64(&m.value),
+                "envio_indexing_buffer_block" => entry.buffer_block = parse_i64(&m.value),
+                "envio_indexing_end_block" => entry.end_block = parse_i64(&m.value),
+                _ => {}
+            }
+        }
+    }
+
+    let mut sorted: Vec<IndexingChainData> = chains.into_values().collect();
+    sorted.sort_by(|a, b| a.chain_id.cmp(&b.chain_id));
+    (sorted, target_buffer_size)
+}
+
+fn group_progress(metrics: &[Metric]) -> Vec<ProgressChainData> {
+    let mut chains: HashMap<String, ProgressChainData> = HashMap::new();
+
+    for m in metrics {
+        if let Some(chain_id) = m.labels.get("chainId") {
+            let entry = chains
+                .entry(chain_id.clone())
+                .or_insert_with(|| ProgressChainData {
+                    chain_id: chain_id.clone(),
+                    ..Default::default()
+                });
+            match m.name.as_str() {
+                "envio_progress_block" => entry.block = parse_i64(&m.value),
+                "envio_progress_events" => entry.events = parse_i64(&m.value),
+                "envio_progress_latency" => entry.latency_ms = parse_i64(&m.value),
+                "envio_progress_ready" => {
+                    entry.ready = parse_i64(&m.value).unwrap_or(0) == 1
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut sorted: Vec<ProgressChainData> = chains.into_values().collect();
+    sorted.sort_by(|a, b| a.chain_id.cmp(&b.chain_id));
+    sorted
+}
+
+fn group_sinks(metrics: &[Metric]) -> Vec<SinkItem> {
+    let mut sinks: HashMap<String, SinkItem> = HashMap::new();
+
+    for m in metrics {
+        if let Some(sink_name) = m.labels.get("sink") {
+            let item = sinks
+                .entry(sink_name.clone())
+                .or_insert_with(|| SinkItem {
+                    name: sink_name.clone(),
+                    ..Default::default()
+                });
+            match m.name.as_str() {
+                "envio_sink_write_seconds" => {
+                    item.write_seconds = parse_f64(&m.value).unwrap_or(0.0)
+                }
+                "envio_sink_write_total" => {
+                    item.write_count = parse_i64(&m.value).unwrap_or(0)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut sorted: Vec<SinkItem> = sinks.into_values().collect();
+    sorted.sort_by(|a, b| {
+        b.write_seconds
+            .partial_cmp(&a.write_seconds)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    sorted
+}
+
+fn group_reorg(metrics: &[Metric]) -> ReorgData {
+    let mut data = ReorgData::default();
+    for m in metrics {
+        match m.name.as_str() {
+            "envio_reorg_detected_total" => {
+                data.reorgs_detected += parse_i64(&m.value).unwrap_or(0)
+            }
+            "envio_rollback_total" => data.rollbacks = parse_i64(&m.value).unwrap_or(0),
+            "envio_rollback_seconds" => {
+                data.rollback_seconds = parse_f64(&m.value).unwrap_or(0.0)
+            }
+            "envio_rollback_events" => data.rollback_events = parse_i64(&m.value).unwrap_or(0),
+            _ => {}
+        }
+    }
+    data
 }
 
 // ---------------------------------------------------------------------------
@@ -458,8 +705,12 @@ fn fmt_time_ms(ms: f64) -> String {
     }
 }
 
-fn fmt_time_ms_i64(ms: i64) -> String {
-    fmt_time_ms(ms as f64)
+fn fmt_time_secs(secs: f64) -> String {
+    fmt_time_ms(secs * 1000.0)
+}
+
+fn fmt_optional_ms(ms: Option<f64>) -> String {
+    ms.map_or("-".to_string(), fmt_time_ms)
 }
 
 fn fmt_bytes(bytes: f64) -> String {
@@ -470,10 +721,6 @@ fn fmt_bytes(bytes: f64) -> String {
     } else {
         format!("{:.2}GB", bytes / 1024.0 / 1024.0 / 1024.0)
     }
-}
-
-fn fmt_optional_ms(ms: Option<f64>) -> String {
-    ms.map_or("-".to_string(), fmt_time_ms)
 }
 
 fn fmt_number(n: i64) -> String {
@@ -497,23 +744,27 @@ fn fmt_number(n: i64) -> String {
 
 #[derive(Debug)]
 struct DeltaPerformance {
-    events_processed: i64,
     elapsed_seconds: f64,
+    events_processed: i64,
     events_per_second: f64,
     batch_count_delta: i64,
     avg_batch_size: f64,
 }
 
 fn compute_delta(before: &[Metric], after: &[Metric], elapsed_secs: f64) -> DeltaPerformance {
+    // Use progress events to compute events processed during the window
+    let progress_before = group_progress(before);
+    let progress_after = group_progress(after);
+
+    let events_before: i64 = progress_before.iter().filter_map(|p| p.events).sum();
+    let events_after: i64 = progress_after.iter().filter_map(|p| p.events).sum();
+    let events_processed = events_after - events_before;
+
     let perf_before = group_performance(before);
     let perf_after = group_performance(after);
 
-    let events_before = perf_before.batch_size.sum.unwrap_or(0);
-    let events_after = perf_after.batch_size.sum.unwrap_or(0);
-    let events_processed = events_after - events_before;
-
-    let batches_before = perf_before.batch_size.number.unwrap_or(0);
-    let batches_after = perf_after.batch_size.number.unwrap_or(0);
+    let batches_before = perf_before.storage_write_count.unwrap_or(0);
+    let batches_after = perf_after.storage_write_count.unwrap_or(0);
     let batch_count_delta = batches_after - batches_before;
 
     let events_per_second = if elapsed_secs > 0.0 {
@@ -529,8 +780,8 @@ fn compute_delta(before: &[Metric], after: &[Metric], elapsed_secs: f64) -> Delt
     };
 
     DeltaPerformance {
-        events_processed,
         elapsed_seconds: elapsed_secs,
+        events_processed,
         events_per_second,
         batch_count_delta,
         avg_batch_size,
@@ -542,7 +793,8 @@ fn compute_effect_deltas(
     after: &[EffectItem],
     elapsed_secs: f64,
 ) -> Vec<(String, f64)> {
-    let before_map: HashMap<&str, i64> = before.iter().map(|e| (e.name.as_str(), e.call_count)).collect();
+    let before_map: HashMap<&str, i64> =
+        before.iter().map(|e| (e.name.as_str(), e.call_count)).collect();
     let mut deltas = Vec::new();
     for e in after {
         let prev = before_map.get(e.name.as_str()).copied().unwrap_or(0);
@@ -567,7 +819,11 @@ fn generate_report(
     let perf = group_performance(metrics);
     let effects = group_effects(metrics);
     let storage_reads = group_storage_reads(metrics);
-    let chain_latencies = group_chain_latencies(metrics);
+    let fetching = group_fetching(metrics);
+    let (indexing, target_buffer_size) = group_indexing(metrics);
+    let progress = group_progress(metrics);
+    let sinks = group_sinks(metrics);
+    let reorg = group_reorg(metrics);
 
     let mut md = String::new();
 
@@ -575,6 +831,10 @@ fn generate_report(
 
     // ── Overview ──
     md.push_str("## Overview\n\n");
+
+    if let Some(version) = &perf.version {
+        md.push_str(&format!("**Envio version**: {}\n\n", version));
+    }
 
     if let Some(delta) = delta {
         md.push_str(&format!(
@@ -591,83 +851,154 @@ fn generate_report(
         }
     }
 
-    let events_per_second = match (perf.batch_size.sum, perf.total_run_time) {
-        (Some(size), Some(time)) if time > 0.0 => Some(size as f64 / (time / 1000.0)),
-        _ => None,
-    };
+    let total_events: i64 = progress.iter().filter_map(|p| p.events).sum();
+    let total_processing_ms = [perf.preload_ms, perf.processing_ms, perf.storage_write_ms]
+        .iter()
+        .filter_map(|v| *v)
+        .sum::<f64>();
 
     md.push_str("| Metric | Value |\n|---|---|\n");
     md.push_str(&format!(
-        "| Profiling Time | {} |\n",
-        perf.total_run_time.map_or("-".to_string(), fmt_time_ms)
-    ));
-    md.push_str(&format!(
-        "| Processing Time | {} |\n",
-        fmt_optional_ms(perf.total_time_elapsed.sum)
-    ));
-    md.push_str(&format!(
         "| Total Events Processed | {} |\n",
-        perf.batch_size
-            .sum
-            .map_or("-".to_string(), |s| fmt_number(s))
-    ));
-    md.push_str(&format!(
-        "| Average Events/sec | {} |\n",
-        events_per_second.map_or("-".to_string(), |eps| format!("{:.0}", eps))
+        if total_events > 0 {
+            fmt_number(total_events)
+        } else {
+            "-".to_string()
+        }
     ));
     md.push_str(&format!(
         "| Total Batches | {} |\n",
-        perf.batch_size
-            .number
+        perf.storage_write_count
             .map_or("-".to_string(), |n| fmt_number(n))
     ));
     md.push_str(&format!(
-        "| Mean Batch Size | {} |\n",
-        perf.batch_size
-            .mean
-            .map_or("-".to_string(), |n| n.to_string())
-    ));
-    md.push_str(&format!(
         "| Max Batch Size | {} |\n",
-        perf.batch_size
-            .max
-            .map_or("-".to_string(), |n| n.to_string())
+        perf.max_batch_size
+            .map_or("-".to_string(), |n| fmt_number(n))
     ));
     md.push('\n');
 
     // ── Processing Pipeline Breakdown ──
     md.push_str("## Processing Pipeline\n\n");
-    md.push_str("| Stage | Sum | Mean | Max |\n|---|---|---|---|\n");
-
-    let stages: &[(&str, &Duration)] = &[
-        ("Loaders", &perf.load_duration),
-        ("Handlers", &perf.handler_duration),
-        ("DB Writes", &perf.db_write_duration),
-        ("Contract Register", &perf.contract_register_duration),
-        ("Total Elapsed", &perf.total_time_elapsed),
-    ];
-    for (name, dur) in stages {
+    md.push_str("Cumulative time spent in each processing stage.\n\n");
+    md.push_str("| Stage | Time |\n|---|---|\n");
+    md.push_str(&format!(
+        "| Loaders (preload) | {} |\n",
+        fmt_optional_ms(perf.preload_ms)
+    ));
+    md.push_str(&format!(
+        "| Handlers (processing) | {} |\n",
+        fmt_optional_ms(perf.processing_ms)
+    ));
+    md.push_str(&format!(
+        "| DB Writes | {} |\n",
+        fmt_optional_ms(perf.storage_write_ms)
+    ));
+    if total_processing_ms > 0.0 {
         md.push_str(&format!(
-            "| {} | {} | {} | {} |\n",
-            name,
-            fmt_optional_ms(dur.sum),
-            fmt_optional_ms(dur.mean),
-            fmt_optional_ms(dur.max),
+            "| **Total** | **{}** |\n",
+            fmt_time_ms(total_processing_ms)
         ));
     }
     md.push('\n');
 
-    // ── Handlers Per Event ──
+    // Pipeline percentage breakdown
+    if total_processing_ms > 0.0 {
+        if let (Some(preload), Some(processing), Some(write)) =
+            (perf.preload_ms, perf.processing_ms, perf.storage_write_ms)
+        {
+            md.push_str(&format!(
+                "Pipeline split: Loaders {:.0}% | Handlers {:.0}% | DB Writes {:.0}%\n\n",
+                preload / total_processing_ms * 100.0,
+                processing / total_processing_ms * 100.0,
+                write / total_processing_ms * 100.0,
+            ));
+        }
+    }
+
+    // ── Per-Handler Breakdown ──
     if !perf.handlers.is_empty() {
-        md.push_str("## Handlers Per Event\n\n");
-        md.push_str("Sorted by total time (descending).\n\n");
-        md.push_str("| Handler | Total Time |\n|---|---|\n");
+        md.push_str("## Handler Breakdown\n\n");
+        md.push_str("Per-handler timing sorted by total time (handler + preload).\n\n");
+        md.push_str("| Handler | Handler Time | Calls | Preload Time | Preload Calls |\n|---|---|---|---|---|\n");
         for h in &perf.handlers {
             md.push_str(&format!(
-                "| {} | {} |\n",
+                "| {} | {} | {} | {} | {} |\n",
                 h.label,
-                fmt_time_ms_i64(h.sum)
+                fmt_time_secs(h.handler_seconds),
+                fmt_number(h.handler_count),
+                fmt_time_secs(h.preload_seconds),
+                fmt_number(h.preload_count),
             ));
+        }
+        md.push('\n');
+    }
+
+    // ── Chain Progress ──
+    if !progress.is_empty() {
+        md.push_str("## Chain Progress\n\n");
+        md.push_str("| Chain | Block | Events | Latency | Synced |\n|---|---|---|---|---|\n");
+        for p in &progress {
+            md.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                p.chain_id,
+                p.block.map_or("-".to_string(), |b| fmt_number(b)),
+                p.events.map_or("-".to_string(), |e| fmt_number(e)),
+                p.latency_ms
+                    .map_or("-".to_string(), |ms| fmt_time_ms(ms as f64)),
+                if p.ready { "Yes" } else { "No" },
+            ));
+        }
+        md.push('\n');
+    }
+
+    // ── Fetching Performance ──
+    if !fetching.is_empty() {
+        md.push_str("## Fetching Performance\n\n");
+        md.push_str("Per-chain data fetching statistics.\n\n");
+        md.push_str("| Chain | Fetch Time | Parse Time | Fetches | Events Fetched | Blocks Covered | Avg Events/Fetch |\n|---|---|---|---|---|---|---|\n");
+        for f in &fetching {
+            let avg_events_per_fetch = if f.fetch_count > 0 {
+                format!("{:.0}", f.events_fetched as f64 / f.fetch_count as f64)
+            } else {
+                "-".to_string()
+            };
+            md.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} |\n",
+                f.chain_id,
+                fmt_time_secs(f.fetch_seconds),
+                fmt_time_secs(f.parse_seconds),
+                fmt_number(f.fetch_count),
+                fmt_number(f.events_fetched),
+                fmt_number(f.blocks_covered),
+                avg_events_per_fetch,
+            ));
+        }
+        md.push('\n');
+    }
+
+    // ── Indexing Status ──
+    if !indexing.is_empty() {
+        md.push_str("## Indexing Status\n\n");
+        md.push_str("Per-chain indexing configuration and timing.\n\n");
+        md.push_str("| Chain | Known Height | Buffer | Concurrency | Partitions | Addresses | Idle Time | Waiting | Querying |\n|---|---|---|---|---|---|---|---|---|\n");
+        for idx in &indexing {
+            md.push_str(&format!(
+                "| {} | {} | {} | {}/{} | {} | {} | {} | {} | {} |\n",
+                idx.chain_id,
+                idx.known_height.map_or("-".to_string(), |h| fmt_number(h)),
+                idx.buffer_size.map_or("-".to_string(), |b| fmt_number(b)),
+                idx.concurrency.map_or("-".to_string(), |c| c.to_string()),
+                idx.max_concurrency.map_or("-".to_string(), |c| c.to_string()),
+                idx.partitions.map_or("-".to_string(), |p| p.to_string()),
+                idx.addresses.map_or("-".to_string(), |a| fmt_number(a)),
+                fmt_time_secs(idx.idle_seconds),
+                fmt_time_secs(idx.source_waiting_seconds),
+                fmt_time_secs(idx.source_querying_seconds),
+            ));
+        }
+        if let Some(tbs) = target_buffer_size {
+            md.push_str(&format!("\nTarget buffer size: {}\n", fmt_number(tbs)));
         }
         md.push('\n');
     }
@@ -681,7 +1012,7 @@ fn generate_report(
              |---|---|---|---|---|---|---|---|\n",
         );
         for e in &effects {
-            let total_time = e.calls_time + e.cache_load_time + e.queue_time;
+            let total_time = e.call_seconds + e.cache_load_seconds + e.queue_wait_seconds;
             let batched_pct = match (e.cache_load_where_size, e.cache_load_count) {
                 (Some(ws), Some(c)) if ws > 0 && c > 0 => {
                     let saved = ws - c;
@@ -692,7 +1023,7 @@ fn generate_report(
             md.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 e.name,
-                fmt_time_ms_i64(total_time),
+                fmt_time_secs(total_time),
                 fmt_number(e.call_count),
                 e.active_calls,
                 e.queue_count,
@@ -707,15 +1038,15 @@ fn generate_report(
         md.push_str("### Effect Time Breakdown\n\n");
         md.push_str("| Effect | Cache Loading | Queue Time | Execution | Concurrency Saved |\n|---|---|---|---|---|\n");
         for e in &effects {
-            let concurrency_saved = if e.sum_time > 0 {
-                fmt_time_ms_i64(e.sum_time)
+            let concurrency_saved = if e.sum_seconds > 0.0 {
+                fmt_time_secs(e.sum_seconds)
             } else {
                 "-".to_string()
             };
-            let avg_exec = if e.call_count > 0 && e.sum_time > 0 {
+            let avg_exec = if e.call_count > 0 && e.sum_seconds > 0.0 {
                 format!(
                     " (avg {})",
-                    fmt_time_ms_i64(e.sum_time / e.call_count)
+                    fmt_time_secs(e.sum_seconds / e.call_count as f64)
                 )
             } else {
                 String::new()
@@ -723,9 +1054,9 @@ fn generate_report(
             md.push_str(&format!(
                 "| {} | {} | {} | {}{} | {} |\n",
                 e.name,
-                fmt_time_ms_i64(e.cache_load_time),
-                fmt_time_ms_i64(e.queue_time),
-                fmt_time_ms_i64(e.calls_time),
+                fmt_time_secs(e.cache_load_seconds),
+                fmt_time_secs(e.queue_wait_seconds),
+                fmt_time_secs(e.call_seconds),
                 avg_exec,
                 concurrency_saved,
             ));
@@ -752,7 +1083,7 @@ fn generate_report(
         md.push_str("| Operation | Time | Avg/Query | Calls | Batched % | Found % |\n|---|---|---|---|---|---|\n");
         for op in &storage_reads {
             let avg_per_query = if op.count > 0 {
-                fmt_time_ms_i64(op.sum_time / op.count)
+                fmt_time_secs(op.sum_seconds / op.count as f64)
             } else {
                 "-".to_string()
             };
@@ -770,7 +1101,7 @@ fn generate_report(
             md.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} |\n",
                 op.name,
-                fmt_time_ms_i64(op.load_time),
+                fmt_time_secs(op.load_seconds),
                 avg_per_query,
                 fmt_number(op.where_size),
                 batched_pct,
@@ -780,15 +1111,43 @@ fn generate_report(
         md.push('\n');
     }
 
-    // ── Chain Progress Latency ──
-    if !chain_latencies.is_empty() {
-        md.push_str("## Chain Latency\n\n");
-        md.push_str("| Chain ID | Latency |\n|---|---|\n");
-        for cl in &chain_latencies {
+    // ── Sink Writes ──
+    if !sinks.is_empty() {
+        md.push_str("## Sink Writes\n\n");
+        md.push_str("| Sink | Time | Writes |\n|---|---|---|\n");
+        for s in &sinks {
             md.push_str(&format!(
-                "| {} | {} |\n",
-                cl.chain_id,
-                fmt_time_ms_i64(cl.latency_ms)
+                "| {} | {} | {} |\n",
+                s.name,
+                fmt_time_secs(s.write_seconds),
+                fmt_number(s.write_count),
+            ));
+        }
+        md.push('\n');
+    }
+
+    // ── Reorg/Rollback ──
+    if reorg.reorgs_detected > 0 || reorg.rollbacks > 0 {
+        md.push_str("## Reorgs & Rollbacks\n\n");
+        md.push_str("| Metric | Value |\n|---|---|\n");
+        md.push_str(&format!(
+            "| Reorgs Detected | {} |\n",
+            fmt_number(reorg.reorgs_detected)
+        ));
+        md.push_str(&format!(
+            "| Rollbacks | {} |\n",
+            fmt_number(reorg.rollbacks)
+        ));
+        if reorg.rollback_seconds > 0.0 {
+            md.push_str(&format!(
+                "| Rollback Time | {} |\n",
+                fmt_time_secs(reorg.rollback_seconds)
+            ));
+        }
+        if reorg.rollback_events > 0 {
+            md.push_str(&format!(
+                "| Events Rolled Back | {} |\n",
+                fmt_number(reorg.rollback_events)
             ));
         }
         md.push('\n');
@@ -835,73 +1194,40 @@ fn generate_report(
 
     let mut insights = Vec::new();
 
-    // Performance rating
-    if let Some(eps) = events_per_second {
-        if eps > 10_000.0 {
+    // Performance rating from delta mode
+    if let Some(delta) = delta {
+        if delta.events_per_second > 10_000.0 {
             insights.push(format!(
-                "**Excellent performance** — processing {:.0} events/sec. The indexer is running optimally.",
-                eps
+                "**Excellent performance** — processing {:.0} events/sec.",
+                delta.events_per_second
             ));
-        } else if eps > 5_000.0 {
+        } else if delta.events_per_second > 5_000.0 {
             insights.push(format!(
                 "**Very good performance** — processing {:.0} events/sec.",
-                eps
+                delta.events_per_second
             ));
-        } else if eps > 1_000.0 {
+        } else if delta.events_per_second > 1_000.0 {
             insights.push(format!(
                 "**Good performance** — processing {:.0} events/sec. There may be room for optimization.",
-                eps
+                delta.events_per_second
             ));
-        } else if eps > 500.0 {
+        } else if delta.events_per_second > 500.0 {
             insights.push(format!(
-                "**Performance could be improved** — only {:.0} events/sec. Review handler and loader durations below.",
-                eps
+                "**Performance could be improved** — only {:.0} events/sec.",
+                delta.events_per_second
             ));
-        } else {
+        } else if delta.events_processed > 0 {
             insights.push(format!(
-                "**Performance needs optimization** — only {:.0} events/sec. This indicates significant bottlenecks.",
-                eps
+                "**Performance needs optimization** — only {:.0} events/sec.",
+                delta.events_per_second
             ));
         }
     }
 
-    // Profiling vs processing time gap
-    if let (Some(run_time), Some(processing_time)) =
-        (perf.total_run_time, perf.total_time_elapsed.sum)
-    {
-        if run_time > 0.0 {
-            let utilization = processing_time / run_time * 100.0;
-            if utilization < 70.0 {
-                insights.push(format!(
-                    "**Processing utilization is low** ({:.0}%). The indexer spends {:.0}% of profiling time idle, likely waiting for event fetching. Ensure HyperSync is enabled for all supported networks and use field selection to prevent over-fetching.",
-                    utilization,
-                    100.0 - utilization,
-                ));
-            } else {
-                insights.push(format!(
-                    "Processing utilization: {:.0}% — event fetching is not a bottleneck.",
-                    utilization,
-                ));
-            }
-        }
-    }
-
-    // Batch size insights
-    if let Some(mean_batch) = perf.batch_size.mean {
-        if mean_batch < 100 {
-            insights.push(format!(
-                "**Small average batch size** ({}) — this suggests events are sparse or fetching is slow. For historical sync, batch sizes close to 5,000 are ideal.",
-                mean_batch
-            ));
-        }
-    }
-
-    // Handler bottleneck
-    if let (Some(handler_sum), Some(total_sum)) =
-        (perf.handler_duration.sum, perf.total_time_elapsed.sum)
-    {
-        if total_sum > 0.0 {
-            let handler_pct = handler_sum / total_sum * 100.0;
+    // Pipeline bottleneck detection
+    if total_processing_ms > 0.0 {
+        if let Some(handler_ms) = perf.processing_ms {
+            let handler_pct = handler_ms / total_processing_ms * 100.0;
             if handler_pct > 50.0 {
                 insights.push(format!(
                     "**Handlers are the main bottleneck** — {:.0}% of processing time. Move async operations to loaders using `Promise.all` for parallelization.",
@@ -909,33 +1235,21 @@ fn generate_report(
                 ));
             }
         }
-    }
-
-    // Loader bottleneck
-    if let (Some(load_sum), Some(total_sum)) =
-        (perf.load_duration.sum, perf.total_time_elapsed.sum)
-    {
-        if total_sum > 0.0 {
-            let load_pct = load_sum / total_sum * 100.0;
-            if load_pct > 40.0 {
+        if let Some(preload_ms) = perf.preload_ms {
+            let preload_pct = preload_ms / total_processing_ms * 100.0;
+            if preload_pct > 40.0 {
                 insights.push(format!(
                     "**Loaders are a significant bottleneck** — {:.0}% of processing time. Use `Promise.all` for multiple async operations and consider using the Effect API for external calls.",
-                    load_pct
+                    preload_pct
                 ));
             }
         }
-    }
-
-    // DB write bottleneck
-    if let (Some(db_sum), Some(total_sum)) =
-        (perf.db_write_duration.sum, perf.total_time_elapsed.sum)
-    {
-        if total_sum > 0.0 {
-            let db_pct = db_sum / total_sum * 100.0;
-            if db_pct > 30.0 {
+        if let Some(write_ms) = perf.storage_write_ms {
+            let write_pct = write_ms / total_processing_ms * 100.0;
+            if write_pct > 30.0 {
                 insights.push(format!(
                     "**DB writes are a significant bottleneck** — {:.0}% of processing time. Consider reducing the number of entity writes or optimizing your schema.",
-                    db_pct
+                    write_pct
                 ));
             }
         }
@@ -948,23 +1262,48 @@ fn generate_report(
         insights.push(format!(
             "**Slowest handlers**: `{}` ({}) and `{}` ({}).",
             top.label,
-            fmt_time_ms_i64(top.sum),
+            fmt_time_secs(top.handler_seconds + top.preload_seconds),
             second.label,
-            fmt_time_ms_i64(second.sum),
+            fmt_time_secs(second.handler_seconds + second.preload_seconds),
         ));
     } else if let Some(top) = perf.handlers.first() {
         insights.push(format!(
             "**Slowest handler**: `{}` ({}).",
             top.label,
-            fmt_time_ms_i64(top.sum),
+            fmt_time_secs(top.handler_seconds + top.preload_seconds),
         ));
+    }
+
+    // Fetching insights
+    for f in &fetching {
+        if f.fetch_count > 0 {
+            let avg_fetch_time = f.fetch_seconds / f.fetch_count as f64;
+            if avg_fetch_time > 5.0 {
+                insights.push(format!(
+                    "**Chain {} has slow fetch times** (avg {:.1}s per fetch). Consider enabling HyperSync or using field selection to reduce payload size.",
+                    f.chain_id, avg_fetch_time
+                ));
+            }
+        }
+    }
+
+    // Indexing idle time insights
+    for idx in &indexing {
+        let total_time = idx.idle_seconds + idx.source_waiting_seconds + idx.source_querying_seconds;
+        if total_time > 0.0 && idx.idle_seconds / total_time > 0.5 {
+            insights.push(format!(
+                "**Chain {} indexer is idle {:.0}% of the time** — event processing is faster than fetching. Ensure HyperSync is enabled and use field selection.",
+                idx.chain_id,
+                idx.idle_seconds / total_time * 100.0,
+            ));
+        }
     }
 
     // Effect insights
     for e in &effects {
-        let total = e.calls_time + e.cache_load_time + e.queue_time;
-        if e.queue_time > 0 && total > 0 {
-            let queue_pct = e.queue_time as f64 / total as f64 * 100.0;
+        let total = e.call_seconds + e.cache_load_seconds + e.queue_wait_seconds;
+        if e.queue_wait_seconds > 0.0 && total > 0.0 {
+            let queue_pct = e.queue_wait_seconds / total * 100.0;
             if queue_pct > 30.0 {
                 insights.push(format!(
                     "**Effect `{}` has high queue time** ({:.0}% of its total time). Consider increasing concurrency or optimizing the external service.",
@@ -1030,41 +1369,38 @@ fn generate_report(
     md.push_str("## Raw Metric Summary\n\n");
     md.push_str("<details>\n<summary>Full metric values for AI analysis</summary>\n\n");
     md.push_str("```\n");
-    md.push_str(&format!(
-        "total_run_time_ms={}\n",
-        perf.total_run_time.map_or("-".to_string(), |v| format!("{:.0}", v))
-    ));
-    md.push_str(&format!(
-        "total_events={}\n",
-        perf.batch_size.sum.map_or("-".to_string(), |v| v.to_string())
-    ));
+    md.push_str(&format!("total_events={}\n", total_events));
     md.push_str(&format!(
         "total_batches={}\n",
-        perf.batch_size.number.map_or("-".to_string(), |v| v.to_string())
+        perf.storage_write_count
+            .map_or("-".to_string(), |v| v.to_string())
     ));
     md.push_str(&format!(
-        "events_per_second={}\n",
-        events_per_second.map_or("-".to_string(), |v| format!("{:.1}", v))
+        "preload_ms={}\n",
+        perf.preload_ms
+            .map_or("-".to_string(), |v| format!("{:.0}", v))
     ));
     md.push_str(&format!(
-        "handler_sum_ms={}\n",
-        perf.handler_duration.sum.map_or("-".to_string(), |v| format!("{:.0}", v))
+        "processing_ms={}\n",
+        perf.processing_ms
+            .map_or("-".to_string(), |v| format!("{:.0}", v))
     ));
     md.push_str(&format!(
-        "loader_sum_ms={}\n",
-        perf.load_duration.sum.map_or("-".to_string(), |v| format!("{:.0}", v))
-    ));
-    md.push_str(&format!(
-        "db_write_sum_ms={}\n",
-        perf.db_write_duration.sum.map_or("-".to_string(), |v| format!("{:.0}", v))
+        "storage_write_ms={}\n",
+        perf.storage_write_ms
+            .map_or("-".to_string(), |v| format!("{:.0}", v))
     ));
     md.push_str(&format!(
         "memory_mb={}\n",
-        perf.resources.memory_bytes.map_or("-".to_string(), |v| format!("{:.1}", v / 1024.0 / 1024.0))
+        perf.resources
+            .memory_bytes
+            .map_or("-".to_string(), |v| format!("{:.1}", v / 1024.0 / 1024.0))
     ));
     md.push_str(&format!(
         "event_loop_lag_ms={}\n",
-        perf.resources.event_loop_lag.map_or("-".to_string(), |v| format!("{:.2}", v * 1000.0))
+        perf.resources
+            .event_loop_lag
+            .map_or("-".to_string(), |v| format!("{:.2}", v * 1000.0))
     ));
     md.push_str("```\n\n");
     md.push_str("</details>\n");
