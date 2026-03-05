@@ -273,7 +273,7 @@ module Make = () => {
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: (
         {
-          totalTimeElapsed: 0,
+          totalTimeElapsed: 0.,
         }: Source.blockRangeFetchStats
       ),
     }
