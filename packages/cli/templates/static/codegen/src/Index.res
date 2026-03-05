@@ -4,7 +4,6 @@ NodeJs.process->NodeJs.onUnhandledRejection(reason => {
   reason
   ->ErrorHandling.make(~msg="Unhandled promise rejection")
   ->ErrorHandling.log
-  NodeJs.process->NodeJs.exitWithCode(Failure)
 })
 
 let main = async () => {
