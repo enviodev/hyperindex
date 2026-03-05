@@ -513,9 +513,9 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
-    getHeightMethodName: "getHeight",
     getHeightOrThrow: async () => {
-      switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
+      let timerRef = Hrtime.makeTimer()
+      let result = switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>
         Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
@@ -525,6 +525,10 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         0
       | ErrorMessage(m) => Js.Exn.raiseError(m)
       }
+      let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
+      Prometheus.SourceRequestCount.addSumTime(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~timeMillis)
+      result
     },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>

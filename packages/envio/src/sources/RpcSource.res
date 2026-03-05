@@ -1112,9 +1112,13 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
-    getHeightMethodName: "eth_blockNumber",
-    getHeightOrThrow: () => {
-      Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+    getHeightOrThrow: async () => {
+      let timerRef = Hrtime.makeTimer()
+      let height = await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+      let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber")
+      Prometheus.SourceRequestCount.addSumTime(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="eth_blockNumber", ~timeMillis)
+      height
     },
     getItemsOrThrow,
     ?createHeightSubscription,

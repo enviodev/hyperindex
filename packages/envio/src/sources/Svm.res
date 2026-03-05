@@ -53,9 +53,13 @@ let makeRPCSource = (~chain, ~rpc: string): Source.t => {
     pollingInterval: 10_000,
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
       Js.Exn.raiseError("Svm does not support getting block hashes"),
-    getHeightMethodName: "getSlot",
-    getHeightOrThrow: () => {
-      GetFinalizedSlot.route->Rest.fetch((), ~client)
+    getHeightOrThrow: async () => {
+      let timerRef = Hrtime.makeTimer()
+      let height = await GetFinalizedSlot.route->Rest.fetch((), ~client)
+      let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
+      Prometheus.SourceRequestCount.addSumTime(~sourceName=name, ~chainId, ~method="getSlot", ~timeMillis)
+      height
     },
     getItemsOrThrow: (
       ~fromBlock as _,

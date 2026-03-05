@@ -212,14 +212,7 @@ let getSourceNewHeight = async (
     | None =>
       // No subscription, use REST polling
       try {
-        let timerRef = Hrtime.makeTimer()
         let height = await source.getHeightOrThrow()
-        let sourceName = source.name
-        let chainId = source.chain->ChainMap.Chain.toChainId
-        let method = source.getHeightMethodName
-        let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-        Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method)
-        Prometheus.SourceRequestCount.addSumTime(~sourceName, ~chainId, ~method, ~timeMillis)
 
         newHeight := height
         if height <= knownHeight {

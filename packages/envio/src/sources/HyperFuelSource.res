@@ -497,9 +497,13 @@ let make = ({chain, endpointUrl}: options): t => {
     getBlockHashes,
     pollingInterval: 100,
     poweredByHyperSync: true,
-    getHeightMethodName: "getHeight",
-    getHeightOrThrow: () => {
-      HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
+    getHeightOrThrow: async () => {
+      let timerRef = Hrtime.makeTimer()
+      let height = await HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
+      let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
+      Prometheus.SourceRequestCount.addSumTime(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~timeMillis)
+      height
     },
     getItemsOrThrow,
   }
