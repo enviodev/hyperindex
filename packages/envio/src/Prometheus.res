@@ -563,7 +563,7 @@ module RollbackSuccess = {
   })
 
   let eventsCounter = PromClient.Counter.makeCounter({
-    "name": "envio_rollback_events_total",
+    "name": "envio_rollback_events",
     "help": "Number of events rollbacked on reorg",
   })
 
@@ -645,17 +645,6 @@ module ProgressEventsCount = {
   }
 }
 
-module ProgressBatchCount = {
-  let counter = PromClient.Counter.makeCounter({
-    "name": "envio_progress_batches_total",
-    "help": "The number of batches processed and reflected in the database.",
-  })
-
-  let increment = () => {
-    counter->PromClient.Counter.inc
-  }
-}
-
 module ProgressLatency = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_progress_latency",
@@ -674,25 +663,25 @@ let effectLabelsSchema = S.object(s => {
 
 module EffectCalls = {
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_calls_seconds",
+    ~name="envio_effect_call_seconds",
     ~help="Processing time taken to call the Effect function.",
     ~labelSchema=effectLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_calls_seconds_total",
+    ~name="envio_effect_call_seconds_total",
     ~help="Cumulative time spent calling the Effect function during the indexing process.",
     ~labelSchema=effectLabelsSchema,
   )
 
   let totalCallsCount = SafeCounter.makeOrThrow(
-    ~name="envio_effect_calls_total",
+    ~name="envio_effect_call_total",
     ~help="Cumulative number of resolved Effect function calls during the indexing process.",
     ~labelSchema=effectLabelsSchema,
   )
 
   let activeCallsCount = SafeGauge.makeOrThrow(
-    ~name="envio_effect_active_calls_total",
+    ~name="envio_effect_active_call_total",
     ~help="The number of Effect function calls that are currently running.",
     ~labelSchema=effectLabelsSchema,
   )
@@ -730,7 +719,7 @@ module EffectQueueCount = {
   )
 
   let timeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_effect_queue_seconds",
+    ~name="envio_effect_queue_wait_seconds",
     ~help="The time spent waiting in the rate limit queue.",
     ~labelSchema=effectLabelsSchema,
   )

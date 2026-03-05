@@ -178,8 +178,6 @@ Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
 let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ctx: Ctx.t) => {
-  Prometheus.ProgressBatchCount.increment()
-
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
