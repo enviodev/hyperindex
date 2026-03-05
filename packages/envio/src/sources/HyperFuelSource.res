@@ -497,8 +497,8 @@ let make = ({chain, endpointUrl}: options): t => {
     getBlockHashes,
     pollingInterval: 100,
     poweredByHyperSync: true,
+    getHeightMethodName: "getHeight",
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
       HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
     },
     getItemsOrThrow,

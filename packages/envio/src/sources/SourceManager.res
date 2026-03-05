@@ -214,14 +214,12 @@ let getSourceNewHeight = async (
       try {
         let timerRef = Hrtime.makeTimer()
         let height = await source.getHeightOrThrow()
-        let labels = {
-          "source": source.name,
-          "chainId": source.chain->ChainMap.Chain.toChainId,
-        }
-        Prometheus.SourceGetHeightDuration.increment(
-          ~labels,
-          ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
-        )
+        let sourceName = source.name
+        let chainId = source.chain->ChainMap.Chain.toChainId
+        let method = source.getHeightMethodName
+        let timeMillis = timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+        Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method)
+        Prometheus.SourceRequestCount.addSumTime(~sourceName, ~chainId, ~method, ~timeMillis)
 
         newHeight := height
         if height <= knownHeight {

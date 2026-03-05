@@ -513,12 +513,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
+    getHeightMethodName: "getHeight",
     getHeightOrThrow: async () => {
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-      )
       switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>

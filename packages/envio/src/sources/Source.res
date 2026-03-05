@@ -44,6 +44,7 @@ type t = {
     ~blockNumbers: array<int>,
     ~logger: Pino.t,
   ) => promise<result<array<ReorgDetection.blockDataWithTimestamp>, exn>>,
+  getHeightMethodName: string,
   getHeightOrThrow: unit => promise<int>,
   getItemsOrThrow: (
     ~fromBlock: int,

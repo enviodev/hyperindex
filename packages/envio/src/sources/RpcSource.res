@@ -1112,12 +1112,8 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
+    getHeightMethodName: "eth_blockNumber",
     getHeightOrThrow: () => {
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-      )
       Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
     },
     getItemsOrThrow,

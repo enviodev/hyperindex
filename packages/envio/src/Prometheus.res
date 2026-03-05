@@ -411,9 +411,22 @@ module SourceRequestCount = {
     ~labelSchema=sourceRequestLabelsSchema,
   )
 
+  let sumTimeCounter = SafeCounter.makeOrThrow(
+    ~name="envio_source_request_sum_time",
+    ~help="Cumulative time spent on data source requests. (milliseconds)",
+    ~labelSchema=sourceRequestLabelsSchema,
+  )
+
   let increment = (~sourceName, ~chainId, ~method) => {
     counter->SafeCounter.increment(
       ~labels={"source": sourceName, "chainId": chainId, "method": method},
+    )
+  }
+
+  let addSumTime = (~sourceName, ~chainId, ~method, ~timeMillis) => {
+    sumTimeCounter->SafeCounter.handleInt(
+      ~labels={"source": sourceName, "chainId": chainId, "method": method},
+      ~value=timeMillis,
     )
   }
 }
@@ -433,24 +446,7 @@ module SourceHeight = {
   }
 }
 
-module SourceGetHeightDuration = {
-  let sumTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_source_get_height_duration_sum_time",
-    ~help="Cumulative time spent on source get height requests. (milliseconds)",
-    ~labelSchema=sourceLabelsSchema,
-  )
 
-  let count = SafeCounter.makeOrThrow(
-    ~name="envio_source_get_height_duration_count",
-    ~help="Total number of source get height requests.",
-    ~labelSchema=sourceLabelsSchema,
-  )
-
-  let increment = (~labels, ~timeMillis) => {
-    sumTimeCounter->SafeCounter.handleInt(~labels, ~value=timeMillis)
-    count->SafeCounter.increment(~labels)
-  }
-}
 
 module ReorgCount = {
   let gauge = SafeGauge.makeOrThrow(
