@@ -1365,46 +1365,6 @@ fn generate_report(
 
     md.push('\n');
 
-    // ── Raw metric counts (for AI consumption) ──
-    md.push_str("## Raw Metric Summary\n\n");
-    md.push_str("<details>\n<summary>Full metric values for AI analysis</summary>\n\n");
-    md.push_str("```\n");
-    md.push_str(&format!("total_events={}\n", total_events));
-    md.push_str(&format!(
-        "total_batches={}\n",
-        perf.storage_write_count
-            .map_or("-".to_string(), |v| v.to_string())
-    ));
-    md.push_str(&format!(
-        "preload_ms={}\n",
-        perf.preload_ms
-            .map_or("-".to_string(), |v| format!("{:.0}", v))
-    ));
-    md.push_str(&format!(
-        "processing_ms={}\n",
-        perf.processing_ms
-            .map_or("-".to_string(), |v| format!("{:.0}", v))
-    ));
-    md.push_str(&format!(
-        "storage_write_ms={}\n",
-        perf.storage_write_ms
-            .map_or("-".to_string(), |v| format!("{:.0}", v))
-    ));
-    md.push_str(&format!(
-        "memory_mb={}\n",
-        perf.resources
-            .memory_bytes
-            .map_or("-".to_string(), |v| format!("{:.1}", v / 1024.0 / 1024.0))
-    ));
-    md.push_str(&format!(
-        "event_loop_lag_ms={}\n",
-        perf.resources
-            .event_loop_lag
-            .map_or("-".to_string(), |v| format!("{:.2}", v * 1000.0))
-    ));
-    md.push_str("```\n\n");
-    md.push_str("</details>\n");
-
     md
 }
 
@@ -1437,6 +1397,13 @@ async fn fetch_metrics(client: &reqwest::Client, base_url: &str) -> Result<Strin
 // ---------------------------------------------------------------------------
 //  Entry point
 // ---------------------------------------------------------------------------
+
+/// Parse metrics and generate a markdown report from raw prometheus text.
+/// Extracted for testability.
+fn report_from_prometheus_text(text: &str) -> String {
+    let metrics = parse_prometheus_metrics(text);
+    generate_report(&metrics, None, None)
+}
 
 pub async fn run_profile(args: ProfileArgs) -> Result<()> {
     let base_url = resolve_base_url(&args);
@@ -1475,4 +1442,161 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_report_from_prometheus_metrics() {
+        let input = r#"
+# HELP envio_preload_seconds Cumulative time spent on preloading entities during batch processing.
+# TYPE envio_preload_seconds counter
+envio_preload_seconds 0.066200668
+# HELP envio_processing_seconds Cumulative time spent executing event handlers during batch processing.
+# TYPE envio_processing_seconds counter
+envio_processing_seconds 0.03451024900000001
+# HELP envio_storage_write_seconds Cumulative time spent writing batch data to storage.
+# TYPE envio_storage_write_seconds counter
+envio_storage_write_seconds 0.14491870900000003
+# HELP envio_storage_write_total Total number of batch writes to storage.
+# TYPE envio_storage_write_total counter
+envio_storage_write_total 4
+# HELP envio_progress_ready Whether the chain is fully synced to the head.
+# TYPE envio_progress_ready gauge
+# HELP hyperindex_synced_to_head All chains fully synced
+# TYPE hyperindex_synced_to_head gauge
+hyperindex_synced_to_head 0
+# HELP envio_processing_handler_seconds Cumulative time spent inside individual event handler executions.
+# TYPE envio_processing_handler_seconds counter
+envio_processing_handler_seconds{contract="ERC20",event="Approval"} 0.007507434000000004
+envio_processing_handler_seconds{contract="ERC20",event="Transfer"} 0.018549728
+# HELP envio_processing_handler_total Total number of individual event handler executions.
+# TYPE envio_processing_handler_total counter
+envio_processing_handler_total{contract="ERC20",event="Approval"} 3434
+envio_processing_handler_total{contract="ERC20",event="Transfer"} 6607
+# HELP envio_preload_handler_seconds Wall-clock time spent inside individual preload handler executions.
+# TYPE envio_preload_handler_seconds counter
+envio_preload_handler_seconds{contract="ERC20",event="Approval"} 0.028596248999999997
+envio_preload_handler_seconds{contract="ERC20",event="Transfer"} 0.06534654299999999
+# HELP envio_preload_handler_total Total number of individual preload handler executions.
+# TYPE envio_preload_handler_total counter
+envio_preload_handler_total{contract="ERC20",event="Approval"} 3434
+envio_preload_handler_total{contract="ERC20",event="Transfer"} 6607
+# HELP envio_preload_handler_seconds_total Cumulative time spent inside individual preload handler executions. Can exceed wall-clock time due to parallel execution.
+# TYPE envio_preload_handler_seconds_total counter
+envio_preload_handler_seconds_total{contract="ERC20",event="Approval"} 27.46140452299992
+envio_preload_handler_seconds_total{contract="ERC20",event="Transfer"} 164.58959649099964
+# HELP envio_fetching_block_range_seconds Cumulative time spent fetching block ranges.
+# TYPE envio_fetching_block_range_seconds counter
+envio_fetching_block_range_seconds{chainId="1"} 19.410937083
+# HELP envio_fetching_block_range_parse_seconds Cumulative time spent parsing block range fetch responses.
+# TYPE envio_fetching_block_range_parse_seconds counter
+envio_fetching_block_range_parse_seconds{chainId="1"} 0.137992167
+# HELP envio_fetching_block_range_total Total number of block range fetch operations.
+# TYPE envio_fetching_block_range_total counter
+envio_fetching_block_range_total{chainId="1"} 2
+# HELP envio_fetching_block_range_events_total Cumulative number of events fetched across all block range operations.
+# TYPE envio_fetching_block_range_events_total counter
+envio_fetching_block_range_events_total{chainId="1"} 10041
+# HELP envio_fetching_block_range_size Cumulative number of blocks covered across all block range fetch operations.
+# TYPE envio_fetching_block_range_size counter
+envio_fetching_block_range_size{chainId="1"} 132690
+# HELP envio_indexing_known_height The latest known block number reported by the active indexing source.
+# TYPE envio_indexing_known_height gauge
+envio_indexing_known_height{chainId="1"} 24592713
+# HELP envio_info Information about the indexer
+# TYPE envio_info gauge
+envio_info{version="0.0.1-dev"} 1
+# HELP envio_indexing_addresses The number of addresses indexed on chain.
+# TYPE envio_indexing_addresses gauge
+envio_indexing_addresses{chainId="1"} 1
+# HELP envio_indexing_max_concurrency The maximum number of concurrent queries to the chain data-source.
+# TYPE envio_indexing_max_concurrency gauge
+envio_indexing_max_concurrency{chainId="1"} 10
+# HELP envio_indexing_concurrency The number of executing concurrent queries to the chain data-source.
+# TYPE envio_indexing_concurrency gauge
+envio_indexing_concurrency{chainId="1"} 6
+# HELP envio_indexing_partitions The number of partitions used to split fetching logic.
+# TYPE envio_indexing_partitions gauge
+envio_indexing_partitions{chainId="1"} 1
+# HELP envio_indexing_idle_seconds The time the indexer source syncing has been idle.
+# TYPE envio_indexing_idle_seconds counter
+envio_indexing_idle_seconds{chainId="1"} 0.115673209
+# HELP envio_indexing_source_waiting_seconds The time the indexer has been waiting for new blocks.
+# TYPE envio_indexing_source_waiting_seconds counter
+envio_indexing_source_waiting_seconds{chainId="1"} 1.7183905419999999
+# HELP envio_indexing_source_querying_seconds The time spent performing queries to the chain data-source.
+# TYPE envio_indexing_source_querying_seconds counter
+envio_indexing_source_querying_seconds{chainId="1"} 19.490299541
+# HELP envio_indexing_buffer_size The current number of items in the indexing buffer.
+# TYPE envio_indexing_buffer_size gauge
+envio_indexing_buffer_size{chainId="1"} 0
+# HELP envio_indexing_target_buffer_size The target buffer size per chain for indexing.
+# TYPE envio_indexing_target_buffer_size gauge
+envio_indexing_target_buffer_size 50000
+# HELP envio_indexing_buffer_block The highest block number that has been fully fetched by the indexer.
+# TYPE envio_indexing_buffer_block gauge
+envio_indexing_buffer_block{chainId="1"} 18732689
+# HELP envio_source_request_total The number of requests made to data sources.
+# TYPE envio_source_request_total counter
+envio_source_request_total{source="HyperSync",chainId="1",method="getHeight"} 1
+envio_source_request_total{source="HyperSync",chainId="1",method="getLogs"} 14
+envio_source_request_total{source="HyperSync",chainId="1",method="getBlockHashes"} 2
+# HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
+# TYPE envio_source_request_seconds_total counter
+envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getHeight"} 1.7180131250000001
+# HELP envio_source_known_height The latest known block number reported by the source.
+# TYPE envio_source_known_height gauge
+envio_source_known_height{source="HyperSync",chainId="1"} 24592713
+# HELP envio_reorg_detected_total Total number of reorgs detected
+# TYPE envio_reorg_detected_total counter
+# HELP envio_reorg_threshold Whether indexing is currently within the reorg threshold
+# TYPE envio_reorg_threshold gauge
+envio_reorg_threshold 0
+# HELP envio_rollback_enabled Whether rollback on reorg is enabled
+# TYPE envio_rollback_enabled gauge
+envio_rollback_enabled 1
+# HELP envio_rollback_seconds Rollback on reorg total time.
+# TYPE envio_rollback_seconds counter
+envio_rollback_seconds 0
+# HELP envio_rollback_total Number of successful rollbacks on reorg
+# TYPE envio_rollback_total counter
+envio_rollback_total 0
+# HELP envio_rollback_events Number of events rollbacked on reorg
+# TYPE envio_rollback_events counter
+envio_rollback_events 0
+# HELP envio_processing_max_batch_size The maximum number of items to process in a single batch.
+# TYPE envio_processing_max_batch_size gauge
+envio_processing_max_batch_size 5000
+# HELP envio_progress_block The block number of the latest block processed and stored in the database.
+# TYPE envio_progress_block gauge
+envio_progress_block{chainId="1"} 18732689
+# HELP envio_progress_events The number of events processed and reflected in the database.
+# TYPE envio_progress_events gauge
+envio_progress_events{chainId="1"} 10041
+# HELP envio_progress_latency The latency in milliseconds between the latest processed event creation and the time it was written to storage.
+# TYPE envio_progress_latency gauge
+envio_progress_latency{chainId="1"} 2080747478
+# HELP envio_storage_load_seconds Processing time taken to load data from storage.
+# TYPE envio_storage_load_seconds counter
+envio_storage_load_seconds{operation="Account.get"} 0.026509540999999998
+# HELP envio_storage_load_seconds_total Cumulative time spent loading data from storage during the indexing process.
+# TYPE envio_storage_load_seconds_total counter
+envio_storage_load_seconds_total{operation="Account.get"} 0.026582
+# HELP envio_storage_load_total Cumulative number of successful storage load operations during the indexing process.
+# TYPE envio_storage_load_total counter
+envio_storage_load_total{operation="Account.get"} 4
+# HELP envio_storage_load_where_size Cumulative number of filter conditions used in storage load operations.
+# TYPE envio_storage_load_where_size counter
+envio_storage_load_where_size{operation="Account.get"} 2477
+# HELP envio_storage_load_size Cumulative number of records loaded from storage.
+# TYPE envio_storage_load_size counter
+envio_storage_load_size{operation="Account.get"} 267
+"#;
+
+        let report = report_from_prometheus_text(input);
+        insta::assert_snapshot!(report);
+    }
 }
