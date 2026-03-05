@@ -2,7 +2,6 @@
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js can't display them.
 NodeJs.process->NodeJs.onUnhandledRejection(reason => {
   reason
-  ->Utils.prettifyExn
   ->ErrorHandling.make(~msg="Unhandled promise rejection")
   ->ErrorHandling.log
   NodeJs.process->NodeJs.exitWithCode(Failure)
