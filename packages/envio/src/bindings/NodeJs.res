@@ -3,6 +3,7 @@ type t
 @send external exit: (t, unit) => unit = "exit"
 type exitCode = | @as(0) Success | @as(1) Failure
 @send external exitWithCode: (t, exitCode) => unit = "exit"
+@send external onUnhandledRejection: (t, @as("unhandledRejection") _, unknown => unit) => unit = "on"
 
 module Util = {
   @unboxed
