@@ -954,4 +954,102 @@ describe("Use Envio test framework to test event handlers", () => {
         "Cannot call User.set() while indexer.process() is running. Wait for process() to complete before modifying entities directly.",
     });
   });
+
+  it("createTestIndexer with simulate processes events without fetching", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Test Gravatar",
+                imageUrl: "https://example.com/image.png",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(result, {
+      changes: [
+        {
+          block: 1,
+          chainId: 1337,
+          eventsProcessed: 1,
+          Gravatar: {
+            sets: [
+              {
+                id: "1",
+                owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Test Gravatar",
+                imageUrl: "https://example.com/image.png",
+                updatesCount: 1n,
+                size: "SMALL",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    // Entity should be accessible after processing
+    const gravatar = await indexer.Gravatar.get("1");
+    assert.deepEqual(gravatar, {
+      id: "1",
+      owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      displayName: "Test Gravatar",
+      imageUrl: "https://example.com/image.png",
+      updatesCount: 1n,
+      size: "SMALL",
+    });
+  });
+
+  it("createTestIndexer with simulate processes multiple events", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "First",
+                imageUrl: "https://example.com/1.png",
+              },
+            },
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 2n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Second",
+                imageUrl: "https://example.com/2.png",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Should have processed both events
+    assert.strictEqual(result.changes.length, 1);
+    assert.strictEqual(result.changes[0]!.eventsProcessed, 2);
+    assert.strictEqual(result.changes[0]!.Gravatar?.sets?.length, 2);
+  });
 });

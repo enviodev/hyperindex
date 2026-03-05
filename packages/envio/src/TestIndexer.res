@@ -561,12 +561,18 @@ let makeCreateTestIndexer = (
         )
 
         Promise.make((resolve, reject) => {
+          // BigInt-safe JSON serialization (converts BigInt to string for simulate params)
+          let jsonStringifyBigIntSafe: 'a => string = %raw(`function(obj) {
+            return JSON.stringify(obj, function(_, v) {
+              return typeof v === "bigint" ? v.toString() : v;
+            })
+          }`)
           // Include initialState in workerData
           let workerDataObj = {
-            "processConfig": processConfig->Utils.magic->Js.Json.serializeExn->Js.Json.parseExn,
+            "processConfig": processConfig->Utils.magic->jsonStringifyBigIntSafe->Js.Json.parseExn,
             "initialState": initialState->Utils.magic,
           }
-          let workerData = workerDataObj->Js.Json.serializeExn->Js.Json.parseExn
+          let workerData = workerDataObj->jsonStringifyBigIntSafe->Js.Json.parseExn
           let worker = try {
             NodeJs.WorkerThreads.makeWorker(
               workerPath,
@@ -670,7 +676,7 @@ let initTestWorker = (
 
   let workerData: option<workerData> = NodeJs.WorkerThreads.workerData->Js.Nullable.toOption
   switch workerData {
-  | Some({initialState}) =>
+  | Some({initialState, processConfig}) =>
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
@@ -687,7 +693,7 @@ let initTestWorker = (
     | Some(_) => ()
     }
 
-    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true)->ignore
+    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true, ~processConfig)->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

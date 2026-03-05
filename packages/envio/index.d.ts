@@ -526,12 +526,45 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
 
 // ============== Test Indexer Types ==============
 
+/** A simulate event item specifying event data to process without fetching. */
+type SimulateEventItem = {
+  /** The contract name as defined in config.yaml. */
+  contract: string;
+  /** The event name as defined in the contract ABI. */
+  event: string;
+  /** Event parameters. Keys match the event's parameter names. */
+  params?: Record<string, unknown>;
+  /** Override the source address. Defaults to the first contract address. */
+  srcAddress?: Address;
+  /** Override the log index. Auto-increments by default. */
+  logIndex?: number;
+  /** Override the block number. Defaults to startBlock. */
+  number?: number;
+  /** Override block fields (number, timestamp, hash, etc). */
+  block?: Record<string, unknown>;
+  /** Override transaction fields. */
+  transaction?: Record<string, unknown>;
+};
+
+/** A simulate block item specifying a block handler to invoke. */
+type SimulateBlockItem = {
+  /** The onBlock handler name as defined in the handler registration. */
+  block: string;
+  /** Override the block number. Defaults to startBlock. */
+  number?: number;
+};
+
+/** A simulate item: either an event or a block handler invocation. */
+export type SimulateItem = SimulateEventItem | SimulateBlockItem;
+
 /** Configuration for a single chain in the test indexer. */
 export type TestIndexerChainConfig = {
   /** The block number to start processing from. */
   startBlock: number;
   /** The block number to stop processing at. */
   endBlock: number;
+  /** Simulate items to process instead of fetching from real sources. */
+  simulate?: SimulateItem[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
