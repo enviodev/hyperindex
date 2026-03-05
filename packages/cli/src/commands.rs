@@ -36,6 +36,36 @@ async fn execute_command(
         ))
 }
 
+/// Like execute_command, but suppresses stdout and stderr
+async fn execute_command_silent(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+) -> anyhow::Result<std::process::ExitStatus> {
+    tokio::process::Command::new(cmd)
+        .args(&args)
+        .current_dir(current_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .context(format!(
+            "Failed to spawn command {} {} at {} as child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?
+        .wait()
+        .await
+        .context(format!(
+            "Failed to exit command {} {} at {} from child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))
+}
+
 pub mod rescript {
     use super::execute_command;
     use anyhow::Result;
@@ -279,26 +309,27 @@ pub mod db_migrate {
 }
 
 pub mod git {
-    use super::execute_command;
+    use super::execute_command_silent;
     use anyhow::{anyhow, Result};
     use std::path::Path;
 
     /// Check if the given path is inside a git repository
     async fn is_inside_git_repo(path: &Path) -> bool {
-        execute_command("git", vec!["rev-parse", "--is-inside-work-tree"], path)
+        execute_command_silent("git", vec!["rev-parse", "--is-inside-work-tree"], path)
             .await
             .map(|exit| exit.success())
             .unwrap_or(false)
     }
 
-    /// Initialize a git repository if not already inside one
-    pub async fn init(project_root: &Path) -> Result<()> {
+    /// Initialize a git repository if not already inside one.
+    /// Returns true if a new repository was created, false if already inside one.
+    pub async fn init(project_root: &Path) -> Result<bool> {
         // Skip if already inside a git repository
         if is_inside_git_repo(project_root).await {
-            return Ok(());
+            return Ok(false);
         }
 
-        let exit = execute_command("git", vec!["init"], project_root).await?;
+        let exit = execute_command_silent("git", vec!["init"], project_root).await?;
 
         if !exit.success() {
             return Err(anyhow!(
@@ -307,6 +338,6 @@ pub mod git {
             ));
         }
 
-        Ok(())
+        Ok(true)
     }
 }

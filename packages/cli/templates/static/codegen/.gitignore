@@ -29,3 +29,4 @@
 *.res.js
 *.res.mjs
 logs/*
+.pnpm-store

@@ -34,3 +34,4 @@ logs
 *.gen.ts
 build
 .env
+.pnpm-store

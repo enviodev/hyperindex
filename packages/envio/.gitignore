@@ -133,3 +133,4 @@ dist
 lib
 *.res.js
 *.res.mjs
+.pnpm-store

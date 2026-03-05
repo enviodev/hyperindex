@@ -65,27 +65,15 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 
 /**
- * Returns the executable path for envio located inside node_modules
+ * Returns the executable path for envio located inside node_modules.
  * The naming convention is envio-\${os}-\${arch}
- * If the platform is \`win32\` or \`cygwin\`, executable will include a \`.exe\` extension
  * @see https://nodejs.org/api/os.html#osarch
  * @see https://nodejs.org/api/os.html#osplatform
  * @example "x/xx/node_modules/envio-darwin-arm64"
  */
 function getExePath() {
-  const arch = process.arch;
-  /**
-   * @type {string}
-   */
-  let os = process.platform;
-  let extension = "";
-  if (["win32", "cygwin"].includes(process.platform)) {
-    os = "windows";
-    extension = ".exe";
-  }
-
-  const pkg = \`envio-\${os}-\${arch}\`;
-  const bin = \`bin/envio\${extension}\`;
+  const pkg = \`envio-\${process.platform}-\${process.arch}\`;
+  const bin = "bin/envio";
 
   try {
     return require.resolve(\`\${pkg}/\${bin}\`);
