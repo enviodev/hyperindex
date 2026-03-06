@@ -1540,6 +1540,178 @@ but we still attempt the fallback source if it was the initial active source.
       }
     },
   )
+
+  Async.it(
+    "After consecutive successful queries on a fallback source, switches back to the primary sync source",
+    async t => {
+      let syncMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let fallbackMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow],
+        ~sourceFor=Fallback,
+      )
+      let newBlockFallbackStallTimeout = 0
+      let sourceManager = SourceManager.make(
+        ~newBlockFallbackStallTimeout,
+        ~sources=[syncMock.source, fallbackMock.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      // Switch active source to fallback via waitForNewBlock
+      {
+        let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+        await Utils.delay(newBlockFallbackStallTimeout)
+        fallbackMock.resolveGetHeightOrThrow(101)
+        t.expect(await p).toBe(101)
+        t.expect(
+          sourceManager->SourceManager.getActiveSource,
+          ~message="Should have switched to fallback",
+        ).toBe(fallbackMock.source)
+      }
+
+      // Run fallbackRecoveryThreshold (10) successful queries on fallback
+      for _ in 0 to SourceManager.fallbackRecoveryThreshold - 1 {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
+        switch fallbackMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        }
+        let _ = await p
+      }
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="After 10 successful fallback queries, should switch back to sync source",
+      ).toBe(syncMock.source)
+
+      // Verify the next query goes to the sync source
+      let p =
+        sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
+      t.expect(
+        syncMock.getItemsOrThrowCalls->Array.length,
+        ~message="Next query should use sync source",
+      ).toEqual(1)
+      switch syncMock.getItemsOrThrowCalls {
+      | [call] => call.resolve([])
+      | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
+      }
+      t.expect((await p).parsedQueueItems).toEqual([])
+    },
+  )
+
+  Async.it(
+    "Does not attempt recovery when active source is already a sync source",
+    async t => {
+      let syncMock = Mock.Source.make([#getItemsOrThrow])
+      let sourceManager = SourceManager.make(
+        ~sources=[syncMock.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      // Run more than fallbackRecoveryThreshold queries on sync source
+      for _ in 0 to SourceManager.fallbackRecoveryThreshold {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
+        switch syncMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
+        }
+        let _ = await p
+      }
+
+      // Counter should stay at 0, active source unchanged
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Active source should remain the sync source",
+      ).toBe(syncMock.source)
+    },
+  )
+
+  Async.it(
+    "Recovery counter resets when a query on the recovered sync source fails and falls back again",
+    async t => {
+      let syncMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let fallbackMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow],
+        ~sourceFor=Fallback,
+      )
+      let newBlockFallbackStallTimeout = 0
+      let sourceManager = SourceManager.make(
+        ~newBlockFallbackStallTimeout,
+        ~sources=[syncMock.source, fallbackMock.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      // Switch to fallback
+      {
+        let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+        await Utils.delay(newBlockFallbackStallTimeout)
+        fallbackMock.resolveGetHeightOrThrow(101)
+        let _ = await p
+      }
+
+      // Run threshold queries to trigger recovery back to sync
+      for _ in 0 to SourceManager.fallbackRecoveryThreshold - 1 {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
+        switch fallbackMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        }
+        let _ = await p
+      }
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Should have recovered to sync",
+      ).toBe(syncMock.source)
+
+      // Sync source succeeds - counter should be reset to 0 since active is Sync
+      {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
+        switch syncMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
+        }
+        let _ = await p
+      }
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Active source should remain sync after successful query",
+      ).toBe(syncMock.source)
+
+      // Now simulate sync going down again via waitForNewBlock
+      // (the natural way fallback gets re-activated)
+      {
+        let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
+        await Utils.delay(newBlockFallbackStallTimeout)
+        fallbackMock.resolveGetHeightOrThrow(102)
+        let _ = await p
+        t.expect(
+          sourceManager->SourceManager.getActiveSource,
+          ~message="Should switch back to fallback via waitForNewBlock",
+        ).toBe(fallbackMock.source)
+      }
+
+      // Run threshold queries again to verify counter works after re-fallback
+      for _ in 0 to SourceManager.fallbackRecoveryThreshold - 1 {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=102)
+        switch fallbackMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        }
+        let _ = await p
+      }
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Should recover to sync again after second round of fallback queries",
+      ).toBe(syncMock.source)
+    },
+  )
 })
 
 describe("SourceManager height subscription", () => {
