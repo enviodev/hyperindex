@@ -1,7 +1,14 @@
 // Catch unhandled promise rejections to display full error details instead of the opaque "#<Object>" message.
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js can't display them.
+// With --unhandled-rejections=throw (Node v15+ default), registering this handler prevents Node from
+// crashing on unhandled rejections, so the handler must not re-throw or exit.
 NodeJs.process->NodeJs.onUnhandledRejection(reason => {
-  reason->ErrorHandling.make(~msg="Unhandled promise rejection")->ErrorHandling.log
+  try {
+    Js.Console.error("Unhandled promise rejection:")
+    Js.Console.error(reason->Utils.prettifyExn)
+  } catch {
+  | _ => Js.Console.error2("Unhandled promise rejection (raw):", reason)
+  }
 })
 
 let main = async () => {
