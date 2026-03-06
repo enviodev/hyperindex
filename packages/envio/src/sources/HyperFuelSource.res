@@ -287,7 +287,7 @@ let make = ({chain, endpointUrl}: options): t => {
     }
 
     let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -457,7 +457,7 @@ let make = ({chain, endpointUrl}: options): t => {
       })
     })
 
-    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let rangeLastBlock = await lastBlockQueriedPromise
 
@@ -466,7 +466,7 @@ let make = ({chain, endpointUrl}: options): t => {
       prevRangeLastBlock: None,
     }
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let stats = {
       totalTimeElapsed,
@@ -497,9 +497,13 @@ let make = ({chain, endpointUrl}: options): t => {
     getBlockHashes,
     pollingInterval: 100,
     poweredByHyperSync: true,
-    getHeightOrThrow: () => {
+    getHeightOrThrow: async () => {
+      let timerRef = Hrtime.makeTimer()
+      let height = await HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
-      HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
+      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~seconds)
+      height
     },
     getItemsOrThrow,
   }
