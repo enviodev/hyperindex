@@ -111,7 +111,7 @@ let handleWriteBatch = (
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointBlockHashes: array<Js.Null.t<string>>,
-  ~checkpointEventsProcessed: array<int>,
+  ~checkpointEventsProcessed: array<float>,
 ): unit => {
   // Group entity changes by checkpointId
   // checkpointId -> entityName -> entityChange
@@ -273,7 +273,7 @@ let makeInitialState = (
       sourceBlockNumber: processChainConfig.endBlock,
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
-      numEventsProcessed: 0,
+      numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
       dynamicContracts,

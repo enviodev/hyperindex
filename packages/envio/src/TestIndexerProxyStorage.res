@@ -38,7 +38,7 @@ type workerPayload =
       checkpointChainIds: array<int>,
       checkpointBlockNumbers: array<int>,
       checkpointBlockHashes: array<Js.Null.t<string>>,
-      checkpointEventsProcessed: array<int>,
+      checkpointEventsProcessed: array<float>,
     })
 
 // Main thread -> Worker payloads

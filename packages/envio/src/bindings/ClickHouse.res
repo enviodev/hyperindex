@@ -47,6 +47,7 @@ let getClickHouseFieldType = (
   | Int32 => "Int32"
   | Uint32 => "UInt32"
   | Serial => "Int32"
+  | BigSerial => "Int64"
   | BigInt({?precision}) =>
     switch precision {
     | None => "String" // Fallback for unbounded BigInt
@@ -283,7 +284,7 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
   let eventsProcessedField = (#events_processed: InternalTable.Checkpoints.field :> string)
 
   `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\` (
-  \`${idField}\` ${getClickHouseFieldType(~fieldType=Int32, ~isNullable=false, ~isArray=false)},
+  \`${idField}\` ${getClickHouseFieldType(~fieldType=Uint32, ~isNullable=false, ~isArray=false)},
   \`${chainIdField}\` ${getClickHouseFieldType(
       ~fieldType=Int32,
       ~isNullable=false,
@@ -300,7 +301,7 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
       ~isArray=false,
     )},
   \`${eventsProcessedField}\` ${getClickHouseFieldType(
-      ~fieldType=Int32,
+      ~fieldType=Uint32,
       ~isNullable=false,
       ~isArray=false,
     )}

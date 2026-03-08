@@ -49,7 +49,7 @@ module Chains = {
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
-    @as("_num_batches_fetched") numBatchesFetched: int,
+    @as("_num_batches_fetched") numBatchesFetched: float,
   }
 
   type t = {
@@ -59,7 +59,7 @@ module Chains = {
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
-    @as("events_processed") numEventsProcessed: int,
+    @as("events_processed") numEventsProcessed: float,
     ...metaFields,
   }
 
@@ -90,13 +90,13 @@ module Chains = {
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
-      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#events_processed: field :> string), Uint32, ~fieldSchema=S.float),
       // TODO: In the future it should reference a table with sources
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
       // TODO: Should deprecate after changing the ETA calculation logic
-      mkField((#_num_batches_fetched: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#_num_batches_fetched: field :> string), Uint32, ~fieldSchema=S.float),
     ],
   )
 
@@ -112,8 +112,8 @@ module Chains = {
       timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
       progressBlockNumber: -1,
       isHyperSync: false,
-      numEventsProcessed: 0,
-      numBatchesFetched: 0,
+      numEventsProcessed: 0.,
+      numBatchesFetched: 0.,
     }
   }
 
@@ -177,7 +177,7 @@ WHERE "${(#id: field :> string)}" = $1;`
     maxReorgDepth: int,
     firstEventBlockNumber: Js.Null.t<int>,
     timestampCaughtUpToHeadOrEndblock: Js.Null.t<Js.Date.t>,
-    numEventsProcessed: int,
+    numEventsProcessed: float,
     progressBlockNumber: int,
     dynamicContracts: array<Internal.indexingContract>,
     sourceBlockNumber: int,
@@ -258,7 +258,7 @@ WHERE "id" = $1;`
     chainId: int,
     progressBlockNumber: int,
     sourceBlockNumber: int,
-    totalEventsProcessed: int,
+    totalEventsProcessed: float,
   }
 
   let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
@@ -278,7 +278,7 @@ WHERE "id" = $1;`
         ->Js.Array2.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
-          | #events_processed => data.totalEventsProcessed->(Utils.magic: int => unknown)
+          | #events_processed => data.totalEventsProcessed->(Utils.magic: float => unknown)
           | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
         )
@@ -331,7 +331,7 @@ module Checkpoints = {
     @as("block_hash")
     blockHash: Js.null<string>,
     @as("events_processed")
-    eventsProcessed: int,
+    eventsProcessed: float,
   }
 
   let initialCheckpointId = 0.
@@ -343,7 +343,7 @@ module Checkpoints = {
       mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
-      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#events_processed: field :> string), Uint32, ~fieldSchema=S.float),
     ],
   )
 
@@ -379,7 +379,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
 
   let makeInsertCheckpointQuery = (~pgSchema) => {
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(BigInt: Postgres.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -404,7 +404,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
         checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<float>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
+          (array<float>, array<int>, array<int>, array<Js.Null.t<string>>, array<float>)
         ) => unknown
       ),
     )
@@ -536,7 +536,7 @@ module RawEvents = {
       mkField("block_fields", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("transaction_fields", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("params", Json, ~fieldSchema=S.json(~validate=false)),
-      mkField("serial", Serial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
+      mkField("serial", BigSerial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
     ],
   )
 }

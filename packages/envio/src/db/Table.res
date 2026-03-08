@@ -27,6 +27,7 @@ type fieldType =
   | BigInt({precision?: int})
   | BigDecimal({config?: (int, int)}) // (precision, scale)
   | Serial
+  | BigSerial
   | Json
   | Date
   | Enum({config: enumConfig<enum>})
@@ -129,6 +130,7 @@ let getPgFieldType = (
     }
 
   | Serial => (Postgres.Serial :> string)
+  | BigSerial => (Postgres.BigSerial :> string)
   | Json => (Postgres.JsonB :> string)
   | Date =>
     (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)

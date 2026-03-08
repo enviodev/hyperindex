@@ -7,7 +7,7 @@ type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
   sourceBlockNumber: int,
-  totalEventsProcessed: int,
+  totalEventsProcessed: float,
   fetchState: FetchState.t,
   isProgressAtHeadWhenBatchCreated: bool,
 }
@@ -17,7 +17,7 @@ type chainBeforeBatch = {
   reorgDetection: ReorgDetection.t,
   progressBlockNumber: int,
   sourceBlockNumber: int,
-  totalEventsProcessed: int,
+  totalEventsProcessed: float,
   chainConfig: Config.chain,
 }
 
@@ -30,7 +30,7 @@ type t = {
   checkpointChainIds: array<int>,
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Js.Null.t<string>>,
-  checkpointEventsProcessed: array<int>,
+  checkpointEventsProcessed: array<float>,
 }
 
 /**
@@ -111,7 +111,7 @@ let getProgressedChainsById = {
             batchSize,
             progressBlockNumber: progressBlockNumberAfterBatch,
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
-            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed + batchSize,
+            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +. batchSize->Int.toFloat,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
@@ -206,7 +206,7 @@ let addReorgCheckpoints = (
         mutCheckpointChainIds->Js.Array2.push(chainId)->ignore
         mutCheckpointBlockNumbers->Js.Array2.push(blockNumber)->ignore
         mutCheckpointBlockHashes->Js.Array2.push(Js.Null.Value(hash))->ignore
-        mutCheckpointEventsProcessed->Js.Array2.push(0)->ignore
+        mutCheckpointEventsProcessed->Js.Array2.push(0.)->ignore
       | Js.Null.Null => ()
       }
     }
@@ -306,7 +306,7 @@ let prepareOrderedBatch = (
           )
           ->ignore
           checkpointEventsProcessed
-          ->Js.Array2.push(newItemsCount)
+          ->Js.Array2.push(newItemsCount->Int.toFloat)
           ->ignore
 
           prevCheckpointId := checkpointId
@@ -434,7 +434,7 @@ let prepareUnorderedBatch = (
             chainBeforeBatch.reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber),
           )
           ->ignore
-          checkpointEventsProcessed->Js.Array2.push(1)->ignore
+          checkpointEventsProcessed->Js.Array2.push(1.)->ignore
 
           prevBlockNumber := blockNumber
           prevCheckpointId := checkpointId
@@ -443,7 +443,7 @@ let prepareUnorderedBatch = (
           checkpointEventsProcessed
           ->Belt.Array.setUnsafe(
             lastIndex,
-            checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1,
+            checkpointEventsProcessed->Array.getUnsafe(lastIndex) +. 1.,
           )
           ->ignore
         }
@@ -522,7 +522,7 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
     let checkpointChainId = batch.checkpointChainIds->Array.getUnsafe(idx.contents)
     if (
       checkpointChainId === chainId &&
-        batch.checkpointEventsProcessed->Array.getUnsafe(idx.contents) > 0
+        batch.checkpointEventsProcessed->Array.getUnsafe(idx.contents) > 0.
     ) {
       result := Some(batch.checkpointBlockNumbers->Array.getUnsafe(idx.contents))
     } else {

@@ -179,8 +179,8 @@ module App = {
         )
       })
 
-    let totalEventsProcessed = chains->Array.reduce(0, (acc, chain) => {
-      acc + chain.eventsProcessed
+    let totalEventsProcessed = chains->Array.reduce(0., (acc, chain) => {
+      acc +. chain.eventsProcessed
     })
     let maxChainIdLength = chains->Array.reduce(0, (acc, chain) => {
       let chainIdLength = chain.chainId->String.length

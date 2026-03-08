@@ -112,6 +112,7 @@ type columnType =
   | @as("DOUBLE PRECISION") DoublePrecision
   | @as("TEXT") Text
   | @as("SERIAL") Serial
+  | @as("BIGSERIAL") BigSerial
   | @as("JSONB") JsonB
   | @as("TIMESTAMP WITH TIME ZONE") TimestampWithTimezone
   | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithTimezoneNull

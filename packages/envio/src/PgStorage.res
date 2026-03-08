@@ -1272,7 +1272,7 @@ let make = (
         endBlock: chainConfig.endBlock,
         maxReorgDepth: chainConfig.maxReorgDepth,
         progressBlockNumber: -1,
-        numEventsProcessed: 0,
+        numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
         dynamicContracts: [],

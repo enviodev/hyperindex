@@ -61,13 +61,13 @@ let useShouldDisplayEta = (~chains: array<TuiData.chain>) => {
     //Only compute this while it is not displaying eta
     if !shouldDisplayEta {
       //Each chain should have fetched at least one batch
-      let (allChainsHaveFetchedABatch, totalNumBatchesFetched) = chains->Array.reduce((true, 0), (
+      let (allChainsHaveFetchedABatch, totalNumBatchesFetched) = chains->Array.reduce((true, 0.), (
         (allChainsHaveFetchedABatch, totalNumBatchesFetched),
         chain,
       ) => {
         (
-          allChainsHaveFetchedABatch && chain.numBatchesFetched >= 1,
-          totalNumBatchesFetched + chain.numBatchesFetched,
+          allChainsHaveFetchedABatch && chain.numBatchesFetched >= 1.,
+          totalNumBatchesFetched +. chain.numBatchesFetched,
         )
       })
 
@@ -78,7 +78,7 @@ let useShouldDisplayEta = (~chains: array<TuiData.chain>) => {
       // Only display once an additinal 2 batches have been fetched to allow
       // eta to realistically stabalize
       let numChains = chains->Array.length
-      let minTotalBatches = numChains + 2
+      let minTotalBatches = (numChains + 2)->Int.toFloat
       let hasMinNumBatches = totalNumBatchesFetched >= minTotalBatches
 
       let shouldDisplayEta = allChainsHaveFetchedABatch && hasMinNumBatches
