@@ -784,6 +784,7 @@ let checkAndFetchForChain = (
   //required args
   ~state,
   ~dispatchAction,
+  ~isInvalidated,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   if !isPreparingRollback(state) {
@@ -794,15 +795,17 @@ let checkAndFetchForChain = (
       ~waitForNewBlock=(~knownHeight) => chainFetcher.sourceManager->waitForNewBlock(~knownHeight),
       ~onNewBlock=(~knownHeight) => dispatchAction(FinishWaitingForNewBlock({chain, knownHeight})),
       ~executeQuery=async query => {
-        try {
-          let response =
-            await chainFetcher.sourceManager->executeQuery(
-              ~query,
-              ~knownHeight=fetchState.knownHeight,
-            )
-          dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
-        } catch {
-        | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
+        if !isInvalidated() {
+          try {
+            let response =
+              await chainFetcher.sourceManager->executeQuery(
+                ~query,
+                ~knownHeight=fetchState.knownHeight,
+              )
+            dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
+          } catch {
+          | exn => dispatchAction(ErrorExit(exn->ErrorHandling.make))
+          }
         }
       },
       ~stateId=state.id,
@@ -820,6 +823,7 @@ let injectedTaskReducer = (
   state: t,
   task: task,
   ~dispatchAction,
+  ~isInvalidated,
 ) => {
   switch task {
   | ProcessPartitionQueryResponse(partitionQueryResponse) =>
@@ -889,6 +893,7 @@ let injectedTaskReducer = (
       ~executeQuery,
       ~state,
       ~dispatchAction,
+      ~isInvalidated,
     )
 
     switch chainCheck {

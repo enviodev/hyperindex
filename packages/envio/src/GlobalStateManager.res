@@ -4,7 +4,7 @@ module type State = {
   type action
   type task
 
-  let taskReducer: (t, task, ~dispatchAction: action => unit) => promise<unit>
+  let taskReducer: (t, task, ~dispatchAction: action => unit, ~isInvalidated: unit => bool) => promise<unit>
   let actionReducer: (t, action) => (t, array<task>)
   let invalidatedActionReducer: (t, action) => (t, array<task>)
   let getId: t => int
@@ -47,7 +47,7 @@ module MakeManager = (S: State) => {
         try {
           S.taskReducer(self.state, task, ~dispatchAction=action =>
             dispatchAction(~stateId, self, action)
-          )
+          , ~isInvalidated=() => stateId !== self.state->S.getId)
           ->Promise.catch(e => {
             e->self.onError
             Promise.resolve()
