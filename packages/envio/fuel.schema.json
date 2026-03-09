@@ -45,6 +45,17 @@
       "format": "uint64",
       "minimum": 0
     },
+    "storage": {
+      "description": "Storage backend for the indexer. Options: 'postgres' (default) or 'clickhouse'.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Storage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "$ref": "#/$defs/EcosystemTag"
@@ -81,6 +92,21 @@
     "chains"
   ],
   "$defs": {
+    "Storage": {
+      "description": "Storage backend option",
+      "oneOf": [
+        {
+          "description": "Use PostgreSQL as the storage backend (default)",
+          "type": "string",
+          "const": "postgres"
+        },
+        {
+          "description": "Use ClickHouse as the storage backend",
+          "type": "string",
+          "const": "clickhouse"
+        }
+      ]
+    },
     "EcosystemTag": {
       "type": "string",
       "enum": [

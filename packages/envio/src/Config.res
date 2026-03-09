@@ -71,6 +71,8 @@ type sourceSync = {
   pollingInterval: int,
 }
 
+type storage = | @as("postgres") Postgres | @as("clickhouse") Clickhouse
+
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
 
 type contractHandler = {
@@ -93,6 +95,7 @@ type t = {
   maxAddrInPartition: int,
   batchSize: int,
   lowercaseAddresses: bool,
+  storage: storage,
   addContractNameToContractNameMapping: dict<string>,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
@@ -231,6 +234,8 @@ let publicConfigEvmSchema = S.schema(s =>
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
   }
 )
+
+let storageSchema = S.enum([Postgres, Clickhouse])
 
 let multichainSchema = S.enum([Ordered, Unordered])
 
@@ -412,6 +417,7 @@ let publicConfigSchema = S.schema(s =>
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
+    "storage": s.matches(S.option(storageSchema)),
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
@@ -709,6 +715,7 @@ let fromPublic = (
     maxAddrInPartition,
     batchSize: publicConfig["fullBatchSize"]->Option.getWithDefault(5000),
     lowercaseAddresses,
+    storage: publicConfig["storage"]->Option.getWithDefault(Postgres),
     addContractNameToContractNameMapping,
     userEntitiesByName,
     userEntities,

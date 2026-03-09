@@ -58,6 +58,16 @@ impl JsonSchema for Addresses {
 
 type ChainId = u64;
 
+/// Storage backend option
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Storage {
+    #[schemars(description = "Use PostgreSQL as the storage backend (default)")]
+    Postgres,
+    #[schemars(description = "Use ClickHouse as the storage backend")]
+    Clickhouse,
+}
+
 /// Base configuration fields shared across all ecosystems
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
 pub struct BaseConfig {
@@ -87,6 +97,11 @@ pub struct BaseConfig {
         description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Storage backend for the indexer. Options: 'postgres' (default) or 'clickhouse'."
+    )]
+    pub storage: Option<Storage>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -988,6 +1003,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1039,6 +1055,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,

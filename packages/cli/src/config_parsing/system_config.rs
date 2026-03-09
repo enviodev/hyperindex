@@ -428,6 +428,7 @@ pub struct SystemConfig {
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub handlers: Option<String>,
+    pub storage: human_config::Storage,
 }
 
 //Getter methods for system config
@@ -732,6 +733,7 @@ impl SystemConfig {
                         Some(super::human_config::evm::AddressFormat::Lowercase)
                     ),
                     handlers: base_config.handlers.clone(),
+                    storage: base_config.storage.clone().unwrap_or(human_config::Storage::Postgres),
                     human_config,
                 })
             }
@@ -873,6 +875,7 @@ impl SystemConfig {
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
                     lowercase_addresses: false,
                     handlers: base_config.handlers.clone(),
+                    storage: base_config.storage.clone().unwrap_or(human_config::Storage::Postgres),
                     human_config,
                 })
             }
@@ -914,6 +917,7 @@ impl SystemConfig {
                     enable_raw_events: false,
                     lowercase_addresses: false,
                     handlers: None,
+                    storage: svm_config.base.storage.clone().unwrap_or(human_config::Storage::Postgres),
                     human_config,
                 })
             }
@@ -2265,6 +2269,7 @@ mod test {
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: None,
             contracts: None,
@@ -2313,6 +2318,7 @@ mod test {
                 output: Some("custom/output".to_string()),
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: None,
             contracts: None,
