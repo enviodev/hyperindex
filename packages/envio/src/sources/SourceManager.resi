@@ -11,6 +11,7 @@ let make: (
 ) => t
 
 let getActiveSource: t => Source.t
+let setIsLive: (t, bool) => unit
 
 let fetchNext: (
   t,
