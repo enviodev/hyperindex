@@ -422,6 +422,9 @@ let validatePartitionQueryResponse = (
             ) {
             | Some(eventsProcessedDiff) => {
                 ...chainFetcher,
+                // Since we detected a reorg, until rollback wasn't completed in the db
+                // We return the events processed counter to the pre-rollback value,
+                // to decrease it once more for the new rollback.
                 numEventsProcessed: chainFetcher.numEventsProcessed + eventsProcessedDiff,
               }
             | None => chainFetcher
