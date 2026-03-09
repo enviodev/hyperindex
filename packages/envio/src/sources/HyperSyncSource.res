@@ -314,7 +314,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -461,7 +461,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }
     })
 
-    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let rangeLastBlock = await lastBlockQueriedPromise
 
@@ -473,7 +473,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       }),
     }
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     let stats = {
       totalTimeElapsed,
@@ -514,12 +514,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-      )
-      switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
+      let timerRef = Hrtime.makeTimer()
+      let result = switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>
         Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
@@ -529,6 +525,10 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         0
       | ErrorMessage(m) => Js.Exn.raiseError(m)
       }
+      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
+      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~seconds)
+      result
     },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>

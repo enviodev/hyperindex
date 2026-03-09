@@ -1581,7 +1581,7 @@ let make = (
           ->Promise.thenResolve(_ => {
             Prometheus.SinkWrite.increment(
               ~sinkName=sink.name,
-              ~timeMillis=timerRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+              ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
             )
             None
           })

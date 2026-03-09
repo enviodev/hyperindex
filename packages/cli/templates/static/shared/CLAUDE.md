@@ -8,7 +8,7 @@ See `AGENTS.md` for full project context, commands, and workflow.
 - After TypeScript changes → run `pnpm tsc --noEmit`
 - Use spread operator for entity updates (returned objects are read-only)
 - Use Effect API (`createEffect` + `context.effect()`) for ALL external calls
-- Use `entity_id` fields for relationships, not entity references
+- Schema uses entity references (`collection: NftCollection!`); handlers use `_id` suffix (`collection_id: value`); never add `_id` to schema field names
 - Use pnpm, not npm
 - Run `TUI_OFF=true pnpm dev` for AI-friendly indexer output
 

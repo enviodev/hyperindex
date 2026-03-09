@@ -95,9 +95,9 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
   | Querieng => Prometheus.IndexingQueryTime.counter
   }
-  promCounter->Prometheus.SafeCounter.incrementMany(
+  promCounter->Prometheus.SafeCounter.handleFloat(
     ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis,
+    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toSecondsFloat,
   )
   sourceManager.statusStart = Hrtime.makeTimer()
   sourceManager.status = newStatus
@@ -212,13 +212,7 @@ let getSourceNewHeight = async (
     | None =>
       // No subscription, use REST polling
       try {
-        // Use to detect if the source is taking too long to respond
-        let endTimer = Prometheus.SourceGetHeightDuration.startTimer({
-          "source": source.name,
-          "chainId": source.chain->ChainMap.Chain.toChainId,
-        })
         let height = await source.getHeightOrThrow()
-        endTimer()
 
         newHeight := height
         if height <= knownHeight {

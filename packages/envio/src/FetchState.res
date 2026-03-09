@@ -1871,7 +1871,7 @@ let getUnorderedMultichainProgressBlockNumberAt = ({buffer} as fetchState: t, ~i
 
 let updateKnownHeight = (fetchState: t, ~knownHeight) => {
   if knownHeight > fetchState.knownHeight {
-    Prometheus.setKnownHeight(~blockNumber=knownHeight, ~chainId=fetchState.chainId)
+    Prometheus.IndexingKnownHeight.set(~blockNumber=knownHeight, ~chainId=fetchState.chainId)
     fetchState->updateInternal(~knownHeight)
   } else {
     fetchState
