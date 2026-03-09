@@ -412,9 +412,13 @@ let validatePartitionQueryResponse = (
       let chainManager = switch state.rollbackState {
       | RollbackReady({eventsProcessedDiffByChain}) => {
           ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
+          // Restore event counters for ALL chains, not just the reorg chain.
+          // The previous rollback subtracted from all chains' counters,
+          // but was never committed to DB. So we must undo the subtraction
+          // for every chain before the new rollback subtracts again.
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.mapWithKey((c, chainFetcher) => {
             switch eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
-              chain->ChainMap.Chain.toChainId,
+              c->ChainMap.Chain.toChainId,
             ) {
             | Some(eventsProcessedDiff) => {
                 ...chainFetcher,
