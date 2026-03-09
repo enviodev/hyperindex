@@ -117,6 +117,9 @@ Handlers.ERC20.Transfer.handlerWithLoader({
     )->Promise.all2
   },
   handler: async ({event, context, loaderReturn}) => {
+    if event.transaction.kind->Belt.Option.isNone {
+      Js.Exn.raiseError("Transaction kind is missing")
+    }
     let (senderAccountToken, receiverAccountToken) = loaderReturn
     let {params: {from, to, value}, srcAddress} = event
     let fromAccount_id = from->Address.toString

@@ -73,7 +73,10 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.blockField>),
     transaction: capitalizedTransactionFields
     ->Utils.Set.toArray
-    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>),
+    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>)
+    ->// Currently the api for underlying "Type" field is still "Kind"
+    // transform this to use the new client
+    Array.map(field => (field :> string) !== "Kind" ? field : Type),
   }
 
   let noAddressesLogSelection = LogSelection.make(

@@ -88,7 +88,7 @@ module QueryTypes = {
     | GasUsed
     | ContractAddress
     | LogsBloom
-    | Kind
+    | Type
     | Root
     | Status
     | L1Fee
@@ -383,7 +383,7 @@ module ResponseTypes = {
     gasUsed?: bigint,
     contractAddress?: string,
     logsBloom?: string,
-    kind?: int,
+    @as("type") type_?: int,
     root?: string,
     status?: int,
     l1Fee?: bigint,

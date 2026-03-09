@@ -101,12 +101,20 @@ module GetLogs = {
     ~nonOptionalBlockFieldNames,
     ~nonOptionalTransactionFieldNames,
   ): logsQueryPageItem => {
+    // Remap "type" -> "kind" on the transaction object at runtime before validation.
+    // The latest hypersync client renamed "kind" to "type" but v2 consumers expect "kind".
+    let transaction: Js.Dict.t<unknown> = event.transaction->Utils.magic
+    switch transaction->Js.Dict.get("type") {
+    | Some(v) => transaction->Js.Dict.set("kind", v)
+    | None => ()
+    }
+
     let missingParams = []
     missingParams->addMissingParams(Log.fieldNames, event.log, ~prefix="log")
     missingParams->addMissingParams(nonOptionalBlockFieldNames, event.block, ~prefix="block")
     missingParams->addMissingParams(
       nonOptionalTransactionFieldNames,
-      event.transaction,
+      transaction->Utils.magic,
       ~prefix="transaction",
     )
     if missingParams->Array.length > 0 {
@@ -126,7 +134,7 @@ module GetLogs = {
     {
       log,
       block: event.block->Utils.magic,
-      transaction: event.transaction->Utils.magic,
+      transaction: transaction->Utils.magic,
     }
   }
 
