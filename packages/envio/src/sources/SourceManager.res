@@ -31,11 +31,9 @@ type t = {
   // After reaching a threshold, we attempt to switch back to a primary source (Sync or Live)
   // to check if it has recovered.
   mutable consecutiveFallbackSuccesses: int,
-  mutable isLive: bool,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
-let setIsLive = (sourceManager, isLive) => sourceManager.isLive = isLive
 
 let makeGetHeightRetryInterval = (
   ~initialRetryInterval,
@@ -95,7 +93,6 @@ let make = (
     statusStart: Hrtime.makeTimer(),
     status: Idle,
     consecutiveFallbackSuccesses: 0,
-    isLive: false,
   }
 }
 
@@ -277,7 +274,7 @@ let getSourceNewHeight = async (
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
-let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
+let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
@@ -297,7 +294,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
       ()
     } else if (
       source.sourceFor === Sync ||
-      source.sourceFor === Live && sourceManager.isLive ||
+      source.sourceFor === Live && isLive ||
       // Even if the active source is a fallback, still include
       // it to the list. So we don't wait for a timeout again
       // if all main sync sources are still not valid
@@ -375,6 +372,7 @@ let getNextSyncSourceState = (
   // But don't try it when main sync sources fail because of invalid configuration
   // note: The logic might be changed in the future
   ~attemptFallbacks=false,
+  ~isLive,
 ) => {
   let before = []
   let after = []
@@ -392,7 +390,7 @@ let getNextSyncSourceState = (
     } else if (
       switch source.sourceFor {
       | Sync => true
-      | Live => sourceManager.isLive
+      | Live => isLive
       | Fallback => attemptFallbacks || sourceState === initialSourceState
       }
     ) {
@@ -412,18 +410,18 @@ let getNextSyncSourceState = (
 
 let fallbackRecoveryThreshold = 10
 
-let getFirstPrimarySourceState = (sourceManager: t) => {
+let getFirstPrimarySourceState = (sourceManager: t, ~isLive) => {
   sourceManager.sourcesState->Js.Array2.find(s =>
     !s.disabled &&
       switch s.source.sourceFor {
       | Sync => true
-      | Live => sourceManager.isLive
+      | Live => isLive
       | Fallback => false
       }
   )
 }
 
-let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight) => {
+let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
@@ -481,6 +479,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             sourceManager->getNextSyncSourceState(
               ~initialSourceState,
               ~currentSourceState=sourceState,
+              ~isLive,
             )
 
           // These errors are impossible to recover, so we disable the source
@@ -532,6 +531,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             ~initialSourceState,
             ~currentSourceState=sourceState,
             ~attemptFallbacks=true,
+            ~isLive,
           )
 
         let hasAnotherSource = nextSourceState !== initialSourceState
@@ -573,6 +573,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
               ~initialSourceState,
               ~attemptFallbacks,
               ~currentSourceState=sourceState,
+              ~isLive,
             )
           } else {
             sourceState
@@ -621,7 +622,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
       sourceManager.consecutiveFallbackSuccesses + 1
     if sourceManager.consecutiveFallbackSuccesses >= fallbackRecoveryThreshold {
       sourceManager.consecutiveFallbackSuccesses = 0
-      switch sourceManager->getFirstPrimarySourceState {
+      switch sourceManager->getFirstPrimarySourceState(~isLive) {
       | Some(primarySourceState) =>
         let logger = Logging.createChild(
           ~params={

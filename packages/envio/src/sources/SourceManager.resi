@@ -11,7 +11,6 @@ let make: (
 ) => t
 
 let getActiveSource: t => Source.t
-let setIsLive: (t, bool) => unit
 
 let fetchNext: (
   t,
@@ -22,12 +21,13 @@ let fetchNext: (
   ~stateId: int,
 ) => promise<unit>
 
-let waitForNewBlock: (t, ~knownHeight: int) => promise<int>
+let waitForNewBlock: (t, ~knownHeight: int, ~isLive: bool) => promise<int>
 
 let executeQuery: (
   t,
   ~query: FetchState.query,
   ~knownHeight: int,
+  ~isLive: bool,
 ) => promise<Source.blockRangeFetchResponse>
 
 let makeGetHeightRetryInterval: (
