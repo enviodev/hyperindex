@@ -3,6 +3,10 @@ type t
 @send external exit: (t, unit) => unit = "exit"
 type exitCode = | @as(0) Success | @as(1) Failure
 @send external exitWithCode: (t, exitCode) => unit = "exit"
+// Use @val to access the global `process` object for EventEmitter methods like `on`.
+// The @module binding above compiles to `import * as Process from "process"` (a namespace import),
+// which exposes named exports (exit, cwd) but not EventEmitter prototype methods (on, off, emit).
+@val external globalProcess: t = "process"
 @send external onUnhandledRejection: (t, @as("unhandledRejection") _, exn => unit) => unit = "on"
 
 module Util = {

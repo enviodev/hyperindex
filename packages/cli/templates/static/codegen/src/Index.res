@@ -2,7 +2,7 @@
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js can't display them.
 // With --unhandled-rejections=throw (Node v15+ default), registering this handler prevents Node from
 // crashing on unhandled rejections, so the handler must not re-throw or exit.
-NodeJs.process->NodeJs.onUnhandledRejection(reason => {
+NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
   try {
     Js.Console.error("Unhandled promise rejection:")
     Js.Console.error(reason->Utils.prettifyExn)
