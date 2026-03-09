@@ -27,8 +27,8 @@ type t = {
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
-  // Counts consecutive successful queries while active source is not a Sync source.
-  // After reaching a threshold, we attempt to switch back to a Sync source
+  // Counts consecutive successful queries while active source is a Fallback.
+  // After reaching a threshold, we attempt to switch back to a primary source (Sync or Live)
   // to check if it has recovered.
   mutable consecutiveFallbackSuccesses: int,
 }
@@ -61,7 +61,9 @@ let make = (
     ~maxRetryInterval=60_000,
   ),
 ) => {
-  let initialActiveSource = switch sources->Js.Array2.find(source => source.sourceFor === Sync) {
+  let initialActiveSource = switch sources->Js.Array2.find(source =>
+    source.sourceFor->Source.isPrimarySource
+  ) {
   | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
   | Some(source) => source
   }
@@ -283,12 +285,6 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  // Only include Live sources if we've actually synced some blocks
-  // (knownHeight > 0 means we've fetched at least one batch)
-  // This prevents Live RPC from winning the initial height race and
-  // becoming activeSource, which would bypass HyperSync's smart block detection
-  let isInitialHeightFetch = knownHeight === 0
-
   let syncSources = []
   let fallbackSources = []
   sourcesState->Array.forEach(sourceState => {
@@ -297,10 +293,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
       // Skip disabled sources
       ()
     } else if (
-      source.sourceFor === Sync ||
-      // Include Live sources only after initial sync has started
-      // Live sources are optimized for real-time indexing with lower latency
-      source.sourceFor === Live && !isInitialHeightFetch ||
+      source.sourceFor->Source.isPrimarySource ||
       // Even if the active source is a fallback, still include
       // it to the list. So we don't wait for a timeout again
       // if all main sync sources are still not valid
@@ -394,10 +387,8 @@ let getNextSyncSourceState = (
       hasActive := true
     } else if (
       switch source.sourceFor {
-      | Sync => true
-      // Live sources should NOT be used for historical sync rotation
-      // They are only meant for real-time indexing once synced
-      | Live | Fallback => attemptFallbacks || sourceState === initialSourceState
+      | Sync | Live => true
+      | Fallback => attemptFallbacks || sourceState === initialSourceState
       }
     ) {
       (hasActive.contents ? after : before)->Array.push(sourceState)
@@ -416,9 +407,9 @@ let getNextSyncSourceState = (
 
 let fallbackRecoveryThreshold = 10
 
-let getFirstSyncSourceState = (sourceManager: t) => {
+let getFirstPrimarySourceState = (sourceManager: t) => {
   sourceManager.sourcesState->Js.Array2.find(s =>
-    !s.disabled && s.source.sourceFor === Sync
+    !s.disabled && s.source.sourceFor->Source.isPrimarySource
   )
 }
 
@@ -611,28 +602,28 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
     sourceManager.activeSource = sourceStateRef.contents.source
   }
 
-  // After a successful query on a non-Sync source, check if we should
-  // attempt switching back to a Sync source that may have recovered
-  if sourceManager.activeSource.sourceFor === Sync {
+  // After a successful query on a Fallback source, check if we should
+  // attempt switching back to a primary source that may have recovered
+  if sourceManager.activeSource.sourceFor->Source.isPrimarySource {
     sourceManager.consecutiveFallbackSuccesses = 0
   } else {
     sourceManager.consecutiveFallbackSuccesses =
       sourceManager.consecutiveFallbackSuccesses + 1
     if sourceManager.consecutiveFallbackSuccesses >= fallbackRecoveryThreshold {
       sourceManager.consecutiveFallbackSuccesses = 0
-      switch sourceManager->getFirstSyncSourceState {
-      | Some(syncSourceState) =>
+      switch sourceManager->getFirstPrimarySourceState {
+      | Some(primarySourceState) =>
         let logger = Logging.createChild(
           ~params={
             "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
           },
         )
         logger->Logging.childInfo({
-          "msg": "Attempting to switch back to primary sync source after fallback recovery period",
-          "source": syncSourceState.source.name,
+          "msg": "Attempting to switch back to primary source after fallback recovery period",
+          "source": primarySourceState.source.name,
           "previousSource": sourceManager.activeSource.name,
         })
-        sourceManager.activeSource = syncSourceState.source
+        sourceManager.activeSource = primarySourceState.source
       | None => ()
       }
     }
