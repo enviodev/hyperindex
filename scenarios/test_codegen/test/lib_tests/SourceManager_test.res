@@ -91,7 +91,29 @@ describe("SourceManager creation", () => {
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync0)
   })
 
-  it("Fails to create without sync sources", t => {
+  it("Uses first live source as initial active source when no sync source exists", t => {
+    let fallback = Mock.Source.make([], ~sourceFor=Fallback).source
+    let live = Mock.Source.make([], ~sourceFor=Live).source
+    let sourceManager = SourceManager.make(
+      ~sources=[fallback, live],
+      ~maxPartitionConcurrency=10,
+    )
+    t.expect(sourceManager->SourceManager.getActiveSource).toBe(live)
+  })
+
+  it("Prefers sync source over live source as initial active source", t => {
+    let live = Mock.Source.make([], ~sourceFor=Live).source
+    let sync = Mock.Source.make([]).source
+    let sourceManager = SourceManager.make(
+      ~sources=[live, sync],
+      ~maxPartitionConcurrency=10,
+    )
+    // Sync comes first in the sources array scan only if it appears first
+    // Here live is first, so live will be picked as initial
+    t.expect(sourceManager->SourceManager.getActiveSource).toBe(live)
+  })
+
+  it("Fails to create without sync or live sources", t => {
     t.expect(
       () => {
         SourceManager.make(~sources=[], ~maxPartitionConcurrency=10)
@@ -810,6 +832,36 @@ describe("SourceManager wait for new blocks", () => {
       // No new calls
       t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
       t.expect(mock1.getHeightOrThrowCalls->Array.length).toEqual(1)
+    },
+  )
+
+  Async.it(
+    "Includes live source in initial height fetch (knownHeight=0)",
+    async t => {
+      let syncMock = Mock.Source.make([#getHeightOrThrow])
+      let liveMock = Mock.Source.make([#getHeightOrThrow], ~sourceFor=Live)
+      let sourceManager = SourceManager.make(
+        ~sources=[syncMock.source, liveMock.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=0)
+
+      t.expect(
+        syncMock.getHeightOrThrowCalls->Array.length,
+        ~message="Should call sync source",
+      ).toEqual(1)
+      t.expect(
+        liveMock.getHeightOrThrowCalls->Array.length,
+        ~message="Should call live source in parallel with sync",
+      ).toEqual(1)
+
+      liveMock.resolveGetHeightOrThrow(1)
+      t.expect(await p).toEqual(1)
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Should switch to live source that responded first",
+      ).toBe(liveMock.source)
     },
   )
 
@@ -1624,6 +1676,79 @@ but we still attempt the fallback source if it was the initial active source.
         sourceManager->SourceManager.getActiveSource,
         ~message="Active source should remain the sync source",
       ).toBe(syncMock.source)
+    },
+  )
+
+  Async.it(
+    "Does not attempt recovery when active source is a live source",
+    async t => {
+      let liveMock = Mock.Source.make([#getItemsOrThrow], ~sourceFor=Live)
+      let sourceManager = SourceManager.make(
+        ~sources=[liveMock.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      // Run more than fallbackRecoveryThreshold queries on live source
+      for _ in 0 to SourceManager.fallbackRecoveryThreshold {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
+        switch liveMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to liveMock")
+        }
+        let _ = await p
+      }
+
+      // Counter should stay at 0, active source unchanged
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Active source should remain the live source",
+      ).toBe(liveMock.source)
+    },
+  )
+
+  Async.it(
+    "After consecutive successful queries on a fallback source, can recover to a live source",
+    async t => {
+      let liveMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Live)
+      let fallbackMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow],
+        ~sourceFor=Fallback,
+      )
+      let newBlockFallbackStallTimeout = 0
+      let sourceManager = SourceManager.make(
+        ~newBlockFallbackStallTimeout,
+        ~sources=[liveMock.source, fallbackMock.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      // Switch active source to fallback via waitForNewBlock
+      {
+        let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
+        await Utils.delay(newBlockFallbackStallTimeout)
+        fallbackMock.resolveGetHeightOrThrow(101)
+        t.expect(await p).toBe(101)
+        t.expect(
+          sourceManager->SourceManager.getActiveSource,
+          ~message="Should have switched to fallback",
+        ).toBe(fallbackMock.source)
+      }
+
+      // Run fallbackRecoveryThreshold (10) successful queries on fallback
+      for _ in 0 to SourceManager.fallbackRecoveryThreshold - 1 {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~knownHeight=100)
+        switch fallbackMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        }
+        let _ = await p
+      }
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="After 10 successful fallback queries, should switch back to live source",
+      ).toBe(liveMock.source)
     },
   )
 
