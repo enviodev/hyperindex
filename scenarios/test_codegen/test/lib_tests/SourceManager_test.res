@@ -33,7 +33,7 @@ let executeQueryMock = () => {
 }
 
 type waitForNewBlockMock = {
-  fn: (~currentBlockHeight: int) => Promise.t<int>,
+  fn: (~knownHeight: int) => Promise.t<int>,
   calls: array<int>,
   resolveAll: int => unit,
   resolveFns: array<int => unit>,
@@ -43,11 +43,11 @@ let waitForNewBlockMock = () => {
   let calls = []
   let resolveFns = []
   {
-    resolveAll: currentBlockHeight => {
-      resolveFns->Js.Array2.forEach(resolve => resolve(currentBlockHeight))
+    resolveAll: knownHeight => {
+      resolveFns->Js.Array2.forEach(resolve => resolve(knownHeight))
     },
-    fn: (~currentBlockHeight) => {
-      calls->Js.Array2.push(currentBlockHeight)->ignore
+    fn: (~knownHeight) => {
+      calls->Js.Array2.push(knownHeight)->ignore
       Promise.make((resolve, _reject) => {
         resolveFns->Js.Array2.push(resolve)->ignore
       })
@@ -58,7 +58,7 @@ let waitForNewBlockMock = () => {
 }
 
 type onNewBlockMock = {
-  fn: (~currentBlockHeight: int) => unit,
+  fn: (~knownHeight: int) => unit,
   calls: array<int>,
 }
 
@@ -66,8 +66,8 @@ let onNewBlockMock = () => {
   let calls = []
 
   {
-    fn: (~currentBlockHeight) => {
-      calls->Js.Array2.push(currentBlockHeight)->ignore
+    fn: (~knownHeight) => {
+      calls->Js.Array2.push(knownHeight)->ignore
     },
     calls,
   }
@@ -200,10 +200,10 @@ describe("SourceManager fetchNext", () => {
     }->FetchState.updateInternal
   }
 
-  let neverWaitForNewBlock = async (~currentBlockHeight as _) =>
+  let neverWaitForNewBlock = async (~knownHeight as _) =>
     Assert.fail("The waitForNewBlock shouldn't be called for the test")
 
-  let neverOnNewBlock = (~currentBlockHeight as _) =>
+  let neverOnNewBlock = (~knownHeight as _) =>
     Assert.fail("The onNewBlock shouldn't be called for the test")
 
   let neverExecutePartitionQuery = _ =>
@@ -755,7 +755,7 @@ describe("SourceManager wait for new blocks", () => {
       ])
       let sourceManager = SourceManager.make(~sources=[source], ~maxPartitionConcurrency=10)
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=0)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=0)
 
       Assert.deepEqual(getHeightOrThrowCalls->Array.length, 1)
       resolveGetHeightOrThrow(1)
@@ -774,7 +774,7 @@ describe("SourceManager wait for new blocks", () => {
         ~maxPartitionConcurrency=10,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=0)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=0)
 
       Assert.deepEqual(mock0.getHeightOrThrowCalls->Array.length, 1)
       Assert.deepEqual(mock1.getHeightOrThrowCalls->Array.length, 1)
@@ -813,7 +813,7 @@ describe("SourceManager wait for new blocks", () => {
       ~maxPartitionConcurrency=10,
     )
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
     let ((), ()) = await Promise.all2((
       (
@@ -909,7 +909,7 @@ describe("SourceManager wait for new blocks", () => {
       ),
     )
 
-    let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+    let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
     let ((), ()) = await Promise.all2((
       (
@@ -1051,7 +1051,7 @@ describe("SourceManager wait for new blocks", () => {
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
       Assert.deepEqual(sync.getHeightOrThrowCalls->Array.length, 1)
       Assert.deepEqual(fallback.getHeightOrThrowCalls->Array.length, 0)
@@ -1134,7 +1134,7 @@ describe("SourceManager wait for new blocks", () => {
         ~message="Polling for fallback source should stop after successful response",
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=101)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=101)
 
       Assert.deepEqual(
         sync.getHeightOrThrowCalls->Array.length,
@@ -1192,7 +1192,7 @@ describe("SourceManager wait for new blocks", () => {
         ~stalledPollingInterval,
       )
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
 
       Assert.deepEqual(sync.getHeightOrThrowCalls->Array.length, 1)
       sync.resolveGetHeightOrThrow(100)
@@ -1335,7 +1335,7 @@ describe("SourceManager.executeQuery", () => {
       {
         // Switch the initial active source to fallback,
         // to test that it's included to the rotation
-        let p = sourceManager->SourceManager.waitForNewBlock(~currentBlockHeight=100)
+        let p = sourceManager->SourceManager.waitForNewBlock(~knownHeight=100)
         await Utils.delay(newBlockFallbackStallTimeout)
         mock1.resolveGetHeightOrThrow(101)
         Assert.equal(await p, 101)
