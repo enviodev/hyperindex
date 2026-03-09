@@ -2660,4 +2660,114 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       )
     },
   )
+
+  Async.it(
+    "Should not loop when reorg chain has no checkpoints after rollback target",
+    async t => {
+      // Reproduces a production bug: infinite reorg→rollback→reorg loop.
+      // When getRollbackProgressDiff returns no rows for the reorg chain
+      // (no checkpoints after rollbackTargetCheckpointId), the chain hit the
+      // | None branch. Without the fix, reorgDetection and fetchState were
+      // not rolled back, preserving stale block hashes.
+      //
+      // Multi-chain setup: chain A (reorg chain) has only the initial checkpoint
+      // at block 100. Chain B progresses further. When chain A's first
+      // within-threshold fetch triggers a reorg, getRollbackProgressDiff(id > 1)
+      // returns chain B but NOT chain A → chain A enters | None branch.
+
+      let sourceMock1 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock2 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock2.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // Both chains enter reorg threshold
+      // Chain A (#1337): checkpoint at block 100 (id=1)
+      // Chain B (#100): checkpoint at block 100 (id=2)
+      let _ = await Promise.all2((
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
+      ))
+
+      // Chain B progresses: creates checkpoint after id=1
+      sourceMock2.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
+      await indexerMock.getBatchWritePromise()
+
+      // Chain A: trigger reorg on block 100 (prevRangeLastBlock hash mismatch).
+      // Chain A only has checkpoint at block 100 (id=1), so rollbackTargetCheckpointId=1.
+      // getRollbackProgressDiff(id > 1) returns chain B but NOT chain A.
+      // → chain A enters the | None branch in the rollback code.
+      sourceMock1.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=102,
+        ~prevRangeLastBlock={
+          blockNumber: 100,
+          blockHash: "0x100-reorged",
+        },
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // No getBlockHashes call expected for chain A:
+      // getThresholdBlockNumbersBelowBlock(blockNumber=100, knownHeight=300)
+      // has thresholdBlockNumber=100, so blocks >=100 AND <100 → empty.
+      // Falls to getHighestBlockBelowThreshold = 100.
+      t.expect(
+        sourceMock1.getBlockHashesCalls,
+        ~message="Should not call getBlockHashes (no scanned blocks in threshold below reorg block)",
+      ).toEqual([])
+
+      // Clean up pending calls from chain B
+      sourceMock2.resolveGetItemsOrThrow([], ~resolveAt=#all)
+
+      await indexerMock.getRollbackReadyPromise()
+
+      // After rollback, chain A should refetch from block 101
+      t.expect(
+        sourceMock1.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+        ~message="Chain A should refetch from block 101 after rollback",
+      ).toEqual(
+        [
+          {
+            "fromBlock": 101,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
+        ],
+      )
+
+      // Resolve chain A's refetch normally and verify indexer progresses
+      sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
+      await indexerMock.getBatchWritePromise()
+
+      // Verify chain A progressed past the rollback target
+      let checkpoints = await indexerMock.queryCheckpoints()
+      let chainACheckpoints =
+        checkpoints
+        ->Js.Array2.filter(cp => cp.chainId == 1337)
+        ->Js.Array2.sortInPlaceWith((a, b) => a.id > b.id ? 1 : -1)
+
+      t.expect(
+        chainACheckpoints->Js.Array2.map(cp => cp.blockNumber),
+        ~message="Chain A should have progressed past the rollback target",
+      ).toEqual([102])
+    },
+  )
 })

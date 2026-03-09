@@ -1118,8 +1118,23 @@ let injectedTaskReducer = (
             numEventsProcessed: newTotalEventsProcessed,
           }
 
-        | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything
-          cf
+        | None =>
+          // Even if no checkpoints exist for the reorg chain (no events processed),
+          // we must still rollback its reorgDetection to clear stale block hashes.
+          // Otherwise, the old hash remains and the same reorg is detected in a loop.
+          if chain == reorgChain {
+            {
+              ...cf,
+              reorgDetection: cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+                ~blockNumber=rollbackTargetBlockNumber,
+              ),
+              fetchState: cf.fetchState->FetchState.rollback(
+                ~targetBlockNumber=rollbackTargetBlockNumber,
+              ),
+            }
+          } else {
+            cf
+          }
         }
       })
 
