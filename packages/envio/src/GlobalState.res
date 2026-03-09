@@ -310,6 +310,11 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     }
   })
 
+  // Propagate isLive state to SourceManager so it can include Live sources in rotation
+  chainFetchers
+  ->ChainMap.values
+  ->Array.forEach(cf => cf.sourceManager->SourceManager.setIsLive(cf->ChainFetcher.isLive))
+
   let allChainsSyncedAtHead =
     chainFetchers
     ->ChainMap.values

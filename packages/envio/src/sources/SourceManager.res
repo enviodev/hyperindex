@@ -31,9 +31,11 @@ type t = {
   // After reaching a threshold, we attempt to switch back to a primary source (Sync or Live)
   // to check if it has recovered.
   mutable consecutiveFallbackSuccesses: int,
+  mutable isLive: bool,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+let setIsLive = (sourceManager, isLive) => sourceManager.isLive = isLive
 
 let makeGetHeightRetryInterval = (
   ~initialRetryInterval,
@@ -93,6 +95,7 @@ let make = (
     statusStart: Hrtime.makeTimer(),
     status: Idle,
     consecutiveFallbackSuccesses: 0,
+    isLive: false,
   }
 }
 
@@ -293,7 +296,8 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight) => {
       // Skip disabled sources
       ()
     } else if (
-      source.sourceFor->Source.isPrimarySource ||
+      source.sourceFor === Sync ||
+      source.sourceFor === Live && sourceManager.isLive ||
       // Even if the active source is a fallback, still include
       // it to the list. So we don't wait for a timeout again
       // if all main sync sources are still not valid
@@ -387,7 +391,8 @@ let getNextSyncSourceState = (
       hasActive := true
     } else if (
       switch source.sourceFor {
-      | Sync | Live => true
+      | Sync => true
+      | Live => sourceManager.isLive
       | Fallback => attemptFallbacks || sourceState === initialSourceState
       }
     ) {
@@ -409,7 +414,12 @@ let fallbackRecoveryThreshold = 10
 
 let getFirstPrimarySourceState = (sourceManager: t) => {
   sourceManager.sourcesState->Js.Array2.find(s =>
-    !s.disabled && s.source.sourceFor->Source.isPrimarySource
+    !s.disabled &&
+      switch s.source.sourceFor {
+      | Sync => true
+      | Live => sourceManager.isLive
+      | Fallback => false
+      }
   )
 }
 
