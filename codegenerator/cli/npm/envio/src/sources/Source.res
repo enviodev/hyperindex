@@ -56,4 +56,5 @@ type t = {
     ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
+  createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
 }

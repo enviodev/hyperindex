@@ -783,10 +783,10 @@ let checkAndFetchForChain = (
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
-      ~waitForNewBlock=(~currentBlockHeight) =>
-        chainFetcher.sourceManager->waitForNewBlock(~currentBlockHeight),
-      ~onNewBlock=(~currentBlockHeight) =>
-        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight})),
+      ~waitForNewBlock=(~knownHeight) =>
+        chainFetcher.sourceManager->waitForNewBlock(~knownHeight),
+      ~onNewBlock=(~knownHeight) =>
+        dispatchAction(FinishWaitingForNewBlock({chain, currentBlockHeight: knownHeight})),
       ~currentBlockHeight,
       ~executeQuery=async query => {
         try {
