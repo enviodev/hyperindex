@@ -69,10 +69,18 @@ let make = (~hyperSyncUrl, ~apiToken) => {
     let es = EventSource.create(
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
-        headers: Js.Dict.fromArray([
-          ("Authorization", `Bearer ${apiToken}`),
-          ("User-Agent", userAgent),
-        ]),
+        fetch: (url, ~args) => {
+          EventSource.Fetch.fetch(
+            url,
+            ~args={
+              ...args,
+              headers: Js.Dict.fromArray([
+                ("Authorization", `Bearer ${apiToken}`),
+                ("User-Agent", userAgent),
+              ]),
+            },
+          )
+        },
       },
     )
 
