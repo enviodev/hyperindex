@@ -310,11 +310,6 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     }
   })
 
-  // Propagate isLive state to SourceManager so it can include Live sources in rotation
-  chainFetchers
-  ->ChainMap.values
-  ->Array.forEach(cf => cf.sourceManager->SourceManager.setIsLive(cf->ChainFetcher.isLive))
-
   let allChainsSyncedAtHead =
     chainFetchers
     ->ChainMap.values
@@ -792,7 +787,11 @@ let checkAndFetchForChain = (
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
-      ~waitForNewBlock=(~knownHeight) => chainFetcher.sourceManager->waitForNewBlock(~knownHeight),
+      ~waitForNewBlock=(~knownHeight) =>
+        chainFetcher.sourceManager->waitForNewBlock(
+          ~knownHeight,
+          ~isLive=chainFetcher->ChainFetcher.isLive,
+        ),
       ~onNewBlock=(~knownHeight) => dispatchAction(FinishWaitingForNewBlock({chain, knownHeight})),
       ~executeQuery=async query => {
         try {
@@ -800,6 +799,7 @@ let checkAndFetchForChain = (
             await chainFetcher.sourceManager->executeQuery(
               ~query,
               ~knownHeight=fetchState.knownHeight,
+              ~isLive=chainFetcher->ChainFetcher.isLive,
             )
           dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
         } catch {
