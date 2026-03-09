@@ -35,10 +35,6 @@ importers:
       viem:
         specifier: 2.21.0
         version: 2.21.0(typescript@5.5.4)
-    optionalDependencies:
-      generated:
-        specifier: ./generated
-        version: link:generated
     devDependencies:
       '@glennsl/rescript-jest':
         specifier: ^0.9.2
@@ -94,6 +90,10 @@ importers:
       ts-node:
         specifier: ^10.9.1
         version: 10.9.2(@types/node@18.19.47)(typescript@5.5.4)
+    optionalDependencies:
+      generated:
+        specifier: ./generated
+        version: link:generated
 
   ../helpers:
     dependencies:
@@ -143,7 +143,7 @@ importers:
         specifier: 16.4.5
         version: 16.4.5
       envio:
-        specifier: file:/Users/dzakh/.cursor/worktrees/hyperindex/ZXvoF/codegenerator/target/debug/envio/../../../cli/npm/envio
+        specifier: file:/Users/Jonathan/Coding/envio/indexer/codegenerator/target/debug/envio/../../../cli/npm/envio
         version: file:../../codegenerator/cli/npm/envio(typescript@5.5.4)
       ethers:
         specifier: 6.8.0
@@ -418,44 +418,50 @@ packages:
     resolution: {integrity: sha512-raKA6DshYSle0sAOHBV1OkSRFMN+Mkz8sFiMmS3k+m5nP6pP56E17CRRePBL5qmR6ZgSEvGOz/44QUiKNkK9Pg==}
     engines: {node: '>= 10'}
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.7.0':
-    resolution: {integrity: sha512-/CNHCekZdcMLGp8Q1uhmEhAzk/0YnRJNpHOdfQYJ81WiKuQbVtejD77liFBqG3zAGYRN6ZRMD/I1hOVnIz5ixw==}
+  '@envio-dev/hypersync-client-darwin-arm64@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-jE67vEbT0BrKlhhXOuPCz8ghF+3juC81AOXv3z6DAaVHY7+NNl2stWFOIMwcSbT5etxmC7zbdujr+GgA9K7M3w==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-darwin-x64@0.7.0':
-    resolution: {integrity: sha512-SqqBuVozL0hclIPS6L4VQC4TNr4gIC4kzQpOhrszwrho73pqEvlqSKyH10u615tJIDD9lvqxjjiRPLs/mdcVWg==}
+  '@envio-dev/hypersync-client-darwin-x64@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-e/GknuNBsMwiTLxGs6JbwKcRHojrF4wCmZvLAa3dPJSvrbOHqZx9mG/mgbk9EXpxawD/v/kXrENsNa/ypjrWrQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0':
-    resolution: {integrity: sha512-q09sfN4pDf82NPuh7xPZ+DZQZuO4vKG6qxbBCHPjK6KZkIw4sNfxIwSG08GG0iLKUxQdW/V3R6FIDM9+c5NTUg==}
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-6kQRvekJ3iJo5k8qotrU6jo0NAS9h8yxrQ+RM5kaNtVeaucB1gxphpWFwG9mutsgAX0PP41mldTZOzU7NpfkUw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
-    resolution: {integrity: sha512-Rpz3VSLqq2O9Qp3GiDXHmF3MPm7TcsTfRzSz2RkRVEfdchaKA7Ob86jQ2ueRyG1UEEu47V9JzL6mYmVs4gNa7w==}
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-FpriXd/Y2Vp+A+5ORJ6frd3upUs9d2O7Y48uGcE/Dcxjr/SXXUSNRjbeEUbEhTc4c3ZqglQBaJb5Qan83dSTEA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
-    resolution: {integrity: sha512-SZ8RHNaCEcPvubFGdA7gkbxJeJe4whhw0oaAvSyGEbUjL5byFI9nqMVzW8o8mPACqqjlOHIq77GYxbbUI+53vQ==}
+  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-V7dA9BIvua6CkMMe20iqDEfGf0I5Yg0O9s72aVkrj+WISMfFnnUcFgeh9yHhn/yo1VqFLkovd3QDg/OQNZVZmw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
-    resolution: {integrity: sha512-R7M1IBcWfqx1TyBcK5Mc/VJmayGeK9woWPzSPzjTgYsHFl65gE1e0hXb8B/gi+km8GQDZYNcaHyBh6xSVHkrzg==}
+  '@envio-dev/hypersync-client-win32-arm64-msvc@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-KbGy+iYscYL7tKRiYefezOhWgrDTXoUrmw9sykp396US4/0heXIz7xgpa+1rWKPKVU1wRJLczU2NqgCwY0Zxqw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-XAAaBE2iVUYIHiqAtRjQEpjD0lXS76kiGCSlMhybRITeGLZbNanfdSYkz3vTxQ1nkX7+u/xNfzU7Ih+5k3YxmA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@envio-dev/hypersync-client@0.7.0':
-    resolution: {integrity: sha512-YDFN8XIQTOBztBe5Xr4oFu7PKdR93+7QjGxg4/Xx6+406tPOX9Lrir3cKD+cJpS1ZY1k4/l8l4C6L6D0gqJReQ==}
+  '@envio-dev/hypersync-client@0.7.0-hyperindex-v2-compatible':
+    resolution: {integrity: sha512-JHh0c5UGFORruCgWxHWxWmNf9hNgJP8C9pvzMeuQRG7dGXk6B9S7D1LznkshmsRt/d8w0de/uQlPiNxFwOldVA==}
     engines: {node: '>= 10'}
 
   '@ethersproject/abi@5.7.0':
@@ -1733,6 +1739,14 @@ packages:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
 
+  eventsource-parser@3.0.6:
+    resolution: {integrity: sha512-Vo1ab+QXPzZ4tCa8SwIHJFaSzy4R6SHf7BY79rFBDf0idraZWAkYrDjDj8uWaSm3S2TK+hJ7/t1CEmZ7jXw+pg==}
+    engines: {node: '>=18.0.0'}
+
+  eventsource@4.1.0:
+    resolution: {integrity: sha512-2GuF51iuHX6A9xdTccMTsNb7VO0lHZihApxhvQzJB5A03DvHDd2FQepodbMaztPBmBcE/ox7o2gqaxGhYB9LhQ==}
+    engines: {node: '>=20.0.0'}
+
   evp_bytestokey@1.0.3:
     resolution: {integrity: sha512-/f2Go4TognH/KvCISP7OUsHn85hT9nUkxxA9BEWxFn+Oj9o8ZNLm/40hdlgSLyuOimsrTKLUMEorQexp/aPQeA==}
 
@@ -1904,7 +1918,7 @@ packages:
 
   glob@7.1.7:
     resolution: {integrity: sha512-OvD9ENzPLbegENnYP5UUfJIirTg4+XwMWGaQfQTY0JenxNvvIKP3U3/tAQSPIu/lHxXYSZmpXlUHeqAIdKzBLQ==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   glob@7.2.0:
     resolution: {integrity: sha512-lmLf6gtyrPq8tTjSmrO94wBeQbFR3HbLHbuyD69wuyQkImp2hWqMGB47OX65FBkPffO641IP9jWa1z4ivqG26Q==}
@@ -3838,32 +3852,36 @@ snapshots:
       '@envio-dev/hyperfuel-client-linux-x64-musl': 1.2.2
       '@envio-dev/hyperfuel-client-win32-x64-msvc': 1.2.2
 
-  '@envio-dev/hypersync-client-darwin-arm64@0.7.0':
+  '@envio-dev/hypersync-client-darwin-arm64@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-darwin-x64@0.7.0':
+  '@envio-dev/hypersync-client-darwin-x64@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0':
+  '@envio-dev/hypersync-client-linux-arm64-gnu@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0':
+  '@envio-dev/hypersync-client-linux-x64-gnu@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0':
+  '@envio-dev/hypersync-client-linux-x64-musl@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0':
+  '@envio-dev/hypersync-client-win32-arm64-msvc@0.7.0-hyperindex-v2-compatible':
     optional: true
 
-  '@envio-dev/hypersync-client@0.7.0':
+  '@envio-dev/hypersync-client-win32-x64-msvc@0.7.0-hyperindex-v2-compatible':
+    optional: true
+
+  '@envio-dev/hypersync-client@0.7.0-hyperindex-v2-compatible':
     optionalDependencies:
-      '@envio-dev/hypersync-client-darwin-arm64': 0.7.0
-      '@envio-dev/hypersync-client-darwin-x64': 0.7.0
-      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.7.0
-      '@envio-dev/hypersync-client-linux-x64-gnu': 0.7.0
-      '@envio-dev/hypersync-client-linux-x64-musl': 0.7.0
-      '@envio-dev/hypersync-client-win32-x64-msvc': 0.7.0
+      '@envio-dev/hypersync-client-darwin-arm64': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-darwin-x64': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-linux-x64-gnu': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-linux-x64-musl': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-win32-arm64-msvc': 0.7.0-hyperindex-v2-compatible
+      '@envio-dev/hypersync-client-win32-x64-msvc': 0.7.0-hyperindex-v2-compatible
 
   '@ethersproject/abi@5.7.0':
     dependencies:
@@ -5454,8 +5472,9 @@ snapshots:
     dependencies:
       '@elastic/ecs-pino-format': 1.4.0
       '@envio-dev/hyperfuel-client': 1.2.2
-      '@envio-dev/hypersync-client': 0.7.0
+      '@envio-dev/hypersync-client': 0.7.0-hyperindex-v2-compatible
       bignumber.js: 9.1.2
+      eventsource: 4.1.0
       pino: 8.16.1
       pino-pretty: 10.2.3
       prom-client: 15.0.0
@@ -5612,6 +5631,12 @@ snapshots:
   event-target-shim@5.0.1: {}
 
   events@3.3.0: {}
+
+  eventsource-parser@3.0.6: {}
+
+  eventsource@4.1.0:
+    dependencies:
+      eventsource-parser: 3.0.6
 
   evp_bytestokey@1.0.3:
     dependencies:

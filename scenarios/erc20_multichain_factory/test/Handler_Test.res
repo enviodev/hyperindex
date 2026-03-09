@@ -34,6 +34,7 @@ describe("Transfers", () => {
         from: userAddress1,
         to: userAddress2,
         value: BigInt.fromInt(3),
+        mockEventData: {transaction: {kind: Some(0)}},
       })
 
       //Process the mockEvent
@@ -85,6 +86,7 @@ describe("Transfers", () => {
       from: userAddress1,
       to: userAddress2,
       value: BigInt.fromInt(3),
+      mockEventData: {transaction: {kind: Some(0)}},
     })
 
     let mockDbAfterTransfer = await ERC20.Transfer.processEvent({
