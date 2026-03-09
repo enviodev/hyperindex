@@ -2538,6 +2538,200 @@ Sorted by timestamp and chain id`,
     },
   )
 
+  Async.it(
+    "Reorg-on-reorg restores ALL chains' counters, not just the reorg chain's",
+    async t => {
+      // Root cause test: validatePartitionQueryResponse must restore counters
+      // for every chain when re-reorging from RollbackReady state.
+      // Without the fix, only the reorg chain's counter is restored,
+      // causing non-reorg chains to go negative on the second rollback.
+      let sourceMock1337 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock100 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let sourceMock137 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#137,
+      )
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock100.source]),
+          },
+          {
+            chain: #137,
+            sourceConfig: Config.CustomSources([sourceMock137.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      // All three chains enter reorg threshold
+      let _ = await Promise.all3((
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock137),
+      ))
+
+      // Each chain processes events at blocks 102-103
+      sourceMock100.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 102,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "1", value: "value-1"})
+            },
+          },
+          {
+            blockNumber: 103,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "2", value: "value-2"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      sourceMock137.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 102,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "4", value: "value-4"})
+            },
+          },
+          {
+            blockNumber: 103,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "5", value: "value-5"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      sourceMock1337.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 102,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({id: "3", value: "value-3"})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=103,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        {
+          let metrics = await indexerMock.metric("envio_progress_events")
+          metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+        },
+        ~message="Events count before rollback: chain 1337=1, chain 100=2, chain 137=2",
+      ).toEqual(
+        [
+          {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
+          {value: "2", labels: Js.Dict.fromArray([("chainId", "100")])},
+          {value: "2", labels: Js.Dict.fromArray([("chainId", "137")])},
+        ],
+      )
+
+      // === FIRST REORG on chain 1337 at block 103 ===
+      sourceMock1337.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={
+          blockNumber: 103,
+          blockHash: "0x103-reorged",
+        },
+        ~resolveAt=#first,
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      sourceMock1337.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      ])
+
+      // Clean up pending calls from before rollback
+      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock137.resolveGetItemsOrThrow([], ~resolveAt=#all)
+
+      await indexerMock.getRollbackReadyPromise()
+
+      t.expect(
+        {
+          let metrics = await indexerMock.metric("envio_progress_events")
+          metrics->Js.Array2.sortInPlaceWith((a, b) =>
+            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+          )
+        },
+        ~message="After first rollback: all chains' counters should be 0",
+      ).toEqual(
+        [
+          {value: "0", labels: Js.Dict.fromArray([("chainId", "100")])},
+          {value: "0", labels: Js.Dict.fromArray([("chainId", "137")])},
+          {value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])},
+        ],
+      )
+
+      // === SECOND REORG on chain 1337 at block 100 ===
+      await Utils.delay(0)
+
+      sourceMock1337.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={
+          blockNumber: 100,
+          blockHash: "0x100-reorged",
+        },
+        ~resolveAt=#first,
+      )
+
+      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock137.resolveGetItemsOrThrow([], ~resolveAt=#all)
+
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      await indexerMock.getRollbackReadyPromise()
+
+      // The root cause bug: without restoring ALL chains' counters,
+      // chain 100 and chain 137 would be at -2 instead of 0.
+      t.expect(
+        {
+          let metrics = await indexerMock.metric("envio_progress_events")
+          metrics->Js.Array2.sortInPlaceWith((a, b) =>
+            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+          )
+        },
+        ~message="After second rollback: non-reorg chains (100, 137) must NOT go negative",
+      ).toEqual(
+        [
+          {value: "0", labels: Js.Dict.fromArray([("chainId", "100")])},
+          {value: "0", labels: Js.Dict.fromArray([("chainId", "137")])},
+          {value: "0", labels: Js.Dict.fromArray([("chainId", "1337")])},
+        ],
+      )
+    },
+  )
+
   Async.it("Should NOT have duplicate queries after rollback with chunked partitions", async t => {
     // 1. Setup mock source and indexer
     let sourceMock = Mock.Source.make(
