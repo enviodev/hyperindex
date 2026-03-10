@@ -52,15 +52,15 @@ const result = await indexer.process({
 From `config.yaml`, extract:
 - Contract addresses
 - Event signatures (topic0 hashes)
-- Chain ID → HyperSync endpoint (e.g., chain 1 → `https://eth.hypersync.xyz`)
+- Chain ID → HyperSync endpoint: `https://{chainId}.hypersync.xyz` (e.g., chain 1 → `https://1.hypersync.xyz`)
 
-Common HyperSync endpoints: `eth`, `base`, `arbitrum-one`, `optimism`, `polygon`, `bsc`, `avalanche`, `gnosis`, `linea`, `scroll`, `blast`, `celo` — all at `https://{name}.hypersync.xyz`.
+Common chain IDs: 1 (Ethereum), 8453 (Base), 42161 (Arbitrum), 10 (Optimism), 137 (Polygon), 56 (BSC), 43114 (Avalanche), 100 (Gnosis), 59144 (Linea), 534352 (Scroll), 81457 (Blast), 42220 (Celo).
 
 ### Step 2: Query HyperSync for Matching Blocks
 
 ```bash
 curl --request POST \
-  --url https://eth.hypersync.xyz/query \
+  --url https://1.hypersync.xyz/query \
   --header 'Content-Type: application/json' \
   --header "Authorization: Bearer $ENVIO_API_TOKEN" \
   --data '{
@@ -91,7 +91,7 @@ Query by topic combinations (e.g., Transfer events to/from an address) and trans
 
 ```bash
 curl --request POST \
-  --url https://eth.hypersync.xyz/query \
+  --url https://1.hypersync.xyz/query \
   --header 'Content-Type: application/json' \
   --header "Authorization: Bearer $ENVIO_API_TOKEN" \
   --data '{
