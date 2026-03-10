@@ -66,7 +66,6 @@
     "ink-big-text": "2.0.0",
     "ink-spinner": "5.0.0",
     "postgres": "3.4.8",
-    "tsx": "4.21.0",
-    "js-sdsl": "4.4.2"
+    "tsx": "4.21.0"
   }
 }
