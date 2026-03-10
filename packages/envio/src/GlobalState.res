@@ -1116,8 +1116,24 @@ let injectedTaskReducer = (
             numEventsProcessed: newTotalEventsProcessed,
           }
 
-        | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything
-          cf
+        | None =>
+          // Even without a progress diff entry, the reorg chain must have its
+          // reorgDetection and fetchState rolled back. Otherwise the stale block hash
+          // stays in dataByBlockNumber and the same reorg is re-detected on the next
+          // fetch, causing an infinite reorg→rollback loop.
+          if chain == reorgChain {
+            {
+              ...cf,
+              reorgDetection: cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+                ~blockNumber=rollbackTargetBlockNumber,
+              ),
+              fetchState: cf.fetchState->FetchState.rollback(
+                ~targetBlockNumber=rollbackTargetBlockNumber,
+              ),
+            }
+          } else {
+            cf
+          }
         }
       })
 
