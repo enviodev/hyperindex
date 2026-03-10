@@ -12,7 +12,7 @@ type fuelBlockEvent = {height: int}
 // Static types exposed to users. All fields are always visible on the type.
 // At runtime, accessing a field not in field_selection throws a friendly error via proxy.
 // For TS users: index.d.ts provides JSDoc descriptions for all fields.
-// For ReScript users: always-available fields are required, others are optional.
+// For ReScript users: inherently nullable fields use option<T>, others are required.
 
 @genType
 module EvmBlock = {
@@ -21,30 +21,30 @@ module EvmBlock = {
     number: int,
     timestamp: int,
     hash: string,
-    parentHash?: string,
-    nonce?: bigint,
-    sha3Uncles?: string,
-    logsBloom?: string,
-    transactionsRoot?: string,
-    stateRoot?: string,
-    receiptsRoot?: string,
-    miner?: Address.t,
-    difficulty?: bigint,
-    totalDifficulty?: bigint,
-    extraData?: string,
-    size?: bigint,
-    gasLimit?: bigint,
-    gasUsed?: bigint,
-    uncles?: array<string>,
-    baseFeePerGas?: bigint,
-    blobGasUsed?: bigint,
-    excessBlobGas?: bigint,
-    parentBeaconBlockRoot?: string,
-    withdrawalsRoot?: string,
-    l1BlockNumber?: int,
-    sendCount?: string,
-    sendRoot?: string,
-    mixHash?: string,
+    parentHash: string,
+    nonce: option<bigint>,
+    sha3Uncles: string,
+    logsBloom: string,
+    transactionsRoot: string,
+    stateRoot: string,
+    receiptsRoot: string,
+    miner: Address.t,
+    difficulty: option<bigint>,
+    totalDifficulty: option<bigint>,
+    extraData: string,
+    size: bigint,
+    gasLimit: bigint,
+    gasUsed: bigint,
+    uncles: option<array<string>>,
+    baseFeePerGas: option<bigint>,
+    blobGasUsed: option<bigint>,
+    excessBlobGas: option<bigint>,
+    parentBeaconBlockRoot: option<string>,
+    withdrawalsRoot: option<string>,
+    l1BlockNumber: option<int>,
+    sendCount: option<string>,
+    sendRoot: option<string>,
+    mixHash: option<string>,
   }
 }
 
