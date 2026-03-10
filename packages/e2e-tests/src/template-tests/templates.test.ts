@@ -84,19 +84,19 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
       console.error(`[${name}] stdout:`, result.stdout);
     }
     expect(result.exitCode).toBe(0);
-  });
+  }, config.timeouts.install + 10_000);
 
   it("installs dependencies", async () => {
     const result = await runCommand("pnpm", ["install"], {
       cwd: projectDir,
-      timeout: config.timeouts.test,
+      timeout: config.timeouts.install,
     });
 
     if (result.exitCode !== 0) {
       console.error(`[${name}] pnpm install failed:`, result.stderr);
     }
     expect(result.exitCode).toBe(0);
-  });
+  }, config.timeouts.install + 10_000);
 
   it("runs codegen successfully", async () => {
     const result = await runCommand(config.envioCommand, [...config.envioArgs, "codegen"], {
@@ -108,7 +108,7 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
       console.error(`[${name}] codegen failed:`, result.stderr);
     }
     expect(result.exitCode).toBe(0);
-  });
+  }, config.timeouts.codegen + 10_000);
 
   it.skipIf(!hasTests)("runs tests successfully", async () => {
     const result = await runCommand("pnpm", ["test"], {
@@ -121,5 +121,5 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
       console.error(`[${name}] stdout:`, result.stdout);
     }
     expect(result.exitCode).toBe(0);
-  });
+  }, config.timeouts.test + 10_000);
 });

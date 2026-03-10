@@ -2660,4 +2660,147 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       )
     },
   )
+
+  Async.it(
+    "Should not enter infinite reorg loop when reorg chain has no events processed since target checkpoint",
+    async t => {
+      let sourceMock1 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock2 = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      // batchSize=1 ensures that chain 100's single event fills the batch,
+      // causing chain 1337 to be SKIPPED in prepareUnorderedBatch.
+      // This means chain 1337 gets no checkpoint at block 101.
+      let indexerMock = await Mock.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock1.source]),
+          },
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([sourceMock2.source]),
+          },
+        ],
+        ~batchSize=1,
+      )
+      await Utils.delay(0)
+
+      let _ = await Promise.all2((
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
+        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
+      ))
+
+      // Chain 1337 fetches block 101 with 0 events.
+      // registerReorgGuard stores block hash "0x101" for block 101.
+      sourceMock1.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=101,
+        ~resolveAt=#first,
+      )
+
+      // Chain 100 fetches block 101 with 1 event.
+      sourceMock2.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 101,
+            logIndex: 0,
+            handler: async ({context}) => {
+              context.simpleEntity.set({
+                id: "1",
+                value: "from-chain-100",
+              })
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=101,
+        ~resolveAt=#first,
+      )
+
+      // Fetch response processing uses multiple layers of setTimeout(0):
+      // 1. ValidatePartitionQueryResponse → dispatches ProcessPartitionQueryResponse task
+      // 2. ProcessPartitionQueryResponse → dispatches SubmitPartitionQueryResponse action
+      //    which dispatches NextQuery + ProcessEventBatch tasks
+      // 3. NextQuery starts fetches, ProcessEventBatch creates batch
+      // We need 3 delays to let all layers fire.
+      await Utils.delay(0)
+      await Utils.delay(0)
+      // After this delay:
+      // - NextQuery started fetches for both chains from block 102
+      // - ProcessEventBatch created batch: with batchSize=1, chain 100's
+      //   1 event fills the batch. Chain 1337 is SKIPPED — no checkpoint.
+      //   The batch write is async and still in-flight.
+      await Utils.delay(0)
+
+      // Chain 1337 now has a pending fetch from block 102 (started by NextQuery).
+      // Resolve it with prevRangeLastBlock having a DIFFERENT hash for block 101.
+      // registerReorgGuard compares stored "0x101" vs received "0x101-reorged" → MISMATCH.
+      // Reorg is detected while the batch write is still in-flight,
+      // so chain 1337 never gets a checkpoint at block 101.
+      // getRollbackProgressDiff won't return an entry for chain 1337 (None branch).
+      sourceMock1.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=102,
+        ~prevRangeLastBlock={
+          blockNumber: 101,
+          blockHash: "0x101-reorged",
+        },
+        ~resolveAt=#first,
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      t.expect(
+        sourceMock1.getBlockHashesCalls,
+        ~message="Should have called getBlockHashes to find rollback depth",
+      ).toEqual(
+        [[100]],
+      )
+      sourceMock1.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      ])
+
+      await indexerMock.getRollbackReadyPromise()
+
+      let actualPayloads = sourceMock1.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)
+      t.expect(
+        actualPayloads->Utils.Array.last,
+        ~message="Should rollback fetch state for reorg chain even with no events processed",
+      ).toEqual(
+        Some({
+          "fromBlock": 101,
+          "toBlock": None,
+          "retry": 0,
+          "p": "0",
+        }),
+      )
+
+      // Clear getBlockHashesCalls from the initial rollback
+      sourceMock1.getBlockHashesCalls->Utils.Array.clearInPlace
+
+      // Resolve the re-fetch with the new (reorged) block hash.
+      // With the fix: stale "0x101" was removed by rollbackToValidBlockNumber(100),
+      // so "0x101-reorged" is stored fresh — no mismatch.
+      // Without the fix: stored "0x101" vs received "0x101-reorged" → another reorg!
+      sourceMock1.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=101,
+        ~latestFetchedBlockHash="0x101-reorged",
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Verify no second reorg is detected (no infinite loop)
+      t.expect(
+        sourceMock1.getBlockHashesCalls,
+        ~message="Should not trigger another reorg (no infinite loop)",
+      ).toEqual(
+        [],
+      )
+    },
+  )
 })
