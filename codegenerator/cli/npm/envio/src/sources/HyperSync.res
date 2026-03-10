@@ -104,7 +104,7 @@ module GetLogs = {
     // Remap "type" -> "kind" on the transaction object at runtime before validation.
     // The latest hypersync client renamed "kind" to "type" but v2 consumers expect "kind".
     let transaction: Js.Dict.t<unknown> = event.transaction->Utils.magic
-    if transaction->(Obj.magic: 'a => bool) {
+    if transaction->Obj.magic {
       switch transaction->Js.Dict.get("type") {
       | Some(v) => transaction->Js.Dict.set("kind", v)
       | None => ()
