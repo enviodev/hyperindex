@@ -92,7 +92,7 @@ type storage = {
   getRollbackTargetCheckpoint: (
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
-  ) => promise<array<{"id": string}>>,
+  ) => promise<array<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
     ~rollbackTargetCheckpointId: Internal.checkpointId,

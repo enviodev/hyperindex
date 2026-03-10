@@ -1029,7 +1029,7 @@ let injectedTaskReducer = (
           ~reorgChainId,
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
         ) {
-        | [checkpoint] => checkpoint["id"]->BigInt.fromStringUnsafe
+        | [checkpointId] => checkpointId
         | _ => 0n
         }
       }
@@ -1053,7 +1053,7 @@ let injectedTaskReducer = (
               | Some(v) => v
               | None =>
                 Js.Exn.raiseError(
-                  `Unexpedted case: Invalid events processed diff ${diff["events_processed_diff"]}`,
+                  `Unexpected case: Invalid events processed diff ${diff["events_processed_diff"]}`,
                 )
               }
               rollbackedProcessedEvents :=

@@ -111,7 +111,7 @@ let handleWriteBatch = (
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointBlockHashes: array<Js.Null.t<string>>,
-  ~checkpointEventsProcessed: array<int>,
+  ~checkpointEventsProcessed: array<bigint>,
 ): unit => {
   // Group entity changes by checkpointId
   // checkpointId -> entityName -> entityChange
@@ -563,10 +563,10 @@ let makeCreateTestIndexer = (
         Promise.make((resolve, reject) => {
           // Include initialState in workerData
           let workerDataObj = {
-            "processConfig": processConfig->Utils.magic,
-            "initialState": initialState->Utils.magic,
+            "processConfig": processConfig->(Utils.magic: 'a => Js.Json.t),
+            "initialState": initialState->(Utils.magic: Persistence.initialState => Js.Json.t),
           }
-          let workerData = workerDataObj->Utils.magic
+          let workerData = workerDataObj->(Utils.magic: {"processConfig": Js.Json.t, "initialState": Js.Json.t} => Js.Json.t)
           let worker = try {
             NodeJs.WorkerThreads.makeWorker(
               workerPath,

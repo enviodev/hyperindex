@@ -37,8 +37,8 @@ let chainDataSchema = S.schema((s): chainData => {
   latestProcessedBlock: s.matches(S.option(S.int)),
   timestampCaughtUpToHeadOrEndblock: s.matches(S.option(S.datetime(S.string))),
   numEventsProcessed: s.matches(
-    S.float->S.transform(_ => {
-      serializer: n => n->BigInt.toFloat,
+    S.string->S.transform(_ => {
+      serializer: n => n->BigInt.toString,
     })
   ),
   latestFetchedBlockNumber: s.matches(S.int),

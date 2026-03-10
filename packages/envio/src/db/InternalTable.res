@@ -108,7 +108,6 @@ module Chains = {
       progressBlockNumber: -1,
       isHyperSync: false,
       numEventsProcessed: 0n,
-      numBatchesFetched: 0,
     }
   }
 
@@ -402,6 +401,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
     let checkpointIdStrings = checkpointIds->BigInt.arrayToStringArray
+    let checkpointEventsProcessedStrings = checkpointEventsProcessed->BigInt.arrayToStringArray
     sql
     ->Postgres.preparedUnsafe(
       query,
@@ -410,10 +410,10 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
         checkpointChainIds,
         checkpointBlockNumbers,
         checkpointBlockHashes,
-        checkpointEventsProcessed,
+        checkpointEventsProcessedStrings,
       )->(
         Utils.magic: (
-          (array<string>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
+          (array<string>, array<int>, array<int>, array<Js.Null.t<string>>, array<string>)
         ) => unknown
       ),
     )
@@ -457,12 +457,17 @@ LIMIT 1;`
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
   ) => {
-    sql
-    ->Postgres.preparedUnsafe(
-      makeGetRollbackTargetCheckpointQuery(~pgSchema),
-      (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
-    )
-    ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
+    let rawResult: promise<array<{"id": string}>> =
+      sql
+      ->Postgres.preparedUnsafe(
+        makeGetRollbackTargetCheckpointQuery(~pgSchema),
+        (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
+      )
+      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
+    rawResult->Js.Promise2.then(rows => {
+      let ids = Belt.Array.map(rows, row => row["id"]->BigInt.fromStringUnsafe)
+      Js.Promise2.resolve(ids)
+    })
   }
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
@@ -545,7 +550,7 @@ module RawEvents = {
       mkField("block_fields", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("transaction_fields", Json, ~fieldSchema=S.json(~validate=false)),
       mkField("params", Json, ~fieldSchema=S.json(~validate=false)),
-      mkField("serial", BigSerial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.int)),
+      mkField("serial", BigSerial, ~isNullable, ~isPrimaryKey, ~fieldSchema=S.null(S.bigint)),
     ],
   )
 }
@@ -582,7 +587,7 @@ SELECT
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
   "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
   "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
-  "_num_batches_fetched" AS "num_batches_fetched",
+  0 AS "num_batches_fetched",
   "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
   "${(#start_block: Chains.field :> string)}" AS "start_block",
   "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"

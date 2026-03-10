@@ -16,7 +16,6 @@ type t = {
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
   numEventsProcessed: bigint,
-  numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
   safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
@@ -283,7 +282,6 @@ let makeFromConfig = (
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0n,
-    ~numBatchesFetched=0,
     ~targetBufferSize,
     ~logger,
     ~dynamicContracts=[],
