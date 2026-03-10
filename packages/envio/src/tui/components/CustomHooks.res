@@ -92,7 +92,7 @@ module InitApi = {
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
     switch await route->Rest.fetch(body, ~client) {
-    | exception exn => Error(exn->Obj.magic)
+    | exception exn => Error(exn->Utils.magic)
     | messages => Ok(messages)
     }
   }

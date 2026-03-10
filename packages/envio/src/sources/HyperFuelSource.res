@@ -409,7 +409,7 @@ let make = ({chain, endpointUrl}: options): t => {
             subId,
             amount: val,
           }: Internal.fuelSupplyParams
-        )->Obj.magic
+        )->Utils.magic
       | (_, Transfer({amount, assetId, to})) =>
         (
           {
@@ -417,7 +417,7 @@ let make = ({chain, endpointUrl}: options): t => {
             assetId,
             amount,
           }: Internal.fuelTransferParams
-        )->Obj.magic
+        )->Utils.magic
       | (_, TransferOut({amount, assetId, toAddress})) =>
         (
           {
@@ -425,7 +425,7 @@ let make = ({chain, endpointUrl}: options): t => {
             assetId,
             amount,
           }: Internal.fuelTransferParams
-        )->Obj.magic
+        )->Utils.magic
       | (_, Call({amount, assetId, to})) =>
         (
           {
@@ -433,7 +433,7 @@ let make = ({chain, endpointUrl}: options): t => {
             assetId,
             amount,
           }: Internal.fuelTransferParams
-        )->Obj.magic
+        )->Utils.magic
       // This should never happen unless there's a bug in the routing logic
       | _ => Js.Exn.raiseError("Unexpected bug in the event routing logic")
       }
@@ -449,8 +449,8 @@ let make = ({chain, endpointUrl}: options): t => {
           params,
           transaction: {
             "id": item.transactionId,
-          }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-          block: block->Obj.magic,
+          }->Utils.magic, // TODO: Utils.magic needed until the field selection types are not configurable for Fuel and Evm separately
+          block: block->Utils.magic,
           srcAddress: contractAddress,
           logIndex: receiptIndex,
         },

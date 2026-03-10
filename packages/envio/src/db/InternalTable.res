@@ -241,7 +241,7 @@ WHERE "id" = $1;`
         params->Js.Array2.push(value)->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Utils.magic))->ignore
     })
 
     Promise.all(promises)
@@ -278,7 +278,7 @@ WHERE "id" = $1;`
         ->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Utils.magic))->ignore
     })
 
     Promise.all(promises)->Promise.ignoreValue
@@ -421,7 +421,7 @@ SELECT * FROM unnest($1::${(Integer: Postgres.columnType :> string)}[],$2::${(In
     sql
     ->Postgres.preparedUnsafe(
       makePruneStaleCheckpointsQuery(~pgSchema),
-      [safeCheckpointId]->Obj.magic,
+      [safeCheckpointId]->Utils.magic,
     )
     ->Promise.ignoreValue
   }
@@ -444,7 +444,7 @@ LIMIT 1;`
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackTargetCheckpointQuery(~pgSchema),
-      (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
+      (reorgChainId, lastKnownValidBlockNumber)->Utils.magic,
     )
     ->(Utils.magic: promise<unknown> => promise<array<{"id": Internal.checkpointId}>>)
   }
@@ -467,7 +467,7 @@ GROUP BY "${(#chain_id: field :> string)}";`
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema),
-      [rollbackTargetCheckpointId]->Obj.magic,
+      [rollbackTargetCheckpointId]->Utils.magic,
     )
     ->(
       Utils.magic: promise<unknown> => promise<

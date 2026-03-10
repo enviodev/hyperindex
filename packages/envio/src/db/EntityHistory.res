@@ -139,7 +139,7 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
   sql
   ->Postgres.preparedUnsafe(
     makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [ids]->Obj.magic,
+    [ids]->Utils.magic,
   )
   ->Promise.ignoreValue
 }

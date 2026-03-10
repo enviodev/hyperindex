@@ -74,7 +74,7 @@ module Storage = {
       if methods->Js.Array2.includes(method) {
         fn
       } else {
-        (() => Js.Exn.raiseError(`storage.${(method :> string)} not implemented`))->Obj.magic
+        (() => Js.Exn.raiseError(`storage.${(method :> string)} not implemented`))->Utils.magic
       }
     }
 
@@ -539,7 +539,7 @@ module Source = {
       if methods->Js.Array2.includes(method) {
         fn
       } else {
-        (() => Js.Exn.raiseError(`source.${(method :> string)} not implemented`))->Obj.magic
+        (() => Js.Exn.raiseError(`source.${(method :> string)} not implemented`))->Utils.magic
       }
     }
 
@@ -590,7 +590,7 @@ module Source = {
         getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
       },
       rejectGetHeightOrThrow: exn => {
-        getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
+        getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Utils.magic))
       },
       getItemsOrThrowCalls,
       resolveGetItemsOrThrow: (

@@ -84,14 +84,14 @@ module MakeSafePromMetric = (
     (
       metric
       ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
-      ->Obj.magic
+      ->Utils.magic
     )["inc"]()
 
   let incrementMany = ({metric, labelSchema}: t<'a>, ~labels: 'a, ~value) =>
     (
       metric
       ->M.labels(labels->S.reverseConvertToJsonOrThrow(labelSchema))
-      ->Obj.magic
+      ->Utils.magic
     )["inc"](value)
 }
 

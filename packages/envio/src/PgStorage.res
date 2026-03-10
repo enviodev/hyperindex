@@ -638,12 +638,12 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
     | [_] =>
       sql->Postgres.preparedUnsafe(
         makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
-        ids->Obj.magic,
+        ids->Utils.magic,
       )
     | _ =>
       sql->Postgres.preparedUnsafe(
         makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
-        [ids]->Obj.magic,
+        [ids]->Utils.magic,
       )
     }
   ) {
@@ -817,7 +817,7 @@ let rec writeBatch = async (
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (batchDeleteEntityIds, batchDeleteCheckpointIds)->Obj.magic,
+                  (batchDeleteEntityIds, batchDeleteCheckpointIds)->Utils.magic,
                 )
                 ->Promise.ignoreValue,
               )
@@ -1288,12 +1288,12 @@ let make = (
       | [_] =>
         sql->Postgres.preparedUnsafe(
           makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          ids->Obj.magic,
+          ids->Utils.magic,
         )
       | _ =>
         sql->Postgres.preparedUnsafe(
           makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
-          [ids]->Obj.magic,
+          [ids]->Utils.magic,
         )
       }
     ) {
@@ -1325,7 +1325,7 @@ let make = (
     ~table: Table.table,
     ~rowsSchema,
   ) => {
-    let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Obj.magic catch {
+    let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Utils.magic catch {
     | exn =>
       raise(
         Persistence.StorageError({

@@ -159,7 +159,7 @@ let handleWriteBatch = (
 
         | Delete({entityId, checkpointId}) =>
           // Update entities dict for load operations
-          Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
+          Js.Dict.unsafeDeleteKey(entityDict->Utils.magic, entityId)
 
           // Track change by checkpoint
           let checkpointKey = checkpointId->Float.toString

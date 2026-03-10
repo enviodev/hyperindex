@@ -374,7 +374,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
             )
           | Error(e) =>
             HyperSync.queryErrorToMsq(e)
-            ->Obj.magic
+            ->Utils.magic
             ->mkLogAndRaise(
               ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
             )

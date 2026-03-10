@@ -1,7 +1,3 @@
-module Utils = {
-  external magic: 'a => 'b = "%identity"
-}
-
 module Crypto = {
   type t
   @module external crypto: t = "crypto"
@@ -26,7 +22,7 @@ module Crypto = {
     ->digest(Hex)
     ->pad
 
-  let hashKeccak256String = hashKeccak256(~toString=int => int->Obj.magic, _)
+  let hashKeccak256String = hashKeccak256(~toString=int => int->Utils.magic, _)
   let hashKeccak256Int = hashKeccak256(~toString=int => int->Int.toString, _)
   let anyToString = a => a->Js.Json.stringifyAny->Option.getExn
   let hashKeccak256Any = hashKeccak256(~toString=anyToString, _)

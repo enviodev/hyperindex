@@ -82,7 +82,7 @@ let make = (~parentPort, ~initialState): t => {
     | Some(pending) => pending
     | None => Js.Exn.raiseError(`TestIndexer: No pending request found for id ${idStr}`)
     }
-    Js.Dict.unsafeDeleteKey(proxy.pendingRequests->Obj.magic, idStr)
+    Js.Dict.unsafeDeleteKey(proxy.pendingRequests->Utils.magic, idStr)
 
     switch msg.payload {
     | Response({data}) => resolve(data)
@@ -183,7 +183,7 @@ let makeStorage = (proxy: t): Persistence.storage => {
   },
   dumpEffectCache: async () => (),
   reset: async () => (),
-  setChainMeta: async _ => Obj.magic(),
+  setChainMeta: async _ => Utils.magic(),
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
   pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
     (),

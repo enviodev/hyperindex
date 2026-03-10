@@ -79,7 +79,7 @@ module GetLogs = {
   @inline
   let addMissingParams = (acc, fieldNames, returnedObj, ~prefix) => {
     if fieldNames->Utils.Array.notEmpty {
-      if !(returnedObj->Obj.magic) {
+      if !(returnedObj->Utils.magic) {
         acc->Array.push(prefix)->ignore
       } else {
         for idx in 0 to fieldNames->Array.length - 1 {

@@ -53,7 +53,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
     Js.Exn.raiseError(
       `Failed to glob src/handlers directory for auto-loading handlers. Pattern: ${srcPattern}. Before continuing, check that you're using Node.js >=22 version. Error: ${exn
         ->Utils.prettifyExn
-        ->Obj.magic}`,
+        ->Utils.magic}`,
     )
   }
 

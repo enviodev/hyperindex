@@ -25,7 +25,7 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
 
 let jsonRpcFetcher: Rest.ApiFetcher.t = async args => {
   let response = await Rest.ApiFetcher.default(args)
-  let data: {..} = response.data->Obj.magic
+  let data: {..} = response.data->Utils.magic
   switch data["error"]->Js.Nullable.toOption {
   | Some(error) =>
     raise(

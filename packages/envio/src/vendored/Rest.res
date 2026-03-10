@@ -5,6 +5,7 @@ Version: 2.0.0-rc.6
 IF EDITING THIS FILE, PLEASE LIST THE CHANGES BELOW
 
 here
+- Replaced Obj.magic with Utils.magic
 
  */
 
@@ -16,13 +17,9 @@ module Exn = {
   @new
   external makeError: string => error = "Error"
 
-  let raiseAny = (any: 'any): 'a => any->Obj.magic->raise
+  let raiseAny = (any: 'any): 'a => any->Utils.magic->raise
 
   let raiseError: error => 'a = raiseAny
-}
-
-module Obj = {
-  external magic: 'a => 'b = "%identity"
 }
 
 module Promise = {
@@ -33,21 +30,21 @@ module Promise = {
 }
 
 module Option = {
-  let unsafeSome: 'a => option<'a> = Obj.magic
-  let unsafeUnwrap: option<'a> => 'a = Obj.magic
+  let unsafeSome: 'a => option<'a> = Utils.magic
+  let unsafeUnwrap: option<'a> => 'a = Utils.magic
 }
 
 module Dict = {
   @inline
   let has = (dict, key) => {
-    dict->Js.Dict.unsafeGet(key)->(Obj.magic: 'a => bool)
+    dict->Js.Dict.unsafeGet(key)->(Utils.magic: 'a => bool)
   }
 }
 
 let panic = (message, ~params: option<{..}>=?) => {
   let error = Exn.makeError(`[rescript-rest] ${message}`)
   switch params {
-  | Some(params) => (error->Obj.magic)["params"] = params
+  | Some(params) => (error->Utils.magic)["params"] = params
   | None => ()
   }
   Exn.raiseError(error)
@@ -77,7 +74,7 @@ module ApiFetcher = {
 
     // Note: contentType might be null
     if (
-      contentType->Obj.magic &&
+      contentType->Utils.magic &&
       contentType->Js.String2.includes("application/") &&
       contentType->Js.String2.includes("json")
     ) {
@@ -86,7 +83,7 @@ module ApiFetcher = {
         data: await result["json"](),
         headers: result["headers"],
       }
-    } else if contentType->Obj.magic && contentType->Js.String2.includes("text/") {
+    } else if contentType->Utils.magic && contentType->Js.String2.includes("text/") {
       {
         status: result["status"],
         data: await result["text"](),
@@ -202,24 +199,24 @@ module Response = {
     status: [< status | #default],
     builder: builder<'output>,
   ) => {
-    let key = status->(Obj.magic: [< status | #default] => string)
+    let key = status->(Utils.magic: [< status | #default] => string)
     if map->Dict.has(key) {
       panic(`Response for the "${key}" status registered multiple times`)
     } else {
-      map->Js.Dict.set(key, builder->(Obj.magic: builder<'output> => t<'output>))
+      map->Js.Dict.set(key, builder->(Utils.magic: builder<'output> => t<'output>))
     }
   }
 
   @inline
   let find = (map: dict<t<'output>>, responseStatus: int): option<t<'output>> => {
     (map
-    ->Js.Dict.unsafeGet(responseStatus->(Obj.magic: int => string))
-    ->(Obj.magic: t<'output> => bool) ||
+    ->Js.Dict.unsafeGet(responseStatus->(Utils.magic: int => string))
+    ->(Utils.magic: t<'output> => bool) ||
     map
-    ->Js.Dict.unsafeGet((responseStatus / 100)->(Obj.magic: int => string) ++ "XX")
-    ->(Obj.magic: t<'output> => bool) ||
-    map->Js.Dict.unsafeGet("default")->(Obj.magic: t<'output> => bool))
-      ->(Obj.magic: bool => option<t<'output>>)
+    ->Js.Dict.unsafeGet((responseStatus / 100)->(Utils.magic: int => string) ++ "XX")
+    ->(Utils.magic: t<'output> => bool) ||
+    map->Js.Dict.unsafeGet("default")->(Utils.magic: t<'output> => bool))
+      ->(Utils.magic: bool => option<t<'output>>)
   }
 }
 
@@ -331,11 +328,11 @@ let coerceSchema = schema => {
     | Literal(Boolean(_))
     | Bool => {
         parser: unknown =>
-          switch unknown->Obj.magic {
+          switch unknown->Utils.magic {
           | "true" => true
           | "false" => false
-          | _ => unknown->Obj.magic
-          }->Obj.magic,
+          | _ => unknown->Utils.magic
+          }->Utils.magic,
       }
     | Literal(Number(_))
     | Int
@@ -345,7 +342,7 @@ let coerceSchema = schema => {
           if Js.Float.isNaN(float) {
             unknown
           } else {
-            float->Obj.magic
+            float->Utils.magic
           }
         },
       }
@@ -358,15 +355,15 @@ let coerceSchema = schema => {
   })
 }
 
-let stripInPlace = schema => (schema->S.classify->Obj.magic)["unknownKeys"] = S.Strip
+let stripInPlace = schema => (schema->S.classify->Utils.magic)["unknownKeys"] = S.Strip
 let getSchemaField = (schema, fieldName): option<S.item> =>
-  (schema->S.classify->Obj.magic)["fields"]->Js.Dict.unsafeGet(fieldName)
+  (schema->S.classify->Utils.magic)["fields"]->Js.Dict.unsafeGet(fieldName)
 
 type typeValidation = (unknown, ~inputVar: string) => string
-let removeTypeValidationInPlace = schema => (schema->Obj.magic)["f"] = ()
+let removeTypeValidationInPlace = schema => (schema->Utils.magic)["f"] = ()
 let setTypeValidationInPlace = (schema, typeValidation: typeValidation) =>
-  (schema->Obj.magic)["f"] = typeValidation
-let unsafeGetTypeValidationInPlace = (schema): typeValidation => (schema->Obj.magic)["f"]
+  (schema->Utils.magic)["f"] = typeValidation
+let unsafeGetTypeValidationInPlace = (schema): typeValidation => (schema->Utils.magic)["f"]
 
 let isNestedFlattenSupported = schema =>
   switch schema->S.classify {
@@ -405,19 +402,19 @@ let basicAuthSchema = S.string->S.transform(s => {
 })
 
 let params = route => {
-  switch (route->Obj.magic)["_rest"]->(Obj.magic: unknown => option<routeParams<'input, 'output>>) {
+  switch (route->Utils.magic)["_rest"]->(Utils.magic: unknown => option<routeParams<'input, 'output>>) {
   | Some(params) => params
   | None => {
-      let definition = (route->(Obj.magic: route<'input, 'output> => route<unknown, unknown>))()
+      let definition = (route->(Utils.magic: route<'input, 'output> => route<unknown, unknown>))()
 
-      let params = if (definition->Obj.magic)["output"] {
+      let params = if (definition->Utils.magic)["output"] {
         let definition =
-          definition->(Obj.magic: definition<unknown, unknown> => rpc<unknown, unknown>)
+          definition->(Utils.magic: definition<unknown, unknown> => rpc<unknown, unknown>)
         let path =
           `/` ++
           switch definition.operationId {
           | Some(p) => p
-          | None => (route->Obj.magic)["name"]
+          | None => (route->Utils.magic)["name"]
           }
         let inputSchema = S.object(s => s.field("body", definition.input))
         inputSchema->stripInPlace
@@ -534,7 +531,7 @@ let params = route => {
           let schema = S.object(s => {
             let status = status => {
               builder.status = Some(status)
-              let status = status->(Obj.magic: int => Response.status)
+              let status = status->(Utils.magic: int => Response.status)
               responsesMap->Response.register(status, builder)
               s.tag("status", status)
             }
@@ -591,7 +588,7 @@ let params = route => {
           }
           builder.schema = Option.unsafeSome(schema)
           responses
-          ->Js.Array2.push(builder->(Obj.magic: Response.builder<unknown> => Response.t<unknown>))
+          ->Js.Array2.push(builder->(Utils.magic: Response.builder<unknown> => Response.t<unknown>))
           ->ignore
         })
 
@@ -617,8 +614,8 @@ let params = route => {
         }
       }
 
-      (route->Obj.magic)["_rest"] = params
-      params->(Obj.magic: routeParams<unknown, unknown> => routeParams<'input, 'output>)
+      (route->Utils.magic)["_rest"] = params
+      params->(Utils.magic: routeParams<unknown, unknown> => routeParams<'input, 'output>)
     }
   }
 }
@@ -639,7 +636,7 @@ type client = {
 let rec tokeniseValue = (key, value, ~append) => {
   if Js.Array2.isArray(value) {
     value
-    ->(Obj.magic: unknown => array<unknown>)
+    ->(Utils.magic: unknown => array<unknown>)
     ->Js.Array2.forEachi((v, idx) => {
       tokeniseValue(`${key}[${idx->Js.Int.toString}]`, v, ~append)
     })
@@ -648,14 +645,14 @@ let rec tokeniseValue = (key, value, ~append) => {
   } else if value === %raw(`void 0`) {
     ()
   } else if Js.typeof(value) === "object" {
-    let dict = value->(Obj.magic: unknown => dict<unknown>)
+    let dict = value->(Utils.magic: unknown => dict<unknown>)
     dict
     ->Js.Dict.keys
     ->Js.Array2.forEach(k => {
       tokeniseValue(`${key}[${encodeURIComponent(k)}]`, dict->Js.Dict.unsafeGet(k), ~append)
     })
   } else {
-    append(key, value->(Obj.magic: unknown => string))
+    append(key, value->(Utils.magic: unknown => string))
   }
 }
 
@@ -668,8 +665,8 @@ let getCompletePath = (~baseUrl, ~pathItems, ~maybeQuery, ~maybeParams, ~jsonQue
     switch pathItem {
     | Static(static) => path := path.contents ++ static
     | Param({name}) =>
-      switch (maybeParams->Obj.magic && maybeParams->Js.Dict.unsafeGet(name)->Obj.magic)
-        ->(Obj.magic: bool => option<string>) {
+      switch (maybeParams->Utils.magic && maybeParams->Js.Dict.unsafeGet(name)->Utils.magic)
+        ->(Utils.magic: bool => option<string>) {
       | Some(param) => path := path.contents ++ param
       | None => panic(`Path parameter "${name}" is not defined in input`)
       }
@@ -700,16 +697,16 @@ let getCompletePath = (~baseUrl, ~pathItems, ~maybeQuery, ~maybeParams, ~jsonQue
               key,
               if (
                 Js.typeof(value) === "string" && {
-                    let value = value->(Obj.magic: unknown => string)
+                    let value = value->(Utils.magic: unknown => string)
                     value !== "true" &&
                     value !== "false" &&
                     value !== "null" &&
                     Js.Float.isNaN(Js.Float.fromString(value))
                   }
               ) {
-                value->(Obj.magic: unknown => string)
+                value->(Utils.magic: unknown => string)
               } else {
-                value->(Obj.magic: unknown => Js.Json.t)->Js.Json.stringify
+                value->(Utils.magic: unknown => Js.Json.t)->Js.Json.stringify
               },
             )
           | false => tokeniseValue(key, value, ~append)
@@ -728,7 +725,7 @@ let getCompletePath = (~baseUrl, ~pathItems, ~maybeQuery, ~maybeParams, ~jsonQue
 
 let url = (route, input, ~baseUrl="") => {
   let {pathItems, inputSchema} = route->params
-  let data = input->S.reverseConvertOrThrow(inputSchema)->Obj.magic
+  let data = input->S.reverseConvertOrThrow(inputSchema)->Utils.magic
   getCompletePath(
     ~baseUrl,
     ~pathItems,
@@ -748,8 +745,8 @@ let global = {
 }
 
 let fetch = (type input response, route: route<input, response>, input, ~client=?) => {
-  let route = route->(Obj.magic: route<input, response> => route<unknown, unknown>)
-  let input = input->(Obj.magic: input => unknown)
+  let route = route->(Utils.magic: route<input, response> => route<unknown, unknown>)
+  let input = input->(Utils.magic: input => unknown)
 
   let {path, method, ?jsonQuery, inputSchema, responsesMap, pathItems, isRawBody} = route->params
 
@@ -765,7 +762,7 @@ let fetch = (type input response, route: route<input, response>, input, ~client=
     }
   }
 
-  let data = input->S.reverseConvertOrThrow(inputSchema)->Obj.magic
+  let data = input->S.reverseConvertOrThrow(inputSchema)->Utils.magic
 
   if data["body"] !== %raw(`void 0`) {
     if !isRawBody {
@@ -793,23 +790,23 @@ let fetch = (type input response, route: route<input, response>, input, ~client=
     | None =>
       let error = ref(`Unexpected response status "${fetcherResponse.status->Js.Int.toString}"`)
       if (
-        fetcherResponse.data->Obj.magic &&
-          Js.typeof((fetcherResponse.data->Obj.magic)["message"]) === "string"
+        fetcherResponse.data->Utils.magic &&
+          Js.typeof((fetcherResponse.data->Utils.magic)["message"]) === "string"
       ) {
         error :=
-          error.contents ++ ". Message: " ++ (fetcherResponse.data->Obj.magic)["message"]->Obj.magic
+          error.contents ++ ". Message: " ++ (fetcherResponse.data->Utils.magic)["message"]->Utils.magic
       }
 
       panic(error.contents)
     | Some(response) =>
       try fetcherResponse
       ->S.parseOrThrow(response.schema)
-      ->(Obj.magic: unknown => response) catch {
+      ->(Utils.magic: unknown => response) catch {
       | S.Raised({path, code: InvalidType({expected, received})}) if path === S.Path.empty =>
         panic(
           `Failed parsing response data. Reason: Expected ${(
               expected->getSchemaField("data")->Option.unsafeUnwrap
-            ).schema->S.name}, received ${(received->Obj.magic)["data"]->Obj.magic}`,
+            ).schema->S.name}, received ${(received->Utils.magic)["data"]->Utils.magic}`,
         )
       | S.Raised(error) =>
         panic(

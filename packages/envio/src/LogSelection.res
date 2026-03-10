@@ -84,9 +84,9 @@ let parseEventFiltersOrThrow = {
     }
 
     let parse = (eventFilters: Js.Json.t): array<Internal.topicSelection> => {
-      if eventFilters === Obj.magic(true) {
+      if eventFilters === Utils.magic(true) {
         [default]
-      } else if eventFilters === Obj.magic(false) {
+      } else if eventFilters === Utils.magic(false) {
         []
       } else {
         switch eventFilters {

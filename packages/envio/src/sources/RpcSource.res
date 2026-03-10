@@ -201,7 +201,7 @@ let getSuggestedBlockIntervalFromExn = {
     | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
     | Js.Exn.Error(error) =>
       try {
-        let message: string = (error->Obj.magic)["error"]["message"]
+        let message: string = (error->Utils.magic)["error"]["message"]
         message->S.assertOrThrow(S.string)
         parseMessageForBlockRange(message)
       } catch {

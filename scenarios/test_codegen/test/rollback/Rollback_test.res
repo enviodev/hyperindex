@@ -1089,7 +1089,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       {
         let metrics = await indexerMock.metric("envio_progress_events")
         // For some reason the test returns the metrics in different order
-        metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+        metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Utils.magic - b.value->Utils.magic)
       },
       ~message="Events count before rollback",
     ).toEqual(
@@ -1102,7 +1102,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       {
         let metrics = await indexerMock.metric("envio_progress_block")
         // For some reason the test returns the metrics in different order
-        metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+        metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Utils.magic - b.value->Utils.magic)
       },
       ~message="Progress block number before rollback",
     ).toEqual(
@@ -2439,7 +2439,7 @@ Sorted by timestamp and chain id`,
       t.expect(
         {
           let metrics = await indexerMock.metric("envio_progress_events")
-          metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+          metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Utils.magic - b.value->Utils.magic)
         },
         ~message="Events count before rollback",
       ).toEqual(
@@ -2475,7 +2475,7 @@ Sorted by timestamp and chain id`,
       t.expect(
         {
           let metrics = await indexerMock.metric("envio_progress_events")
-          metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+          metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Utils.magic - b.value->Utils.magic)
         },
         ~message="After first rollback: all events should be rolled back to 0",
       ).toEqual(
@@ -2524,8 +2524,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Utils.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Utils.magic
           )
         },
         ~message="After second rollback: event counters should NOT be negative",
@@ -2641,7 +2641,7 @@ Sorted by timestamp and chain id`,
       t.expect(
         {
           let metrics = await indexerMock.metric("envio_progress_events")
-          metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Obj.magic - b.value->Obj.magic)
+          metrics->Js.Array2.sortInPlaceWith((a, b) => a.value->Utils.magic - b.value->Utils.magic)
         },
         ~message="Events count before rollback: chain 1337=1, chain 100=2, chain 137=2",
       ).toEqual(
@@ -2678,8 +2678,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Utils.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Utils.magic
           )
         },
         ~message="After first rollback: all chains' counters should be 0",
@@ -2717,8 +2717,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Utils.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Utils.magic
           )
         },
         ~message="After second rollback: non-reorg chains (100, 137) must NOT go negative",
