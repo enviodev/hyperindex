@@ -1,3 +1,10 @@
+// Crash on unhandled promise rejections with a readable error.
+// ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
+NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
+  Logging.errorWithExn(reason->Utils.prettifyExn, "Unhandled promise rejection")
+  NodeJs.process->NodeJs.exitWithCode(Failure)
+})
+
 let main = async () => {
   try {
     await Main.start(

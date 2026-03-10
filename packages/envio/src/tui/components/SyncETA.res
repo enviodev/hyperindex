@@ -58,32 +58,13 @@ let getTotalBlocksProcessed = (chains: array<TuiData.chain>) => {
 let useShouldDisplayEta = (~chains: array<TuiData.chain>) => {
   let (shouldDisplayEta, setShouldDisplayEta) = React.useState(_ => false)
   React.useEffect(() => {
-    //Only compute this while it is not displaying eta
     if !shouldDisplayEta {
-      //Each chain should have fetched at least one batch
-      let (allChainsHaveFetchedABatch, totalNumBatchesFetched) = chains->Array.reduce((true, 0), (
-        (allChainsHaveFetchedABatch, totalNumBatchesFetched),
-        chain,
-      ) => {
-        (
-          allChainsHaveFetchedABatch && chain.numBatchesFetched >= 1,
-          totalNumBatchesFetched + chain.numBatchesFetched,
-        )
+      // Display ETA once all chains have a known height and some blocks have been fetched
+      let allChainsStartedFetching = chains->Array.every(chain => {
+        chain.knownHeight > 0 && chain.latestFetchedBlockNumber > 0
       })
 
-      //Min num fetched batches is num of chains + 2. All
-      // Chains should have fetched at least 1 batch. (They
-      // could then be blocked from fetching if they are past
-      //the max queue size on first batch)
-      // Only display once an additinal 2 batches have been fetched to allow
-      // eta to realistically stabalize
-      let numChains = chains->Array.length
-      let minTotalBatches = numChains + 2
-      let hasMinNumBatches = totalNumBatchesFetched >= minTotalBatches
-
-      let shouldDisplayEta = allChainsHaveFetchedABatch && hasMinNumBatches
-
-      if shouldDisplayEta {
+      if allChainsStartedFetching {
         setShouldDisplayEta(_ => true)
       }
     }

@@ -105,10 +105,17 @@ const id = `${event.chainId}_${event.block.number}_${event.logIndex}`;
 ```
 This is globally unique across chains and blocks. Use it as the default unless the entity is a singleton (e.g., a Token or Pool keyed by address).
 
-**Entity relationships** — use `_id` suffix:
+**Entity relationships** — schema uses entity references; handlers use the `_id` suffix that codegen adds:
 ```ts
-// WRONG:  { token0: token0.id }
-// CORRECT: { token0_id: token0.id }
+// Schema:   token0: Token!       ← entity reference, field name is "token0"
+// Handler:  { token0_id: token0.id }  ← codegen adds _id; NEVER write "token0" here
+
+// Schema:   collection: NftCollection!
+// Handler:  { collection_id: collectionEntity.id }
+
+// WRONG:  { token0: token0.id }  ← "token0" is not a valid TypeScript field
+// WRONG:  { collection_id: String! } in schema  ← _id belongs in handlers, not schema
+// CORRECT: { token0_id: token0.id }  in handler
 ```
 
 **Optionals** — `string | undefined`, not `string | null`

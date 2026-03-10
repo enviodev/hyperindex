@@ -30,7 +30,7 @@ pnpm test             # Run tests (Vitest)
 
 - **Spread operator for updates** — Entities returned by `context.Entity.get()` are read-only. Always spread: `context.Entity.set({ ...existing, field: newValue })`
 - **Effect API for external calls** — All `fetch`, RPC, or other async I/O must use `createEffect` + `context.effect()`. Never call external services directly in handlers.
-- **`entity_id` for relationships** — Use `token_id: String!` not `token: Token!`. No entity arrays without `@derivedFrom`.
+- **Entity references in schema, `_id` in handlers** — Schema uses `collection: NftCollection!` (entity reference, no `_id`). Handlers use `collection_id: value` (codegen adds `_id`). `@derivedFrom(field: "collection")` matches the schema field name, not the handler field name. No entity arrays without `@derivedFrom`.
 - **No `@entity` decorator** — Unlike TheGraph, schema types have no decorators.
 - **Codegen after schema/config changes** — Generated types go stale otherwise. Always `pnpm codegen` first.
 
