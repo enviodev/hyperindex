@@ -115,7 +115,7 @@ module App = {
       state.chainManager.chainFetchers
       ->ChainMap.values
       ->Array.map(cf => {
-        let {numEventsProcessed, fetchState, numBatchesFetched} = cf
+        let {numEventsProcessed, fetchState} = cf
         let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
         let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
         let knownHeight =
@@ -161,7 +161,6 @@ module App = {
             progress,
             knownHeight,
             latestFetchedBlockNumber,
-            numBatchesFetched,
             eventsProcessed: numEventsProcessed,
             chainId: cf.chainConfig.id->Int.toString,
             progressBlock: cf.committedProgressBlockNumber < cf.fetchState.startBlock

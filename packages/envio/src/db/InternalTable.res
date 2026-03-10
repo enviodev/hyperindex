@@ -24,7 +24,6 @@ module Chains = {
     | #first_event_block
     | #buffer_block
     | #ready_at
-    | #_num_batches_fetched
     | #_is_hyper_sync
   ]
 
@@ -40,7 +39,6 @@ module Chains = {
     #ready_at,
     #events_processed,
     #_is_hyper_sync,
-    #_num_batches_fetched,
   ]
 
   type metaFields = {
@@ -49,7 +47,6 @@ module Chains = {
     @as("ready_at")
     timestampCaughtUpToHeadOrEndblock: Js.null<Js.Date.t>,
     @as("_is_hyper_sync") isHyperSync: bool,
-    @as("_num_batches_fetched") numBatchesFetched: int,
   }
 
   type t = {
@@ -95,8 +92,6 @@ module Chains = {
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
-      // TODO: Should deprecate after changing the ETA calculation logic
-      mkField((#_num_batches_fetched: field :> string), Int32, ~fieldSchema=S.int),
     ],
   )
 
@@ -113,7 +108,6 @@ module Chains = {
       progressBlockNumber: -1,
       isHyperSync: false,
       numEventsProcessed: 0,
-      numBatchesFetched: 0,
     }
   }
 
@@ -154,7 +148,6 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
     #first_event_block,
     #ready_at,
     #_is_hyper_sync,
-    #_num_batches_fetched,
   ]
 
   let makeMetaFieldsUpdateQuery = (~pgSchema) => {
@@ -573,7 +566,7 @@ SELECT
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
   "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
   "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
-  "${(#_num_batches_fetched: Chains.field :> string)}" AS "num_batches_fetched",
+  0 AS "num_batches_fetched",
   "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
   "${(#start_block: Chains.field :> string)}" AS "start_block",
   "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"

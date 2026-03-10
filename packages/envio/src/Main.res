@@ -325,7 +325,7 @@ let start = async (
                 ).poweredByHyperSync,
                 latestFetchedBlockNumber,
                 knownHeight,
-                numBatchesFetched: cf.numBatchesFetched,
+                numBatchesFetched: 0,
                 startBlock: cf.fetchState.startBlock,
                 endBlock: cf.fetchState.endBlock,
                 firstEventBlockNumber: cf.fetchState.firstEventBlock,

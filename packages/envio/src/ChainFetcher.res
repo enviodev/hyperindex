@@ -16,7 +16,6 @@ type t = {
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
   numEventsProcessed: int,
-  numBatchesFetched: int,
   reorgDetection: ReorgDetection.t,
   safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
@@ -35,7 +34,6 @@ let make = (
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
-  ~numBatchesFetched,
   ~isInReorgThreshold,
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
@@ -261,7 +259,6 @@ let make = (
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
-    numBatchesFetched,
   }
 }
 
@@ -285,7 +282,6 @@ let makeFromConfig = (
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
-    ~numBatchesFetched=0,
     ~targetBufferSize,
     ~logger,
     ~dynamicContracts=[],
@@ -332,7 +328,6 @@ let makeFromDbState = async (
       ? None
       : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
-    ~numBatchesFetched=0,
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
