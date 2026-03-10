@@ -300,14 +300,14 @@ SELECT
   "_is_hyper_sync" AS "is_hyper_sync",
   "buffer_block" AS "latest_fetched_block_number",
   "progress_block" AS "latest_processed_block",
-  0 AS "num_batches_fetched",
+  "_num_batches_fetched" AS "num_batches_fetched",
   "events_processed" AS "num_events_processed",
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";
-INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
-       (137, 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false);`
+INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false, 0),
+       (137, 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         t.expect(
           mainQuery,
@@ -365,7 +365,7 @@ SELECT
   "_is_hyper_sync" AS "is_hyper_sync",
   "buffer_block" AS "latest_fetched_block_number",
   "progress_block" AS "latest_processed_block",
-  0 AS "num_batches_fetched",
+  "_num_batches_fetched" AS "num_batches_fetched",
   "events_processed" AS "num_events_processed",
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
@@ -447,7 +447,7 @@ SELECT
   "_is_hyper_sync" AS "is_hyper_sync",
   "buffer_block" AS "latest_fetched_block_number",
   "progress_block" AS "latest_processed_block",
-  0 AS "num_batches_fetched",
+  "_num_batches_fetched" AS "num_batches_fetched",
   "events_processed" AS "num_events_processed",
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
@@ -622,7 +622,8 @@ VALUES($1,$2)ON CONFLICT("id") DO UPDATE SET "c_id" = EXCLUDED."c_id";`
 SET "buffer_block" = $2,
     "first_event_block" = $3,
     "ready_at" = $4,
-    "_is_hyper_sync" = $5
+    "_is_hyper_sync" = $5,
+    "_num_batches_fetched" = $6
 WHERE "id" = $1;`
 
         t.expect(
@@ -722,8 +723,8 @@ WHERE cp."block_hash" IS NOT NULL
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         t.expect(
           query,
@@ -750,8 +751,8 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         t.expect(
           query,
@@ -789,9 +790,9 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
-       (42, 500, NULL, 0, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync", "_num_batches_fetched")
+VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false, 0),
+       (42, 500, NULL, 0, 0, NULL, -1, -1, NULL, 0, false, 0);`
 
         t.expect(
           query,

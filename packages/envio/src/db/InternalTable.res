@@ -582,7 +582,7 @@ SELECT
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",
   "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
   "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
-  0 AS "num_batches_fetched",
+  "_num_batches_fetched" AS "num_batches_fetched",
   "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
   "${(#start_block: Chains.field :> string)}" AS "start_block",
   "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
