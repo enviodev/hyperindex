@@ -9,6 +9,39 @@ import type {Invalid as $$noEventFilters} from './Types.ts';
 
 import type {t as Address_t} from './Address.gen.js';
 
+export type evmTransactionFields = {
+  readonly from?: Address_t; 
+  readonly to?: Address_t; 
+  readonly gas?: bigint; 
+  readonly gasPrice?: bigint; 
+  readonly hash?: string; 
+  readonly input?: string; 
+  readonly nonce?: bigint; 
+  readonly transactionIndex?: number; 
+  readonly value?: bigint; 
+  readonly v?: string; 
+  readonly r?: string; 
+  readonly s?: string; 
+  readonly yParity?: string; 
+  readonly maxPriorityFeePerGas?: bigint; 
+  readonly maxFeePerGas?: bigint; 
+  readonly maxFeePerBlobGas?: bigint; 
+  readonly blobVersionedHashes?: string[]; 
+  readonly cumulativeGasUsed?: bigint; 
+  readonly effectiveGasPrice?: bigint; 
+  readonly gasUsed?: bigint; 
+  readonly contractAddress?: string; 
+  readonly logsBloom?: string; 
+  readonly type: (undefined | number); 
+  readonly root?: string; 
+  readonly status?: number; 
+  readonly l1Fee?: bigint; 
+  readonly l1GasPrice?: bigint; 
+  readonly l1GasUsed?: bigint; 
+  readonly l1FeeScalar?: number; 
+  readonly gasUsedForL1?: bigint
+};
+
 export type genericEvent<params,block,transaction> = {
   readonly params: params; 
   readonly chainId: number; 

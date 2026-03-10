@@ -757,6 +757,8 @@ module Source = {
                             blockSchema: S.object(_ => ())->Utils.magic,
                             transactionSchema: S.object(_ => ())->Utils.magic,
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+                            selectedBlockFields: Js.Dict.empty(),
+                            selectedTransactionFields: Js.Dict.empty(),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -921,5 +923,7 @@ let evmEventConfig = (
         ])
       },
     convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+    selectedBlockFields: Js.Dict.empty(),
+    selectedTransactionFields: Js.Dict.empty(),
   }
 }

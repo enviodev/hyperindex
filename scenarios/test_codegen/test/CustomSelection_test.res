@@ -2,30 +2,6 @@ open Vitest
 
 open TestHelpers
 
-type expectedTransactionFields = {
-  to: option<Address.t>,
-  from: option<Address.t>,
-  hash: string,
-}
-
-type expectedBlockFields = {
-  number: int,
-  timestamp: int,
-  hash: string,
-  parentHash: string,
-}
-
-type expectedGlobalTransactionFields = {
-  transactionIndex: int,
-  hash: string,
-}
-
-type expectedGlobalBlockFields = {
-  number: int,
-  timestamp: int,
-  hash: string,
-}
-
 // The same as for TS but in ReScript
 Async.it("Handles event with a custom field selection (in ReScript)", async t => {
   // Initializing the mock database
@@ -40,8 +16,7 @@ Async.it("Handles event with a custom field selection (in ReScript)", async t =>
         // Can pass transactionIndex event though it's not selected for the event
         transactionIndex: 12,
         hash,
-        to: None,
-        from: Some("0xfoo"->Address.unsafeFromString),
+        from: "0xfoo"->Address.unsafeFromString,
       },
       block: {
         parentHash: "0xParentHash",
@@ -49,15 +24,10 @@ Async.it("Handles event with a custom field selection (in ReScript)", async t =>
     },
   })
 
-  // Test content of the generated record type
-  let _ = ((event.transaction: Indexer.Gravatar.CustomSelection.transaction :> expectedTransactionFields) :> Indexer.Gravatar.CustomSelection.transaction)
-  let _ = ((event.block: Indexer.Gravatar.CustomSelection.block :> expectedBlockFields) :> Indexer.Gravatar.CustomSelection.block)
-
-  // The event not used for the test, but we want to make sure
-  // that events without custom field selection use the global one
-  let anotherEvent = Gravatar.EmptyEvent.createMockEvent({})
-  let _ = ((anotherEvent.transaction: Indexer.Gravatar.EmptyEvent.transaction :> expectedGlobalTransactionFields) :> Indexer.Gravatar.EmptyEvent.transaction)
-  let _ = ((anotherEvent.block: Indexer.Gravatar.EmptyEvent.block :> expectedGlobalBlockFields) :> Indexer.Gravatar.EmptyEvent.block)
+  // All events now use the same Envio.EvmBlock.t and Envio.EvmTransaction.t types.
+  // Runtime proxy validates field access based on field_selection in config.yaml.
+  let _ = (event.transaction: Envio.EvmTransaction.t)
+  let _ = (event.block: Envio.EvmBlock.t)
 
   let updatedMockDb = await Gravatar.CustomSelection.processEvent({
     event,

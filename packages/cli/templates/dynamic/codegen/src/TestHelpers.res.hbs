@@ -70,35 +70,129 @@ module EventFunctions = {
     TestHelpers_MockDb.makeProcessEvents(mockDb, ~chainId=?chainId)([event->(Utils.magic: Internal.event => Indexer.eventLog<unknown>)])
   }
 
+  {{#if ../is_evm_ecosystem}}
   module MockBlock = {
     @genType
     type t = {
-      {{#each aggregated_field_selection.block_fields as | field |}}
-      @as("{{field.name.camel}}") {{field.res_name}}?: {{field.res_type}},
-      {{/each}}
+      number?: int,
+      timestamp?: int,
+      hash?: string,
+      parentHash?: string,
+      nonce?: bigint,
+      sha3Uncles?: string,
+      logsBloom?: string,
+      transactionsRoot?: string,
+      stateRoot?: string,
+      receiptsRoot?: string,
+      miner?: Address.t,
+      difficulty?: bigint,
+      totalDifficulty?: bigint,
+      extraData?: string,
+      size?: bigint,
+      gasLimit?: bigint,
+      gasUsed?: bigint,
+      uncles?: array<string>,
+      baseFeePerGas?: bigint,
+      blobGasUsed?: bigint,
+      excessBlobGas?: bigint,
+      parentBeaconBlockRoot?: string,
+      withdrawalsRoot?: string,
+      l1BlockNumber?: int,
+      sendCount?: string,
+      sendRoot?: string,
+      mixHash?: string,
     }
 
-    let toBlock = (_mock: t) => {
-      {{#each aggregated_field_selection.block_fields as | field |}}
-      {{field.res_name}}: _mock.{{field.res_name}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
-      {{/each}}
-    }->(Utils.magic: Indexer.AggregatedBlock.t => Internal.eventBlock)
+    let toBlock: t => Internal.eventBlock = %raw(`function(mock) {
+      return Object.assign({ number: 0, timestamp: 0, hash: "0x0000000000000000000000000000000000000000000000000000000000000000" }, mock)
+    }`)
   }
 
   module MockTransaction = {
     @genType
     type t = {
-      {{#each aggregated_field_selection.transaction_fields as | field |}}
-      @as("{{field.name.camel}}") {{field.res_name}}?: {{field.res_type}},
-      {{/each}}
+      from?: Address.t,
+      to?: Address.t,
+      gas?: bigint,
+      gasPrice?: bigint,
+      hash?: string,
+      input?: string,
+      nonce?: bigint,
+      transactionIndex?: int,
+      value?: bigint,
+      v?: string,
+      r?: string,
+      s?: string,
+      yParity?: string,
+      maxPriorityFeePerGas?: bigint,
+      maxFeePerGas?: bigint,
+      maxFeePerBlobGas?: bigint,
+      blobVersionedHashes?: array<string>,
+      cumulativeGasUsed?: bigint,
+      effectiveGasPrice?: bigint,
+      gasUsed?: bigint,
+      contractAddress?: string,
+      logsBloom?: string,
+      root?: string,
+      status?: int,
+      l1Fee?: bigint,
+      l1GasPrice?: bigint,
+      l1GasUsed?: bigint,
+      l1FeeScalar?: float,
+      gasUsedForL1?: bigint,
     }
 
-    let toTransaction = (_mock: t) => {
-      {{#each aggregated_field_selection.transaction_fields as | field |}}
-      {{field.res_name}}: _mock.{{field.res_name}}->Belt.Option.getWithDefault({{field.default_value_rescript}}),
-      {{/each}}
-    }->(Utils.magic: Indexer.AggregatedTransaction.t => Internal.eventTransaction)
+    let toTransaction: t => Internal.eventTransaction = %raw(`function(mock) {
+      return Object.assign({}, mock)
+    }`)
   }
+  {{/if}}
+  {{#if ../is_fuel_ecosystem}}
+  module MockBlock = {
+    @genType
+    type t = {
+      id?: string,
+      height?: int,
+      time?: int,
+    }
+
+    let toBlock: t => Internal.eventBlock = %raw(`function(mock) {
+      return Object.assign({ id: "", height: 0, time: 0 }, mock)
+    }`)
+  }
+
+  module MockTransaction = {
+    @genType
+    type t = {
+      id?: string,
+    }
+
+    let toTransaction: t => Internal.eventTransaction = %raw(`function(mock) {
+      return Object.assign({ id: "" }, mock)
+    }`)
+  }
+  {{/if}}
+  {{#if ../is_svm_ecosystem}}
+  module MockBlock = {
+    @genType
+    type t = {
+      slot?: int,
+    }
+
+    let toBlock: t => Internal.eventBlock = %raw(`function(mock) {
+      return Object.assign({ slot: 0 }, mock)
+    }`)
+  }
+
+  module MockTransaction = {
+    @genType
+    type t = {}
+
+    let toTransaction: t => Internal.eventTransaction = %raw(`function(mock) {
+      return Object.assign({}, mock)
+    }`)
+  }
+  {{/if}}
 
   @genType
   type mockEventData = {

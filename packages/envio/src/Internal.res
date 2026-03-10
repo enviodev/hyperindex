@@ -4,6 +4,7 @@ type eventTransaction
 
 // Shared EVM transaction fields type used by both RPC and HyperSync sources
 // Field names match HyperSyncClient.ResponseTypes.transaction for consistency
+@genType
 type evmTransactionFields = {
   from?: Address.t,
   to?: Address.t,
@@ -176,6 +177,9 @@ type evmEventConfig = {
   blockSchema: S.schema<eventBlock>,
   transactionSchema: S.schema<eventTransaction>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
+  // Field names selected in config.yaml, used by runtime proxy to validate field access
+  selectedBlockFields: Js.Dict.t<bool>,
+  selectedTransactionFields: Js.Dict.t<bool>,
 }
 type evmContractConfig = {
   name: string,

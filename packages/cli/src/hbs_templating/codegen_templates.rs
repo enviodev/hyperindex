@@ -503,6 +503,7 @@ pub struct EventMod {
     pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
     pub custom_field_selection: Option<system_config::FieldSelection>,
+    pub global_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
 }
 
@@ -559,29 +560,70 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
             Some(FuelEventKind::LogData(_)) => sighash.to_string(),
         };
 
-        let (block_type, block_schema, transaction_type, transaction_schema) =
+        // Use static types from Envio module instead of code-generated per-event types.
+        // Schemas are still generated per-event for data fetching (HyperSync/RPC field selection).
+        let is_fuel = self.fuel_event_kind.is_some();
+        let (block_type, transaction_type) = if is_fuel {
+            (
+                "Envio.FuelBlock.t".to_string(),
+                "Envio.FuelTransaction.t".to_string(),
+            )
+        } else {
+            (
+                "Envio.EvmBlock.t".to_string(),
+                "Envio.EvmTransaction.t".to_string(),
+            )
+        };
+
+        let (block_schema_code, transaction_schema_code) =
             match self.custom_field_selection {
                 Some(ref field_selection) => {
                     let field_selection = FieldSelection::new(FieldSelectionOptions {
                         transaction_fields: field_selection.transaction_fields.clone(),
                         block_fields: field_selection.block_fields.clone(),
-                        transaction_type_name: "transaction".to_string(),
-                        block_type_name: "block".to_string(),
+                        transaction_type_name: "transactionSchemaFields".to_string(),
+                        block_type_name: "blockSchemaFields".to_string(),
                     });
+                    // Include local record type definitions so schemas can construct concrete records
                     (
-                        field_selection.block_type,
-                        field_selection.block_schema,
-                        field_selection.transaction_type,
-                        field_selection.transaction_schema,
+                        format!("type blockSchemaFields = {}\nlet blockSchema = {}", field_selection.block_type, field_selection.block_schema),
+                        format!("type transactionSchemaFields = {}\nlet transactionSchema = {}", field_selection.transaction_type, field_selection.transaction_schema),
                     )
                 }
                 None => (
-                    "Block.t".to_string(),
-                    "Block.schema".to_string(),
-                    "Transaction.t".to_string(),
-                    "Transaction.schema".to_string(),
+                    "let blockSchema = Block.schema".to_string(),
+                    "let transactionSchema = Transaction.schema".to_string(),
                 ),
             };
+
+        // Generate selected field name lookups for runtime proxy validation.
+        // Uses the event's custom field selection if present, otherwise the global one.
+        let selected_fields_code = if !is_fuel {
+            let field_selection = self.custom_field_selection.as_ref()
+                .or(self.global_field_selection.as_ref());
+            match field_selection {
+                Some(fs) => {
+                    let block_field_names: Vec<String> = fs.block_fields.iter()
+                        .map(|f| format!("\"{}\"", f.name))
+                        .collect();
+                    let tx_field_names: Vec<String> = fs.transaction_fields.iter()
+                        .map(|f| format!("\"{}\"", f.name))
+                        .collect();
+                    format!(
+                        r#"let selectedBlockFields = FieldSelection.makeLookupDict([{}])
+let selectedTransactionFields = FieldSelection.makeLookupDict([{}])"#,
+                        block_field_names.join(", "),
+                        tx_field_names.join(", "),
+                    )
+                }
+                None => {
+                    r#"let selectedBlockFields = FieldSelection.makeLookupDict([])
+let selectedTransactionFields = FieldSelection.makeLookupDict([])"#.to_string()
+                }
+            }
+        } else {
+            String::new()
+        };
 
         let base_event_config_code = r#"id,
 name,
@@ -600,9 +642,11 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
+  selectedBlockFields,
+  selectedTransactionFields,
   {base_event_config_code}
 }}
 }}"#
@@ -659,8 +703,9 @@ block: block,
 {types_code}
 
 let paramsRawEventSchema = {params_raw_event_schema}
-let blockSchema = {block_schema}
-let transactionSchema = {transaction_schema}
+{block_schema_code}
+{transaction_schema_code}
+{selected_fields_code}
 
 @genType
 type eventFilter = {event_filter_type}
@@ -805,6 +850,7 @@ impl EventTemplate {
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
+            global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -831,6 +877,7 @@ impl EventTemplate {
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
+            global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -840,7 +887,10 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
+    pub fn from_config_event(
+        config_event: &system_config::Event,
+        global_field_selection: &system_config::FieldSelection,
+    ) -> Result<Self> {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
@@ -890,6 +940,7 @@ impl EventTemplate {
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
+                    global_field_selection: Some(global_field_selection.clone()),
                     fuel_event_kind: None,
                 };
 
@@ -917,6 +968,7 @@ impl EventTemplate {
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
+                            global_field_selection: None,
                             fuel_event_kind: Some(fuel_event_kind),
                         };
 
@@ -953,10 +1005,11 @@ impl ContractTemplate {
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = contract.handler_path.clone();
+        let global_field_selection = &config.field_selection;
         let codegen_events = contract
             .events
             .iter()
-            .map(EventTemplate::from_config_event)
+            .map(|event| EventTemplate::from_config_event(event, global_field_selection))
             .collect::<Result<_>>()?;
 
         let chain_ids = contract.get_chain_ids(config);
@@ -2374,9 +2427,9 @@ let contractName = contractName
 @genType
 type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
 @genType
-type block = Block.t
+type block = Envio.EvmBlock.t
 @genType
-type transaction = Transaction.t
+type transaction = Envio.EvmTransaction.t
 
 @genType
 type event = {{
@@ -2404,6 +2457,8 @@ type contractRegister = Internal.genericContractRegister<Internal.genericContrac
 let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
+let selectedBlockFields = FieldSelection.makeLookupDict(["number", "timestamp", "hash"])
+let selectedTransactionFields = FieldSelection.makeLookupDict([])
 
 @genType
 type eventFilter = {{}}
@@ -2416,9 +2471,11 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFilte
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
+  selectedBlockFields,
+  selectedTransactionFields,
   id,
 name,
 contractName,
@@ -2434,13 +2491,14 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
 
     #[test]
     fn event_template_with_empty_params() {
+        let global_field_selection = FieldSelection::empty();
         let event_template = EventTemplate::from_config_event(&system_config::Event {
             name: "NewGravatar".to_string(),
             kind: system_config::EventKind::Params(vec![]),
             sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                 .to_string(),
             field_selection: None,
-        })
+        }, &global_field_selection)
         .unwrap();
 
         assert_eq!(
@@ -2457,9 +2515,9 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = Block.t
+type block = Envio.EvmBlock.t
 @genType
-type transaction = Transaction.t
+type transaction = Envio.EvmTransaction.t
 
 @genType
 type event = {
@@ -2487,6 +2545,8 @@ type contractRegister = Internal.genericContractRegister<Internal.genericContrac
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
+let selectedBlockFields = FieldSelection.makeLookupDict([])
+let selectedTransactionFields = FieldSelection.makeLookupDict([])
 
 @genType
 type eventFilter = {}
@@ -2499,9 +2559,11 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  selectedBlockFields,
+  selectedTransactionFields,
   id,
 name,
 contractName,
@@ -2517,6 +2579,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
 
     #[test]
     fn event_template_with_custom_field_selection() {
+        let global_field_selection = FieldSelection::empty();
         let event_template = EventTemplate::from_config_event(&system_config::Event {
             name: "NewGravatar".to_string(),
             kind: system_config::EventKind::Params(vec![]),
@@ -2529,7 +2592,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
                     data_type: TypeIdent::option(TypeIdent::Address),
                 }],
             }),
-        })
+        }, &global_field_selection)
         .unwrap();
 
         assert_eq!(
@@ -2546,9 +2609,9 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = {}
+type block = Envio.EvmBlock.t
 @genType
-type transaction = {from: option<Address.t>}
+type transaction = Envio.EvmTransaction.t
 
 @genType
 type event = {
@@ -2574,8 +2637,12 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
-let blockSchema = S.object((_): block => {})
-let transactionSchema = S.object((s): transaction => {from: s.field("from", S.nullable(Address.schema))})
+type blockSchemaFields = {}
+let blockSchema = S.object((_): blockSchemaFields => {})
+type transactionSchemaFields = {from: option<Address.t>}
+let transactionSchema = S.object((s): transactionSchemaFields => {from: s.field("from", S.nullable(Address.schema))})
+let selectedBlockFields = FieldSelection.makeLookupDict([])
+let selectedTransactionFields = FieldSelection.makeLookupDict(["from"])
 
 @genType
 type eventFilter = {}
@@ -2588,9 +2655,11 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
+  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
+  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  selectedBlockFields,
+  selectedTransactionFields,
   id,
 name,
 contractName,

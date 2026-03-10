@@ -7,6 +7,14 @@ import type {EffectContext as $$effectContext} from './Types.ts';
 
 import type {Effect as $$effect} from './Types.ts';
 
+import type {EvmBlock as $$EvmBlock_t} from '../index.d.ts';
+
+import type {EvmTransaction as $$EvmTransaction_t} from '../index.d.ts';
+
+import type {FuelBlock as $$FuelBlock_t} from '../index.d.ts';
+
+import type {FuelTransaction as $$FuelTransaction_t} from '../index.d.ts';
+
 import type {Logger as $$logger} from './Types.ts';
 
 import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen.js';
@@ -14,6 +22,14 @@ import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen
 export type blockEvent = { readonly number: number };
 
 export type fuelBlockEvent = { readonly height: number };
+
+export type EvmBlock_t = $$EvmBlock_t;
+
+export type EvmTransaction_t = $$EvmTransaction_t;
+
+export type FuelBlock_t = $$FuelBlock_t;
+
+export type FuelTransaction_t = $$FuelTransaction_t;
 
 export type svmOnBlockArgs<context> = { readonly slot: number; readonly context: context };
 

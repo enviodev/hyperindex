@@ -1,10 +1,10 @@
-import { expectType, type TypeEqual } from "ts-expect";
 import assert from "assert";
-import { it, describe } from "vitest";
+import { it } from "vitest";
 import { TestHelpers } from "generated";
 const { MockDb, Gravatar } = TestHelpers;
 
-// The same as for ReScript but in TS
+// With the new static types, all events use the same EvmBlock and EvmTransaction types.
+// Runtime proxies validate field access based on field_selection in config.yaml.
 it("Handles event with a custom field selection (in TS)", async () => {
   // Initializing the mock database
   const mockDbInitial = MockDb.createMockDb();
@@ -18,7 +18,6 @@ it("Handles event with a custom field selection (in TS)", async () => {
         // Can pass transactionIndex event though it's not selected for the event
         transactionIndex: 12,
         hash: hash,
-        to: undefined,
         from: "0xfoo",
       },
       block: {
@@ -26,48 +25,6 @@ it("Handles event with a custom field selection (in TS)", async () => {
       },
     },
   });
-
-  expectType<
-    TypeEqual<
-      typeof event.transaction,
-      {
-        readonly to: `0x${string}` | undefined;
-        readonly from: `0x${string}` | undefined;
-        readonly hash: string;
-      }
-    >
-  >(true);
-  expectType<
-    TypeEqual<
-      typeof event.block,
-      {
-        readonly number: number;
-        readonly timestamp: number;
-        readonly hash: string;
-        readonly parentHash: string;
-      }
-    >
-  >(true);
-
-  // The event not used for the test, but we want to make sure
-  // that events without custom field selection use the global one
-  const anotherEvent = Gravatar.EmptyEvent.createMockEvent({});
-  expectType<
-    TypeEqual<
-      typeof anotherEvent.transaction,
-      { readonly transactionIndex: number; readonly hash: string }
-    >
-  >(true);
-  expectType<
-    TypeEqual<
-      typeof anotherEvent.block,
-      {
-        readonly number: number;
-        readonly timestamp: number;
-        readonly hash: string;
-      }
-    >
-  >(true);
 
   const updatedMockDb = await Gravatar.CustomSelection.processEvent({
     event: event,
