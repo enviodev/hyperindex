@@ -2141,7 +2141,7 @@ Sorted by timestamp and chain id`,
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock.source]),
+            sources: [sourceMock.source],
           },
         ],
       )
@@ -2188,11 +2188,11 @@ Sorted by timestamp and chain id`,
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+            sources: [sourceMock1337.source],
           },
           {
             chain: #100,
-            sourceConfig: Config.CustomSources([sourceMock100.source]),
+            sources: [sourceMock100.source],
           },
         ],
       )
@@ -2365,15 +2365,15 @@ Sorted by timestamp and chain id`,
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock1337.source]),
+            sources: [sourceMock1337.source],
           },
           {
             chain: #100,
-            sourceConfig: Config.CustomSources([sourceMock100.source]),
+            sources: [sourceMock100.source],
           },
           {
             chain: #137,
-            sourceConfig: Config.CustomSources([sourceMock137.source]),
+            sources: [sourceMock137.source],
           },
         ],
       )
@@ -2546,7 +2546,7 @@ Sorted by timestamp and chain id`,
       ~chains=[
         {
           chain: #1337,
-          sourceConfig: Config.CustomSources([sourceMock.source]),
+          sources: [sourceMock.source],
         },
       ],
     )
@@ -2707,7 +2707,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock.source]),
+            sources: [sourceMock.source],
           },
         ],
       )
@@ -2852,11 +2852,11 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
         ~chains=[
           {
             chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock1.source]),
+            sources: [sourceMock1.source],
           },
           {
             chain: #100,
-            sourceConfig: Config.CustomSources([sourceMock2.source]),
+            sources: [sourceMock2.source],
           },
         ],
         ~batchSize=1,
