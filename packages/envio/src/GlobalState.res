@@ -1029,8 +1029,8 @@ let injectedTaskReducer = (
           ~reorgChainId,
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
         ) {
-        | [checkpointId] => checkpointId
-        | _ => 0n
+        | Some(checkpointId) => checkpointId
+        | None => 0n
         }
       }
 

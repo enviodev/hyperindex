@@ -325,7 +325,7 @@ module Checkpoints = {
     @as("block_hash")
     blockHash: Js.null<string>,
     @as("events_processed")
-    eventsProcessed: bigint,
+    eventsProcessed: int,
   }
 
   // Schema for parsing DB results where BIGINT columns come back as strings
@@ -337,7 +337,7 @@ module Checkpoints = {
       "block_hash",
       S.union([S.string->(Utils.magic: S.t<string> => S.t<Js.null<string>>), S.literal(%raw(`null`))]),
     ),
-    eventsProcessed: s.field("events_processed", BigInt.schema),
+    eventsProcessed: s.field("events_processed", S.int),
   })
 
   let initialCheckpointId = 0n
@@ -349,7 +349,7 @@ module Checkpoints = {
       mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
-      mkField((#events_processed: field :> string), UInt64, ~fieldSchema=S.bigint),
+      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
     ],
   )
 
@@ -385,7 +385,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
 
   let makeInsertCheckpointQuery = (~pgSchema) => {
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(BigInt: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -401,7 +401,6 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
     let checkpointIdStrings = checkpointIds->BigInt.arrayToStringArray
-    let checkpointEventsProcessedStrings = checkpointEventsProcessed->BigInt.arrayToStringArray
     sql
     ->Postgres.preparedUnsafe(
       query,
@@ -410,10 +409,10 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
         checkpointChainIds,
         checkpointBlockNumbers,
         checkpointBlockHashes,
-        checkpointEventsProcessedStrings,
+        checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<string>, array<int>, array<int>, array<Js.Null.t<string>>, array<string>)
+          (array<string>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
         ) => unknown
       ),
     )
@@ -464,9 +463,8 @@ LIMIT 1;`
         (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
-    rawResult->Js.Promise2.then(rows => {
-      let ids = Belt.Array.map(rows, row => row["id"]->BigInt.fromStringUnsafe)
-      Js.Promise2.resolve(ids)
+    rawResult->Promise.thenResolve(rows => {
+      rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->BigInt.fromStringUnsafe)
     })
   }
 

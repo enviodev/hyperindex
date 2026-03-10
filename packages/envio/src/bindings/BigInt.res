@@ -43,11 +43,9 @@ module Bitwise = {
 }
 
 let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
-  const res = [];
-  let i = 0;
-  while (i < arr.length) {
-    res.push(arr[i].toString());
-    i++;
+  const res = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    res[i] = arr[i].toString();
   }
   return res;
 }`)

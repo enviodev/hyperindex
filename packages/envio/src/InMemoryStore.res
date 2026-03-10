@@ -108,7 +108,7 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
     let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpoint)
     let chainId = batch.checkpointChainIds->Js.Array2.unsafe_get(checkpoint)
     let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpoint)->BigInt.toIntUnsafe
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpoint)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)

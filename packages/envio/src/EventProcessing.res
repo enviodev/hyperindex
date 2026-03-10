@@ -248,7 +248,7 @@ let preloadBatchOrThrow = async (
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
     let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)->BigInt.toIntUnsafe
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
@@ -340,7 +340,7 @@ let runBatchHandlersOrThrow = async (
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
     let checkpointEventsProcessed =
-      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)->BigInt.toIntUnsafe
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
