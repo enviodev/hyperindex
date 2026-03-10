@@ -43,6 +43,89 @@ const result = await indexer.process({
 });
 ```
 
+## Finding Block Ranges with HyperSync
+
+**Do NOT web-search for block ranges.** Use HyperSync directly to find blocks where your contracts/events actually occur. The HyperSync API key from `.env` (`ENVIO_API_TOKEN`) works for these queries.
+
+### Step 1: Identify What to Query
+
+From `config.yaml`, extract:
+- Contract addresses
+- Event signatures (topic0 hashes)
+- Chain ID → HyperSync endpoint (e.g., chain 1 → `https://eth.hypersync.xyz`)
+
+Common HyperSync endpoints: `eth`, `base`, `arbitrum-one`, `optimism`, `polygon`, `bsc`, `avalanche`, `gnosis`, `linea`, `scroll`, `blast`, `celo` — all at `https://{name}.hypersync.xyz`.
+
+### Step 2: Query HyperSync for Matching Blocks
+
+```bash
+curl --request POST \
+  --url https://eth.hypersync.xyz/query \
+  --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $ENVIO_API_TOKEN" \
+  --data '{
+    "from_block": 0,
+    "logs": [
+      {
+        "address": ["0xYOUR_CONTRACT_ADDRESS"],
+        "topics": [
+          ["0xYOUR_EVENT_TOPIC0"]
+        ]
+      }
+    ],
+    "field_selection": {
+      "log": ["block_number"]
+    }
+  }'
+```
+
+This returns the earliest blocks matching your filter. Use `from_block` to paginate forward.
+
+### Step 3: Pick a Tight Block Range
+
+From the response, pick a small range (50–200 blocks) around the first few matching blocks. This keeps tests fast and deterministic.
+
+### Advanced: Multi-Topic and Transaction Queries
+
+Query by topic combinations (e.g., Transfer events to/from an address) and transactions:
+
+```bash
+curl --request POST \
+  --url https://eth.hypersync.xyz/query \
+  --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $ENVIO_API_TOKEN" \
+  --data '{
+    "from_block": 0,
+    "logs": [
+      {
+        "topics": [
+          ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
+          [],
+          ["0x0000000000000000000000001e037f97d730Cc881e77F01E409D828b0bb14de0"]
+        ]
+      },
+      {
+        "topics": [
+          ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
+          ["0x0000000000000000000000001e037f97d730Cc881e77F01E409D828b0bb14de0"],
+          []
+        ]
+      }
+    ],
+    "transactions": [
+      { "from": ["0x1e037f97d730Cc881e77F01E409D828b0bb14de0"] },
+      { "to": ["0x1e037f97d730Cc881e77F01E409D828b0bb14de0"] }
+    ],
+    "field_selection": {
+      "block": ["number", "timestamp", "hash"],
+      "log": ["block_number", "log_index", "transaction_index", "data", "address", "topic0", "topic1", "topic2", "topic3"],
+      "transaction": ["block_number", "transaction_index", "hash", "from", "to", "value", "input"]
+    }
+  }'
+```
+
+Full HyperSync query reference: https://docs.envio.dev/docs/HyperSync-LLM/hypersync-complete
+
 ## result.changes Structure
 
 `result.changes` is an array of block-level change objects:
