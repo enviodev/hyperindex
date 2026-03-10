@@ -6,8 +6,8 @@ type requestId = int
 // Serializable change with entity as JSON (for worker thread messaging)
 @tag("type")
 type serializableChange =
-  | @as("SET") Set({entityId: string, entity: Js.Json.t, checkpointId: float})
-  | @as("DELETE") Delete({entityId: string, checkpointId: float})
+  | @as("SET") Set({entityId: string, entity: Js.Json.t, checkpointId: bigint})
+  | @as("DELETE") Delete({entityId: string, checkpointId: bigint})
 
 type serializableEntityUpdate = {
   latestChange: serializableChange,
@@ -34,11 +34,11 @@ type workerPayload =
   | @as("writeBatch")
   WriteBatch({
       updatedEntities: array<serializableUpdatedEntity>,
-      checkpointIds: array<float>,
+      checkpointIds: array<bigint>,
       checkpointChainIds: array<int>,
       checkpointBlockNumbers: array<int>,
       checkpointBlockHashes: array<Js.Null.t<string>>,
-      checkpointEventsProcessed: array<int>,
+      checkpointEventsProcessed: array<bigint>,
     })
 
 // Main thread -> Worker payloads

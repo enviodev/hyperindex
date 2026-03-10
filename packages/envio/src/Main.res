@@ -6,7 +6,7 @@ type chainData = {
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
-  numEventsProcessed: int,
+  numEventsProcessed: bigint,
   latestFetchedBlockNumber: int,
   // Need this for API backwards compatibility
   @as("currentBlockHeight")
@@ -36,7 +36,11 @@ let chainDataSchema = S.schema((s): chainData => {
   firstEventBlockNumber: s.matches(S.option(S.int)),
   latestProcessedBlock: s.matches(S.option(S.int)),
   timestampCaughtUpToHeadOrEndblock: s.matches(S.option(S.datetime(S.string))),
-  numEventsProcessed: s.matches(S.int),
+  numEventsProcessed: s.matches(
+    S.float->S.transform(_ => {
+      serializer: n => n->BigInt.toFloat,
+    })
+  ),
   latestFetchedBlockNumber: s.matches(S.int),
   knownHeight: s.matches(S.int),
   numBatchesFetched: s.matches(S.int),

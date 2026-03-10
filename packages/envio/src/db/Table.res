@@ -22,11 +22,13 @@ type fieldType =
   | String
   | Boolean
   | Uint32
+  | UInt64
   | Int32
   | Number
   | BigInt({precision?: int})
   | BigDecimal({config?: (int, int)}) // (precision, scale)
   | Serial
+  | BigSerial
   | Json
   | Date
   | Enum({config: enumConfig<enum>})
@@ -113,6 +115,7 @@ let getPgFieldType = (
   | Boolean => (Postgres.Boolean :> string)
   | Int32 => (Postgres.Integer :> string)
   | Uint32 => (Postgres.BigInt :> string)
+  | UInt64 => (Postgres.BigInt :> string)
   | Number => (Postgres.DoublePrecision :> string)
   | BigInt({?precision}) =>
     (Postgres.Numeric :> string) ++
@@ -129,6 +132,7 @@ let getPgFieldType = (
     }
 
   | Serial => (Postgres.Serial :> string)
+  | BigSerial => (Postgres.BigSerial :> string)
   | Json => (Postgres.JsonB :> string)
   | Date =>
     (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)

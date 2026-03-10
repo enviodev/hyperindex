@@ -17,7 +17,7 @@ module InMemoryStore = {
     inMemTable->InMemoryTable.Entity.set(
       Set({
         entityId: (entity: Internal.entity).id,
-        checkpointId: 0.,
+        checkpointId: 0n,
         entity,
       }),
       ~shouldSaveHistory=config->Config.shouldSaveHistory(
@@ -211,7 +211,7 @@ module Storage = {
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
-        checkpointId: 0.,
+        checkpointId: 0n,
       }),
     }
   }
@@ -432,7 +432,11 @@ module Indexer = {
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
         )
-        ->(Utils.magic: promise<unknown> => promise<array<InternalTable.Checkpoints.t>>)
+        ->Promise.thenResolve(rows =>
+          rows
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        )
       },
       queryEffectCache: (effectName: string) => {
         sql

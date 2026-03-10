@@ -84,11 +84,11 @@ describe("Test ClickHouse SQL generation functions", () => {
         let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` (
-  \`id\` Int32,
+  \`id\` UInt64,
   \`chain_id\` Int32,
   \`block_number\` Int32,
   \`block_hash\` Nullable(String),
-  \`events_processed\` Int32
+  \`events_processed\` UInt64
 )
 ENGINE = MergeTree()
 ORDER BY (id)`
@@ -130,7 +130,7 @@ ORDER BY (id)`
   \`json\` String,
   \`enumField\` Enum8('ADMIN', 'USER'),
   \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
-  \`envio_checkpoint_id\` UInt32,
+  \`envio_checkpoint_id\` UInt64,
   \`envio_change\` Enum8('SET', 'DELETE')
 )
 ENGINE = MergeTree()

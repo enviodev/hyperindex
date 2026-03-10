@@ -26,7 +26,7 @@ module ChainLine = {
       }
       let progressBlockStr = progressBlock->TuiData.formatLocaleString
       let toBlockStr = toBlock->TuiData.formatLocaleString
-      let eventsStr = eventsProcessed->TuiData.formatLocaleString
+      let eventsStr = eventsProcessed->TuiData.formatBigintLocaleString
 
       let blocksText =
         `Blocks: ${progressBlockStr} / ${toBlockStr}` ++
@@ -86,7 +86,7 @@ module TotalEventsProcessed = {
     <Text>
       <Text bold=true> {label->React.string} </Text>
       <Text color={Secondary}>
-        {`${totalEventsProcessed->TuiData.formatLocaleString}`->React.string}
+        {`${totalEventsProcessed->TuiData.formatBigintLocaleString}`->React.string}
       </Text>
     </Text>
   }
@@ -115,7 +115,8 @@ module App = {
       state.chainManager.chainFetchers
       ->ChainMap.values
       ->Array.map(cf => {
-        let {numEventsProcessed, fetchState, numBatchesFetched} = cf
+        let {fetchState, numBatchesFetched} = cf
+        let numEventsProcessed = cf.numEventsProcessed
         let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
         let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
         let knownHeight =
@@ -179,8 +180,8 @@ module App = {
         )
       })
 
-    let totalEventsProcessed = chains->Array.reduce(0, (acc, chain) => {
-      acc + chain.eventsProcessed
+    let totalEventsProcessed = chains->Array.reduce(0n, (acc, chain) => {
+      acc->BigInt.add(chain.eventsProcessed)
     })
     let maxChainIdLength = chains->Array.reduce(0, (acc, chain) => {
       let chainIdLength = chain.chainId->String.length

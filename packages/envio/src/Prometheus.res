@@ -572,10 +572,12 @@ module RollbackSuccess = {
     "help": "Number of events rollbacked on reorg",
   })
 
-  let increment = (~timeSeconds: float, ~rollbackedProcessedEvents) => {
+  let increment = (~timeSeconds: float, ~rollbackedProcessedEvents: bigint) => {
     timeCounter->PromClient.Counter.incMany(timeSeconds->(Utils.magic: float => int))
     counter->PromClient.Counter.inc
-    eventsCounter->PromClient.Counter.incMany(rollbackedProcessedEvents)
+    eventsCounter->PromClient.Counter.incMany(
+      rollbackedProcessedEvents->BigInt.toIntUnsafe,
+    )
   }
 }
 
@@ -645,8 +647,11 @@ module ProgressEventsCount = {
     ~labelSchema=chainIdLabelsSchema,
   )
 
-  let set = (~processedCount, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=processedCount)
+  let set = (~processedCount: bigint, ~chainId) => {
+    gauge->SafeGauge.handleFloat(
+      ~labels=chainId,
+      ~value=processedCount->BigInt.toFloat,
+    )
   }
 }
 

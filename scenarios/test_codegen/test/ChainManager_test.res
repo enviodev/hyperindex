@@ -105,7 +105,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
       committedProgressBlockNumber: -1,
-      numEventsProcessed: 0,
+      numEventsProcessed: 0n,
       numBatchesFetched: 0,
       fetchState: fetchState.contents,
       logger: Logging.getLogger(),
@@ -131,7 +131,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     {
       ChainManager.chainFetchers,
       multichain: Ordered,
-      committedCheckpointId: 0.,
+      committedCheckpointId: 0n,
       isInReorgThreshold: false,
     },
     numberOfMockEventsCreated.contents,

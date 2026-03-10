@@ -43,6 +43,8 @@ module Bitwise = {
 }
 
 let zero = fromInt(0)
+let toFloat: bigint => float = %raw(`(n) => Number(n)`)
+let toIntUnsafe: bigint => int = %raw(`(n) => Number(n)`)
 
 @genType
 let schema =

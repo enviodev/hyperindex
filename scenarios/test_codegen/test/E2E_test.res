@@ -243,44 +243,44 @@ describe("E2E tests", () => {
       (
         [
           {
-            id: 2.,
+            id: 2n,
             chainId: 100,
             blockNumber: 150,
             blockHash: Js.Null.Null,
-            eventsProcessed: 1,
+            eventsProcessed: 1n,
           },
           {
-            id: 3.,
+            id: 3n,
             chainId: 1337,
             blockNumber: 100,
             blockHash: Js.Null.Value("0x100"),
-            eventsProcessed: 0,
+            eventsProcessed: 0n,
           },
           {
-            id: 4.,
+            id: 4n,
             chainId: 1337,
             blockNumber: 150,
             blockHash: Js.Null.Null,
-            eventsProcessed: 1,
+            eventsProcessed: 1n,
           },
           {
-            id: 5.,
+            id: 5n,
             chainId: 100,
             blockNumber: 151,
             blockHash: Js.Null.Null,
-            eventsProcessed: 1,
+            eventsProcessed: 1n,
           },
           {
-            id: 6.,
+            id: 6n,
             chainId: 100,
             blockNumber: 160,
             blockHash: Js.Null.Value("0x160"),
-            eventsProcessed: 0,
+            eventsProcessed: 0n,
           },
         ],
         [
           Set({
-            checkpointId: 2.,
+            checkpointId: 2n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -288,7 +288,7 @@ describe("E2E tests", () => {
             },
           }),
           Set({
-            checkpointId: 4.,
+            checkpointId: 4n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -296,7 +296,7 @@ describe("E2E tests", () => {
             },
           }),
           Set({
-            checkpointId: 5.,
+            checkpointId: 5n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",

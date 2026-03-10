@@ -1,7 +1,7 @@
 type syncing = {
   firstEventBlockNumber: int,
   latestProcessedBlock: int,
-  numEventsProcessed: int,
+  numEventsProcessed: bigint,
 }
 type synced = {
   ...syncing,
@@ -12,14 +12,14 @@ type progress = SearchingForEvents | Syncing(syncing) | Synced(synced)
 
 let getNumberOfEventsProccessed = (progress: progress) => {
   switch progress {
-  | SearchingForEvents => 0
+  | SearchingForEvents => 0n
   | Syncing(syncing) => syncing.numEventsProcessed
   | Synced(synced) => synced.numEventsProcessed
   }
 }
 type chain = {
   chainId: string,
-  eventsProcessed: int,
+  eventsProcessed: bigint,
   progressBlock: option<int>,
   bufferBlock: option<int>,
   sourceBlock: option<int>,
@@ -44,3 +44,5 @@ type number
 @val external number: int => number = "Number"
 @send external toLocaleString: number => string = "toLocaleString"
 let formatLocaleString = n => n->number->toLocaleString
+@send external bigintToLocaleString: bigint => string = "toLocaleString"
+let formatBigintLocaleString = n => n->bigintToLocaleString

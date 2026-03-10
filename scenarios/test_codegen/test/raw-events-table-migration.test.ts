@@ -21,7 +21,7 @@ describe("Raw Events Table Migrations", () => {
 
     let expectedColumns = [
       { column_name: "chain_id", data_type: "integer" },
-      { column_name: "event_id", data_type: "numeric" },
+      { column_name: "event_id", data_type: "bigint" },
       { column_name: "block_number", data_type: "integer" },
       { column_name: "log_index", data_type: "integer" },
       { column_name: "block_timestamp", data_type: "integer" },
@@ -30,6 +30,7 @@ describe("Raw Events Table Migrations", () => {
       { column_name: "block_fields", data_type: "jsonb" },
       { column_name: "transaction_fields", data_type: "jsonb" },
       { column_name: "src_address", data_type: "text" },
+      { column_name: "serial", data_type: "bigint" },
     ];
 
     expect(rawEventsColumnsRes).toEqual(
