@@ -162,7 +162,6 @@ let updateChainMetadataTable = (
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
-        numBatchesFetched: cf.numBatchesFetched,
       },
     )
   })
@@ -476,11 +475,6 @@ let submitPartitionQueryResponse = (
       ~newItemsWithDcs,
       ~knownHeight,
     )
-
-  let updatedChainFetcher = {
-    ...updatedChainFetcher,
-    numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
-  }
 
   if !chainFetcher.isProgressAtHead && updatedChainFetcher.isProgressAtHead {
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
