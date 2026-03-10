@@ -35,7 +35,6 @@ let make = (
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
-  ~numBatchesFetched,
   ~isInReorgThreshold,
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
@@ -261,7 +260,6 @@ let make = (
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
-    numBatchesFetched,
   }
 }
 
@@ -332,7 +330,6 @@ let makeFromDbState = async (
       ? None
       : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
-    ~numBatchesFetched=0,
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,

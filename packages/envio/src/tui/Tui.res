@@ -162,7 +162,6 @@ module App = {
             progress,
             knownHeight,
             latestFetchedBlockNumber,
-            numBatchesFetched,
             eventsProcessed: numEventsProcessed,
             chainId: cf.chainConfig.id->Int.toString,
             progressBlock: cf.committedProgressBlockNumber < cf.fetchState.startBlock

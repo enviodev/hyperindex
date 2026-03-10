@@ -252,6 +252,7 @@ module Indexer = {
     // makes tests ~1.9 seconds faster
     ~enableHasura=false,
     ~reset=true,
+    ~batchSize=?,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
@@ -295,6 +296,7 @@ module Indexer = {
         enableRawEvents: false,
         chainMap,
         multichain,
+        batchSize: batchSize->Option.getWithDefault(config.batchSize),
       }
     }
 
@@ -461,7 +463,7 @@ module Indexer = {
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false)
+        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false, ~batchSize?)
       },
       graphql: query => {
         if !enableHasura {
