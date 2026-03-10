@@ -34,11 +34,6 @@ exception GetItemsError(getItemsError)
 
 type sourceFor = Sync | Fallback | Live
 
-let isPrimarySource = sourceFor =>
-  switch sourceFor {
-  | Sync | Live => true
-  | Fallback => false
-  }
 type t = {
   name: string,
   sourceFor: sourceFor,

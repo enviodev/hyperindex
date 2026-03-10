@@ -1,5 +1,15 @@
 type t
 
+type sourceRole = Primary | Secondary
+
+let getSourceRole: (
+  ~sourceFor: Source.sourceFor,
+  ~isLive: bool,
+  ~hasLive: bool,
+) => option<sourceRole>
+
+let hasLiveSource: t => bool
+
 let fallbackRecoveryThreshold: int
 
 let make: (
