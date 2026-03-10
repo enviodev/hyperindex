@@ -42,6 +42,16 @@ module Bitwise = {
   let logand = (a: bigint, b: bigint): bigint => %raw("a & b")
 }
 
+let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
+  const res = [];
+  let i = 0;
+  while (i < arr.length) {
+    res.push(arr[i].toString());
+    i++;
+  }
+  return res;
+}`)
+
 let zero = fromInt(0)
 let toFloat: bigint => float = %raw(`(n) => Number(n)`)
 let toIntUnsafe: bigint => int = %raw(`(n) => Number(n)`)

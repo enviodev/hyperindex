@@ -111,7 +111,7 @@ let handleWriteBatch = (
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointBlockHashes: array<Js.Null.t<string>>,
-  ~checkpointEventsProcessed: array<bigint>,
+  ~checkpointEventsProcessed: array<int>,
 ): unit => {
   // Group entity changes by checkpointId
   // checkpointId -> entityName -> entityChange

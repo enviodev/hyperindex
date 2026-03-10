@@ -817,7 +817,7 @@ let rec writeBatch = async (
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (batchDeleteEntityIds, batchDeleteCheckpointIds->Js.Array2.map(BigInt.toString))->Obj.magic,
+                  (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
                 )
                 ->Promise.ignoreValue,
               )

@@ -407,8 +407,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
     let query = makeInsertCheckpointQuery(~pgSchema)
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
-    let checkpointIdStrings = checkpointIds->Js.Array2.map(BigInt.toString)
-    let eventsProcessedStrings = checkpointEventsProcessed->Js.Array2.map(BigInt.toString)
+    let checkpointIdStrings = checkpointIds->BigInt.arrayToStringArray
     sql
     ->Postgres.preparedUnsafe(
       query,
@@ -417,10 +416,10 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
         checkpointChainIds,
         checkpointBlockNumbers,
         checkpointBlockHashes,
-        eventsProcessedStrings,
+        checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<string>, array<int>, array<int>, array<Js.Null.t<string>>, array<string>)
+          (array<string>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
         ) => unknown
       ),
     )
