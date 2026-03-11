@@ -567,7 +567,7 @@ SELECT
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
   "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
-  "${(#events_processed: Chains.field :> string)}"::float8 AS "eventsProcessed",
+  "${(#events_processed: Chains.field :> string)}"::float4 AS "eventsProcessed",
   "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
   "${(#ready_at: Chains.field :> string)}" AS "readyAt",
   ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
