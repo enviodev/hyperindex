@@ -1451,7 +1451,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
   })
 
-  Async.it("_meta and chain_metadata return events processed as a number (float8 cast)", async t => {
+  Async.it("_meta returns eventsProcessed as string, chain_metadata returns num_events_processed as number (float4 cast)", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1479,39 +1479,41 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    // Update events_processed to a value > int32 max to verify float8 works
+    // Update events_processed to a value > int32 max to verify uint52 column works
     let sql = PgStorage.makeClient()
     let _ = await sql->Postgres.unsafe(
       `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
     )
 
-    // float8 cast in the view makes Hasura return numbers instead of strings
+    // _meta uses float8 cast, which Hasura stringifies due to STRINGIFY_NUMERIC_TYPES=true
     t.expect(
       await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
-      ~message="_meta should return eventsProcessed as a number (float8 cast)",
+      ~message="_meta should return eventsProcessed as a string (float8 is stringified by Hasura)",
     ).toEqual(
       {
         data: {
           "_meta": [
             {
               "chainId": 1337,
-              "eventsProcessed": 2147487821.,
+              "eventsProcessed": "2147487821",
             },
           ],
         },
       },
     )
 
+    // chain_metadata uses float4 cast, which Hasura does NOT stringify
+    // float4 has ~7 digits of precision, so large values lose precision
     t.expect(
       await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
-      ~message="chain_metadata should return num_events_processed as a number (float8 cast)",
+      ~message="chain_metadata should return num_events_processed as a number (float4 not stringified)",
     ).toEqual(
       {
         data: {
           "chain_metadata": [
             {
               "chain_id": 1337,
-              "num_events_processed": 2147487821.,
+              "num_events_processed": 2147487700., // float4 precision loss from 2147487821
             },
           ],
         },
