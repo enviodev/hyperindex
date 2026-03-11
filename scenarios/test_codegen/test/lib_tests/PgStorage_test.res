@@ -285,7 +285,7 @@ SELECT
   "progress_block" AS "progressBlock",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
-  "events_processed" AS "eventsProcessed",
+  "events_processed"::float8 AS "eventsProcessed",
   "source_block" AS "sourceBlock",
   "ready_at" AS "readyAt",
   ("ready_at" IS NOT NULL) AS "isReady"
@@ -350,7 +350,7 @@ SELECT
   "progress_block" AS "progressBlock",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
-  "events_processed" AS "eventsProcessed",
+  "events_processed"::float8 AS "eventsProcessed",
   "source_block" AS "sourceBlock",
   "ready_at" AS "readyAt",
   ("ready_at" IS NOT NULL) AS "isReady"
@@ -432,7 +432,7 @@ SELECT
   "progress_block" AS "progressBlock",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
-  "events_processed" AS "eventsProcessed",
+  "events_processed"::float8 AS "eventsProcessed",
   "source_block" AS "sourceBlock",
   "ready_at" AS "readyAt",
   ("ready_at" IS NOT NULL) AS "isReady"

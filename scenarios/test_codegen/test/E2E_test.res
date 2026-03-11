@@ -1451,7 +1451,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
   })
 
-  Async.it("_meta returns eventsProcessed as string, chain_metadata returns num_events_processed as number", async t => {
+  Async.it("_meta and chain_metadata return events processed as a number", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1479,26 +1479,26 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
+    // Update events_processed to a value > int32 max to verify float8 cast works
+    let sql = PgStorage.makeClient()
+    let _ = await sql->Postgres.unsafe(
+      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
+    )
+
     t.expect(
       await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
-      ~message="_meta should return eventsProcessed as a string (bigint serialized by Hasura)",
+      ~message="_meta should return eventsProcessed as a number",
     ).toEqual(
       {
         data: {
           "_meta": [
             {
               "chainId": 1337,
-              "eventsProcessed": "1",
+              "eventsProcessed": 2147487821.,
             },
           ],
         },
       },
-    )
-
-    // Update events_processed to a value > int32 max to verify float8 cast works
-    let sql = PgStorage.makeClient()
-    let _ = await sql->Postgres.unsafe(
-      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
     )
 
     t.expect(
@@ -1510,7 +1510,7 @@ describe("E2E tests", () => {
           "chain_metadata": [
             {
               "chain_id": 1337,
-              "num_events_processed": 2147487821,
+              "num_events_processed": 2147487821.,
             },
           ],
         },
