@@ -285,7 +285,7 @@ SELECT
   "progress_block" AS "progressBlock",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
-  "events_processed" AS "eventsProcessed",
+  "events_processed"::float8 AS "eventsProcessed",
   "source_block" AS "sourceBlock",
   "ready_at" AS "readyAt",
   ("ready_at" IS NOT NULL) AS "isReady"
@@ -301,7 +301,7 @@ SELECT
   "buffer_block" AS "latest_fetched_block_number",
   "progress_block" AS "latest_processed_block",
   0 AS "num_batches_fetched",
-  "events_processed" AS "num_events_processed",
+  "events_processed"::float8 AS "num_events_processed",
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";
@@ -350,7 +350,7 @@ SELECT
   "progress_block" AS "progressBlock",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
-  "events_processed" AS "eventsProcessed",
+  "events_processed"::float8 AS "eventsProcessed",
   "source_block" AS "sourceBlock",
   "ready_at" AS "readyAt",
   ("ready_at" IS NOT NULL) AS "isReady"
@@ -366,7 +366,7 @@ SELECT
   "buffer_block" AS "latest_fetched_block_number",
   "progress_block" AS "latest_processed_block",
   0 AS "num_batches_fetched",
-  "events_processed" AS "num_events_processed",
+  "events_processed"::float8 AS "num_events_processed",
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";`
@@ -432,7 +432,7 @@ SELECT
   "progress_block" AS "progressBlock",
   "buffer_block" AS "bufferBlock",
   "first_event_block" AS "firstEventBlock",
-  "events_processed" AS "eventsProcessed",
+  "events_processed"::float8 AS "eventsProcessed",
   "source_block" AS "sourceBlock",
   "ready_at" AS "readyAt",
   ("ready_at" IS NOT NULL) AS "isReady"
@@ -448,7 +448,7 @@ SELECT
   "buffer_block" AS "latest_fetched_block_number",
   "progress_block" AS "latest_processed_block",
   0 AS "num_batches_fetched",
-  "events_processed" AS "num_events_processed",
+  "events_processed"::float8 AS "num_events_processed",
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "public"."envio_chains";`

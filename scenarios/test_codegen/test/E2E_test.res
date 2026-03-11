@@ -1451,7 +1451,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
   })
 
-  Async.it("_meta and chain_metadata return events processed as a number", async t => {
+  Async.it("_meta and chain_metadata return events processed as a number (float8 cast)", async t => {
     let sourceMock = Mock.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
@@ -1485,17 +1485,17 @@ describe("E2E tests", () => {
       `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
     )
 
-    // Hasura stringifies float8 when HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true
+    // float8 cast in the view makes Hasura return numbers instead of strings
     t.expect(
       await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
-      ~message="_meta should return eventsProcessed as a stringified float8",
+      ~message="_meta should return eventsProcessed as a number (float8 cast)",
     ).toEqual(
       {
         data: {
           "_meta": [
             {
               "chainId": 1337,
-              "eventsProcessed": "2147487821",
+              "eventsProcessed": 2147487821.,
             },
           ],
         },
@@ -1504,14 +1504,14 @@ describe("E2E tests", () => {
 
     t.expect(
       await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
-      ~message="chain_metadata should return num_events_processed as a stringified float8",
+      ~message="chain_metadata should return num_events_processed as a number (float8 cast)",
     ).toEqual(
       {
         data: {
           "chain_metadata": [
             {
               "chain_id": 1337,
-              "num_events_processed": "2147487821",
+              "num_events_processed": 2147487821.,
             },
           ],
         },
