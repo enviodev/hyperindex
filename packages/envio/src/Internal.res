@@ -177,10 +177,10 @@ type eventFilters =
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  blockSchema: S.schema<eventBlock>,
-  transactionSchema: S.schema<eventTransaction>,
+  blockFieldNames: array<string>,
+  transactionFieldNames: array<string>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
-  // Field names selected in config.yaml, used by runtime proxy to validate field access
+  // Lookup dicts derived from field name arrays, used by runtime proxy to validate field access
   selectedBlockFields: Js.Dict.t<bool>,
   selectedTransactionFields: Js.Dict.t<bool>,
 }

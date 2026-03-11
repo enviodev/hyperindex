@@ -144,6 +144,8 @@ struct InternalEvmConfig<'a> {
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
     address_format: &'a str,
+    global_block_fields: Vec<String>,
+    global_transaction_fields: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -212,6 +214,12 @@ struct InternalChainConfig {
 #[serde(rename_all = "camelCase")]
 struct InternalContractEventItem {
     event: String,
+    sighash: String,
+    topic_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_fields: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction_fields: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Debug)]
@@ -596,7 +604,7 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
                 ),
             };
 
-        // Generate selected field name lookups for runtime proxy validation.
+        // Generate field name arrays and derive lookup dicts for runtime proxy validation.
         // Uses the event's custom field selection if present, otherwise the global one.
         let selected_fields_code = if !is_fuel {
             let field_selection = self.custom_field_selection.as_ref()
@@ -610,15 +618,19 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
                         .map(|f| format!("\"{}\"", f.name))
                         .collect();
                     format!(
-                        r#"let selectedBlockFields = FieldSelection.makeLookupDict([{}])
-let selectedTransactionFields = FieldSelection.makeLookupDict([{}])"#,
+                        r#"let blockFieldNames = [{}]
+let transactionFieldNames = [{}]
+let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
+let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)"#,
                         block_field_names.join(", "),
                         tx_field_names.join(", "),
                     )
                 }
                 None => {
-                    r#"let selectedBlockFields = FieldSelection.makeLookupDict([])
-let selectedTransactionFields = FieldSelection.makeLookupDict([])"#.to_string()
+                    r#"let blockFieldNames = []
+let transactionFieldNames = []
+let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
+let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)"#.to_string()
                 }
             }
         } else {
@@ -642,8 +654,8 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
+  blockFieldNames,
+  transactionFieldNames,
   convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
   selectedBlockFields,
   selectedTransactionFields,
@@ -1777,13 +1789,29 @@ type testIndexer = {{
                     let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
                     let abi_compact = serde_json::to_string(&abi_value)?;
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
-                    // Extract event signatures for EVM contracts
+                    // Extract event details for EVM contracts, with per-event field selection
                     let events = match &contract.abi {
-                        Abi::Evm(abi) => abi
-                            .get_event_signatures()
-                            .into_iter()
-                            .map(|sig| InternalContractEventItem { event: sig })
-                            .collect(),
+                        Abi::Evm(abi) => {
+                            // Build sighash → field_selection lookup from configured events
+                            let field_selection_by_sighash: std::collections::HashMap<&str, &system_config::FieldSelection> =
+                                contract.events.iter()
+                                    .filter_map(|e| e.field_selection.as_ref().map(|fs| (e.sighash.as_str(), fs)))
+                                    .collect();
+                            abi
+                                .get_event_details()
+                                .into_iter()
+                                .map(|(sig, selector, topic_count)| {
+                                    let fs = field_selection_by_sighash.get(selector.as_str());
+                                    InternalContractEventItem {
+                                        event: sig,
+                                        sighash: selector,
+                                        topic_count,
+                                        block_fields: fs.map(|fs| fs.block_fields.iter().map(|f| f.name.clone()).collect()),
+                                        transaction_fields: fs.map(|fs| fs.transaction_fields.iter().map(|f| f.name.clone()).collect()),
+                                    }
+                                })
+                                .collect()
+                        }
                         Abi::Fuel(_) => vec![],
                     };
                     Ok((
@@ -1808,6 +1836,8 @@ type testIndexer = {{
                         } else {
                             "checksum"
                         },
+                        global_block_fields: cfg.field_selection.block_fields.iter().map(|f| f.name.clone()).collect(),
+                        global_transaction_fields: cfg.field_selection.transaction_fields.iter().map(|f| f.name.clone()).collect(),
                     }),
                     None,
                     None,
@@ -2457,8 +2487,10 @@ type contractRegister = Internal.genericContractRegister<Internal.genericContrac
 let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
-let selectedBlockFields = FieldSelection.makeLookupDict(["number", "timestamp", "hash"])
-let selectedTransactionFields = FieldSelection.makeLookupDict([])
+let blockFieldNames = ["number", "timestamp", "hash"]
+let transactionFieldNames = []
+let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
+let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)
 
 @genType
 type eventFilter = {{}}
@@ -2471,8 +2503,8 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFilte
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
+  blockFieldNames,
+  transactionFieldNames,
   convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
   selectedBlockFields,
   selectedTransactionFields,
@@ -2545,8 +2577,10 @@ type contractRegister = Internal.genericContractRegister<Internal.genericContrac
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
 let blockSchema = Block.schema
 let transactionSchema = Transaction.schema
-let selectedBlockFields = FieldSelection.makeLookupDict([])
-let selectedTransactionFields = FieldSelection.makeLookupDict([])
+let blockFieldNames = []
+let transactionFieldNames = []
+let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
+let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)
 
 @genType
 type eventFilter = {}
@@ -2559,8 +2593,8 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
+  blockFieldNames,
+  transactionFieldNames,
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
   selectedBlockFields,
   selectedTransactionFields,
@@ -2641,8 +2675,10 @@ type blockSchemaFields = {}
 let blockSchema = S.object((_): blockSchemaFields => {})
 type transactionSchemaFields = {from: option<Address.t>}
 let transactionSchema = S.object((s): transactionSchemaFields => {from: s.field("from", S.nullable(Address.schema))})
-let selectedBlockFields = FieldSelection.makeLookupDict([])
-let selectedTransactionFields = FieldSelection.makeLookupDict(["from"])
+let blockFieldNames = []
+let transactionFieldNames = ["from"]
+let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
+let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)
 
 @genType
 type eventFilter = {}
@@ -2655,8 +2691,8 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<_> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<_> => S.t<Internal.eventTransaction>),
+  blockFieldNames,
+  transactionFieldNames,
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
   selectedBlockFields,
   selectedTransactionFields,
