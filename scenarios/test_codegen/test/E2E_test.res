@@ -243,35 +243,35 @@ describe("E2E tests", () => {
       (
         [
           {
-            id: 2.,
+            id: 2n,
             chainId: 100,
             blockNumber: 150,
             blockHash: Js.Null.Null,
             eventsProcessed: 1,
           },
           {
-            id: 3.,
+            id: 3n,
             chainId: 1337,
             blockNumber: 100,
             blockHash: Js.Null.Value("0x100"),
             eventsProcessed: 0,
           },
           {
-            id: 4.,
+            id: 4n,
             chainId: 1337,
             blockNumber: 150,
             blockHash: Js.Null.Null,
             eventsProcessed: 1,
           },
           {
-            id: 5.,
+            id: 5n,
             chainId: 100,
             blockNumber: 151,
             blockHash: Js.Null.Null,
             eventsProcessed: 1,
           },
           {
-            id: 6.,
+            id: 6n,
             chainId: 100,
             blockNumber: 160,
             blockHash: Js.Null.Value("0x160"),
@@ -280,7 +280,7 @@ describe("E2E tests", () => {
         ],
         [
           Set({
-            checkpointId: 2.,
+            checkpointId: 2n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -288,7 +288,7 @@ describe("E2E tests", () => {
             },
           }),
           Set({
-            checkpointId: 4.,
+            checkpointId: 4n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -296,7 +296,7 @@ describe("E2E tests", () => {
             },
           }),
           Set({
-            checkpointId: 5.,
+            checkpointId: 5n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -1449,5 +1449,74 @@ describe("E2E tests", () => {
       addresses->Js.Dict.unsafeGet("Gravatar")->Array.length,
       ~message="Merged partition should have addresses from both DCs",
     ).toEqual(2)
+  })
+
+  Async.it("_meta and chain_metadata return events processed as a number (float4 cast)", async t => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+      ~enableHasura=true,
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 50,
+        logIndex: 1,
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    // Update events_processed to a value > int32 max to verify uint52 column works
+    let sql = PgStorage.makeClient()
+    let _ = await sql->Postgres.unsafe(
+      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
+    )
+
+    // float4 cast in the views makes Hasura return numbers instead of strings
+    // float4 has ~7 digits of precision, so large values lose precision
+    t.expect(
+      await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
+      ~message="_meta should return eventsProcessed as a number (float4 not stringified by Hasura)",
+    ).toEqual(
+      {
+        data: {
+          "_meta": [
+            {
+              "chainId": 1337,
+              "eventsProcessed": 2147487700., // float4 precision loss from 2147487821
+            },
+          ],
+        },
+      },
+    )
+
+    t.expect(
+      await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
+      ~message="chain_metadata should return num_events_processed as a number (float4 not stringified)",
+    ).toEqual(
+      {
+        data: {
+          "chain_metadata": [
+            {
+              "chain_id": 1337,
+              "num_events_processed": 2147487700., // float4 precision loss from 2147487821
+            },
+          ],
+        },
+      },
+    )
   })
 })

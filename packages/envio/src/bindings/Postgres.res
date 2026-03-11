@@ -78,7 +78,6 @@ type poolConfig = {
   idleTimeout?: int, // Idle connection timeout in seconds (default: 0)
   connectTimeout?: int, // Connect timeout in seconds (default: 30)
   prepare?: bool, // Automatic creation of prepared statements (default: true)
-  // types?: array<'a>, // Array of custom types, see more below (default: [])
   onnotice?: string => unit, // Default console.log, set false to silence NOTICE (default: fn)
   onParameter?: (string, string) => unit, // (key, value) when server param change (default: fn)
   debug?: (~connection: unknown, ~query: unknown, ~params: unknown, ~types: unknown) => unit, // Is called with (connection, query, params, types)
@@ -112,6 +111,7 @@ type columnType =
   | @as("DOUBLE PRECISION") DoublePrecision
   | @as("TEXT") Text
   | @as("SERIAL") Serial
+  | @as("BIGSERIAL") BigSerial
   | @as("JSONB") JsonB
   | @as("TIMESTAMP WITH TIME ZONE") TimestampWithTimezone
   | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithTimezoneNull

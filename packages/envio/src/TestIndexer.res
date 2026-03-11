@@ -107,7 +107,7 @@ let handleLoadByField = (
 let handleWriteBatch = (
   state: testIndexerState,
   ~updatedEntities: array<TestIndexerProxyStorage.serializableUpdatedEntity>,
-  ~checkpointIds: array<float>,
+  ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointBlockHashes: array<Js.Null.t<string>>,
@@ -140,7 +140,7 @@ let handleWriteBatch = (
           entityDict->Js.Dict.set(entityId, parsedEntity)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->Float.toString
+          let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -162,7 +162,7 @@ let handleWriteBatch = (
           Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->Float.toString
+          let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -209,7 +209,7 @@ let handleWriteBatch = (
     )
 
     // Add entity changes for this checkpoint
-    let checkpointKey = checkpointId->Float.toString
+    let checkpointKey = checkpointId->BigInt.toString
     switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
     | Some(entityChanges) =>
       entityChanges
@@ -273,7 +273,7 @@ let makeInitialState = (
       sourceBlockNumber: processChainConfig.endBlock,
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
-      numEventsProcessed: 0,
+      numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
       dynamicContracts,
@@ -563,10 +563,10 @@ let makeCreateTestIndexer = (
         Promise.make((resolve, reject) => {
           // Include initialState in workerData
           let workerDataObj = {
-            "processConfig": processConfig->Utils.magic->Js.Json.serializeExn->Js.Json.parseExn,
-            "initialState": initialState->Utils.magic,
+            "processConfig": processConfig->(Utils.magic: 'a => Js.Json.t),
+            "initialState": initialState->(Utils.magic: Persistence.initialState => Js.Json.t),
           }
-          let workerData = workerDataObj->Js.Json.serializeExn->Js.Json.parseExn
+          let workerData = workerDataObj->(Utils.magic: {"processConfig": Js.Json.t, "initialState": Js.Json.t} => Js.Json.t)
           let worker = try {
             NodeJs.WorkerThreads.makeWorker(
               workerPath,

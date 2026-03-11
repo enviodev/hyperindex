@@ -7,7 +7,7 @@ type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
   sourceBlockNumber: int,
-  totalEventsProcessed: int,
+  totalEventsProcessed: float,
   fetchState: FetchState.t,
   isProgressAtHeadWhenBatchCreated: bool,
 }
@@ -17,7 +17,7 @@ type chainBeforeBatch = {
   reorgDetection: ReorgDetection.t,
   progressBlockNumber: int,
   sourceBlockNumber: int,
-  totalEventsProcessed: int,
+  totalEventsProcessed: float,
   chainConfig: Config.chain,
 }
 
@@ -26,7 +26,7 @@ type t = {
   items: array<Internal.item>,
   progressedChainsById: dict<chainAfterBatch>,
   // Unnest-like checkpoint fields:
-  checkpointIds: array<float>,
+  checkpointIds: array<bigint>,
   checkpointChainIds: array<int>,
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Js.Null.t<string>>,
@@ -111,7 +111,7 @@ let getProgressedChainsById = {
             batchSize,
             progressBlockNumber: progressBlockNumberAfterBatch,
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
-            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed + batchSize,
+            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +. batchSize->Int.toFloat,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
@@ -199,7 +199,7 @@ let addReorgCheckpoints = (
     for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
       switch reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber) {
       | Js.Null.Value(hash) =>
-        let checkpointId = prevCheckpointId.contents +. 1.
+        let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
         prevCheckpointId := checkpointId
 
         mutCheckpointIds->Js.Array2.push(checkpointId)->ignore
@@ -280,7 +280,7 @@ let prepareOrderedBatch = (
               ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
             )
 
-          let checkpointId = prevCheckpointId.contents +. 1.
+          let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
 
           items
           ->Js.Array2.push(item0)
@@ -424,7 +424,7 @@ let prepareUnorderedBatch = (
               ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
             )
 
-          let checkpointId = prevCheckpointId.contents +. 1.
+          let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
 
           checkpointIds->Js.Array2.push(checkpointId)->ignore
           checkpointChainIds->Js.Array2.push(fetchState.chainId)->ignore
