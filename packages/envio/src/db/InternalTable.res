@@ -567,7 +567,7 @@ SELECT
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
   "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
-  "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
+  "${(#events_processed: Chains.field :> string)}"::float8 AS "eventsProcessed",
   "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
   "${(#ready_at: Chains.field :> string)}" AS "readyAt",
   ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
@@ -586,7 +586,7 @@ SELECT
   "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
   "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
   0 AS "num_batches_fetched",
-  "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
+  "${(#events_processed: Chains.field :> string)}"::float8 AS "num_events_processed",
   "${(#start_block: Chains.field :> string)}" AS "start_block",
   "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "${pgSchema}"."${Chains.table.tableName}";`
