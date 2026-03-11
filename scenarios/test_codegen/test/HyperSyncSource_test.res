@@ -76,22 +76,8 @@ describe("HyperSyncSource - getSelectionConfig", () => {
         dependsOnAddresses: true,
         eventConfigs: [
           (Mock.evmEventConfig(
-            ~blockSchema=S.schema(
-              s =>
-                {
-                  "hash": s.matches(S.string),
-                  "number": s.matches(S.int),
-                  "timestamp": s.matches(S.int),
-                  "nonce": s.matches(S.null(BigInt.schema)),
-                },
-            ),
-            ~transactionSchema=S.schema(
-              s =>
-                {
-                  "hash": s.matches(S.string),
-                  "gasPrice": s.matches(S.null(S.string)),
-                },
-            ),
+            ~blockFieldNames=["hash", "number", "timestamp", "nonce"],
+            ~transactionFieldNames=["hash", "gasPrice"],
           ) :> Internal.eventConfig),
         ],
       }->HyperSyncSource.getSelectionConfig(~chain)
@@ -119,35 +105,13 @@ describe("HyperSyncSource - getSelectionConfig", () => {
       eventConfigs: [
         (Mock.evmEventConfig(
           ~contractName="Foo",
-          ~blockSchema=S.schema(
-            s =>
-              {
-                "hash": s.matches(S.string),
-                "number": s.matches(S.int),
-                "timestamp": s.matches(S.int),
-              },
-          ),
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "hash": s.matches(S.string),
-              },
-          ),
+          ~blockFieldNames=["hash", "number", "timestamp"],
+          ~transactionFieldNames=["hash"],
         ) :> Internal.eventConfig),
         (Mock.evmEventConfig(
           ~contractName="Bar",
-          ~blockSchema=S.schema(
-            s =>
-              {
-                "nonce": s.matches(S.null(BigInt.schema)),
-              },
-          ),
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "gasPrice": s.matches(S.null(S.string)),
-              },
-          ),
+          ~blockFieldNames=["nonce"],
+          ~transactionFieldNames=["gasPrice"],
         ) :> Internal.eventConfig),
       ],
     }->HyperSyncSource.getSelectionConfig(~chain)

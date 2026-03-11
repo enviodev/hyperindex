@@ -756,8 +756,8 @@ module Source = {
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
-                            blockSchema: S.object(_ => ())->Utils.magic,
-                            transactionSchema: S.object(_ => ())->Utils.magic,
+                            blockFieldNames: [],
+                            transactionFieldNames: [],
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
                             selectedBlockFields: Js.Dict.empty(),
                             selectedTransactionFields: Js.Dict.empty(),
@@ -870,8 +870,8 @@ let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47
 let evmEventConfig = (
   ~id=eventId,
   ~contractName="ERC20",
-  ~blockSchema: option<S.t<'block>>=?,
-  ~transactionSchema: option<S.t<'transaction>>=?,
+  ~blockFieldNames: array<string>=[],
+  ~transactionFieldNames: array<string>=[],
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
@@ -889,12 +889,8 @@ let evmEventConfig = (
     paramsRawEventSchema: S.literal(%raw(`null`))
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    blockSchema: blockSchema
-    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
-    ->Utils.magic,
-    transactionSchema: transactionSchema
-    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
-    ->Utils.magic,
+    blockFieldNames,
+    transactionFieldNames,
     getEventFiltersOrThrow: _ =>
       switch dependsOnAddresses {
       | Some(true) =>
@@ -925,7 +921,7 @@ let evmEventConfig = (
         ])
       },
     convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
-    selectedBlockFields: Js.Dict.empty(),
-    selectedTransactionFields: Js.Dict.empty(),
+    selectedBlockFields: FieldSelection.makeLookupDict(blockFieldNames),
+    selectedTransactionFields: FieldSelection.makeLookupDict(transactionFieldNames),
   }
 }

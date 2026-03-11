@@ -497,31 +497,6 @@ external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 module Schema = {
   let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
-  let getNonOptionalFieldNames = schema => {
-    let acc = []
-    switch schema->S.classify {
-    | Object({items}) =>
-      items->Js.Array2.forEach(item => {
-        switch item.schema->S.classify {
-        // Check for null, since we generate S.null schema for db serializing
-        // In the future it should be changed to Option only
-        | Null(_) => ()
-        | Option(_) => ()
-        | _ => acc->Js.Array2.push(item.location)->ignore
-        }
-      })
-    | _ => ()
-    }
-    acc
-  }
-
-  let getCapitalizedFieldNames = schema => {
-    switch schema->S.classify {
-    | Object({items}) => items->Js.Array2.map(item => item.location->String.capitalize)
-    | _ => []
-    }
-  }
-
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
   let dbDate =

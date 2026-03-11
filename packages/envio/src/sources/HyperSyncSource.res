@@ -10,6 +10,10 @@ type selectionConfig = {
   nonOptionalTransactionFieldNames: array<string>,
 }
 
+// Static sets of nullable field names — matches the S.nullable wrapping in RpcSource field registries
+let nullableBlockFields = Utils.Set.fromArray(["nonce", "difficulty", "totalDifficulty", "uncles", "baseFeePerGas", "blobGasUsed", "excessBlobGas", "parentBeaconBlockRoot", "withdrawalsRoot", "l1BlockNumber", "sendCount", "sendRoot", "mixHash"])
+let nullableTransactionFields = Utils.Set.fromArray(["gasPrice", "v", "r", "s", "yParity", "maxPriorityFeePerGas", "maxFeePerGas", "maxFeePerBlobGas", "blobVersionedHashes", "contractAddress", "root", "status", "l1Fee", "l1GasPrice", "l1GasUsed", "l1FeeScalar", "gasUsedForL1", "from", "to", "type"])
+
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let nonOptionalBlockFieldNames = Utils.Set.make()
   let nonOptionalTransactionFieldNames = Utils.Set.make()
@@ -28,20 +32,22 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     dependsOnAddresses,
     contractName,
     getEventFiltersOrThrow,
-    blockSchema,
-    transactionSchema,
+    blockFieldNames,
+    transactionFieldNames,
     isWildcard,
   }) => {
-    nonOptionalBlockFieldNames->Utils.Set.addMany(
-      blockSchema->Utils.Schema.getNonOptionalFieldNames,
-    )
-    nonOptionalTransactionFieldNames->Utils.Set.addMany(
-      transactionSchema->Utils.Schema.getNonOptionalFieldNames,
-    )
-    capitalizedBlockFields->Utils.Set.addMany(blockSchema->Utils.Schema.getCapitalizedFieldNames)
-    capitalizedTransactionFields->Utils.Set.addMany(
-      transactionSchema->Utils.Schema.getCapitalizedFieldNames,
-    )
+    blockFieldNames->Array.forEach(name => {
+      if !(nullableBlockFields->Utils.Set.has(name)) {
+        nonOptionalBlockFieldNames->Utils.Set.add(name)->ignore
+      }
+      capitalizedBlockFields->Utils.Set.add(name->Utils.String.capitalize)->ignore
+    })
+    transactionFieldNames->Array.forEach(name => {
+      if !(nullableTransactionFields->Utils.Set.has(name)) {
+        nonOptionalTransactionFieldNames->Utils.Set.add(name)->ignore
+      }
+      capitalizedTransactionFields->Utils.Set.add(name->Utils.String.capitalize)->ignore
+    })
 
     let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
