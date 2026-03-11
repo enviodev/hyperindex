@@ -56,7 +56,7 @@ module Chains = {
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
-    @as("events_processed") numEventsProcessed: bigint,
+    @as("events_processed") numEventsProcessed: float,
     ...metaFields,
   }
 
@@ -87,7 +87,7 @@ module Chains = {
         ~fieldSchema=S.null(Utils.Schema.dbDate),
         ~isNullable,
       ),
-      mkField((#events_processed: field :> string), UInt64, ~fieldSchema=S.bigint),
+      mkField((#events_processed: field :> string), UInt52, ~fieldSchema=S.float),
       // TODO: In the future it should reference a table with sources
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
@@ -107,7 +107,7 @@ module Chains = {
       timestampCaughtUpToHeadOrEndblock: Js.Null.empty,
       progressBlockNumber: -1,
       isHyperSync: false,
-      numEventsProcessed: 0n,
+      numEventsProcessed: 0.,
     }
   }
 
@@ -171,7 +171,7 @@ WHERE "${(#id: field :> string)}" = $1;`
     maxReorgDepth: int,
     firstEventBlockNumber: Js.Null.t<int>,
     timestampCaughtUpToHeadOrEndblock: Js.Null.t<Js.Date.t>,
-    numEventsProcessed: string, // BIGINT returned as string by postgres driver
+    numEventsProcessed: float,
     progressBlockNumber: int,
     dynamicContracts: array<Internal.indexingContract>,
     sourceBlockNumber: int,
@@ -252,7 +252,7 @@ WHERE "id" = $1;`
     chainId: int,
     progressBlockNumber: int,
     sourceBlockNumber: int,
-    totalEventsProcessed: bigint,
+    totalEventsProcessed: float,
   }
 
   let setProgressedChains = (sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
@@ -272,7 +272,7 @@ WHERE "id" = $1;`
         ->Js.Array2.push(
           switch field {
           | #progress_block => data.progressBlockNumber->(Utils.magic: int => unknown)
-          | #events_processed => data.totalEventsProcessed->BigInt.toString->(Utils.magic: string => unknown)
+          | #events_processed => data.totalEventsProcessed->(Utils.magic: float => unknown)
           | #source_block => data.sourceBlockNumber->(Utils.magic: int => unknown)
           },
         )
@@ -567,7 +567,7 @@ SELECT
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
   "${(#buffer_block: Chains.field :> string)}" AS "bufferBlock",
   "${(#first_event_block: Chains.field :> string)}" AS "firstEventBlock",
-  "${(#events_processed: Chains.field :> string)}"::float8 AS "eventsProcessed",
+  "${(#events_processed: Chains.field :> string)}" AS "eventsProcessed",
   "${(#source_block: Chains.field :> string)}" AS "sourceBlock",
   "${(#ready_at: Chains.field :> string)}" AS "readyAt",
   ("${(#ready_at: Chains.field :> string)}" IS NOT NULL) AS "isReady"
@@ -586,7 +586,7 @@ SELECT
   "${(#buffer_block: Chains.field :> string)}" AS "latest_fetched_block_number",
   "${(#progress_block: Chains.field :> string)}" AS "latest_processed_block",
   0 AS "num_batches_fetched",
-  "${(#events_processed: Chains.field :> string)}"::float8 AS "num_events_processed",
+  "${(#events_processed: Chains.field :> string)}" AS "num_events_processed",
   "${(#start_block: Chains.field :> string)}" AS "start_block",
   "${(#ready_at: Chains.field :> string)}" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "${pgSchema}"."${Chains.table.tableName}";`

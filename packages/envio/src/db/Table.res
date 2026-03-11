@@ -22,6 +22,7 @@ type fieldType =
   | String
   | Boolean
   | Uint32
+  | UInt52
   | UInt64
   | Int32
   | Number
@@ -115,6 +116,7 @@ let getPgFieldType = (
   | Boolean => (Postgres.Boolean :> string)
   | Int32 => (Postgres.Integer :> string)
   | Uint32 => (Postgres.BigInt :> string)
+  | UInt52 => (Postgres.DoublePrecision :> string)
   | UInt64 => (Postgres.BigInt :> string)
   | Number => (Postgres.DoublePrecision :> string)
   | BigInt({?precision}) =>

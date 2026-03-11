@@ -273,7 +273,7 @@ let makeInitialState = (
       sourceBlockNumber: processChainConfig.endBlock,
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
-      numEventsProcessed: 0n,
+      numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
       dynamicContracts,

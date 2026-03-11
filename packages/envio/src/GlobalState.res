@@ -6,7 +6,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<bigint>})
+  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
   type t = {
@@ -133,7 +133,7 @@ type action =
   | SetRollbackState({
       diffInMemoryStore: InMemoryStore.t,
       rollbackedChainManager: ChainManager.t,
-      eventsProcessedDiffByChain: dict<bigint>,
+      eventsProcessedDiffByChain: dict<float>,
     })
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -424,7 +424,7 @@ let validatePartitionQueryResponse = (
                 // Since we detected a reorg, until rollback wasn't completed in the db
                 // We return the events processed counter to the pre-rollback value,
                 // to decrease it once more for the new rollback.
-                numEventsProcessed: chainFetcher.numEventsProcessed->BigInt.add(eventsProcessedDiff),
+                numEventsProcessed: chainFetcher.numEventsProcessed +. eventsProcessedDiff,
               }
             | None => chainFetcher
             }
@@ -1036,7 +1036,7 @@ let injectedTaskReducer = (
 
       let eventsProcessedDiffByChain = Js.Dict.empty()
       let newProgressBlockNumberPerChain = Js.Dict.empty()
-      let rollbackedProcessedEvents = ref(0n)
+      let rollbackedProcessedEvents = ref(0.)
 
       {
         let rollbackProgressDiff = await state.ctx.persistence.storage.getRollbackProgressDiff(
@@ -1047,17 +1047,11 @@ let injectedTaskReducer = (
           eventsProcessedDiffByChain->Utils.Dict.setByInt(
             diff["chain_id"],
             {
-              let eventsProcessedDiff = switch BigInt.fromString(
+              let eventsProcessedDiff = Float.fromString(
                 diff["events_processed_diff"],
-              ) {
-              | Some(v) => v
-              | None =>
-                Js.Exn.raiseError(
-                  `Unexpected case: Invalid events processed diff ${diff["events_processed_diff"]}`,
-                )
-              }
+              )->Option.getExn
               rollbackedProcessedEvents :=
-                rollbackedProcessedEvents.contents->BigInt.add(eventsProcessedDiff)
+                rollbackedProcessedEvents.contents +. eventsProcessedDiff
               eventsProcessedDiff
             },
           )
@@ -1080,8 +1074,7 @@ let injectedTaskReducer = (
           let fetchState =
             cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
           let newTotalEventsProcessed =
-            cf.numEventsProcessed->BigInt.sub(
-            eventsProcessedDiffByChain
+            cf.numEventsProcessed -. (eventsProcessedDiffByChain
             ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
             ->Option.getUnsafe)
 

@@ -26,7 +26,7 @@ module ChainLine = {
       }
       let progressBlockStr = progressBlock->TuiData.formatLocaleString
       let toBlockStr = toBlock->TuiData.formatLocaleString
-      let eventsStr = eventsProcessed->TuiData.formatBigintLocaleString
+      let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
 
       let blocksText =
         `Blocks: ${progressBlockStr} / ${toBlockStr}` ++
@@ -86,7 +86,7 @@ module TotalEventsProcessed = {
     <Text>
       <Text bold=true> {label->React.string} </Text>
       <Text color={Secondary}>
-        {`${totalEventsProcessed->TuiData.formatBigintLocaleString}`->React.string}
+        {`${totalEventsProcessed->TuiData.formatFloatLocaleString}`->React.string}
       </Text>
     </Text>
   }
@@ -178,8 +178,8 @@ module App = {
         )
       })
 
-    let totalEventsProcessed = chains->Array.reduce(0n, (acc, chain) => {
-      acc->BigInt.add(chain.eventsProcessed)
+    let totalEventsProcessed = chains->Array.reduce(0., (acc, chain) => {
+      acc +. chain.eventsProcessed
     })
     let maxChainIdLength = chains->Array.reduce(0, (acc, chain) => {
       let chainIdLength = chain.chainId->String.length

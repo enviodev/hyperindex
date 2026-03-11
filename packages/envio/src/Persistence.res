@@ -19,7 +19,7 @@ type initialChainState = {
   endBlock: option<int>,
   maxReorgDepth: int,
   progressBlockNumber: int,
-  numEventsProcessed: bigint,
+  numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dynamicContracts: array<Internal.indexingContract>,

@@ -7,7 +7,7 @@ type chainAfterBatch = {
   batchSize: int,
   progressBlockNumber: int,
   sourceBlockNumber: int,
-  totalEventsProcessed: bigint,
+  totalEventsProcessed: float,
   fetchState: FetchState.t,
   isProgressAtHeadWhenBatchCreated: bool,
 }
@@ -17,7 +17,7 @@ type chainBeforeBatch = {
   reorgDetection: ReorgDetection.t,
   progressBlockNumber: int,
   sourceBlockNumber: int,
-  totalEventsProcessed: bigint,
+  totalEventsProcessed: float,
   chainConfig: Config.chain,
 }
 
@@ -111,7 +111,7 @@ let getProgressedChainsById = {
             batchSize,
             progressBlockNumber: progressBlockNumberAfterBatch,
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
-            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed->BigInt.add(batchSize->BigInt.fromInt),
+            totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +. batchSize->Int.toFloat,
             fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
