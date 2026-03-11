@@ -120,6 +120,23 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 dateSchema
               }
             }
+          // ClickHouse returns UInt64 values as strings, need to parse to float
+          | UInt52 => {
+              let uint52Schema =
+                S.float
+                ->S.preprocess(_ => {
+                  parser: unknown =>
+                    unknown->(Utils.magic: unknown => string)->Js.Float.fromString,
+                })
+                ->S.toUnknown
+              if f.isNullable {
+                S.null(uint52Schema)->S.toUnknown
+              } else if f.isArray {
+                S.array(uint52Schema)->S.toUnknown
+              } else {
+                uint52Schema
+              }
+            }
           | _ => f.fieldSchema
           }
           dict->Js.Dict.set(fieldName, s.matches(fieldSchema))
