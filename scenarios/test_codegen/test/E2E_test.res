@@ -1450,4 +1450,65 @@ describe("E2E tests", () => {
       ~message="Merged partition should have addresses from both DCs",
     ).toEqual(2)
   })
+
+  Async.it("_meta returns eventsProcessed as string, chain_metadata returns num_events_processed as number", async t => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+      ~enableHasura=true,
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 50,
+        logIndex: 1,
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(
+      await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
+      ~message="_meta should return eventsProcessed as a string (bigint serialized by Hasura)",
+    ).toEqual(
+      {
+        data: {
+          "_meta": [
+            {
+              "chainId": 1337,
+              "eventsProcessed": "1",
+            },
+          ],
+        },
+      },
+    )
+
+    t.expect(
+      await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
+      ~message="chain_metadata should return num_events_processed as a number",
+    ).toEqual(
+      {
+        data: {
+          "chain_metadata": [
+            {
+              "chain_id": 1337,
+              "num_events_processed": 1,
+            },
+          ],
+        },
+      },
+    )
+  })
 })
