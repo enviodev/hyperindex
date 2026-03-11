@@ -27,7 +27,8 @@ Replace generated rescript-schema with string arrays passed via `internal.config
 
 - Update `publicConfigEvmSchema` to parse `globalBlockFields` and `globalTransactionFields`
 - Update `contractEventItemSchema` to parse optional `blockFields` and `transactionFields`
-- Expose parsed field names so they flow into event config construction
+- Derive `selectedBlockFields`/`selectedTransactionFields` via `FieldSelection.makeLookupDict(blockFieldNames)` during event config construction
+- Expose parsed field names and lookup dicts so they flow into event config
 
 ### 3. Internal.res: replace schemas with string arrays
 **File: `Internal.res`**
@@ -35,7 +36,7 @@ Replace generated rescript-schema with string arrays passed via `internal.config
 - In `evmEventConfig`:
   - Remove `blockSchema: S.schema<eventBlock>` and `transactionSchema: S.schema<eventTransaction>`
   - Add `blockFieldNames: array<string>` and `transactionFieldNames: array<string>`
-  - Keep `selectedBlockFields` / `selectedTransactionFields` (lookup dicts for proxy)
+  - Keep `selectedBlockFields: Js.Dict.t<bool>` / `selectedTransactionFields: Js.Dict.t<bool>` (lookup dicts for proxy)
 
 ### 4. Indexer.res.hbs: remove schema generation, use Config-provided field names
 **File: `Indexer.res.hbs`**
@@ -43,7 +44,7 @@ Replace generated rescript-schema with string arrays passed via `internal.config
 - Remove `module Block` (type + schema) and `module Transaction` (type + schema)
 - Remove per-event `blockSchema`/`transactionSchema` code generation (both custom schema inline and `Block.schema`/`Transaction.schema` references)
 - In `register()`, replace `blockSchema`/`transactionSchema` with `blockFieldNames`/`transactionFieldNames` from parsed config
-- Keep `selectedBlockFields`/`selectedTransactionFields` lookup dicts
+- Remove generated `selectedBlockFields`/`selectedTransactionFields` — derive from `blockFieldNames`/`transactionFieldNames` via `FieldSelection.makeLookupDict` at config parse time in Config.res
 
 ### 5. Rust codegen: remove FieldSelection template struct
 **File: `codegen_templates.rs`**
@@ -52,7 +53,7 @@ Replace generated rescript-schema with string arrays passed via `internal.config
 - Remove `FieldSelection::new()`, `FieldSelection::global_selection()`, `FieldSelection::aggregated_selection()`
 - Remove `field_selection` from template context (Handlebars)
 - Remove `block_schema_code`/`transaction_schema_code` generation in `EventTemplate`
-- Keep `selected_fields_code` generation (for `selectedBlockFields`/`selectedTransactionFields` proxy dicts) — or move this to Config.res too
+- Remove `selected_fields_code` generation — `selectedBlockFields`/`selectedTransactionFields` now derived in Config.res from field name arrays
 
 ### 6. RpcSource: use string arrays instead of S.classify
 **File: `RpcSource.res`**
@@ -93,4 +94,4 @@ Replace generated rescript-schema with string arrays passed via `internal.config
 
 ## Unresolved Questions
 
-1. **`selectedBlockFields`/`selectedTransactionFields` proxy dicts**: Currently generated inline in Indexer.res.hbs from Rust. Should these also move to Config.res (derived from the field name arrays), or keep as codegen? Moving to Config.res is more consistent — derive them from `blockFieldNames`/`transactionFieldNames` at runtime.
+None.
