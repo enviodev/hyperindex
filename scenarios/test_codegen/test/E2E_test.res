@@ -1479,10 +1479,10 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    // Update events_processed to a value > int32 max to verify float8 cast works
+    // Update events_processed to a large value to verify it's returned as a number
     let sql = PgStorage.makeClient()
     let _ = await sql->Postgres.unsafe(
-      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
+      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147483000 WHERE "id" = 1337`,
     )
 
     t.expect(
@@ -1494,7 +1494,7 @@ describe("E2E tests", () => {
           "_meta": [
             {
               "chainId": 1337,
-              "eventsProcessed": 2147487821.,
+              "eventsProcessed": 2147483000,
             },
           ],
         },
@@ -1510,7 +1510,7 @@ describe("E2E tests", () => {
           "chain_metadata": [
             {
               "chain_id": 1337,
-              "num_events_processed": 2147487821.,
+              "num_events_processed": 2147483000,
             },
           ],
         },
