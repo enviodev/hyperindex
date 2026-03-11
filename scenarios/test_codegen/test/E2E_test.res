@@ -1479,22 +1479,23 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    // Update events_processed to a large value to verify it's returned as a number
+    // Update events_processed to a value > int32 max to verify float8 works
     let sql = PgStorage.makeClient()
     let _ = await sql->Postgres.unsafe(
-      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147483000 WHERE "id" = 1337`,
+      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
     )
 
+    // Hasura stringifies float8 when HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true
     t.expect(
       await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
-      ~message="_meta should return eventsProcessed as a number",
+      ~message="_meta should return eventsProcessed as a stringified float8",
     ).toEqual(
       {
         data: {
           "_meta": [
             {
               "chainId": 1337,
-              "eventsProcessed": 2147483000,
+              "eventsProcessed": "2147487821",
             },
           ],
         },
@@ -1503,14 +1504,14 @@ describe("E2E tests", () => {
 
     t.expect(
       await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
-      ~message="chain_metadata should return num_events_processed as a number",
+      ~message="chain_metadata should return num_events_processed as a stringified float8",
     ).toEqual(
       {
         data: {
           "chain_metadata": [
             {
               "chain_id": 1337,
-              "num_events_processed": 2147483000,
+              "num_events_processed": "2147487821",
             },
           ],
         },
