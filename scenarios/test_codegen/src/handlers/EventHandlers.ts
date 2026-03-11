@@ -160,30 +160,8 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
   S.assertOrThrow(event.block, blockSchema)!;
   deepEqual(context.chain.id, event.chainId);
 
-  // We already do type checking in the tests,
-  // but double-check that we receive correct types
-  // in the handler args as well
-  expectType<
-    TypeEqual<
-      typeof event.transaction,
-      {
-        readonly to: `0x${string}` | undefined;
-        readonly from: `0x${string}` | undefined;
-        readonly hash: string;
-      }
-    >
-  >(true);
-  expectType<
-    TypeEqual<
-      typeof event.block,
-      {
-        readonly number: number;
-        readonly timestamp: number;
-        readonly hash: string;
-        readonly parentHash: string;
-      }
-    >
-  >(true);
+  // All events now use the full EvmBlock and EvmTransaction types.
+  // Runtime proxy validates field access based on field_selection.
 
   // Test chain field accessibility in TypeScript
   expectType<

@@ -4,43 +4,47 @@ type eventTransaction
 
 // Shared EVM transaction fields type used by both RPC and HyperSync sources
 // Field names match HyperSyncClient.ResponseTypes.transaction for consistency
+@genType
 type evmTransactionFields = {
-  from?: Address.t,
-  to?: Address.t,
-  gas?: bigint,
-  gasPrice?: bigint,
+  transactionIndex?: int,
   hash?: string,
+  from?: option<Address.t>,
+  to?: option<Address.t>,
+  gas?: bigint,
+  gasPrice?: option<bigint>,
   input?: string,
   nonce?: bigint,
-  transactionIndex?: int,
   value?: bigint,
   // Signature fields - optional for ZKSync EIP-712 compatibility
-  v?: string,
-  r?: string,
-  s?: string,
-  yParity?: string,
+  v?: option<string>,
+  r?: option<string>,
+  s?: option<string>,
+  yParity?: option<string>,
   // EIP-1559 fields
-  maxPriorityFeePerGas?: bigint,
-  maxFeePerGas?: bigint,
+  maxPriorityFeePerGas?: option<bigint>,
+  maxFeePerGas?: option<bigint>,
   // EIP-4844 blob fields
-  maxFeePerBlobGas?: bigint,
-  blobVersionedHashes?: array<string>,
+  maxFeePerBlobGas?: option<bigint>,
+  blobVersionedHashes?: option<array<string>>,
   // Receipt fields (from joined transaction receipts)
   cumulativeGasUsed?: bigint,
   effectiveGasPrice?: bigint,
   gasUsed?: bigint,
-  contractAddress?: string,
+  contractAddress?: option<Address.t>,
   logsBloom?: string,
   @as("type")
-  type_?: int,
-  root?: string,
-  status?: int,
+  type_?: option<int>,
+  root?: option<string>,
+  status?: option<int>,
   // L2 specific fields (Optimism, Arbitrum, etc.)
-  l1Fee?: bigint,
-  l1GasPrice?: bigint,
-  l1GasUsed?: bigint,
-  l1FeeScalar?: float,
-  gasUsedForL1?: bigint,
+  l1Fee?: option<bigint>,
+  l1GasPrice?: option<bigint>,
+  l1GasUsed?: option<bigint>,
+  l1FeeScalar?: option<float>,
+  gasUsedForL1?: option<bigint>,
+  // Access list
+  accessList?: option<array<HyperSyncClient.ResponseTypes.accessList>>,
+  authorizationList?: option<array<HyperSyncClient.ResponseTypes.authorizationList>>,
 }
 
 @genType
@@ -173,9 +177,12 @@ type eventFilters =
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  blockSchema: S.schema<eventBlock>,
-  transactionSchema: S.schema<eventTransaction>,
+  blockFieldNames: array<string>,
+  transactionFieldNames: array<string>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
+  // Lookup dicts derived from field name arrays, used by runtime proxy to validate field access
+  selectedBlockFields: Js.Dict.t<bool>,
+  selectedTransactionFields: Js.Dict.t<bool>,
 }
 type evmContractConfig = {
   name: string,

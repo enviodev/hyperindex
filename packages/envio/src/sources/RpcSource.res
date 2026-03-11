@@ -473,26 +473,21 @@ let makeThrowingGetEventBlock = (
     blockFieldRegistryChecksum
   }
   let fnsCache = Utils.WeakMap.make()
-  (log: Rpc.GetLogs.log, ~blockSchema) => {
+  (log: Rpc.GetLogs.log, ~blockFieldNames: array<string>) => {
     (
-      switch fnsCache->Utils.WeakMap.get(blockSchema) {
+      switch fnsCache->Utils.WeakMap.get(blockFieldNames) {
       | Some(fn) => fn
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
-          let blockFieldItems = switch blockSchema->S.classify {
-          | Object({items}) => items
-          | _ => Js.Exn.raiseError("Unexpected internal error: blockSchema is not an object")
-          }
-
           let fields: array<blockFieldDef> = []
-          blockFieldItems->Array.forEach(item => {
-            switch blockFieldRegistry->Js.Dict.get(item.location) {
+          blockFieldNames->Array.forEach(fieldName => {
+            switch blockFieldRegistry->Js.Dict.get(fieldName) {
             | Some(def) => fields->Js.Array2.push(def)->ignore
             | None => () // Unknown field — skip silently
             }
           })
 
-          let fn = switch blockFieldItems {
+          let fn = switch blockFieldNames {
           | [] => _ => (%raw(`{}`)->(Utils.magic: 'a => Internal.eventBlock))->Promise.resolve
           | _ =>
             (log: Rpc.GetLogs.log) => {
@@ -503,7 +498,7 @@ let makeThrowingGetEventBlock = (
               })
             }
           }
-          let _ = fnsCache->Utils.WeakMap.set(blockSchema, fn)
+          let _ = fnsCache->Utils.WeakMap.set(blockFieldNames, fn)
           fn
         }
       }
@@ -597,17 +592,12 @@ let makeThrowingGetEventTransaction = (
     fieldRegistryChecksum
   }
   let fnsCache = Utils.WeakMap.make()
-  (log, ~transactionSchema) => {
+  (log, ~transactionFieldNames: array<string>) => {
     (
-      switch fnsCache->Utils.WeakMap.get(transactionSchema) {
+      switch fnsCache->Utils.WeakMap.get(transactionFieldNames) {
       | Some(fn) => fn
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
-          let transactionFieldItems = switch transactionSchema->S.classify {
-          | Object({items}) => items
-          | _ => Js.Exn.raiseError("Unexpected internal error: transactionSchema is not an object")
-          }
-
           // Classify fields: log-derived vs RPC fields
           let hasTransactionIndex = ref(false)
           let hasHash = ref(false)
@@ -615,12 +605,12 @@ let makeThrowingGetEventTransaction = (
           let receiptFields: array<fieldDef> = []
           let bothFields: array<fieldDef> = []
 
-          transactionFieldItems->Array.forEach(item => {
-            switch item.location {
+          transactionFieldNames->Array.forEach(fieldName => {
+            switch fieldName {
             | "transactionIndex" => hasTransactionIndex := true
             | "hash" => hasHash := true
             | _ =>
-              switch fieldRegistry->Js.Dict.get(item.location) {
+              switch fieldRegistry->Js.Dict.get(fieldName) {
               | Some(def) =>
                 switch def.source {
                 | TransactionOnly => txFields->Js.Array2.push(def)->ignore
@@ -661,7 +651,7 @@ let makeThrowingGetEventTransaction = (
             }
           }
 
-          let fn = switch (transactionFieldItems, strategy) {
+          let fn = switch (transactionFieldNames, strategy) {
           | ([], _) => _ => %raw(`{}`)->Promise.resolve
           | (_, NoRpc) =>
             (log: Rpc.GetLogs.log) => {
@@ -702,7 +692,7 @@ let makeThrowingGetEventTransaction = (
               })
             }
           }
-          let _ = fnsCache->Utils.WeakMap.set(transactionSchema, fn)
+          let _ = fnsCache->Utils.WeakMap.set(transactionFieldNames, fn)
           fn
         }
       }
@@ -999,10 +989,10 @@ let make = (
                 async () => {
                   let (block, transaction) = try await Promise.all2((
                     log->getEventBlockOrThrow(
-                      ~blockSchema=eventConfig.blockSchema,
+                      ~blockFieldNames=eventConfig.blockFieldNames,
                     ),
                     log->getEventTransactionOrThrow(
-                      ~transactionSchema=eventConfig.transactionSchema,
+                      ~transactionFieldNames=eventConfig.transactionFieldNames,
                     ),
                   )) catch {
                   | exn =>
@@ -1018,6 +1008,18 @@ let make = (
                     )
                   }
 
+                  let wrappedBlock = FieldSelection.makeFieldSelectionProxy(
+                    block,
+                    ~selectedFields=eventConfig.selectedBlockFields,
+                    ~entityType="block",
+                    ~eventName=eventConfig.name,
+                  )
+                  let wrappedTransaction = FieldSelection.makeFieldSelectionProxy(
+                    transaction,
+                    ~selectedFields=eventConfig.selectedTransactionFields,
+                    ~entityType="transaction",
+                    ~eventName=eventConfig.name,
+                  )
                   Internal.Event({
                     eventConfig: (eventConfig :> Internal.eventConfig),
                     timestamp: block->Evm.getTimestamp,
@@ -1027,8 +1029,8 @@ let make = (
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
-                      transaction,
-                      block,
+                      transaction: wrappedTransaction,
+                      block: wrappedBlock,
                       srcAddress: routedAddress,
                       logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,

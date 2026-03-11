@@ -53,13 +53,13 @@ let setGravatar4: Indexer.Gravatar.UpdatedGravatar.eventArgs = {
   imageUrl: "https://gravatar4.com",
 }
 
-let block1: Indexer.Block.t = {
+let block1: Envio.EvmBlock.t = {
   number: 1,
   timestamp: 1,
   hash: "deasne",
 }
 
-let tx1: Indexer.Transaction.t = {
+let tx1: Envio.EvmTransaction.t = {
   hash: "0xaaa",
   transactionIndex: 1,
 }

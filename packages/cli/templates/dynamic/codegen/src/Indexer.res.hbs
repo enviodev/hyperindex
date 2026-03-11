@@ -19,33 +19,29 @@ type contractRegistrations = {
 //**CONTRACTS**
 //*************
 
-module Transaction = {
-  @genType
-  type t = {{field_selection.transaction_type}}
-
-  let schema = {{field_selection.transaction_schema}}
-}
-
+// Schemas are still needed internally for HyperSync/RPC field selection queries
 module Block = {
-  @genType
   type t = {{field_selection.block_type}}
-
   let schema = {{field_selection.block_schema}}
 }
 
-{{!-- For internal usage. The type and schema which agreage
-  all possible event-specific and global field selection --}}
-module AggregatedBlock = {
-  @genType
-  type t = {{aggregated_field_selection.block_type}}
-}
-module AggregatedTransaction = {
-  @genType
-  type t = {{aggregated_field_selection.transaction_type}}
+module Transaction = {
+  type t = {{field_selection.transaction_type}}
+  let schema = {{field_selection.transaction_schema}}
 }
 
+{{#if is_evm_ecosystem}}
 @genType.as("EventLog")
-type eventLog<'params> = Internal.genericEvent<'params, Block.t, Transaction.t>
+type eventLog<'params> = Internal.genericEvent<'params, Envio.EvmBlock.t, Envio.EvmTransaction.t>
+{{/if}}
+{{#if is_fuel_ecosystem}}
+@genType.as("EventLog")
+type eventLog<'params> = Internal.genericEvent<'params, Envio.FuelBlock.t, Envio.FuelTransaction.t>
+{{/if}}
+{{#if is_svm_ecosystem}}
+@genType.as("EventLog")
+type eventLog<'params> = Internal.genericEvent<'params, Internal.eventBlock, Internal.eventTransaction>
+{{/if}}
 
 module SingleOrMultiple: {
   @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))

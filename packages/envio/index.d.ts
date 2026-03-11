@@ -15,6 +15,158 @@ export type {
 import type { Address } from "./src/Types.ts";
 export type { EffectCaller, Address } from "./src/Types.ts";
 
+import type { accessList, authorizationList } from "./src/sources/HyperSyncClient.gen.ts";
+
+// ============== EVM Block Type ==============
+
+/** EVM block data. Fields beyond `number`, `timestamp`, and `hash` require field_selection configuration. */
+export type EvmBlock = {
+  /** The block number (height) in the chain. Always available. */
+  readonly number: number;
+  /** The unix timestamp of when the block was mined. Always available. */
+  readonly timestamp: number;
+  /** The hash of the block. Always available. */
+  readonly hash: string;
+  /** The hash of the parent block. */
+  readonly parentHash: string;
+  /** The nonce of the block, used in proof-of-work. Null for proof-of-stake blocks. */
+  readonly nonce: bigint | undefined;
+  /** The SHA3 hash of the uncles data in the block. */
+  readonly sha3Uncles: string;
+  /** The bloom filter for the logs of the block. */
+  readonly logsBloom: string;
+  /** The root of the transaction trie of the block. */
+  readonly transactionsRoot: string;
+  /** The root of the state trie of the block. */
+  readonly stateRoot: string;
+  /** The root of the receipts trie of the block. */
+  readonly receiptsRoot: string;
+  /** The address of the miner/validator who mined this block. */
+  readonly miner: Address;
+  /** The difficulty for this block. Null for proof-of-stake blocks. */
+  readonly difficulty: bigint | undefined;
+  /** The total difficulty of the chain until this block. Null for proof-of-stake blocks. */
+  readonly totalDifficulty: bigint | undefined;
+  /** The extra data included in the block by the miner. */
+  readonly extraData: string;
+  /** The size of this block in bytes. */
+  readonly size: bigint;
+  /** The maximum gas allowed in this block. */
+  readonly gasLimit: bigint;
+  /** The total gas used by all transactions in this block. */
+  readonly gasUsed: bigint;
+  /** The list of uncle block hashes. */
+  readonly uncles: string[] | undefined;
+  /** The base fee per gas in this block (EIP-1559). Null for pre-London blocks. */
+  readonly baseFeePerGas: bigint | undefined;
+  /** The total amount of blob gas consumed by transactions in this block (EIP-4844). */
+  readonly blobGasUsed: bigint | undefined;
+  /** The running total of blob gas consumed in excess of the target (EIP-4844). */
+  readonly excessBlobGas: bigint | undefined;
+  /** The root hash of the parent beacon block (EIP-4788). */
+  readonly parentBeaconBlockRoot: string | undefined;
+  /** The root hash of the withdrawals trie (EIP-4895). */
+  readonly withdrawalsRoot: string | undefined;
+  /** The L1 block number associated with this L2 block (L2 chains only). */
+  readonly l1BlockNumber: number | undefined;
+  /** The number of messages sent in this block (Arbitrum). */
+  readonly sendCount: string | undefined;
+  /** The Merkle root of the outbox messages (Arbitrum). */
+  readonly sendRoot: string | undefined;
+  /** The mix hash used in proof-of-work. */
+  readonly mixHash: string | undefined;
+};
+
+// ============== EVM Transaction Type ==============
+
+/** EVM transaction data. All fields require field_selection configuration. */
+export type EvmTransaction = {
+  /** The index of the transaction within the block. */
+  readonly transactionIndex: number;
+  /** The hash of the transaction. */
+  readonly hash: string;
+  /** The address of the sender. Can be undefined for system transactions. */
+  readonly from: Address | undefined;
+  /** The address of the receiver. Undefined for contract creation transactions. */
+  readonly to: Address | undefined;
+  /** The gas provided by the sender. */
+  readonly gas: bigint;
+  /** The gas price provided by the sender in wei. Undefined for EIP-1559 transactions. */
+  readonly gasPrice: bigint | undefined;
+  /** The maximum priority fee per gas the sender is willing to pay (EIP-1559). */
+  readonly maxPriorityFeePerGas: bigint | undefined;
+  /** The maximum fee per gas the sender is willing to pay (EIP-1559). */
+  readonly maxFeePerGas: bigint | undefined;
+  /** The total gas used in the block up to and including this transaction. */
+  readonly cumulativeGasUsed: bigint;
+  /** The actual gas price paid per unit of gas (post EIP-1559). */
+  readonly effectiveGasPrice: bigint;
+  /** The amount of gas used by this specific transaction. */
+  readonly gasUsed: bigint;
+  /** The input data sent with the transaction (calldata). */
+  readonly input: string;
+  /** The number of transactions made by the sender prior to this one. */
+  readonly nonce: bigint;
+  /** The value transferred in wei. */
+  readonly value: bigint;
+  /** ECDSA recovery id (signature component). */
+  readonly v: string | undefined;
+  /** ECDSA signature r value. */
+  readonly r: string | undefined;
+  /** ECDSA signature s value. */
+  readonly s: string | undefined;
+  /** The address of the contract created, if this is a contract creation transaction. */
+  readonly contractAddress: Address | undefined;
+  /** The bloom filter for the logs of this transaction's receipt. */
+  readonly logsBloom: string;
+  /** The post-transaction state root (pre-Byzantium) or undefined. */
+  readonly root: string | undefined;
+  /** The transaction status: 1 for success, 0 for failure. Undefined for pre-Byzantium transactions. */
+  readonly status: number | undefined;
+  /** The parity of the y-value of the secp256k1 signature (EIP-2718). */
+  readonly yParity: string | undefined;
+  /** The maximum fee per blob gas (EIP-4844). */
+  readonly maxFeePerBlobGas: bigint | undefined;
+  /** The list of versioned blob hashes associated with this transaction (EIP-4844). */
+  readonly blobVersionedHashes: string[] | undefined;
+  /** The EIP-2718 transaction type. */
+  readonly type: number | undefined;
+  /** The L1 fee paid for this L2 transaction (Optimism). */
+  readonly l1Fee: bigint | undefined;
+  /** The L1 gas price at the time of this L2 transaction (Optimism). */
+  readonly l1GasPrice: bigint | undefined;
+  /** The L1 gas used by this L2 transaction (Optimism). */
+  readonly l1GasUsed: bigint | undefined;
+  /** The L1 fee scalar (Optimism). */
+  readonly l1FeeScalar: number | undefined;
+  /** The gas used for L1 data submission (Arbitrum). */
+  readonly gasUsedForL1: bigint | undefined;
+  /** The access list for this transaction (EIP-2930). */
+  readonly accessList: accessList[] | undefined;
+  /** The authorization list for this transaction (EIP-7702). */
+  readonly authorizationList: authorizationList[] | undefined;
+};
+
+// ============== Fuel Block Type ==============
+
+/** Fuel block data. */
+export type FuelBlock = {
+  /** The unique identifier of the block. */
+  readonly id: string;
+  /** The block height (number). */
+  readonly height: number;
+  /** The unix timestamp of the block. */
+  readonly time: number;
+};
+
+// ============== Fuel Transaction Type ==============
+
+/** Fuel transaction data. */
+export type FuelTransaction = {
+  /** The unique identifier of the transaction. */
+  readonly id: string;
+};
+
 /** Utility type to expand/flatten complex types for better IDE display. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 

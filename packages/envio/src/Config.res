@@ -203,6 +203,10 @@ let publicConfigChainSchema = S.schema(s =>
 let contractEventItemSchema = S.schema(s =>
   {
     "event": s.matches(S.string),
+    "sighash": s.matches(S.string),
+    "topicCount": s.matches(S.int),
+    "blockFields": s.matches(S.option(S.array(S.string))),
+    "transactionFields": s.matches(S.option(S.array(S.string))),
   }
 )
 
@@ -229,6 +233,8 @@ let publicConfigEvmSchema = S.schema(s =>
     "chains": s.matches(S.dict(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
+    "globalBlockFields": s.matches(S.array(S.string)),
+    "globalTransactionFields": s.matches(S.array(S.string)),
   }
 )
 

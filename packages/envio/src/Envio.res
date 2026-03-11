@@ -8,6 +8,71 @@ type blockEvent = {number: int}
 @genType
 type fuelBlockEvent = {height: int}
 
+// ============== EVM Block & Transaction Types ==============
+// Static types exposed to users. All fields are always visible on the type.
+// At runtime, accessing a field not in field_selection throws a friendly error via proxy.
+// For TS users: index.d.ts provides JSDoc descriptions for all fields.
+// For ReScript users: always-selected fields are required, others use `?`.
+// Inherently nullable fields additionally use option<T> for their inner type.
+
+@genType
+module EvmBlock = {
+  @genType.import(("../index.d.ts", "EvmBlock"))
+  type t = {
+    number: int,
+    timestamp: int,
+    hash: string,
+    parentHash?: string,
+    nonce?: option<bigint>,
+    sha3Uncles?: string,
+    logsBloom?: string,
+    transactionsRoot?: string,
+    stateRoot?: string,
+    receiptsRoot?: string,
+    miner?: Address.t,
+    difficulty?: option<bigint>,
+    totalDifficulty?: option<bigint>,
+    extraData?: string,
+    size?: bigint,
+    gasLimit?: bigint,
+    gasUsed?: bigint,
+    uncles?: option<array<string>>,
+    baseFeePerGas?: option<bigint>,
+    blobGasUsed?: option<bigint>,
+    excessBlobGas?: option<bigint>,
+    parentBeaconBlockRoot?: option<string>,
+    withdrawalsRoot?: option<string>,
+    l1BlockNumber?: option<int>,
+    sendCount?: option<string>,
+    sendRoot?: option<string>,
+    mixHash?: option<string>,
+  }
+}
+
+@genType
+module EvmTransaction = {
+  @genType.import(("../index.d.ts", "EvmTransaction"))
+  type t = Internal.evmTransactionFields
+}
+
+@genType
+module FuelBlock = {
+  @genType.import(("../index.d.ts", "FuelBlock"))
+  type t = {
+    id: string,
+    height: int,
+    time: int,
+  }
+}
+
+@genType
+module FuelTransaction = {
+  @genType.import(("../index.d.ts", "FuelTransaction"))
+  type t = {
+    id: string,
+  }
+}
+
 @genType
 type svmOnBlockArgs<'context> = {slot: int, context: 'context}
 
