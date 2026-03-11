@@ -1495,6 +1495,12 @@ describe("E2E tests", () => {
       },
     )
 
+    // Update events_processed to a value > int32 max to verify float8 cast works
+    let sql = PgStorage.makeClient()
+    let _ = await sql->Postgres.unsafe(
+      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
+    )
+
     t.expect(
       await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
       ~message="chain_metadata should return num_events_processed as a number",
@@ -1504,7 +1510,7 @@ describe("E2E tests", () => {
           "chain_metadata": [
             {
               "chain_id": 1337,
-              "num_events_processed": 1,
+              "num_events_processed": 2147487821,
             },
           ],
         },
