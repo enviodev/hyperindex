@@ -206,7 +206,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
 
   let getInitialState = (sql, ~pgSchema) => {
     sql
-    ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
+    ->Pg.unsafe(makeGetInitialStateQuery(~pgSchema))
     ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
 
@@ -242,7 +242,7 @@ WHERE "id" = $1;`
         params->Js.Array2.push(value)->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Js.Array2.push(sql->Pg.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
     Promise.all(promises)
@@ -279,7 +279,7 @@ WHERE "id" = $1;`
         ->ignore
       })
 
-      promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Js.Array2.push(sql->Pg.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
     Promise.all(promises)->Promise.ignoreValue
@@ -385,7 +385,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
 
   let makeInsertCheckpointQuery = (~pgSchema) => {
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: Pg.columnType :> string)}[],$3::${(Integer: Pg.columnType :> string)}[],$4::${(Text: Pg.columnType :> string)}[],$5::${(Integer: Pg.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -402,7 +402,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
     // Convert bigint arrays to string arrays for postgres driver compatibility
     let checkpointIdStrings = checkpointIds->BigInt.arrayToStringArray
     sql
-    ->Postgres.preparedUnsafe(
+    ->Pg.preparedUnsafe(
       query,
       (
         checkpointIdStrings,
@@ -421,7 +421,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
 
   let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
     sql
-    ->Postgres.preparedUnsafe(
+    ->Pg.preparedUnsafe(
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
       [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
     )
@@ -434,7 +434,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
 
   let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: bigint) => {
     sql
-    ->Postgres.preparedUnsafe(
+    ->Pg.preparedUnsafe(
       makePruneStaleCheckpointsQuery(~pgSchema),
       [safeCheckpointId->BigInt.toString]->Obj.magic,
     )
@@ -458,7 +458,7 @@ LIMIT 1;`
   ) => {
     let rawResult: promise<array<{"id": string}>> =
       sql
-      ->Postgres.preparedUnsafe(
+      ->Pg.preparedUnsafe(
         makeGetRollbackTargetCheckpointQuery(~pgSchema),
         (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
       )
@@ -484,7 +484,7 @@ GROUP BY "${(#chain_id: field :> string)}";`
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => {
     sql
-    ->Postgres.preparedUnsafe(
+    ->Pg.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema),
       [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
     )

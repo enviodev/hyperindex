@@ -112,40 +112,40 @@ let getPgFieldType = (
   ~isNullable,
 ) => {
   let columnType = switch fieldType {
-  | String => (Postgres.Text :> string)
-  | Boolean => (Postgres.Boolean :> string)
-  | Int32 => (Postgres.Integer :> string)
-  | Uint32 => (Postgres.BigInt :> string)
-  | UInt52 => (Postgres.BigInt :> string)
-  | UInt64 => (Postgres.BigInt :> string)
-  | Number => (Postgres.DoublePrecision :> string)
+  | String => (Pg.Text :> string)
+  | Boolean => (Pg.Boolean :> string)
+  | Int32 => (Pg.Integer :> string)
+  | Uint32 => (Pg.BigInt :> string)
+  | UInt52 => (Pg.BigInt :> string)
+  | UInt64 => (Pg.BigInt :> string)
+  | Number => (Pg.DoublePrecision :> string)
   | BigInt({?precision}) =>
-    (Postgres.Numeric :> string) ++
+    (Pg.Numeric :> string) ++
     switch precision {
     | Some(precision) => `(${precision->Int.toString}, 0)` // scale is always 0 for BigInt
     | None => ""
     }
 
   | BigDecimal({?config}) =>
-    (Postgres.Numeric :> string) ++
+    (Pg.Numeric :> string) ++
     switch config {
     | Some((precision, scale)) => `(${precision->Int.toString}, ${scale->Int.toString})`
     | None => ""
     }
 
-  | Serial => (Postgres.Serial :> string)
-  | BigSerial => (Postgres.BigSerial :> string)
-  | Json => (Postgres.JsonB :> string)
+  | Serial => (Pg.Serial :> string)
+  | BigSerial => (Pg.BigSerial :> string)
+  | Json => (Pg.JsonB :> string)
   | Date =>
-    (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)
+    (isNullable ? Pg.TimestampWithTimezoneNull : Pg.TimestampWithTimezone :> string)
   | Enum({config}) => `"${pgSchema}".${config.name}`
-  | Entity(_) => (Postgres.Text :> string) // FIXME: Will it work correctly if id is not a text column?
+  | Entity(_) => (Pg.Text :> string) // FIXME: Will it work correctly if id is not a text column?
   }
 
   // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
   let isNumericAsText = isArray && isNumericArrayAsText
-  let columnType = if columnType == (Postgres.Numeric :> string) && isNumericAsText {
-    (Postgres.Text :> string)
+  let columnType = if columnType == (Pg.Numeric :> string) && isNumericAsText {
+    (Pg.Text :> string)
   } else {
     columnType
   }
@@ -284,12 +284,6 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               hasArrayField := true
               schema
             }
-          | Bool =>
-            // Workaround for https://github.com/porsager/postgres/issues/471
-            S.union([
-              S.literal(1)->S.shape(_ => true),
-              S.literal(0)->S.shape(_ => false),
-            ])->S.toUnknown
           | _ => schema
           }
 
@@ -321,11 +315,11 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               ~isNumericArrayAsText=false, // TODO: Test whether it should be passed via args and match the column type
             )
             switch f.fieldType {
-            | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
-            | Boolean => `${(Integer: Postgres.columnType :> string)}[]::${pgFieldType}`
+            | Enum(_) => `${(Text: Pg.columnType :> string)}[]::${pgFieldType}`
+            | Boolean => `${(Integer: Pg.columnType :> string)}[]::${pgFieldType}`
             | _ => pgFieldType
             }
-          | DerivedFrom(_) => (Text: Postgres.columnType :> string) ++ "[]"
+          | DerivedFrom(_) => (Text: Pg.columnType :> string) ++ "[]"
           },
         )
         ->ignore

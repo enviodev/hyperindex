@@ -110,7 +110,7 @@ let pruneStaleEntityHistory = (
   ~pgSchema,
   ~safeCheckpointId,
 ): promise<unit> => {
-  sql->Postgres.preparedUnsafe(
+  sql->Pg.preparedUnsafe(
     makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
     [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
@@ -121,7 +121,7 @@ let pruneStaleEntityHistory = (
 let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (
-  SELECT UNNEST($1::${(Text: Postgres.columnType :> string)}[]) AS id
+  SELECT UNNEST($1::${(Text: Pg.columnType :> string)}[]) AS id
 ),
 missing_history AS (
   SELECT e.*
@@ -137,7 +137,7 @@ FROM missing_history;`
 
 let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
   sql
-  ->Postgres.preparedUnsafe(
+  ->Pg.preparedUnsafe(
     makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
     [ids]->Obj.magic,
   )
@@ -146,7 +146,7 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
 
 let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
   sql
-  ->Postgres.preparedUnsafe(
+  ->Pg.preparedUnsafe(
     `DELETE FROM "${pgSchema}"."${historyTableName(
         ~entityName,
         ~entityIndex,

@@ -1,7 +1,9 @@
 import { runUpMigrations } from "../../generated/src/db/Migrations.res.mjs";
 import { makeClient } from "envio/src/PgStorage.gen";
+import { unsafe, preparedUnsafe } from "envio/src/bindings/Pg.res.mjs";
 
 export const createSql = makeClient;
+export { unsafe, preparedUnsafe };
 
 const originalConsoleLog = console.log;
 
