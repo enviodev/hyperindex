@@ -1,4 +1,4 @@
-import { runMigrationsNoLogs, createSql } from "./helpers/utils";
+import { runMigrationsNoLogs, createSql, unsafe } from "./helpers/utils";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 describe("Postgres Numeric Precision Entity Tester Migrations", () => {
@@ -16,7 +16,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
 
   it("should have the correct columns and data types in 'PostgresNumericPrecisionEntityTester' table", async () => {
     //  This SQL is quite a beast, but it does work 🙏
-    const columnsRes = await sql.unsafe(`
+    const columnsRes = await unsafe(sql, `
       SELECT
         a.attname AS column_name,
         pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,

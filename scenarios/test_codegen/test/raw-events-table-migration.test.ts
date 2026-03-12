@@ -1,5 +1,5 @@
 import { mockRawEventRow } from "./helpers/Mock.gen";
-import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
+import { runMigrationsNoLogs, createSql, EventVariants, unsafe, preparedUnsafe } from "./helpers/utils";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 function insertRawEvent(sql: any, row: any) {
@@ -7,7 +7,8 @@ function insertRawEvent(sql: any, row: any) {
   const values = Object.values(row);
   const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
   const columnNames = columns.map((c) => `"${c}"`).join(", ");
-  return sql.unsafe(
+  return preparedUnsafe(
+    sql,
     `INSERT INTO raw_events (${columnNames}) VALUES (${placeholders})`,
     values
   );
@@ -24,7 +25,7 @@ describe("Raw Events Table Migrations", () => {
   });
 
   it("Raw events table should migrate successfully", async () => {
-    let rawEventsColumnsRes = await sql.unsafe(`
+    let rawEventsColumnsRes = await unsafe(sql, `
       SELECT COLUMN_NAME, DATA_TYPE
       FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_NAME = 'raw_events';

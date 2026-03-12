@@ -28,15 +28,96 @@ type poolConfig = {
   onnotice?: string => unit,
 }
 
-@module("./pg-adapter.mjs")
-external makeSql: (~config: poolConfig) => sql = "default"
+// Internal bindings on the opaque sql type.
+// Both pg.Pool and pg.Client support .query()
+@send external _query: (sql, string) => promise<{"rows": 'a}> = "query"
+@send external _queryWithConfig: (sql, Pg.queryConfig) => promise<{"rows": 'a}> = "query"
+// Pool-only: acquire a client for transactions
+@send external _connect: sql => promise<sql> = "connect"
+// Client-only: release back to pool
+@send external _release: sql => unit = "release"
+// Event emitter (both Pool and Client)
+@send external _on: (sql, string, 'handler) => unit = "on"
 
-@send external beginSql: (sql, sql => promise<'result>) => promise<'result> = "begin"
+// Statement name cache for prepared queries.
+// Uses an incrementing counter for collision-free, stable names.
+let statementNameCounter = ref(0)
+let statementNameCache = Js.Dict.empty()
 
-@send external unsafe: (sql, string) => promise<'a> = "unsafe"
-@send
-external preparedUnsafe: (sql, string, unknown, @as(json`{prepare: true}`) _) => promise<'a> =
-  "unsafe"
+let getStatementName = (text: string): string => {
+  switch statementNameCache->Js.Dict.get(text) {
+  | Some(name) => name
+  | None =>
+    let name = `s${statementNameCounter.contents->Js.Int.toString}`
+    statementNameCounter := statementNameCounter.contents + 1
+    statementNameCache->Js.Dict.set(text, name)
+    name
+  }
+}
+
+let makeSql = (~config: poolConfig): sql => {
+  let pgConfig: Pg.config = {
+    host: ?config.host,
+    port: ?config.port,
+    user: ?config.username,
+    password: ?config.password,
+    database: ?config.database,
+    max: ?config.max,
+    ssl: ?switch config.ssl {
+    | Some(Require) => Some(Pg.Options({rejectUnauthorized: false}))
+    | Some(VerifyFull) => Some(Pg.Options({rejectUnauthorized: true}))
+    | Some(Prefer | Allow | Bool(true)) => Some(Pg.Bool(true))
+    | Some(Bool(false)) => Some(Pg.Bool(false))
+    | None => None
+    },
+  }
+
+  let sql = Pg.makePool(pgConfig)->(Utils.magic: Pg.pool => sql)
+
+  switch config.onnotice {
+  | Some(handler) =>
+    sql->_on("connect", (client: sql) => {
+      client->_on("notice", (msg: {"message": string}) => handler(msg["message"]))
+    })
+  | None => ()
+  }
+
+  // Prevent unhandled error events from crashing the process.
+  // Individual query errors are still propagated through promises.
+  sql->_on("error", () => ())
+
+  sql
+}
+
+let unsafe = (sql: sql, text: string): promise<'a> => {
+  sql->_query(text)->Promise.thenResolve(r => r["rows"])
+}
+
+let preparedUnsafe = (sql: sql, text: string, values: unknown): promise<'a> => {
+  sql
+  ->_queryWithConfig({text, values, name: getStatementName(text)})
+  ->Promise.thenResolve(r => r["rows"])
+}
+
+let beginSql = async (sql: sql, fn: sql => promise<'a>) => {
+  let client = await sql->_connect
+  try {
+    let _ = await client->_query("BEGIN")
+    let result = await fn(client)
+    let _ = await client->_query("COMMIT")
+    client->_release
+    result
+  } catch {
+  | exn =>
+    try {
+      let _ = await client->_query("ROLLBACK")
+    } catch {
+    | _ => ()
+    }
+    client->_release
+    raise(exn)
+  }
+}
 
 @unboxed
 type columnType =
