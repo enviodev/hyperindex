@@ -376,7 +376,7 @@ module Indexer = {
       query: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
         sql
-        ->Postgres.unsafe(
+        ->Pg.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
         )
         ->Promise.thenResolve(items => {
@@ -388,7 +388,7 @@ module Indexer = {
         let ec = entityConfig(name)
         let historyTableName = PgStorage.getEntityHistory(~entityConfig=ec).table.tableName
         sql
-        ->Postgres.unsafe(
+        ->Pg.unsafe(
           `SELECT * FROM "${pgSchema}"."${historyTableName}" ORDER BY "id", "${EntityHistory.checkpointIdFieldName}";`,
         )
         ->Promise.thenResolve(items => {
@@ -416,7 +416,7 @@ module Indexer = {
       },
       queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
         sql
-        ->Postgres.unsafe(
+        ->Pg.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
         ->Promise.thenResolve(items => {
@@ -426,7 +426,7 @@ module Indexer = {
       },
       queryCheckpoints: () => {
         sql
-        ->Postgres.unsafe(
+        ->Pg.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
             ~tableName=InternalTable.Checkpoints.table.tableName,
@@ -440,7 +440,7 @@ module Indexer = {
       },
       queryEffectCache: (effectName: string) => {
         sql
-        ->Postgres.unsafe(
+        ->Pg.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
         )
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": Js.Json.t}>>)

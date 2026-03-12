@@ -1481,7 +1481,7 @@ describe("E2E tests", () => {
 
     // Update events_processed to a value > int32 max to verify uint52 column works
     let sql = PgStorage.makeClient()
-    let _ = await sql->Postgres.unsafe(
+    let _ = await sql->Pg.unsafe(
       `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
     )
 
