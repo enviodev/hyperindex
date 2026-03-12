@@ -386,12 +386,10 @@ module Indexer = {
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
+        let historyTableName = PgStorage.getEntityHistory(~entityConfig=ec).table.tableName
         sql
         ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
-          ),
+          `SELECT * FROM "${pgSchema}"."${historyTableName}" ORDER BY "id", "${EntityHistory.checkpointIdFieldName}";`,
         )
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(

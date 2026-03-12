@@ -284,12 +284,6 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               hasArrayField := true
               schema
             }
-          | Bool =>
-            // Workaround for https://github.com/porsager/postgres/issues/471
-            S.union([
-              S.literal(1)->S.shape(_ => true),
-              S.literal(0)->S.shape(_ => false),
-            ])->S.toUnknown
           | _ => schema
           }
 

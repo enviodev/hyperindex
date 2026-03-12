@@ -18,9 +18,7 @@ let makeClient = () => {
           ? None
           : Some(_str => ())
       ),
-      transform: {undefined: Null},
       max: Env.Db.maxConnections,
-      // debug: (~connection, ~query, ~params as _, ~types as _) => Js.log2(connection, query),
     },
   )
 }

@@ -16,7 +16,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
 
   it("should have the correct columns and data types in 'PostgresNumericPrecisionEntityTester' table", async () => {
     //  This SQL is quite a beast, but it does work 🙏
-    const columnsRes = await sql`
+    const columnsRes = await sql.unsafe(`
       SELECT
         a.attname AS column_name,
         pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
@@ -54,7 +54,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
         NOT a.attisdropped
       ORDER BY
         a.attnum;
-    `;
+    `);
 
     // Define the expected columns and their properties
     const expectedColumns = [
