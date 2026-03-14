@@ -115,7 +115,7 @@ let makeStoreOperatorEntity = (
     table->set(
       Delete({
         entityId,
-        checkpointId: 0.,
+        checkpointId: 0n,
       }),
       ~shouldSaveHistory=false,
     )
@@ -131,7 +131,7 @@ let makeStoreOperatorEntity = (
     table->set(
       Set({
         entityId,
-        checkpointId: 0.,
+        checkpointId: 0n,
         entity,
       }),
       ~shouldSaveHistory=false,
@@ -413,7 +413,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
-        checkpointId: 0.,
+        checkpointId: 0n,
       }),
     }
     let ctx = {
@@ -470,7 +470,7 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     }
 
     let batch = Batch.prepareUnorderedBatch(
-      ~checkpointIdBeforeBatch=0.,
+      ~checkpointIdBeforeBatch=0n,
       ~chainsBeforeBatch=ChainMap.fromArrayUnsafe([
         (
           processingChain,

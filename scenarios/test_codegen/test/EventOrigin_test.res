@@ -54,7 +54,7 @@ describe("Chains State", () => {
           inMemoryStore,
           shouldSaveHistory: false,
           isPreload: false,
-          checkpointId: 0.,
+          checkpointId: 0n,
           chains,
           isResolved: false,
           config: Indexer.Generated.configWithoutRegistrations,

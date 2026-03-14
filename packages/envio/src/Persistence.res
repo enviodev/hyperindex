@@ -19,7 +19,7 @@ type initialChainState = {
   endBlock: option<int>,
   maxReorgDepth: int,
   progressBlockNumber: int,
-  numEventsProcessed: int,
+  numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dynamicContracts: array<Internal.indexingContract>,
@@ -92,7 +92,7 @@ type storage = {
   getRollbackTargetCheckpoint: (
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
-  ) => promise<array<{"id": Internal.checkpointId}>>,
+  ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
     ~rollbackTargetCheckpointId: Internal.checkpointId,

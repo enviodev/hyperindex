@@ -42,7 +42,17 @@ module Bitwise = {
   let logand = (a: bigint, b: bigint): bigint => %raw("a & b")
 }
 
+let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
+  const res = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    res[i] = arr[i].toString();
+  }
+  return res;
+}`)
+
 let zero = fromInt(0)
+let toFloat: bigint => float = %raw(`(n) => Number(n)`)
+let toIntUnsafe: bigint => int = %raw(`(n) => Number(n)`)
 
 @genType
 let schema =

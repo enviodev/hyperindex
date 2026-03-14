@@ -6,7 +6,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<int>})
+  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
   type t = {
@@ -133,7 +133,7 @@ type action =
   | SetRollbackState({
       diffInMemoryStore: InMemoryStore.t,
       rollbackedChainManager: ChainManager.t,
-      eventsProcessedDiffByChain: dict<int>,
+      eventsProcessedDiffByChain: dict<float>,
     })
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -424,7 +424,7 @@ let validatePartitionQueryResponse = (
                 // Since we detected a reorg, until rollback wasn't completed in the db
                 // We return the events processed counter to the pre-rollback value,
                 // to decrease it once more for the new rollback.
-                numEventsProcessed: chainFetcher.numEventsProcessed + eventsProcessedDiff,
+                numEventsProcessed: chainFetcher.numEventsProcessed +. eventsProcessedDiff,
               }
             | None => chainFetcher
             }
@@ -1029,14 +1029,14 @@ let injectedTaskReducer = (
           ~reorgChainId,
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
         ) {
-        | [checkpoint] => checkpoint["id"]
-        | _ => 0.
+        | Some(checkpointId) => checkpointId
+        | None => 0n
         }
       }
 
       let eventsProcessedDiffByChain = Js.Dict.empty()
       let newProgressBlockNumberPerChain = Js.Dict.empty()
-      let rollbackedProcessedEvents = ref(0)
+      let rollbackedProcessedEvents = ref(0.)
 
       {
         let rollbackProgressDiff = await state.ctx.persistence.storage.getRollbackProgressDiff(
@@ -1046,21 +1046,18 @@ let injectedTaskReducer = (
           let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
           eventsProcessedDiffByChain->Utils.Dict.setByInt(
             diff["chain_id"],
-            switch diff["events_processed_diff"]->Int.fromString {
-            | Some(eventsProcessedDiff) => {
-                rollbackedProcessedEvents :=
-                  rollbackedProcessedEvents.contents + eventsProcessedDiff
-                eventsProcessedDiff
-              }
-            | None =>
-              Js.Exn.raiseError(
-                `Unexpedted case: Invalid events processed diff ${diff["events_processed_diff"]}`,
-              )
+            {
+              let eventsProcessedDiff = Float.fromString(
+                diff["events_processed_diff"],
+              )->Option.getExn
+              rollbackedProcessedEvents :=
+                rollbackedProcessedEvents.contents +. eventsProcessedDiff
+              eventsProcessedDiff
             },
           )
           newProgressBlockNumberPerChain->Utils.Dict.setByInt(
             diff["chain_id"],
-            if rollbackTargetCheckpointId === 0. && diff["chain_id"] === reorgChainId {
+            if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChainId {
               Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
             } else {
               diff["new_progress_block_number"]
@@ -1077,10 +1074,9 @@ let injectedTaskReducer = (
           let fetchState =
             cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
           let newTotalEventsProcessed =
-            cf.numEventsProcessed -
-            eventsProcessedDiffByChain
+            cf.numEventsProcessed -. (eventsProcessedDiffByChain
             ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
-            ->Option.getUnsafe
+            ->Option.getUnsafe)
 
           if cf.committedProgressBlockNumber !== newProgressBlockNumber {
             Prometheus.ProgressBlockNumber.set(
@@ -1141,7 +1137,7 @@ let injectedTaskReducer = (
       let diff =
         await state.ctx.persistence->Persistence.prepareRollbackDiff(
           ~rollbackTargetCheckpointId,
-          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId +. 1.,
+          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
         )
 
       let chainManager = {

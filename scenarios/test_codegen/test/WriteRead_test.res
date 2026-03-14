@@ -108,7 +108,7 @@ describe("Write/read tests", () => {
     ).toEqual(
       [
         Set({
-          checkpointId: 1.,
+          checkpointId: 1n,
           entityId: "1",
           entity: entityWithAllTypes,
         }),
@@ -124,7 +124,7 @@ describe("Write/read tests", () => {
     ).toEqual(
       [
         Set({
-          checkpointId: 1.,
+          checkpointId: 1n,
           entityId: "1",
           entity: entityWithAllNonArrayTypes,
         }),
@@ -145,7 +145,7 @@ describe("Write/read tests", () => {
     ).toEqual(
       [
         Set({
-          checkpointId: 1.,
+          checkpointId: 1n,
           entityId: "1",
           entity: {
             id: "1",
@@ -167,7 +167,7 @@ describe("Write/read tests", () => {
     ).toEqual(
       [
         Set({
-          checkpointId: 1.,
+          checkpointId: 1n,
           entityId: "2",
           entity: {
             id: "2",
