@@ -1915,8 +1915,15 @@ type testIndexer = {{
             // Generate EvmContracts type
             let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 cfg.contracts
-                    .keys()
-                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .iter()
+                    .map(|(name, contract)| {
+                        let event_names: Vec<String> = contract
+                            .events
+                            .iter()
+                            .map(|event| format!("\"{}\"", event.name))
+                            .collect();
+                        format!("  \"{}\": {{ events: {} }};", name, event_names.join(" | "))
+                    })
                     .collect()
             } else {
                 vec![]
@@ -1958,8 +1965,15 @@ type testIndexer = {{
             // Generate FuelContracts type
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 cfg.contracts
-                    .keys()
-                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .iter()
+                    .map(|(name, contract)| {
+                        let event_names: Vec<String> = contract
+                            .events
+                            .iter()
+                            .map(|event| format!("\"{}\"", event.name))
+                            .collect();
+                        format!("  \"{}\": {{ events: {} }};", name, event_names.join(" | "))
+                    })
                     .collect()
             } else {
                 vec![]

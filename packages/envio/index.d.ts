@@ -378,11 +378,11 @@ type SvmChain<Id extends number = number> = {
 type IndexerConfigTypes = {
   evm?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, {}>;
+    contracts?: Record<string, { events: string }>;
   };
   fuel?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, {}>;
+    contracts?: Record<string, { events: string }>;
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
@@ -526,12 +526,18 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
 
 // ============== Test Indexer Types ==============
 
-/** A simulate event item specifying event data to process without fetching. */
-type SimulateEventItem = {
-  /** The contract name as defined in config.yaml. */
-  contract: string;
-  /** The event name as defined in the contract ABI. */
-  event: string;
+// Helper: Build a union of {contract, event} pairs from a contracts record
+type SimulateContractEvent<Contracts extends Record<string, { events: string }>> = {
+  [C in keyof Contracts]: {
+    /** The contract name as defined in config.yaml. */
+    contract: C;
+    /** The event name as defined in the contract ABI. */
+    event: Contracts[C]["events"];
+  };
+}[keyof Contracts];
+
+/** Base fields shared by all simulate event items. */
+type SimulateEventItemBase = {
   /** Event parameters. Keys match the event's parameter names. */
   params?: Record<string, unknown>;
   /** Override the source address. Defaults to the first contract address. */
@@ -546,6 +552,14 @@ type SimulateEventItem = {
   transaction?: Record<string, unknown>;
 };
 
+/** A typesafe simulate event item for EVM. */
+type EvmSimulateEventItem<Contracts extends Record<string, { events: string }>> =
+  SimulateContractEvent<Contracts> & SimulateEventItemBase;
+
+/** A typesafe simulate event item for Fuel. */
+type FuelSimulateEventItem<Contracts extends Record<string, { events: string }>> =
+  SimulateContractEvent<Contracts> & SimulateEventItemBase;
+
 /** A simulate block item specifying a block handler to invoke. */
 type SimulateBlockItem = {
   /** The onBlock handler name as defined in the handler registration. */
@@ -554,17 +568,30 @@ type SimulateBlockItem = {
   number?: number;
 };
 
-/** A simulate item: either an event or a block handler invocation. */
-export type SimulateItem = SimulateEventItem | SimulateBlockItem;
+/** Resolve the simulate item type for a config. */
+type SimulateItemForConfig<Config extends IndexerConfigTypes> =
+  HasEvm<Config> extends true
+    ? Config["evm"] extends { contracts?: Record<string, { events: string }> }
+      ? Config["evm"]["contracts"] extends Record<string, { events: string }>
+        ? EvmSimulateEventItem<Config["evm"]["contracts"]> | SimulateBlockItem
+        : never
+      : never
+    : HasFuel<Config> extends true
+    ? Config["fuel"] extends { contracts?: Record<string, { events: string }> }
+      ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
+        ? FuelSimulateEventItem<Config["fuel"]["contracts"]> | SimulateBlockItem
+        : never
+      : never
+    : never;
 
 /** Configuration for a single chain in the test indexer. */
-export type TestIndexerChainConfig = {
+type TestIndexerChainConfig<Config extends IndexerConfigTypes> = {
   /** The block number to start processing from. */
   startBlock: number;
   /** The block number to stop processing at. */
   endBlock: number;
   /** Simulate items to process instead of fetching from real sources. */
-  simulate?: SimulateItem[];
+  simulate?: SimulateItemForConfig<Config>[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
@@ -642,7 +669,7 @@ type TestIndexerChainIds<Config extends IndexerConfigTypes> =
 export type TestIndexerProcessConfig<Config extends IndexerConfigTypes> = {
   /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
   chains: {
-    [K in TestIndexerChainIds<Config>]?: TestIndexerChainConfig;
+    [K in TestIndexerChainIds<Config>]?: TestIndexerChainConfig<Config>;
   };
 };
 
