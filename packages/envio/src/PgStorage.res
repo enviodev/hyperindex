@@ -421,8 +421,10 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
         ~itemSchema,
         ~itemsCount=maxItemsPerQuery,
       ),
+      // Use dbSchema instead of itemSchema so that JSON fields get JSON.stringified
+      // (pg driver doesn't auto-serialize JSONB values like postgres.js did)
       "convertOrThrow": S.compile(
-        S.unnest(itemSchema)->S.preprocess(_ => {
+        S.unnest(dbSchema)->S.preprocess(_ => {
           serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
         }),
         ~input=Value,

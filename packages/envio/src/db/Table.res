@@ -292,6 +292,23 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
         | None => raise(NonExistingTableField(location))
         }
 
+        // pg driver doesn't auto-serialize JSONB values like postgres.js did.
+        // Check the table field type rather than the schema classification,
+        // since the schema may be a typed schema (e.g., effect cache output)
+        // that doesn't classify as JSON even though the column is JSONB.
+        let coercedSchema = switch field {
+        | Field({fieldType: Json}) => {
+            hasArrayField := true
+            schema->coerceSchema->S.preprocess(_ => {
+              serializer: value =>
+                Js.Json.stringify(value->(Utils.magic: unknown => Js.Json.t))->(
+                  Utils.magic: string => unknown
+                ),
+            })
+          }
+        | _ => schema->coerceSchema
+        }
+
         quotedFieldNames
         ->Js.Array2.push(inlinedLocation)
         ->ignore
@@ -323,7 +340,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
           },
         )
         ->ignore
-        dict->Js.Dict.set(location, s.matches(schema->coerceSchema))
+        dict->Js.Dict.set(location, s.matches(coercedSchema))
       })
       dict
     | _ => Js.Exn.raiseError("Failed creating db schema. Expected an object schema for table")
