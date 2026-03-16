@@ -271,7 +271,7 @@ let start = async (
   ~makeGeneratedConfig: unit => Config.t,
   ~persistence: Persistence.t,
   ~isTest=false,
-  ~processConfig: option<Js.Json.t>=?,
+  ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
   let shouldUseTui = !isTest && !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
@@ -290,43 +290,8 @@ let start = async (
     config
   }
 
-  // Override source config for chains with simulate items
-  let config = switch processConfig {
-  | Some(processConfig) =>
-    let processChains: option<Js.Dict.t<Js.Json.t>> =
-      (processConfig->(Utils.magic: Js.Json.t => {..}))["chains"]
-      ->Js.Nullable.toOption
-    switch processChains {
-    | Some(chainsDict) =>
-      let newChainMap = config.chainMap->ChainMap.mapWithKey((chain, chainConfig) => {
-        let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
-        switch chainsDict->Js.Dict.get(chainIdStr) {
-        | Some(processChainJson) =>
-          let simulateRaw: option<array<Js.Json.t>> =
-            (processChainJson->(Utils.magic: Js.Json.t => {..}))["simulate"]
-            ->Js.Nullable.toOption
-          switch simulateRaw {
-          | Some(simulateItems) =>
-            let items = SimulateItems.parse(
-              ~simulateItems,
-              ~config,
-              ~chainConfig,
-              ~registrations,
-            )
-            // Use endBlock from processConfig (the user-specified range)
-            let endBlock: int =
-              (processChainJson->(Utils.magic: Js.Json.t => {..}))["endBlock"]
-              ->(Utils.magic: 'a => int)
-            let source = SimulateSource.make(~items, ~endBlock, ~chain)
-            {...chainConfig, sourceConfig: Config.CustomSources([source])}
-          | None => chainConfig
-          }
-        | None => chainConfig
-        }
-      })
-      {...config, chainMap: newChainMap}
-    | None => config
-    }
+  let config = switch patchConfig {
+  | Some(patchConfig) => patchConfig(config, registrations)
   | None => config
   }
   let ctx = {

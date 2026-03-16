@@ -568,30 +568,33 @@ type SimulateBlockItem = {
   number?: number;
 };
 
-/** Resolve the simulate item type for a config. */
-type SimulateItemForConfig<Config extends IndexerConfigTypes> =
-  HasEvm<Config> extends true
-    ? Config["evm"] extends { contracts?: Record<string, { events: string }> }
-      ? Config["evm"]["contracts"] extends Record<string, { events: string }>
-        ? EvmSimulateEventItem<Config["evm"]["contracts"]> | SimulateBlockItem
-        : never
-      : never
-    : HasFuel<Config> extends true
-    ? Config["fuel"] extends { contracts?: Record<string, { events: string }> }
-      ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
-        ? FuelSimulateEventItem<Config["fuel"]["contracts"]> | SimulateBlockItem
-        : never
-      : never
-    : never;
+/** Simulate item type for EVM ecosystem. */
+type EvmSimulateItem<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts?: Record<string, { events: string }> }
+    ? Config["evm"]["contracts"] extends Record<string, { events: string }>
+      ? EvmSimulateEventItem<Config["evm"]["contracts"]> | SimulateBlockItem
+      : SimulateBlockItem
+    : SimulateBlockItem;
+
+/** Simulate item type for Fuel ecosystem. */
+type FuelSimulateItem<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts?: Record<string, { events: string }> }
+    ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
+      ? FuelSimulateEventItem<Config["fuel"]["contracts"]> | SimulateBlockItem
+      : SimulateBlockItem
+    : SimulateBlockItem;
+
+/** Simulate item type for SVM ecosystem. */
+type SvmSimulateItem = SimulateBlockItem;
 
 /** Configuration for a single chain in the test indexer. */
-type TestIndexerChainConfig<Config extends IndexerConfigTypes> = {
+type TestIndexerChainConfig<SimulateItem> = {
   /** The block number to start processing from. */
   startBlock: number;
   /** The block number to stop processing at. */
   endBlock: number;
   /** Simulate items to process instead of fetching from real sources. */
-  simulate?: SimulateItemForConfig<Config>[];
+  simulate?: SimulateItem[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
@@ -643,34 +646,58 @@ type EntityChange<Config extends IndexerConfigTypes> = {
 };
 
 
-// Helper to extract chain IDs from config for test indexer
-type TestIndexerChainIds<Config extends IndexerConfigTypes> =
-  HasEvm<Config> extends true
-    ? Config["evm"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: number }>
-        ? Chains[keyof Chains]["id"]
-        : never
-      : never
-    : HasFuel<Config> extends true
-    ? Config["fuel"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: number }>
-        ? Chains[keyof Chains]["id"]
-        : never
-      : never
-    : HasSvm<Config> extends true
-    ? Config["svm"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: number }>
-        ? Chains[keyof Chains]["id"]
-        : never
+// Helper to extract chain IDs per ecosystem
+type EvmChainIds<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: number }>
+      ? Chains[keyof Chains]["id"]
       : never
     : never;
+
+type FuelChainIds<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: number }>
+      ? Chains[keyof Chains]["id"]
+      : never
+    : never;
+
+type SvmChainIds<Config extends IndexerConfigTypes> =
+  Config["svm"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: number }>
+      ? Chains[keyof Chains]["id"]
+      : never
+    : never;
+
+// Helper to extract all chain IDs from config for test indexer
+type TestIndexerChainIds<Config extends IndexerConfigTypes> =
+  | EvmChainIds<Config>
+  | FuelChainIds<Config>
+  | SvmChainIds<Config>;
+
+// Per-ecosystem chain config mappings
+type EvmTestChains<Config extends IndexerConfigTypes> =
+  HasEvm<Config> extends true
+    ? { [K in EvmChainIds<Config>]?: TestIndexerChainConfig<EvmSimulateItem<Config>> }
+    : {};
+
+type FuelTestChains<Config extends IndexerConfigTypes> =
+  HasFuel<Config> extends true
+    ? { [K in FuelChainIds<Config>]?: TestIndexerChainConfig<FuelSimulateItem<Config>> }
+    : {};
+
+type SvmTestChains<Config extends IndexerConfigTypes> =
+  HasSvm<Config> extends true
+    ? { [K in SvmChainIds<Config>]?: TestIndexerChainConfig<SvmSimulateItem> }
+    : {};
 
 /** Process configuration for the test indexer, with chains keyed by chain ID. */
 export type TestIndexerProcessConfig<Config extends IndexerConfigTypes> = {
   /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
-  chains: {
-    [K in TestIndexerChainIds<Config>]?: TestIndexerChainConfig<Config>;
-  };
+  chains: Prettify<
+    EvmTestChains<Config> &
+    FuelTestChains<Config> &
+    SvmTestChains<Config>
+  >;
 };
 
 /**

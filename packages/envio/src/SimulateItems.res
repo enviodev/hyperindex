@@ -185,3 +185,46 @@ let parse = (
 
   items
 }
+
+// Apply simulate source config from processConfig JSON to a Config.t
+// This patches chainMap entries that have simulate items with CustomSources
+let patchConfig = (
+  ~config: Config.t,
+  ~processConfig: Js.Json.t,
+  ~registrations: HandlerRegister.registrations,
+): Config.t => {
+  let processChains: option<Js.Dict.t<Js.Json.t>> =
+    (processConfig->(Utils.magic: Js.Json.t => {..}))["chains"]
+    ->Js.Nullable.toOption
+  switch processChains {
+  | Some(chainsDict) =>
+    let newChainMap = config.chainMap->ChainMap.mapWithKey((chain, chainConfig) => {
+      let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
+      switch chainsDict->Js.Dict.get(chainIdStr) {
+      | Some(processChainJson) =>
+        let simulateRaw: option<array<Js.Json.t>> =
+          (processChainJson->(Utils.magic: Js.Json.t => {..}))["simulate"]
+          ->Js.Nullable.toOption
+        switch simulateRaw {
+        | Some(simulateItems) =>
+          let items = parse(
+            ~simulateItems,
+            ~config,
+            ~chainConfig,
+            ~registrations,
+          )
+          // Use endBlock from processConfig (the user-specified range)
+          let endBlock: int =
+            (processChainJson->(Utils.magic: Js.Json.t => {..}))["endBlock"]
+            ->(Utils.magic: 'a => int)
+          let source = SimulateSource.make(~items, ~endBlock, ~chain)
+          {...chainConfig, sourceConfig: Config.CustomSources([source])}
+        | None => chainConfig
+        }
+      | None => chainConfig
+      }
+    })
+    {...config, chainMap: newChainMap}
+  | None => config
+  }
+}

@@ -693,7 +693,9 @@ let initTestWorker = (
     | Some(_) => ()
     }
 
-    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true, ~processConfig)->ignore
+    let patchConfig = (config, registrations) =>
+      SimulateItems.patchConfig(~config, ~processConfig, ~registrations)
+    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true, ~patchConfig)->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)
