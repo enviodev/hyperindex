@@ -1,8 +1,5 @@
 let getCacheRowCountFnName = "get_cache_row_count"
 
-// Only needed for some old tests
-// Remove @genType in the future
-@genType
 let makeClient = () => {
   Pg.makeSql(
     ~config={

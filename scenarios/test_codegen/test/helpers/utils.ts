@@ -1,9 +1,16 @@
+import { Pool } from "pg";
 import { runUpMigrations } from "../../generated/src/db/Migrations.res.mjs";
-import { makeClient } from "envio/src/PgStorage.gen";
-import { unsafe, preparedUnsafe } from "envio/src/bindings/Pg.res.mjs";
 
-export const createSql = makeClient;
-export { unsafe, preparedUnsafe };
+export const createSql = () => new Pool();
+
+export const unsafe = (pool: Pool, text: string): Promise<any[]> =>
+  pool.query(text).then((r) => r.rows);
+
+export const preparedUnsafe = (
+  pool: Pool,
+  text: string,
+  values: unknown
+): Promise<any[]> => pool.query({ text, values } as any).then((r: any) => r.rows);
 
 const originalConsoleLog = console.log;
 
