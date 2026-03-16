@@ -19,17 +19,6 @@ type contractRegistrations = {
 //**CONTRACTS**
 //*************
 
-// Schemas are still needed internally for HyperSync/RPC field selection queries
-module Block = {
-  type t = {{field_selection.block_type}}
-  let schema = {{field_selection.block_schema}}
-}
-
-module Transaction = {
-  type t = {{field_selection.transaction_type}}
-  let schema = {{field_selection.transaction_schema}}
-}
-
 {{#if is_evm_ecosystem}}
 @genType.as("EventLog")
 type eventLog<'params> = Internal.genericEvent<'params, Envio.EvmBlock.t, Envio.EvmTransaction.t>

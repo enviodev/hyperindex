@@ -25,7 +25,7 @@ use crate::{
     },
     template_dirs::TemplateDirs,
     type_schema::{RecordField, SchemaMode, TypeExpr, TypeIdent},
-    utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
+    utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{anyhow, Context, Result};
 use convert_case::{Case, Casing};
@@ -583,27 +583,6 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
             )
         };
 
-        let (block_schema_code, transaction_schema_code) =
-            match self.custom_field_selection {
-                Some(ref field_selection) => {
-                    let field_selection = FieldSelection::new(FieldSelectionOptions {
-                        transaction_fields: field_selection.transaction_fields.clone(),
-                        block_fields: field_selection.block_fields.clone(),
-                        transaction_type_name: "transactionSchemaFields".to_string(),
-                        block_type_name: "blockSchemaFields".to_string(),
-                    });
-                    // Include local record type definitions so schemas can construct concrete records
-                    (
-                        format!("type blockSchemaFields = {}\nlet blockSchema = {}", field_selection.block_type, field_selection.block_schema),
-                        format!("type transactionSchemaFields = {}\nlet transactionSchema = {}", field_selection.transaction_type, field_selection.transaction_schema),
-                    )
-                }
-                None => (
-                    "let blockSchema = Block.schema".to_string(),
-                    "let transactionSchema = Transaction.schema".to_string(),
-                ),
-            };
-
         // Generate field name arrays and derive lookup dicts for runtime proxy validation.
         // Uses the event's custom field selection if present, otherwise the global one.
         let selected_fields_code = if !is_fuel {
@@ -715,8 +694,6 @@ block: block,
 {types_code}
 
 let paramsRawEventSchema = {params_raw_event_schema}
-{block_schema_code}
-{transaction_schema_code}
 {selected_fields_code}
 
 @genType
@@ -1205,125 +1182,6 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize)]
-struct FieldSelection {
-    transaction_fields: Vec<SelectedFieldTemplate>,
-    block_fields: Vec<SelectedFieldTemplate>,
-    transaction_type: String,
-    transaction_schema: String,
-    block_type: String,
-    block_schema: String,
-}
-
-struct FieldSelectionOptions {
-    transaction_fields: Vec<SelectedField>,
-    block_fields: Vec<SelectedField>,
-    transaction_type_name: String,
-    block_type_name: String,
-}
-
-impl FieldSelection {
-    fn new(options: FieldSelectionOptions) -> Self {
-        let mut block_field_templates = vec![];
-        let mut all_block_fields = vec![];
-        for field in options.block_fields.into_iter() {
-            let res_name = RecordField::to_valid_rescript_name(&field.name);
-            let name: CaseOptions = field.name.into();
-
-            block_field_templates.push(SelectedFieldTemplate {
-                name: name.clone(),
-                res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
-                res_type: field.data_type.to_string(),
-            });
-
-            let record_field = RecordField::new(name.camel, field.data_type);
-            all_block_fields.push(record_field.clone());
-        }
-
-        let mut transaction_field_templates = vec![];
-        let mut all_transaction_fields = vec![];
-        for field in options.transaction_fields.into_iter() {
-            let res_name = RecordField::to_valid_rescript_name(&field.name);
-            let name: CaseOptions = field.name.into();
-
-            transaction_field_templates.push(SelectedFieldTemplate {
-                name: name.clone(),
-                res_name,
-                default_value_rescript: field.data_type.get_default_value_rescript(),
-                res_type: field.data_type.to_string(),
-            });
-
-            let record_field = RecordField::new(name.camel, field.data_type);
-            all_transaction_fields.push(record_field);
-        }
-
-        let block_expr = TypeExpr::Record(all_block_fields);
-        let transaction_expr = TypeExpr::Record(all_transaction_fields);
-
-        Self {
-            transaction_fields: transaction_field_templates,
-            block_fields: block_field_templates,
-            transaction_type: transaction_expr.to_string(),
-            transaction_schema: transaction_expr.to_rescript_schema(
-                &options.transaction_type_name,
-                &SchemaMode::ForFieldSelection,
-            ),
-            block_type: block_expr.to_string(),
-            block_schema: block_expr
-                .to_rescript_schema(&options.block_type_name, &SchemaMode::ForFieldSelection),
-        }
-    }
-
-    fn global_selection(cfg: &system_config::FieldSelection) -> Self {
-        Self::new(FieldSelectionOptions {
-            transaction_fields: cfg.transaction_fields.clone(),
-            block_fields: cfg.block_fields.clone(),
-            transaction_type_name: "t".to_string(),
-            block_type_name: "t".to_string(),
-        })
-    }
-
-    fn aggregated_selection(cfg: &system_config::SystemConfig) -> Self {
-        let mut transaction_fields: BTreeSet<_> = cfg
-            .field_selection
-            .transaction_fields
-            .iter()
-            .cloned()
-            .collect();
-        let mut block_fields: BTreeSet<_> =
-            cfg.field_selection.block_fields.iter().cloned().collect();
-
-        cfg.contracts.iter().for_each(|(_name, contract)| {
-            contract.events.iter().for_each(|event| {
-                if let Some(field_selection) = &event.field_selection {
-                    field_selection.transaction_fields.iter().for_each(|field| {
-                        transaction_fields.insert(field.clone());
-                    });
-                    field_selection.block_fields.iter().for_each(|field| {
-                        block_fields.insert(field.clone());
-                    });
-                }
-            });
-        });
-
-        Self::new(FieldSelectionOptions {
-            transaction_fields: transaction_fields.into_iter().collect::<Vec<_>>(),
-            block_fields: block_fields.into_iter().collect::<Vec<_>>(),
-            transaction_type_name: "t".to_string(),
-            block_type_name: "t".to_string(),
-        })
-    }
-}
-
-#[derive(Serialize)]
-struct SelectedFieldTemplate {
-    name: CaseOptions,
-    res_name: String,
-    res_type: String,
-    default_value_rescript: String,
-}
-
-#[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
@@ -1332,8 +1190,6 @@ pub struct ProjectTemplate {
     chain_configs: Vec<NetworkConfigTemplate>,
     persisted_state: PersistedStateJsonString,
     has_multiple_events: bool,
-    field_selection: FieldSelection,
-    aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
     is_svm_ecosystem: bool,
@@ -1429,10 +1285,6 @@ impl ProjectTemplate {
         .to_str()
         .ok_or_else(|| anyhow!("Failed converting path to str"))?
         .to_string();
-
-        let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
-        // TODO: Remove schemas for aggreaged, since they are not used in runtime
-        let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
         let chain_id_cases = match &cfg.human_config {
             HumanConfig::Svm(hcfg) => hcfg
@@ -2156,8 +2008,6 @@ type testIndexer = {{
             chain_configs,
             persisted_state,
             has_multiple_events,
-            field_selection: global_field_selection,
-            aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
@@ -2485,8 +2335,6 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
-let blockSchema = Block.schema
-let transactionSchema = Transaction.schema
 let blockFieldNames = ["number", "timestamp", "hash"]
 let transactionFieldNames = []
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
@@ -2575,8 +2423,6 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
-let blockSchema = Block.schema
-let transactionSchema = Transaction.schema
 let blockFieldNames = []
 let transactionFieldNames = []
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
@@ -2671,10 +2517,6 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
-type blockSchemaFields = {}
-let blockSchema = S.object((_): blockSchemaFields => {})
-type transactionSchemaFields = {from: option<Address.t>}
-let transactionSchema = S.object((s): transactionSchemaFields => {from: s.field("from", S.nullable(Address.schema))})
 let blockFieldNames = []
 let transactionFieldNames = ["from"]
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
