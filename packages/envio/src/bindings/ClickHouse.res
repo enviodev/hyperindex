@@ -20,16 +20,20 @@ external exec: (client, execParams) => promise<unit> = "exec"
 @send
 external close: client => promise<unit> = "close"
 
+type format =
+  | @as("JSONEachRow") JSONEachRow
+  | @as("JSONCompactEachRow") JSONCompactEachRow
+
 type insertParams<'a> = {
   table: string,
   values: array<'a>,
-  format: string,
+  format: format,
 }
 
 @send
 external insert: (client, insertParams<'a>) => promise<unit> = "insert"
 
-type queryParams = {query: string}
+type queryParams = {query: string, format?: format}
 type queryResult<'a>
 
 @send
@@ -171,7 +175,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
       await client->insert({
         table: `${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
         values: checkpointRows,
-        format: "JSONCompactEachRow",
+        format: JSONCompactEachRow,
       })
     } catch {
     | exn =>
@@ -242,7 +246,7 @@ let setUpdatesOrThrow = async (
       await client->insert({
         table: tableName,
         values,
-        format: "JSONEachRow",
+        format: JSONEachRow,
       })
     } catch {
     | exn =>
@@ -416,6 +420,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     // Get all history tables
     let tablesResult = await client->query({
       query: `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%'`,
+      format: JSONEachRow,
     })
     let tables: array<{"name": string}> = await tablesResult->json
 

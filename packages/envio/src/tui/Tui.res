@@ -218,21 +218,33 @@ module App = {
       <TotalEventsProcessed totalEventsProcessed />
       <SyncETA chains indexerStartTime=state.indexerStartTime />
       <Newline />
-      <Box flexDirection={Row}>
-        <Text> {"GraphQL: "->React.string} </Text>
-        <Text color={Info} underline=true> {Env.Hasura.url->React.string} </Text>
-        {
-          let defaultPassword = "testing"
-          if Env.Hasura.secret == defaultPassword {
-            <Text color={Gray}> {` (password: ${defaultPassword})`->React.string} </Text>
-          } else {
-            React.null
+      {switch state.ctx.config.storage {
+      | Clickhouse =>
+        <Box flexDirection={Row}>
+          <Text> {"ClickHouse Playground: "->React.string} </Text>
+          <Text color={Info} underline=true>
+            {`${Env.ClickHouseStorage.host}/play`->React.string}
+          </Text>
+        </Box>
+      | Postgres =>
+        <Box flexDirection={Row}>
+          <Text> {"GraphQL: "->React.string} </Text>
+          <Text color={Info} underline=true> {Env.Hasura.url->React.string} </Text>
+          {
+            let defaultPassword = "testing"
+            if Env.Hasura.secret == defaultPassword {
+              <Text color={Gray}> {` (password: ${defaultPassword})`->React.string} </Text>
+            } else {
+              React.null
+            }
           }
-        }
-      </Box>
+        </Box>
+      }}
       <Box flexDirection={Row}>
         <Text> {"Dev Console: "->React.string} </Text>
-        <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
+        <Text color={Info} underline=true>
+          {`${Env.envioAppUrl}/console`->React.string}
+        </Text>
       </Box>
       <Messages config=state.ctx.config />
     </Box>

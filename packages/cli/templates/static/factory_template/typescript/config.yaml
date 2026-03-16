@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
-name: envio-indexer
+name: factory-indexer
 description: Envio Indexer showcase for the Factory Contract feature
 contracts:
   - name: UniswapV3Factory
