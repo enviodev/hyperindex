@@ -14,38 +14,38 @@ import type {ResponseTypes_authorizationList as HyperSyncClient_ResponseTypes_au
 import type {t as Address_t} from './Address.gen.js';
 
 export type evmTransactionFields = {
-  readonly transactionIndex?: number; 
-  readonly hash?: string; 
-  readonly from?: (undefined | Address_t); 
-  readonly to?: (undefined | Address_t); 
-  readonly gas?: bigint; 
-  readonly gasPrice?: (undefined | bigint); 
-  readonly input?: string; 
-  readonly nonce?: bigint; 
-  readonly value?: bigint; 
-  readonly v?: (undefined | string); 
-  readonly r?: (undefined | string); 
-  readonly s?: (undefined | string); 
-  readonly yParity?: (undefined | string); 
-  readonly maxPriorityFeePerGas?: (undefined | bigint); 
-  readonly maxFeePerGas?: (undefined | bigint); 
-  readonly maxFeePerBlobGas?: (undefined | bigint); 
-  readonly blobVersionedHashes?: (undefined | string[]); 
-  readonly cumulativeGasUsed?: bigint; 
-  readonly effectiveGasPrice?: bigint; 
-  readonly gasUsed?: bigint; 
-  readonly contractAddress?: (undefined | Address_t); 
-  readonly logsBloom?: string; 
-  readonly type: (undefined | (undefined | number)); 
-  readonly root?: (undefined | string); 
-  readonly status?: (undefined | number); 
-  readonly l1Fee?: (undefined | bigint); 
-  readonly l1GasPrice?: (undefined | bigint); 
-  readonly l1GasUsed?: (undefined | bigint); 
-  readonly l1FeeScalar?: (undefined | number); 
-  readonly gasUsedForL1?: (undefined | bigint); 
-  readonly accessList?: (undefined | HyperSyncClient_ResponseTypes_accessList[]); 
-  readonly authorizationList?: (undefined | HyperSyncClient_ResponseTypes_authorizationList[])
+  readonly transactionIndex: number; 
+  readonly hash: string; 
+  readonly from: (undefined | Address_t); 
+  readonly to: (undefined | Address_t); 
+  readonly gas: bigint; 
+  readonly gasPrice: (undefined | bigint); 
+  readonly input: string; 
+  readonly nonce: bigint; 
+  readonly value: bigint; 
+  readonly v: string; 
+  readonly r: string; 
+  readonly s: string; 
+  readonly yParity: (undefined | string); 
+  readonly maxPriorityFeePerGas: (undefined | bigint); 
+  readonly maxFeePerGas: (undefined | bigint); 
+  readonly maxFeePerBlobGas: (undefined | bigint); 
+  readonly blobVersionedHashes: (undefined | string[]); 
+  readonly cumulativeGasUsed: bigint; 
+  readonly effectiveGasPrice: bigint; 
+  readonly gasUsed: bigint; 
+  readonly contractAddress: (undefined | Address_t); 
+  readonly logsBloom: string; 
+  readonly type: (undefined | number); 
+  readonly root: (undefined | string); 
+  readonly status: (undefined | number); 
+  readonly l1Fee: (undefined | bigint); 
+  readonly l1GasPrice: (undefined | bigint); 
+  readonly l1GasUsed: (undefined | bigint); 
+  readonly l1FeeScalar: (undefined | number); 
+  readonly gasUsedForL1: (undefined | bigint); 
+  readonly accessList: (undefined | HyperSyncClient_ResponseTypes_accessList[]); 
+  readonly authorizationList: (undefined | HyperSyncClient_ResponseTypes_authorizationList[])
 };
 
 export type genericEvent<params,block,transaction> = {

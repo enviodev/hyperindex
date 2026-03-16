@@ -12,65 +12,89 @@ type fuelBlockEvent = {height: int}
 // Static types exposed to users. All fields are always visible on the type.
 // At runtime, accessing a field not in field_selection throws a friendly error via proxy.
 // For TS users: index.d.ts provides JSDoc descriptions for all fields.
-// For ReScript users: always-selected fields are required, others use `?`.
-// Inherently nullable fields additionally use option<T> for their inner type.
+// For ReScript users: all fields are required on the type; inherently nullable
+// fields use option<T>. The runtime proxy validates field access at runtime.
 
+/** EVM block data. `number`, `timestamp`, and `hash` are always available.
+    Other fields require `field_selection` configuration in config.yaml. */
 @genType
-module EvmBlock = {
-  @genType.import(("../index.d.ts", "EvmBlock"))
-  type t = {
-    number: int,
-    timestamp: int,
-    hash: string,
-    parentHash?: string,
-    nonce?: option<bigint>,
-    sha3Uncles?: string,
-    logsBloom?: string,
-    transactionsRoot?: string,
-    stateRoot?: string,
-    receiptsRoot?: string,
-    miner?: Address.t,
-    difficulty?: option<bigint>,
-    totalDifficulty?: option<bigint>,
-    extraData?: string,
-    size?: bigint,
-    gasLimit?: bigint,
-    gasUsed?: bigint,
-    uncles?: option<array<string>>,
-    baseFeePerGas?: option<bigint>,
-    blobGasUsed?: option<bigint>,
-    excessBlobGas?: option<bigint>,
-    parentBeaconBlockRoot?: option<string>,
-    withdrawalsRoot?: option<string>,
-    l1BlockNumber?: option<int>,
-    sendCount?: option<string>,
-    sendRoot?: option<string>,
-    mixHash?: option<string>,
-  }
+type evmBlock = {
+  /** The block number (height) in the chain. Always available. */
+  number: int,
+  /** The unix timestamp of when the block was mined. Always available. */
+  timestamp: int,
+  /** The hash of the block. Always available. */
+  hash: string,
+  /** The hash of the parent block. */
+  parentHash: string,
+  /** The nonce of the block, used in proof-of-work. None for proof-of-stake blocks. */
+  nonce: option<bigint>,
+  /** The SHA3 hash of the uncles data in the block. */
+  sha3Uncles: string,
+  /** The bloom filter for the logs of the block. */
+  logsBloom: string,
+  /** The root of the transaction trie of the block. */
+  transactionsRoot: string,
+  /** The root of the state trie of the block. */
+  stateRoot: string,
+  /** The root of the receipts trie of the block. */
+  receiptsRoot: string,
+  /** The address of the miner/validator who mined this block. */
+  miner: Address.t,
+  /** The difficulty for this block. None for proof-of-stake blocks. */
+  difficulty: option<bigint>,
+  /** The total difficulty of the chain until this block. None for proof-of-stake blocks. */
+  totalDifficulty: option<bigint>,
+  /** The extra data included in the block by the miner. */
+  extraData: string,
+  /** The size of this block in bytes. */
+  size: bigint,
+  /** The maximum gas allowed in this block. */
+  gasLimit: bigint,
+  /** The total gas used by all transactions in this block. */
+  gasUsed: bigint,
+  /** The list of uncle block hashes. */
+  uncles: option<array<string>>,
+  /** The base fee per gas in this block (EIP-1559). None for pre-London blocks. */
+  baseFeePerGas: option<bigint>,
+  /** The total amount of blob gas consumed by transactions in this block (EIP-4844). */
+  blobGasUsed: option<bigint>,
+  /** The running total of blob gas consumed in excess of the target (EIP-4844). */
+  excessBlobGas: option<bigint>,
+  /** The root hash of the parent beacon block (EIP-4788). */
+  parentBeaconBlockRoot: option<string>,
+  /** The root hash of the withdrawals trie (EIP-4895). */
+  withdrawalsRoot: option<string>,
+  /** The L1 block number associated with this L2 block (L2 chains only). */
+  l1BlockNumber: option<int>,
+  /** The number of messages sent in this block (Arbitrum). */
+  sendCount: option<string>,
+  /** The Merkle root of the outbox messages (Arbitrum). */
+  sendRoot: option<string>,
+  /** The mix hash used in proof-of-work. */
+  mixHash: option<string>,
 }
 
+/** EVM transaction data. All fields require `field_selection` configuration. */
 @genType
-module EvmTransaction = {
-  @genType.import(("../index.d.ts", "EvmTransaction"))
-  type t = Internal.evmTransactionFields
+type evmTransaction = Internal.evmTransactionFields
+
+/** Fuel block data. */
+@genType
+type fuelBlock = {
+  /** The unique identifier of the block. */
+  id: string,
+  /** The block height (number). */
+  height: int,
+  /** The unix timestamp of the block. */
+  time: int,
 }
 
+/** Fuel transaction data. */
 @genType
-module FuelBlock = {
-  @genType.import(("../index.d.ts", "FuelBlock"))
-  type t = {
-    id: string,
-    height: int,
-    time: int,
-  }
-}
-
-@genType
-module FuelTransaction = {
-  @genType.import(("../index.d.ts", "FuelTransaction"))
-  type t = {
-    id: string,
-  }
+type fuelTransaction = {
+  /** The unique identifier of the transaction. */
+  id: string,
 }
 
 @genType

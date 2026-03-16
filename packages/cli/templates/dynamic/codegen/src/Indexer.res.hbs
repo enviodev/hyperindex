@@ -21,11 +21,11 @@ type contractRegistrations = {
 
 {{#if is_evm_ecosystem}}
 @genType.as("EventLog")
-type eventLog<'params> = Internal.genericEvent<'params, Envio.EvmBlock.t, Envio.EvmTransaction.t>
+type eventLog<'params> = Internal.genericEvent<'params, Envio.evmBlock, Envio.evmTransaction>
 {{/if}}
 {{#if is_fuel_ecosystem}}
 @genType.as("EventLog")
-type eventLog<'params> = Internal.genericEvent<'params, Envio.FuelBlock.t, Envio.FuelTransaction.t>
+type eventLog<'params> = Internal.genericEvent<'params, Envio.fuelBlock, Envio.fuelTransaction>
 {{/if}}
 {{#if is_svm_ecosystem}}
 @genType.as("EventLog")

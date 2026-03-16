@@ -53,16 +53,11 @@ let setGravatar4: Indexer.Gravatar.UpdatedGravatar.eventArgs = {
   imageUrl: "https://gravatar4.com",
 }
 
-let block1: Envio.EvmBlock.t = {
-  number: 1,
-  timestamp: 1,
-  hash: "deasne",
-}
+// Cast partial JS objects to match the full type — mirrors runtime behavior
+// where the proxy provides all fields (or throws for unselected ones)
+let block1: Envio.evmBlock = %raw(`{number: 1, timestamp: 1, hash: "deasne"}`)
 
-let tx1: Envio.EvmTransaction.t = {
-  hash: "0xaaa",
-  transactionIndex: 1,
-}
+let tx1: Envio.evmTransaction = %raw(`{hash: "0xaaa", transactionIndex: 1}`)
 
 let newGravatarLog1: Indexer.eventLog<Indexer.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar1,

@@ -573,13 +573,13 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
         let is_fuel = self.fuel_event_kind.is_some();
         let (block_type, transaction_type) = if is_fuel {
             (
-                "Envio.FuelBlock.t".to_string(),
-                "Envio.FuelTransaction.t".to_string(),
+                "Envio.fuelBlock".to_string(),
+                "Envio.fuelTransaction".to_string(),
             )
         } else {
             (
-                "Envio.EvmBlock.t".to_string(),
-                "Envio.EvmTransaction.t".to_string(),
+                "Envio.evmBlock".to_string(),
+                "Envio.evmTransaction".to_string(),
             )
         };
 
@@ -2307,9 +2307,9 @@ let contractName = contractName
 @genType
 type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
 @genType
-type block = Envio.EvmBlock.t
+type block = Envio.evmBlock
 @genType
-type transaction = Envio.EvmTransaction.t
+type transaction = Envio.evmTransaction
 
 @genType
 type event = {{
@@ -2395,9 +2395,9 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = Envio.EvmBlock.t
+type block = Envio.evmBlock
 @genType
-type transaction = Envio.EvmTransaction.t
+type transaction = Envio.evmTransaction
 
 @genType
 type event = {
@@ -2489,9 +2489,9 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = Envio.EvmBlock.t
+type block = Envio.evmBlock
 @genType
-type transaction = Envio.EvmTransaction.t
+type transaction = Envio.evmTransaction
 
 @genType
 type event = {
@@ -2646,6 +2646,12 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
     #[test]
     fn internal_config_json_code_with_lowercase_contract_name() {
         let project_template = get_project_template_helper("lowercase-contract-name.yaml");
+        insta::assert_snapshot!(project_template.internal_config_json_code);
+    }
+
+    #[test]
+    fn internal_config_json_code_with_per_event_field_selection() {
+        let project_template = get_project_template_helper("per-event-field-selection.yaml");
         insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 }

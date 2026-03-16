@@ -7,29 +7,94 @@ import type {EffectContext as $$effectContext} from './Types.ts';
 
 import type {Effect as $$effect} from './Types.ts';
 
-import type {EvmBlock as $$EvmBlock_t} from '../index.d.ts';
-
-import type {EvmTransaction as $$EvmTransaction_t} from '../index.d.ts';
-
-import type {FuelBlock as $$FuelBlock_t} from '../index.d.ts';
-
-import type {FuelTransaction as $$FuelTransaction_t} from '../index.d.ts';
-
 import type {Logger as $$logger} from './Types.ts';
 
 import type {S_t as RescriptSchema_S_t} from 'rescript-schema/RescriptSchema.gen.js';
+
+import type {evmTransactionFields as Internal_evmTransactionFields} from './Internal.gen.js';
+
+import type {t as Address_t} from './Address.gen.js';
 
 export type blockEvent = { readonly number: number };
 
 export type fuelBlockEvent = { readonly height: number };
 
-export type EvmBlock_t = $$EvmBlock_t;
+/** EVM block data. `number`, `timestamp`, and `hash` are always available.
+    Other fields require `field_selection` configuration in config.yaml. */
+export type evmBlock = {
+  /** The block number (height) in the chain. Always available. */
+  readonly number: number; 
+  /** The unix timestamp of when the block was mined. Always available. */
+  readonly timestamp: number; 
+  /** The hash of the block. Always available. */
+  readonly hash: string; 
+  /** The hash of the parent block. */
+  readonly parentHash: string; 
+  /** The nonce of the block, used in proof-of-work. None for proof-of-stake blocks. */
+  readonly nonce: (undefined | bigint); 
+  /** The SHA3 hash of the uncles data in the block. */
+  readonly sha3Uncles: string; 
+  /** The bloom filter for the logs of the block. */
+  readonly logsBloom: string; 
+  /** The root of the transaction trie of the block. */
+  readonly transactionsRoot: string; 
+  /** The root of the state trie of the block. */
+  readonly stateRoot: string; 
+  /** The root of the receipts trie of the block. */
+  readonly receiptsRoot: string; 
+  /** The address of the miner/validator who mined this block. */
+  readonly miner: Address_t; 
+  /** The difficulty for this block. None for proof-of-stake blocks. */
+  readonly difficulty: (undefined | bigint); 
+  /** The total difficulty of the chain until this block. None for proof-of-stake blocks. */
+  readonly totalDifficulty: (undefined | bigint); 
+  /** The extra data included in the block by the miner. */
+  readonly extraData: string; 
+  /** The size of this block in bytes. */
+  readonly size: bigint; 
+  /** The maximum gas allowed in this block. */
+  readonly gasLimit: bigint; 
+  /** The total gas used by all transactions in this block. */
+  readonly gasUsed: bigint; 
+  /** The list of uncle block hashes. */
+  readonly uncles: (undefined | string[]); 
+  /** The base fee per gas in this block (EIP-1559). None for pre-London blocks. */
+  readonly baseFeePerGas: (undefined | bigint); 
+  /** The total amount of blob gas consumed by transactions in this block (EIP-4844). */
+  readonly blobGasUsed: (undefined | bigint); 
+  /** The running total of blob gas consumed in excess of the target (EIP-4844). */
+  readonly excessBlobGas: (undefined | bigint); 
+  /** The root hash of the parent beacon block (EIP-4788). */
+  readonly parentBeaconBlockRoot: (undefined | string); 
+  /** The root hash of the withdrawals trie (EIP-4895). */
+  readonly withdrawalsRoot: (undefined | string); 
+  /** The L1 block number associated with this L2 block (L2 chains only). */
+  readonly l1BlockNumber: (undefined | number); 
+  /** The number of messages sent in this block (Arbitrum). */
+  readonly sendCount: (undefined | string); 
+  /** The Merkle root of the outbox messages (Arbitrum). */
+  readonly sendRoot: (undefined | string); 
+  /** The mix hash used in proof-of-work. */
+  readonly mixHash: (undefined | string)
+};
 
-export type EvmTransaction_t = $$EvmTransaction_t;
+/** EVM transaction data. All fields require `field_selection` configuration. */
+export type evmTransaction = Internal_evmTransactionFields;
 
-export type FuelBlock_t = $$FuelBlock_t;
+/** Fuel block data. */
+export type fuelBlock = {
+  /** The unique identifier of the block. */
+  readonly id: string; 
+  /** The block height (number). */
+  readonly height: number; 
+  /** The unix timestamp of the block. */
+  readonly time: number
+};
 
-export type FuelTransaction_t = $$FuelTransaction_t;
+/** Fuel transaction data. */
+export type fuelTransaction = { 
+/** The unique identifier of the transaction. */
+readonly id: string };
 
 export type svmOnBlockArgs<context> = { readonly slot: number; readonly context: context };
 

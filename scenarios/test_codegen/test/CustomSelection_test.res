@@ -24,10 +24,10 @@ Async.it("Handles event with a custom field selection (in ReScript)", async t =>
     },
   })
 
-  // All events now use the same Envio.EvmBlock.t and Envio.EvmTransaction.t types.
+  // All events now use the same Envio.evmBlock and Envio.evmTransaction types.
   // Runtime proxy validates field access based on field_selection in config.yaml.
-  let _ = (event.transaction: Envio.EvmTransaction.t)
-  let _ = (event.block: Envio.EvmBlock.t)
+  let _ = (event.transaction: Envio.evmTransaction)
+  let _ = (event.block: Envio.evmBlock)
 
   let updatedMockDb = await Gravatar.CustomSelection.processEvent({
     event,
