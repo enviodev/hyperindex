@@ -21,11 +21,12 @@ let calculateTargetBufferSize = (~activeChainsCount) => {
   | Some(size) => size
   | None =>
     switch activeChainsCount {
-    | 1 => 50_000
+    | 1 => 60_000
     | 2 => 30_000
     | 3 => 20_000
     | 4 => 15_000
-    | _ => 10_000
+    | 5 => 10_000
+    | _ => 5_000
     }
   }
 }
