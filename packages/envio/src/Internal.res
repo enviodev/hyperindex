@@ -2,6 +2,75 @@ type eventParams
 type eventBlock
 type eventTransaction
 
+// Field name variants for type-safe field selection.
+// @unboxed compiles to plain strings at runtime, matching JS property names.
+@unboxed
+type evmBlockFieldName =
+  // Always-selected fields
+  | @as("number") Number
+  | @as("timestamp") Timestamp
+  | @as("hash") Hash
+  // Optional fields
+  | @as("parentHash") ParentHash
+  | @as("nonce") Nonce
+  | @as("sha3Uncles") Sha3Uncles
+  | @as("logsBloom") LogsBloom
+  | @as("transactionsRoot") TransactionsRoot
+  | @as("stateRoot") StateRoot
+  | @as("receiptsRoot") ReceiptsRoot
+  | @as("miner") Miner
+  | @as("difficulty") Difficulty
+  | @as("totalDifficulty") TotalDifficulty
+  | @as("extraData") ExtraData
+  | @as("size") Size
+  | @as("gasLimit") GasLimit
+  | @as("gasUsed") GasUsed
+  | @as("uncles") Uncles
+  | @as("baseFeePerGas") BaseFeePerGas
+  | @as("blobGasUsed") BlobGasUsed
+  | @as("excessBlobGas") ExcessBlobGas
+  | @as("parentBeaconBlockRoot") ParentBeaconBlockRoot
+  | @as("withdrawalsRoot") WithdrawalsRoot
+  | @as("l1BlockNumber") L1BlockNumber
+  | @as("sendCount") SendCount
+  | @as("sendRoot") SendRoot
+  | @as("mixHash") MixHash
+
+@unboxed
+type evmTransactionFieldName =
+  | @as("transactionIndex") TransactionIndex
+  | @as("hash") Hash
+  | @as("from") From
+  | @as("to") To
+  | @as("gas") Gas
+  | @as("gasPrice") GasPrice
+  | @as("maxPriorityFeePerGas") MaxPriorityFeePerGas
+  | @as("maxFeePerGas") MaxFeePerGas
+  | @as("cumulativeGasUsed") CumulativeGasUsed
+  | @as("effectiveGasPrice") EffectiveGasPrice
+  | @as("gasUsed") GasUsed
+  | @as("input") Input
+  | @as("nonce") Nonce
+  | @as("value") Value
+  | @as("v") V
+  | @as("r") R
+  | @as("s") S
+  | @as("contractAddress") ContractAddress
+  | @as("logsBloom") LogsBloom
+  | @as("root") Root
+  | @as("status") Status
+  | @as("yParity") YParity
+  | @as("accessList") AccessList
+  | @as("maxFeePerBlobGas") MaxFeePerBlobGas
+  | @as("blobVersionedHashes") BlobVersionedHashes
+  | @as("type") Type
+  | @as("l1Fee") L1Fee
+  | @as("l1GasPrice") L1GasPrice
+  | @as("l1GasUsed") L1GasUsed
+  | @as("l1FeeScalar") L1FeeScalar
+  | @as("gasUsedForL1") GasUsedForL1
+  | @as("authorizationList") AuthorizationList
+
 // Shared EVM transaction fields type used by both RPC and HyperSync sources
 // Field names match HyperSyncClient.ResponseTypes.transaction for consistency
 type evmTransactionFields = {
@@ -173,8 +242,8 @@ type eventFilters =
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  blockFieldNames: array<string>,
-  transactionFieldNames: array<string>,
+  blockFieldNames: array<evmBlockFieldName>,
+  transactionFieldNames: array<evmTransactionFieldName>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
   // Lookup dicts derived from field name arrays, used by runtime proxy to validate field access
   selectedBlockFields: Js.Dict.t<bool>,

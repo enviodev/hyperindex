@@ -76,8 +76,8 @@ describe("HyperSyncSource - getSelectionConfig", () => {
         dependsOnAddresses: true,
         eventConfigs: [
           (Mock.evmEventConfig(
-            ~blockFieldNames=["hash", "number", "timestamp", "nonce"],
-            ~transactionFieldNames=["hash", "gasPrice"],
+            ~blockFieldNames=([Hash, Number, Timestamp, Nonce]: array<Internal.evmBlockFieldName>),
+            ~transactionFieldNames=([Hash, GasPrice]: array<Internal.evmTransactionFieldName>),
           ) :> Internal.eventConfig),
         ],
       }->HyperSyncSource.getSelectionConfig(~chain)
@@ -105,13 +105,13 @@ describe("HyperSyncSource - getSelectionConfig", () => {
       eventConfigs: [
         (Mock.evmEventConfig(
           ~contractName="Foo",
-          ~blockFieldNames=["hash", "number", "timestamp"],
-          ~transactionFieldNames=["hash"],
+          ~blockFieldNames=([Hash, Number, Timestamp]: array<Internal.evmBlockFieldName>),
+          ~transactionFieldNames=([Hash]: array<Internal.evmTransactionFieldName>),
         ) :> Internal.eventConfig),
         (Mock.evmEventConfig(
           ~contractName="Bar",
-          ~blockFieldNames=["nonce"],
-          ~transactionFieldNames=["gasPrice"],
+          ~blockFieldNames=([Nonce]: array<Internal.evmBlockFieldName>),
+          ~transactionFieldNames=([GasPrice]: array<Internal.evmTransactionFieldName>),
         ) :> Internal.eventConfig),
       ],
     }->HyperSyncSource.getSelectionConfig(~chain)

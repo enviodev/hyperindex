@@ -41,8 +41,9 @@ let makeBlockHandlerProxy: 'raw => proxy<'result> = %raw(`function(raw) {
   });
 }`)
 
-// Build a lookup dict from an array of field names for O(1) access checks
-let makeLookupDict: array<string> => Js.Dict.t<bool> = %raw(`function(fields) {
+// Build a lookup dict from an array of field names for O(1) access checks.
+// Generic over the field name type to accept @unboxed variants (which are strings at runtime).
+let makeLookupDict: array<'fieldName> => Js.Dict.t<bool> = %raw(`function(fields) {
   var dict = {};
   for (var i = 0; i < fields.length; i++) {
     dict[fields[i]] = true;

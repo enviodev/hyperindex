@@ -597,14 +597,14 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
             match field_selection {
                 Some(fs) => {
                     let block_field_names: Vec<String> = fs.block_fields.iter()
-                        .map(|f| format!("\"{}\"", f.name))
+                        .map(|f| f.name.capitalize())
                         .collect();
                     let tx_field_names: Vec<String> = fs.transaction_fields.iter()
-                        .map(|f| format!("\"{}\"", f.name))
+                        .map(|f| f.name.capitalize())
                         .collect();
                     format!(
-                        r#"let blockFieldNames = [{}]
-let transactionFieldNames = [{}]
+                        r#"let blockFieldNames: array<Internal.evmBlockFieldName> = [{}]
+let transactionFieldNames: array<Internal.evmTransactionFieldName> = [{}]
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
 let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)"#,
                         block_field_names.join(", "),
@@ -612,8 +612,8 @@ let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNa
                     )
                 }
                 None => {
-                    r#"let blockFieldNames = []
-let transactionFieldNames = []
+                    r#"let blockFieldNames: array<Internal.evmBlockFieldName> = []
+let transactionFieldNames: array<Internal.evmTransactionFieldName> = []
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
 let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)"#.to_string()
                 }
@@ -2460,8 +2460,8 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
-let blockFieldNames = ["number", "timestamp", "hash"]
-let transactionFieldNames = []
+let blockFieldNames: array<Internal.evmBlockFieldName> = [Number, Timestamp, Hash]
+let transactionFieldNames: array<Internal.evmTransactionFieldName> = []
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
 let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)
 
@@ -2548,8 +2548,8 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
-let blockFieldNames = []
-let transactionFieldNames = []
+let blockFieldNames: array<Internal.evmBlockFieldName> = []
+let transactionFieldNames: array<Internal.evmTransactionFieldName> = []
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
 let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)
 
@@ -2642,8 +2642,8 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
-let blockFieldNames = []
-let transactionFieldNames = ["from"]
+let blockFieldNames: array<Internal.evmBlockFieldName> = []
+let transactionFieldNames: array<Internal.evmTransactionFieldName> = [From]
 let selectedBlockFields = FieldSelection.makeLookupDict(blockFieldNames)
 let selectedTransactionFields = FieldSelection.makeLookupDict(transactionFieldNames)
 

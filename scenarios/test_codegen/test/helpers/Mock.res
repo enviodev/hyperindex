@@ -756,8 +756,8 @@ module Source = {
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
-                            blockFieldNames: [],
-                            transactionFieldNames: [],
+                            blockFieldNames: ([]: array<Internal.evmBlockFieldName>),
+                            transactionFieldNames: ([]: array<Internal.evmTransactionFieldName>),
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
                             selectedBlockFields: Js.Dict.empty(),
                             selectedTransactionFields: Js.Dict.empty(),
@@ -864,8 +864,8 @@ let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47
 let evmEventConfig = (
   ~id=eventId,
   ~contractName="ERC20",
-  ~blockFieldNames: array<string>=[],
-  ~transactionFieldNames: array<string>=[],
+  ~blockFieldNames: array<Internal.evmBlockFieldName>=[],
+  ~transactionFieldNames: array<Internal.evmTransactionFieldName>=[],
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,

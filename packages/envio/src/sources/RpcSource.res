@@ -473,7 +473,7 @@ let makeThrowingGetEventBlock = (
     blockFieldRegistryChecksum
   }
   let fnsCache = Utils.WeakMap.make()
-  (log: Rpc.GetLogs.log, ~blockFieldNames: array<string>) => {
+  (log: Rpc.GetLogs.log, ~blockFieldNames: array<Internal.evmBlockFieldName>) => {
     (
       switch fnsCache->Utils.WeakMap.get(blockFieldNames) {
       | Some(fn) => fn
@@ -481,7 +481,7 @@ let makeThrowingGetEventBlock = (
       | None => {
           let fields: array<blockFieldDef> = []
           blockFieldNames->Array.forEach(fieldName => {
-            switch blockFieldRegistry->Js.Dict.get(fieldName) {
+            switch blockFieldRegistry->Js.Dict.get((fieldName :> string)) {
             | Some(def) => fields->Js.Array2.push(def)->ignore
             | None => () // Unknown field — skip silently
             }
@@ -592,7 +592,7 @@ let makeThrowingGetEventTransaction = (
     fieldRegistryChecksum
   }
   let fnsCache = Utils.WeakMap.make()
-  (log, ~transactionFieldNames: array<string>) => {
+  (log, ~transactionFieldNames: array<Internal.evmTransactionFieldName>) => {
     (
       switch fnsCache->Utils.WeakMap.get(transactionFieldNames) {
       | Some(fn) => fn
@@ -607,10 +607,10 @@ let makeThrowingGetEventTransaction = (
 
           transactionFieldNames->Array.forEach(fieldName => {
             switch fieldName {
-            | "transactionIndex" => hasTransactionIndex := true
-            | "hash" => hasHash := true
+            | TransactionIndex => hasTransactionIndex := true
+            | Hash => hasHash := true
             | _ =>
-              switch fieldRegistry->Js.Dict.get(fieldName) {
+              switch fieldRegistry->Js.Dict.get((fieldName :> string)) {
               | Some(def) =>
                 switch def.source {
                 | TransactionOnly => txFields->Js.Array2.push(def)->ignore
