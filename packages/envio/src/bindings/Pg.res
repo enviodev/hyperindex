@@ -38,6 +38,7 @@ type pgConfig = {
   database?: string,
   ssl?: ssl,
   max?: int,
+  allowExitOnIdle?: bool,
 }
 type queryConfig = {
   text: string,
@@ -91,7 +92,7 @@ let makeSql = (~config: poolConfig): sql => {
     },
   }
 
-  let sql = makePool(pgConfig)->(Utils.magic: pool => sql)
+  let sql = makePool({...pgConfig, allowExitOnIdle: true})->(Utils.magic: pool => sql)
 
   switch config.onnotice {
   | Some(handler) =>

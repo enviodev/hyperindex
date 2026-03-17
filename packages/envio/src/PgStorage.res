@@ -421,17 +421,53 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
         ~itemSchema,
         ~itemsCount=maxItemsPerQuery,
       ),
-      // Use dbSchema instead of itemSchema so that JSON fields get JSON.stringified
-      // (pg driver doesn't auto-serialize JSONB values like postgres.js did)
-      "convertOrThrow": S.compile(
-        S.unnest(dbSchema)->S.preprocess(_ => {
-          serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
-        }),
-        ~input=Value,
-        ~output=Unknown,
-        ~mode=Sync,
-        ~typeValidation,
-      ),
+      // pg driver doesn't auto-serialize JSONB values like postgres.js did.
+      // Use itemSchema (not dbSchema) for the unnest serialization to preserve
+      // schema transformations (e.g. entity history Change variant → raw dict).
+      // Then stringify JSONB values in a post-processing step.
+      "convertOrThrow": {
+        // Find JSONB field indices to stringify them after unnest+flatten
+        let jsonFieldIndices = {
+          let indices = []
+          table->Table.getFields->Js.Array2.forEachi((field, idx) => {
+            switch field.fieldType {
+            | Json => indices->Js.Array2.push(idx)->ignore
+            | _ => ()
+            }
+          })
+          indices
+        }
+        let unnestConvert = S.compile(
+          S.unnest(itemSchema->S.toUnknown)->S.preprocess(_ => {
+            serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
+          }),
+          ~input=Value,
+          ~output=Unknown,
+          ~mode=Sync,
+          ~typeValidation,
+        )
+        if jsonFieldIndices->Utils.Array.notEmpty {
+          let wrapWithJsonStringify: (. array<unknown> => unknown, array<int>) => array<unknown> => unknown = %raw(`
+            function(unnestConvert, jsonFieldIndices) {
+              return function(items) {
+                var result = unnestConvert(items);
+                var itemCount = items.length;
+                for (var j = 0; j < jsonFieldIndices.length; j++) {
+                  var fieldIdx = jsonFieldIndices[j];
+                  for (var i = 0; i < itemCount; i++) {
+                    var flatIdx = fieldIdx * itemCount + i;
+                    result[flatIdx] = JSON.stringify(result[flatIdx]);
+                  }
+                }
+                return result;
+              }
+            }
+          `)
+          wrapWithJsonStringify(. unnestConvert, jsonFieldIndices)
+        } else {
+          unnestConvert
+        }
+      },
       "isInsertValues": true,
     }
   }
