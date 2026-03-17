@@ -54,8 +54,10 @@ type pool
 @send external _queryWithConfig: (sql, queryConfig) => promise<{"rows": 'a}> = "query"
 // Pool-only: acquire a client for transactions
 @send external _connect: sql => promise<sql> = "connect"
-// Client-only: release back to pool
-@send external _release: sql => unit = "release"
+// Client-only: release back to pool.
+// Pass true to destroy the client instead of returning it to the pool.
+@send external _release: (sql, @as(json`false`) _) => unit = "release"
+@send external _releaseAndDestroy: (sql, @as(json`true`) _) => unit = "release"
 // Event emitter (both Pool and Client)
 @send external _on: (sql, string, 'handler) => unit = "on"
 
@@ -104,7 +106,9 @@ let makeSql = (~config: poolConfig): sql => {
 
   // Prevent unhandled error events from crashing the process.
   // Individual query errors are still propagated through promises.
-  sql->_on("error", () => ())
+  sql->_on("error", (err: Js.Exn.t) => {
+    Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
+  })
 
   sql
 }
@@ -134,7 +138,9 @@ let beginSql = async (sql: sql, fn: sql => promise<'a>) => {
     } catch {
     | _ => ()
     }
-    client->_release
+    // Destroy the client instead of returning it to the pool
+    // to avoid reusing a client in a potentially bad state after a failed transaction.
+    client->_releaseAndDestroy
     raise(exn)
   }
 }
