@@ -4,47 +4,43 @@ type eventTransaction
 
 // Shared EVM transaction fields type used by both RPC and HyperSync sources
 // Field names match HyperSyncClient.ResponseTypes.transaction for consistency
-@genType
 type evmTransactionFields = {
-  transactionIndex: int,
-  hash: string,
-  from: option<Address.t>,
-  to: option<Address.t>,
-  gas: bigint,
-  gasPrice: option<bigint>,
-  input: string,
-  nonce: bigint,
-  value: bigint,
-  // Signature fields
-  v: string,
-  r: string,
-  s: string,
-  yParity: option<string>,
+  from?: Address.t,
+  to?: Address.t,
+  gas?: bigint,
+  gasPrice?: bigint,
+  hash?: string,
+  input?: string,
+  nonce?: bigint,
+  transactionIndex?: int,
+  value?: bigint,
+  // Signature fields - optional for ZKSync EIP-712 compatibility
+  v?: string,
+  r?: string,
+  s?: string,
+  yParity?: string,
   // EIP-1559 fields
-  maxPriorityFeePerGas: option<bigint>,
-  maxFeePerGas: option<bigint>,
+  maxPriorityFeePerGas?: bigint,
+  maxFeePerGas?: bigint,
   // EIP-4844 blob fields
-  maxFeePerBlobGas: option<bigint>,
-  blobVersionedHashes: option<array<string>>,
+  maxFeePerBlobGas?: bigint,
+  blobVersionedHashes?: array<string>,
   // Receipt fields (from joined transaction receipts)
-  cumulativeGasUsed: bigint,
-  effectiveGasPrice: bigint,
-  gasUsed: bigint,
-  contractAddress: option<Address.t>,
-  logsBloom: string,
+  cumulativeGasUsed?: bigint,
+  effectiveGasPrice?: bigint,
+  gasUsed?: bigint,
+  contractAddress?: string,
+  logsBloom?: string,
   @as("type")
-  type_: option<int>,
-  root: option<string>,
-  status: option<int>,
+  type_?: int,
+  root?: string,
+  status?: int,
   // L2 specific fields (Optimism, Arbitrum, etc.)
-  l1Fee: option<bigint>,
-  l1GasPrice: option<bigint>,
-  l1GasUsed: option<bigint>,
-  l1FeeScalar: option<float>,
-  gasUsedForL1: option<bigint>,
-  // Access list
-  accessList: option<array<HyperSyncClient.ResponseTypes.accessList>>,
-  authorizationList: option<array<HyperSyncClient.ResponseTypes.authorizationList>>,
+  l1Fee?: bigint,
+  l1GasPrice?: bigint,
+  l1GasUsed?: bigint,
+  l1FeeScalar?: float,
+  gasUsedForL1?: bigint,
 }
 
 @genType

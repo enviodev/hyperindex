@@ -848,13 +848,7 @@ let mockRawEventRow: InternalTable.RawEvents.t = {
   eventName: "SimpleNftCreated",
   blockNumber: 1000,
   logIndex: 10,
-  transactionFields: S.reverseConvertToJsonOrThrow(
-    {
-      Transaction.transactionIndex: 20,
-      hash: "0x1234567890abcdef",
-    },
-    Transaction.schema,
-  ),
+  transactionFields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
   srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
   blockHash: "0x9876543210fedcba9876543210fedcba987654321",
   blockTimestamp: 1620720000,
