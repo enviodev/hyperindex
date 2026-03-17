@@ -473,23 +473,23 @@ let makeThrowingGetEventBlock = (
     blockFieldRegistryChecksum
   }
   let fnsCache = Utils.WeakMap.make()
-  (log: Rpc.GetLogs.log, ~blockFieldNames: array<Internal.evmBlockFieldName>) => {
+  (log: Rpc.GetLogs.log, ~selectedBlockFields: Utils.Set.t<Internal.evmBlockField>) => {
     (
-      switch fnsCache->Utils.WeakMap.get(blockFieldNames) {
+      switch fnsCache->Utils.WeakMap.get(selectedBlockFields) {
       | Some(fn) => fn
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
           let fields: array<blockFieldDef> = []
-          blockFieldNames->Array.forEach(fieldName => {
+          selectedBlockFields->Utils.Set.toArray->Array.forEach(fieldName => {
             switch blockFieldRegistry->Js.Dict.get((fieldName :> string)) {
             | Some(def) => fields->Js.Array2.push(def)->ignore
             | None => () // Unknown field — skip silently
             }
           })
 
-          let fn = switch blockFieldNames {
-          | [] => _ => (%raw(`{}`)->(Utils.magic: 'a => Internal.eventBlock))->Promise.resolve
-          | _ =>
+          let fn = if selectedBlockFields->Utils.Set.size == 0 {
+            _ => (%raw(`{}`)->(Utils.magic: 'a => Internal.eventBlock))->Promise.resolve
+          } else {
             (log: Rpc.GetLogs.log) => {
               getBlockJson(log.blockNumber)->Promise.thenResolve(json => {
                 let mutBlockAcc = Js.Dict.empty()
@@ -498,7 +498,7 @@ let makeThrowingGetEventBlock = (
               })
             }
           }
-          let _ = fnsCache->Utils.WeakMap.set(blockFieldNames, fn)
+          let _ = fnsCache->Utils.WeakMap.set(selectedBlockFields, fn)
           fn
         }
       }
@@ -592,9 +592,9 @@ let makeThrowingGetEventTransaction = (
     fieldRegistryChecksum
   }
   let fnsCache = Utils.WeakMap.make()
-  (log, ~transactionFieldNames: array<Internal.evmTransactionFieldName>) => {
+  (log, ~selectedTransactionFields: Utils.Set.t<Internal.evmTransactionField>) => {
     (
-      switch fnsCache->Utils.WeakMap.get(transactionFieldNames) {
+      switch fnsCache->Utils.WeakMap.get(selectedTransactionFields) {
       | Some(fn) => fn
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
@@ -605,7 +605,7 @@ let makeThrowingGetEventTransaction = (
           let receiptFields: array<fieldDef> = []
           let bothFields: array<fieldDef> = []
 
-          transactionFieldNames->Array.forEach(fieldName => {
+          selectedTransactionFields->Utils.Set.toArray->Array.forEach(fieldName => {
             switch fieldName {
             | TransactionIndex => hasTransactionIndex := true
             | Hash => hasHash := true
@@ -651,15 +651,16 @@ let makeThrowingGetEventTransaction = (
             }
           }
 
-          let fn = switch (transactionFieldNames, strategy) {
-          | ([], _) => _ => %raw(`{}`)->Promise.resolve
-          | (_, NoRpc) =>
+          let fn = if selectedTransactionFields->Utils.Set.size == 0 {
+            _ => %raw(`{}`)->Promise.resolve
+          } else { switch strategy {
+          | NoRpc =>
             (log: Rpc.GetLogs.log) => {
               let mutTransactionAcc = Js.Dict.empty()
               setLogFields(mutTransactionAcc, log)
               (mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a))->Promise.resolve
             }
-          | (_, _) =>
+          | _ =>
             (log: Rpc.GetLogs.log) => {
               let txJsonPromise = switch strategy {
               | TransactionOnly | TransactionAndReceipt =>
@@ -691,8 +692,8 @@ let makeThrowingGetEventTransaction = (
                 mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)
               })
             }
-          }
-          let _ = fnsCache->Utils.WeakMap.set(transactionFieldNames, fn)
+          }}
+          let _ = fnsCache->Utils.WeakMap.set(selectedTransactionFields, fn)
           fn
         }
       }
@@ -989,10 +990,10 @@ let make = (
                 async () => {
                   let (block, transaction) = try await Promise.all2((
                     log->getEventBlockOrThrow(
-                      ~blockFieldNames=eventConfig.blockFieldNames,
+                      ~selectedBlockFields=eventConfig.selectedBlockFields,
                     ),
                     log->getEventTransactionOrThrow(
-                      ~transactionFieldNames=eventConfig.transactionFieldNames,
+                      ~selectedTransactionFields=eventConfig.selectedTransactionFields,
                     ),
                   )) catch {
                   | exn =>

@@ -5,7 +5,7 @@ type proxy<'a> = 'a
 
 let makeFieldSelectionProxy: (
   'raw,
-  ~selectedFields: Js.Dict.t<bool>,
+  ~selectedFields: Utils.Set.t<'field>,
   ~entityType: string,
   ~eventName: string,
 ) => proxy<'result> = %raw(`function(raw, selectedFields, entityType, eventName) {
@@ -14,7 +14,7 @@ let makeFieldSelectionProxy: (
       if (typeof prop === 'symbol' || prop === 'toJSON' || prop === 'constructor' || prop === 'valueOf' || prop === 'toString') {
         return Reflect.get(target, prop, receiver);
       }
-      if (selectedFields[prop]) {
+      if (selectedFields.has(prop)) {
         return Reflect.get(target, prop, receiver);
       }
       throw new Error(
@@ -41,12 +41,3 @@ let makeBlockHandlerProxy: 'raw => proxy<'result> = %raw(`function(raw) {
   });
 }`)
 
-// Build a lookup dict from an array of field names for O(1) access checks.
-// Generic over the field name type to accept @unboxed variants (which are strings at runtime).
-let makeLookupDict: array<'fieldName> => Js.Dict.t<bool> = %raw(`function(fields) {
-  var dict = {};
-  for (var i = 0; i < fields.length; i++) {
-    dict[fields[i]] = true;
-  }
-  return dict;
-}`)

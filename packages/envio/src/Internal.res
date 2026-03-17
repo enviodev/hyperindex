@@ -5,12 +5,10 @@ type eventTransaction
 // Field name variants for type-safe field selection.
 // @unboxed compiles to plain strings at runtime, matching JS property names.
 @unboxed
-type evmBlockFieldName =
-  // Always-selected fields
+type evmBlockField =
   | @as("number") Number
   | @as("timestamp") Timestamp
   | @as("hash") Hash
-  // Optional fields
   | @as("parentHash") ParentHash
   | @as("nonce") Nonce
   | @as("sha3Uncles") Sha3Uncles
@@ -37,7 +35,7 @@ type evmBlockFieldName =
   | @as("mixHash") MixHash
 
 @unboxed
-type evmTransactionFieldName =
+type evmTransactionField =
   | @as("transactionIndex") TransactionIndex
   | @as("hash") Hash
   | @as("from") From
@@ -242,12 +240,9 @@ type eventFilters =
 type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
-  blockFieldNames: array<evmBlockFieldName>,
-  transactionFieldNames: array<evmTransactionFieldName>,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
-  // Lookup dicts derived from field name arrays, used by runtime proxy to validate field access
-  selectedBlockFields: Js.Dict.t<bool>,
-  selectedTransactionFields: Js.Dict.t<bool>,
+  selectedBlockFields: Utils.Set.t<evmBlockField>,
+  selectedTransactionFields: Utils.Set.t<evmTransactionField>,
 }
 type evmContractConfig = {
   name: string,

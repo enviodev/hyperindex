@@ -38,13 +38,21 @@ expression: project_template.internal_config_json_code
         "events": [
           {
             "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
-            "sighash": "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b",
-            "topicCount": 1
+            "blockFields": [
+              "number",
+              "timestamp",
+              "hash",
+              "parentHash",
+              "miner"
+            ],
+            "transactionFields": [
+              "hash",
+              "from",
+              "value"
+            ]
           },
           {
-            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)",
-            "sighash": "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c",
-            "topicCount": 1
+            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
           }
         ]
       }
@@ -53,9 +61,12 @@ expression: project_template.internal_config_json_code
     "globalBlockFields": [
       "number",
       "timestamp",
-      "hash"
+      "hash",
+      "parentHash"
     ],
-    "globalTransactionFields": []
+    "globalTransactionFields": [
+      "hash"
+    ]
   },
   "enums": {
     "Status": [
