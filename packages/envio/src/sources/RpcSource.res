@@ -480,7 +480,7 @@ let makeThrowingGetEventBlock = (
       // Build per-field parser on first call, then cache in WeakMap
       | None => {
           let fields: array<blockFieldDef> = []
-          selectedBlockFields->Utils.Set.toArray->Array.forEach(fieldName => {
+          selectedBlockFields->Utils.Set.forEach(fieldName => {
             switch blockFieldRegistry->Js.Dict.get((fieldName :> string)) {
             | Some(def) => fields->Js.Array2.push(def)->ignore
             | None => () // Unknown field — skip silently
@@ -605,7 +605,7 @@ let makeThrowingGetEventTransaction = (
           let receiptFields: array<fieldDef> = []
           let bothFields: array<fieldDef> = []
 
-          selectedTransactionFields->Utils.Set.toArray->Array.forEach(fieldName => {
+          selectedTransactionFields->Utils.Set.forEach(fieldName => {
             switch fieldName {
             | TransactionIndex => hasTransactionIndex := true
             | Hash => hasHash := true

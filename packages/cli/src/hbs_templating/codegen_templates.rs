@@ -1729,24 +1729,15 @@ type testIndexer = {{
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
                     // Extract event details for EVM contracts, with per-event field selection
                     let events = match &contract.abi {
-                        Abi::Evm(abi) => {
-                            // Build sighash → field_selection lookup from configured events
-                            let field_selection_by_sighash: std::collections::HashMap<&str, &system_config::FieldSelection> =
-                                contract.events.iter()
-                                    .filter_map(|e| e.field_selection.as_ref().map(|fs| (e.sighash.as_str(), fs)))
-                                    .collect();
-                            abi
-                                .get_event_details()
-                                .into_iter()
-                                .map(|(sig, selector, topic_count)| {
-                                    let fs = field_selection_by_sighash.get(selector.as_str());
-                                    InternalContractEventItem {
-                                        event: sig,
-                                        block_fields: fs.map(|fs| fs.block_fields.iter()
-                                            .filter(|f| !matches!(f.name.as_str(), "number" | "timestamp" | "hash"))
-                                            .map(|f| f.name.clone()).collect()),
-                                        transaction_fields: fs.map(|fs| fs.transaction_fields.iter().map(|f| f.name.clone()).collect()),
-                                    }
+                        Abi::Evm(_) => {
+                            contract.events.iter()
+                                .map(|e| InternalContractEventItem {
+                                    event: e.event_signature.clone(),
+                                    block_fields: e.field_selection.as_ref().map(|fs| fs.block_fields.iter()
+                                        .filter(|f| !matches!(f.name.as_str(), "number" | "timestamp" | "hash"))
+                                        .map(|f| f.name.clone()).collect()),
+                                    transaction_fields: e.field_selection.as_ref().map(|fs| fs.transaction_fields.iter()
+                                        .map(|f| f.name.clone()).collect()),
                                 })
                                 .collect()
                         }
@@ -2461,6 +2452,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
             kind: system_config::EventKind::Params(vec![]),
             sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                 .to_string(),
+            event_signature: String::new(),
             field_selection: None,
         }, &global_field_selection)
         .unwrap();
@@ -2543,6 +2535,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
             kind: system_config::EventKind::Params(vec![]),
             sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                 .to_string(),
+            event_signature: String::new(),
             field_selection: Some(FieldSelection {
                 block_fields: vec![],
                 transaction_fields: vec![SelectedField {

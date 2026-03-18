@@ -1337,6 +1337,9 @@ pub struct Event {
     pub kind: EventKind,
     pub name: String,
     pub sighash: String,
+    /// Full event signature (e.g. "Transfer(address indexed from, address indexed to, uint256 value)")
+    /// Only set for EVM events; empty for Fuel events.
+    pub event_signature: String,
     pub field_selection: Option<FieldSelection>,
 }
 
@@ -1453,6 +1456,7 @@ impl Event {
 
             let abi_name = alloy_event.name.clone();
             let name = event_config.name.clone().unwrap_or(abi_name.clone());
+            let event_signature = EvmAbi::event_signature_from_abi_event(&alloy_event);
 
             // Convert alloy params to our abi_compat EventParam
             let normalized_unnamed_params: Vec<EventParam> =
@@ -1468,6 +1472,7 @@ impl Event {
                 name,
                 kind: EventKind::Params(normalized_unnamed_params),
                 sighash,
+                event_signature,
                 field_selection: match event_config.field_selection {
                     Some(ref selection_config) => {
                         Some(FieldSelection::try_from_config_field_selection(
@@ -1555,6 +1560,7 @@ impl Event {
                         name: event_config.name.clone(),
                         kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
                         sighash: log.id,
+                        event_signature: String::new(),
                         field_selection: None,
                     }
                 }
@@ -1562,24 +1568,28 @@ impl Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Mint),
                     sighash: "mint".to_string(),
+                    event_signature: String::new(),
                     field_selection: None,
                 },
                 EventType::Burn => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Burn),
                     sighash: "burn".to_string(),
+                    event_signature: String::new(),
                     field_selection: None,
                 },
                 EventType::Transfer => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Transfer),
                     sighash: "transfer".to_string(),
+                    event_signature: String::new(),
                     field_selection: None,
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Call),
                     sighash: "call".to_string(),
+                    event_signature: String::new(),
                     field_selection: None,
                 },
             };

@@ -86,6 +86,10 @@ let evmTransactionFieldSchema = S.enum([
   AuthorizationList,
 ])
 
+// Static sets of nullable field names — matches the S.nullable wrapping in RpcSource field registries
+let nullableBlockFields = Utils.Set.fromArray(([Nonce, Difficulty, TotalDifficulty, Uncles, BaseFeePerGas, BlobGasUsed, ExcessBlobGas, ParentBeaconBlockRoot, WithdrawalsRoot, L1BlockNumber, SendCount, SendRoot, MixHash]: array<evmBlockField>))
+let nullableTransactionFields = Utils.Set.fromArray(([GasPrice, V, R, S, YParity, MaxPriorityFeePerGas, MaxFeePerGas, MaxFeePerBlobGas, BlobVersionedHashes, ContractAddress, Root, Status, L1Fee, L1GasPrice, L1GasUsed, L1FeeScalar, GasUsedForL1, From, To, Type]: array<evmTransactionField>))
+
 // Shared EVM transaction fields type used by both RPC and HyperSync sources
 // Field names match HyperSyncClient.ResponseTypes.transaction for consistency
 type evmTransactionFields = {
