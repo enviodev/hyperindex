@@ -995,11 +995,11 @@ let rec writeBatch = async (
         }),
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
-        // Run sequentially to avoid concurrent Hasura configuration requests.
-        updatedEffectsCache->Js.Array2.reduce(async (acc, {effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
-          let _ = await acc
-          await setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
-        }, Promise.resolve()),
+        updatedEffectsCache
+        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
+          setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
+        })
+        ->Promise.all,
       ))
 
       // Just in case, if there's a not PG-specific error.
