@@ -271,12 +271,12 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     if cf->ChainFetcher.hasProcessedToEndblock {
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
-        cf->ChainFetcher.isLive ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
+        cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
       {
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
       }
-    } else if !(cf->ChainFetcher.isLive) && cf.isProgressAtHead {
+    } else if !(cf->ChainFetcher.isReady) && cf.isProgressAtHead {
       //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
       //its not already set
       //CASE1
