@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2673
 expression: project_template.internal_config_json_code
 ---
 {
@@ -39,13 +40,7 @@ expression: project_template.internal_config_json_code
         ]
       }
     },
-    "addressFormat": "checksum",
-    "globalBlockFields": [
-      "number",
-      "timestamp",
-      "hash"
-    ],
-    "globalTransactionFields": []
+    "addressFormat": "checksum"
   },
   "enums": {
     "Status": [

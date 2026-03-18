@@ -1,5 +1,66 @@
 open Vitest
 
+// Exhaustiveness check: if a new variant is added to evmBlockField,
+// this match will fail to compile until it's added here and to the schema.
+let checkBlockField = (field: Internal.evmBlockField) =>
+  switch field {
+  | Number | Timestamp | Hash | ParentHash | Nonce | Sha3Uncles
+  | LogsBloom | TransactionsRoot | StateRoot | ReceiptsRoot | Miner
+  | Difficulty | TotalDifficulty | ExtraData | Size | GasLimit | GasUsed
+  | Uncles | BaseFeePerGas | BlobGasUsed | ExcessBlobGas
+  | ParentBeaconBlockRoot | WithdrawalsRoot | L1BlockNumber | SendCount
+  | SendRoot | MixHash => field
+  }
+
+let allEvmBlockFields = ([
+  Number, Timestamp, Hash, ParentHash, Nonce, Sha3Uncles, LogsBloom,
+  TransactionsRoot, StateRoot, ReceiptsRoot, Miner, Difficulty,
+  TotalDifficulty, ExtraData, Size, GasLimit, GasUsed, Uncles,
+  BaseFeePerGas, BlobGasUsed, ExcessBlobGas, ParentBeaconBlockRoot,
+  WithdrawalsRoot, L1BlockNumber, SendCount, SendRoot, MixHash,
+]: array<Internal.evmBlockField>)
+
+// Exhaustiveness check: if a new variant is added to evmTransactionField,
+// this match will fail to compile until it's added here and to the schema.
+let checkTransactionField = (field: Internal.evmTransactionField) =>
+  switch field {
+  | TransactionIndex | Hash | From | To | Gas | GasPrice
+  | MaxPriorityFeePerGas | MaxFeePerGas | CumulativeGasUsed
+  | EffectiveGasPrice | GasUsed | Input | Nonce | Value | V | R | S
+  | ContractAddress | LogsBloom | Root | Status | YParity | AccessList
+  | MaxFeePerBlobGas | BlobVersionedHashes | Type | L1Fee | L1GasPrice
+  | L1GasUsed | L1FeeScalar | GasUsedForL1 | AuthorizationList => field
+  }
+
+let allEvmTransactionFields = ([
+  TransactionIndex, Hash, From, To, Gas, GasPrice, MaxPriorityFeePerGas,
+  MaxFeePerGas, CumulativeGasUsed, EffectiveGasPrice, GasUsed, Input,
+  Nonce, Value, V, R, S, ContractAddress, LogsBloom, Root, Status,
+  YParity, AccessList, MaxFeePerBlobGas, BlobVersionedHashes, Type,
+  L1Fee, L1GasPrice, L1GasUsed, L1FeeScalar, GasUsedForL1,
+  AuthorizationList,
+]: array<Internal.evmTransactionField>)
+
+describe("Field selection enum schemas", () => {
+  it("evmBlockFieldSchema parses all block field variants", t => {
+    allEvmBlockFields->Js.Array2.forEach(field => {
+      // checkBlockField ensures exhaustiveness at compile time
+      let field = checkBlockField(field)
+      let json = (field :> string)->Js.Json.string
+      t.expect(json->S.parseOrThrow(Internal.evmBlockFieldSchema)).toBe(field)
+    })
+  })
+
+  it("evmTransactionFieldSchema parses all transaction field variants", t => {
+    allEvmTransactionFields->Js.Array2.forEach(field => {
+      // checkTransactionField ensures exhaustiveness at compile time
+      let field = checkTransactionField(field)
+      let json = (field :> string)->Js.Json.string
+      t.expect(json->S.parseOrThrow(Internal.evmTransactionFieldSchema)).toBe(field)
+    })
+  })
+})
+
 describe("Config.fromPublic", () => {
   it("resolves ABI for lowercase contract name in internal config", t => {
     // Internal config JSON with a lowercase contract name key ("greeter")

@@ -144,7 +144,9 @@ struct InternalEvmConfig<'a> {
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
     address_format: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     global_block_fields: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     global_transaction_fields: Vec<String>,
 }
 
@@ -1770,7 +1772,9 @@ type testIndexer = {{
                         } else {
                             "checksum"
                         },
-                        global_block_fields: cfg.field_selection.block_fields.iter().map(|f| f.name.clone()).collect(),
+                        global_block_fields: cfg.field_selection.block_fields.iter()
+                            .filter(|f| !matches!(f.name.as_str(), "number" | "timestamp" | "hash"))
+                            .map(|f| f.name.clone()).collect(),
                         global_transaction_fields: cfg.field_selection.transaction_fields.iter().map(|f| f.name.clone()).collect(),
                     }),
                     None,

@@ -64,7 +64,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~lowercaseAddresses=false,
       )
       t.expect(
-        await mockLog()->getEventTransactionOrThrow(~transactionFieldNames=([]: array<Internal.evmTransactionFieldName>)),
+        await mockLog()->getEventTransactionOrThrow(~selectedTransactionFields=Utils.Set.fromArray([]: array<Internal.evmTransactionField>)),
       ).toEqual(
         %raw(`{}`),
       )
@@ -79,7 +79,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionFieldNames=([TransactionIndex]: array<Internal.evmTransactionFieldName>),
+        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex]: array<Internal.evmTransactionField>),
       ),
     ).toEqual(
       {
@@ -96,7 +96,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionFieldNames=([Hash]: array<Internal.evmTransactionFieldName>),
+        ~selectedTransactionFields=Utils.Set.fromArray([Hash]: array<Internal.evmTransactionField>),
       ),
     ).toEqual(
       {
@@ -113,7 +113,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionFieldNames=([Hash, TransactionIndex]: array<Internal.evmTransactionFieldName>),
+        ~selectedTransactionFields=Utils.Set.fromArray([Hash, TransactionIndex]: array<Internal.evmTransactionField>),
       ),
     ).toEqual(
       {
@@ -130,7 +130,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionFieldNames=([TransactionIndex, Hash]: array<Internal.evmTransactionFieldName>),
+        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex, Hash]: array<Internal.evmTransactionField>),
       ),
     ).toEqual(
       {
@@ -161,13 +161,13 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
-        ~transactionFieldNames=([
+        ~selectedTransactionFields=Utils.Set.fromArray([
           Hash, TransactionIndex, From, To, Gas, GasPrice,
           MaxPriorityFeePerGas, MaxFeePerGas, Input, Nonce,
           Value, V, R, S, YParity,
           // Receipt fields
           GasUsed, EffectiveGasPrice, Status,
-        ]: array<Internal.evmTransactionFieldName>),
+        ]: array<Internal.evmTransactionField>),
       ),
     ).toEqual(
       {
@@ -215,10 +215,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       // Per-field parsing handles this — absent fields are simply not included.
       t.expect(
         await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
-          ~transactionFieldNames=([
+          ~selectedTransactionFields=Utils.Set.fromArray([
             Hash, From, To, Gas, GasPrice, Nonce, Value, Type,
             MaxFeePerGas, MaxPriorityFeePerGas,
-          ]: array<Internal.evmTransactionFieldName>),
+          ]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {
@@ -254,7 +254,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([From, Gas]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([From, Gas]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {
@@ -278,7 +278,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([GasUsed]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([GasUsed]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {"gasUsed": 21000n},
@@ -297,7 +297,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([CumulativeGasUsed]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([CumulativeGasUsed]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {"cumulativeGasUsed": 500000n},
@@ -316,7 +316,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([EffectiveGasPrice]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([EffectiveGasPrice]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {"effectiveGasPrice": 17699339493n},
@@ -339,7 +339,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([Hash, Gas, GasUsed, EffectiveGasPrice, Status]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([Hash, Gas, GasUsed, EffectiveGasPrice, Status]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {
@@ -365,7 +365,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([Gas, Input]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([Gas, Input]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {
@@ -399,7 +399,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([Gas]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([Gas]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {"gas": 21000n},
@@ -418,7 +418,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionFieldNames=([L1FeeScalar]: array<Internal.evmTransactionFieldName>),
+          ~selectedTransactionFields=Utils.Set.fromArray([L1FeeScalar]: array<Internal.evmTransactionField>),
         ),
       ).toEqual(
         {"l1FeeScalar": 0.684},
@@ -434,7 +434,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     try {
       let _ = await mockLog()->getEventTransactionOrThrow(
-        ~transactionFieldNames=([Gas]: array<Internal.evmTransactionFieldName>),
+        ~selectedTransactionFields=Utils.Set.fromArray([Gas]: array<Internal.evmTransactionField>),
       )
       Js.Exn.raiseError("Should have thrown")
     } catch {
@@ -458,7 +458,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
 
     let result = await mockLog()->getEventTransactionOrThrow(
-      ~transactionFieldNames=([From, ContractAddress]: array<Internal.evmTransactionFieldName>),
+      ~selectedTransactionFields=Utils.Set.fromArray([From, ContractAddress]: array<Internal.evmTransactionField>),
     )
     t.expect(
       result,
@@ -485,7 +485,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         ~lowercaseAddresses=false,
       )
       t.expect(
-        (await mockLog()->getEventBlockOrThrow(~blockFieldNames=([]: array<Internal.evmBlockFieldName>)))->toJson,
+        (await mockLog()->getEventBlockOrThrow(~selectedBlockFields=Utils.Set.fromArray([]: array<Internal.evmBlockField>)))->toJson,
       ).toEqual(
         %raw(`{}`),
       )
@@ -502,7 +502,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockFieldNames=([Number]: array<Internal.evmBlockFieldName>),
+        ~selectedBlockFields=Utils.Set.fromArray([Number]: array<Internal.evmBlockField>),
       ))->toJson,
     ).toEqual(
       %raw(`{"number": 123456}`),
@@ -519,7 +519,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockFieldNames=([Number, Timestamp, Hash]: array<Internal.evmBlockFieldName>),
+        ~selectedBlockFields=Utils.Set.fromArray([Number, Timestamp, Hash]: array<Internal.evmBlockField>),
       ))->toJson,
     ).toEqual(
       %raw(`{"number": 123456, "timestamp": 100000000, "hash": "0xabcdef"}`),
@@ -544,7 +544,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockFieldNames=([GasUsed, GasLimit]: array<Internal.evmBlockFieldName>),
+        ~selectedBlockFields=Utils.Set.fromArray([GasUsed, GasLimit]: array<Internal.evmBlockField>),
       ))->toJson,
     ).toEqual(
       %raw(`{"gasUsed": 21000n, "gasLimit": 30000000n}`),
@@ -565,7 +565,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=true,
     )
     let result = await mockLog()->getEventBlockOrThrow(
-      ~blockFieldNames=([Miner]: array<Internal.evmBlockFieldName>),
+      ~selectedBlockFields=Utils.Set.fromArray([Miner]: array<Internal.evmBlockField>),
     )
     t.expect(result->toJson).toEqual(
       %raw(`{"miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"}`),
@@ -586,7 +586,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     let result = await mockLog()->getEventBlockOrThrow(
-      ~blockFieldNames=([Miner]: array<Internal.evmBlockFieldName>),
+      ~selectedBlockFields=Utils.Set.fromArray([Miner]: array<Internal.evmBlockField>),
     )
     t.expect(result->toJson).toEqual(
       %raw(`{"miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"}`),
@@ -611,7 +611,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockFieldNames=([GasUsed]: array<Internal.evmBlockFieldName>),
+        ~selectedBlockFields=Utils.Set.fromArray([GasUsed]: array<Internal.evmBlockField>),
       ))->toJson,
     ).toEqual(
       %raw(`{"gasUsed": 21000n}`),
@@ -633,7 +633,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     try {
       let _ = await mockLog()->getEventBlockOrThrow(
-        ~blockFieldNames=([GasUsed]: array<Internal.evmBlockFieldName>),
+        ~selectedBlockFields=Utils.Set.fromArray([GasUsed]: array<Internal.evmBlockField>),
       )
       Js.Exn.raiseError("Should have thrown")
     } catch {
@@ -661,7 +661,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     let result = (await mockLog()->getEventBlockOrThrow(
-      ~blockFieldNames=([BaseFeePerGas, Difficulty]: array<Internal.evmBlockFieldName>),
+      ~selectedBlockFields=Utils.Set.fromArray([BaseFeePerGas, Difficulty]: array<Internal.evmBlockField>),
     ))->toJson
     t.expect(result).toEqual(
       %raw(`{"baseFeePerGas": 1000000000n, "difficulty": 17179869184n}`),
@@ -689,7 +689,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
 
     t.expect(
       (await log->getEventBlockOrThrow(
-        ~blockFieldNames=([
+        ~selectedBlockFields=Utils.Set.fromArray([
           Number,
           Timestamp,
           Hash,
@@ -697,7 +697,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
           GasLimit,
           BaseFeePerGas,
           ParentHash,
-        ]: array<Internal.evmBlockFieldName>),
+        ]: array<Internal.evmBlockField>),
       ))->toJson,
     ).toEqual(
       %raw(`{

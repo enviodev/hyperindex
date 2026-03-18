@@ -756,11 +756,9 @@ module Source = {
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
-                            blockFieldNames: ([]: array<Internal.evmBlockFieldName>),
-                            transactionFieldNames: ([]: array<Internal.evmTransactionFieldName>),
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
-                            selectedBlockFields: Js.Dict.empty(),
-                            selectedTransactionFields: Js.Dict.empty(),
+                            selectedBlockFields: Utils.Set.make(),
+                            selectedTransactionFields: Utils.Set.make(),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -864,8 +862,8 @@ let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47
 let evmEventConfig = (
   ~id=eventId,
   ~contractName="ERC20",
-  ~blockFieldNames: array<Internal.evmBlockFieldName>=[],
-  ~transactionFieldNames: array<Internal.evmTransactionFieldName>=[],
+  ~blockFieldNames: array<Internal.evmBlockField>=[],
+  ~transactionFieldNames: array<Internal.evmTransactionField>=[],
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
@@ -883,8 +881,6 @@ let evmEventConfig = (
     paramsRawEventSchema: S.literal(%raw(`null`))
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    blockFieldNames,
-    transactionFieldNames,
     getEventFiltersOrThrow: _ =>
       switch dependsOnAddresses {
       | Some(true) =>
@@ -915,7 +911,7 @@ let evmEventConfig = (
         ])
       },
     convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
-    selectedBlockFields: FieldSelection.makeLookupDict(blockFieldNames),
-    selectedTransactionFields: FieldSelection.makeLookupDict(transactionFieldNames),
+    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
+    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
   }
 }

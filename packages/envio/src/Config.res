@@ -231,8 +231,8 @@ let publicConfigEvmSchema = S.schema(s =>
     "chains": s.matches(S.dict(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
-    "globalBlockFields": s.matches(S.array(S.string)),
-    "globalTransactionFields": s.matches(S.array(S.string)),
+    "globalBlockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
+    "globalTransactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
   }
 )
 
@@ -426,32 +426,40 @@ let publicConfigSchema = S.schema(s =>
 
 // Enrich EVM event configs with field selections from the JSON config.
 // Mutates the event configs in-place to set selectedBlockFields/selectedTransactionFields.
-let enrichEvmFieldSelections: (
-  array<Internal.eventConfig>,
+let enrichEvmFieldSelections = (
+  events: array<Internal.eventConfig>,
   ~jsonEvents: option<array<_>>,
-  ~globalBlockFields: array<string>,
-  ~globalTransactionFields: array<string>,
-) => unit = %raw(`function(events, jsonEvents, globalBlockFields, globalTransactionFields) {
+  ~globalBlockFields: array<Internal.evmBlockField>,
+  ~globalTransactionFields: array<Internal.evmTransactionField>,
+) => {
   // Build a lookup by event name extracted from the event signature
-  var fieldsByName = {};
-  if (jsonEvents) {
-    for (var i = 0; i < jsonEvents.length; i++) {
-      var je = jsonEvents[i];
-      var name = je.event.split('(')[0];
-      if (je.blockFields || je.transactionFields) {
-        fieldsByName[name] = je;
+  let fieldsByName: Js.Dict.t<_> = Js.Dict.empty()
+  switch jsonEvents {
+  | Some(jes) =>
+    jes->Array.forEach(je => {
+      let name = je["event"]->Js.String2.split("(")->Array.getUnsafe(0)
+      if je["blockFields"] != None || je["transactionFields"] != None {
+        fieldsByName->Js.Dict.set(name, je)
       }
+    })
+  | None => ()
+  }
+  events->Array.forEach(event => {
+    // Cast to evmEventConfig to set the selected fields (safe: all EVM events have these fields)
+    let evmEvent = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    let je = fieldsByName->Js.Dict.get(evmEvent.name)
+    let blockFields = switch je->Option.flatMap(j => j["blockFields"]) {
+    | Some(fields) => fields->(Utils.magic: array<string> => array<Internal.evmBlockField>)
+    | None => globalBlockFields
     }
-  }
-  for (var i = 0; i < events.length; i++) {
-    var event = events[i];
-    var je = fieldsByName[event.name];
-    var blockFields = (je && je.blockFields) || globalBlockFields;
-    var transactionFields = (je && je.transactionFields) || globalTransactionFields;
-    event.selectedBlockFields = new Set(blockFields);
-    event.selectedTransactionFields = new Set(transactionFields);
-  }
-}`)
+    let transactionFields = switch je->Option.flatMap(j => j["transactionFields"]) {
+    | Some(fields) => fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>)
+    | None => globalTransactionFields
+    }
+    evmEvent.selectedBlockFields = Utils.Set.fromArray(blockFields)
+    evmEvent.selectedTransactionFields = Utils.Set.fromArray(transactionFields)
+  })
+}
 
 let fromPublic = (
   publicConfigJson: Js.Json.t,
@@ -495,9 +503,15 @@ let fromPublic = (
   }
 
   // Extract global EVM field selections (used as defaults for events without per-event overrides)
+  // Always-included block fields (number, timestamp, hash) are not in the JSON;
+  // we prepend them here so they're always present.
+  let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
   let (globalBlockFields, globalTransactionFields) = switch publicConfig["evm"] {
-  | Some(evm) => (evm["globalBlockFields"], evm["globalTransactionFields"])
-  | None => ([], [])
+  | Some(evm) => (
+      Array.concat(alwaysIncludedBlockFields, evm["globalBlockFields"]->Option.getWithDefault([])),
+      evm["globalTransactionFields"]->Option.getWithDefault([]),
+    )
+  | None => (alwaysIncludedBlockFields, [])
   }
 
   // Store ABI, event signatures, and per-event field selections for each contract
