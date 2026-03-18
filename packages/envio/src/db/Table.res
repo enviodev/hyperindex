@@ -162,12 +162,17 @@ type compositeIndexField = {
 
 type table = {
   tableName: string,
+  stmtId: string,
   fields: array<fieldOrDerived>,
   compositeIndices: array<array<compositeIndexField>>,
 }
 
-let mkTable = (tableName, ~compositeIndices=[], ~fields) => {
+let mkTable = (tableName, ~stmtId=?, ~compositeIndices=[], ~fields) => {
   tableName,
+  stmtId: switch stmtId {
+  | Some(id) => id
+  | None => tableName
+  },
   fields,
   compositeIndices,
 }

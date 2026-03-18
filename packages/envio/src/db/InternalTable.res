@@ -204,7 +204,7 @@ WHERE "${(#id: field :> string)}" = $1;`
 FROM "${pgSchema}"."${table.tableName}" as chains;`
   }
 
-  let getInitialState = (sql: Pg.sql, ~pgSchema) => {
+  let getInitialState = (sql: Pg.pool, ~pgSchema) => {
     sql.query({text: makeGetInitialStateQuery(~pgSchema)})
     ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
   }
@@ -223,7 +223,7 @@ SET ${setClauses->Js.Array2.joinWith(",\n    ")}
 WHERE "id" = $1;`
   }
 
-  let setMeta = (sql: Pg.sql, ~pgSchema, ~chainsData: dict<metaFields>) => {
+  let setMeta = (sql: Pg.pool, ~pgSchema, ~chainsData: dict<metaFields>) => {
     let query = makeMetaFieldsUpdateQuery(~pgSchema)
 
     let promises = []
@@ -254,7 +254,7 @@ WHERE "id" = $1;`
     totalEventsProcessed: float,
   }
 
-  let setProgressedChains = (sql: Pg.sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
+  let setProgressedChains = (sql: Pg.pool, ~pgSchema, ~progressedChains: array<progressedChain>) => {
     let query = makeProgressFieldsUpdateQuery(~pgSchema)
 
     let promises = []
@@ -388,7 +388,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
   }
 
   let insert = (
-    sql: Pg.sql,
+    sql: Pg.pool,
     ~pgSchema,
     ~checkpointIds,
     ~checkpointChainIds,
@@ -418,7 +418,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
     ->Promise.ignoreValue
   }
 
-  let rollback = (sql: Pg.sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+  let rollback = (sql: Pg.pool, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
     sql.query({
       name: "checkpoints_rollback",
       text: `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
@@ -431,7 +431,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
     `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
   }
 
-  let pruneStaleCheckpoints = (sql: Pg.sql, ~pgSchema, ~safeCheckpointId: bigint) => {
+  let pruneStaleCheckpoints = (sql: Pg.pool, ~pgSchema, ~safeCheckpointId: bigint) => {
     sql.query({
       name: "checkpoints_prune",
       text: makePruneStaleCheckpointsQuery(~pgSchema),
@@ -450,7 +450,7 @@ LIMIT 1;`
   }
 
   let getRollbackTargetCheckpoint = (
-    sql: Pg.sql,
+    sql: Pg.pool,
     ~pgSchema,
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
@@ -478,7 +478,7 @@ GROUP BY "${(#chain_id: field :> string)}";`
   }
 
   let getRollbackProgressDiff = (
-    sql: Pg.sql,
+    sql: Pg.pool,
     ~pgSchema,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => {

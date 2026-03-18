@@ -372,6 +372,7 @@ let parseEntitiesFromJson = (
 
     let table = Table.mkTable(
       entityName,
+      ~stmtId=index->Belt.Int.toString,
       ~fields=Array.concat(fields, derivedFields),
       ~compositeIndices,
     )

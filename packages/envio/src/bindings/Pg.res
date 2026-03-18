@@ -1,5 +1,5 @@
-// Internal: both pg.Pool and pg.Client share the query interface at JS level
-type rawHandle
+// Internal: the underlying pg.Pool/pg.Client JS object
+type _handle
 
 @unboxed
 type sslOptions =
@@ -48,48 +48,24 @@ type queryConfig = {
 type queryResult = {
   rows: array<unknown>,
 }
-@module("pg") @new external _makePool: pgConfig => rawHandle = "Pool"
-@send external _query: (rawHandle, queryConfig) => promise<queryResult> = "query"
+@module("pg") @new external _makePool: pgConfig => _handle = "Pool"
+@send external _query: (_handle, queryConfig) => promise<queryResult> = "query"
 // Pool-only: acquire a client for transactions
-@send external _connect: rawHandle => promise<rawHandle> = "connect"
+@send external _connect: _handle => promise<_handle> = "connect"
 // Client-only: release back to pool.
 // Pass true to destroy the client instead of returning it to the pool.
-@send external _release: (rawHandle, @as(json`false`) _) => unit = "release"
-@send external _releaseAndDestroy: (rawHandle, @as(json`true`) _) => unit = "release"
+@send external _release: (_handle, @as(json`false`) _) => unit = "release"
+@send external _releaseAndDestroy: (_handle, @as(json`true`) _) => unit = "release"
 // Event emitter (both Pool and Client)
-@send external _on: (rawHandle, string, 'handler) => unit = "on"
-
-// Postgres limits query names to 63 characters
-let maxStatementNameLength = 63
-
-// Hash long statement names to prevent collisions when truncating
-let hashName: string => string = %raw(`
-  function(name) {
-    return name.slice(0, 31) + require('node:crypto').createHash('md5').update(name).digest('hex').slice(0, 32);
-  }
-`)
-
-type sql = {
-  query: queryConfig => promise<array<unknown>>,
-}
-
-let makeSql = (raw: rawHandle): sql => {
-  query: config => {
-    let config = switch config.name {
-    | Some(name) if name->String.length > maxStatementNameLength => {
-        ...config,
-        name: hashName(name),
-      }
-    | _ => config
-    }
-    raw->_query(config)->Promise.thenResolve(r => r.rows)
-  },
-}
+@send external _on: (_handle, string, 'handler) => unit = "on"
 
 type pool = {
-  sql: sql,
-  raw: rawHandle,
+  query: queryConfig => promise<array<unknown>>,
 }
+type client = pool
+
+// WeakMap to store the raw pg.Pool handle for beginSql
+let _rawHandles: Utils.WeakMap.t<pool, _handle> = Utils.WeakMap.make()
 
 let makePool = (~config: poolConfig): pool => {
   let pgConfig: pgConfig = {
@@ -116,31 +92,35 @@ let makePool = (~config: poolConfig): pool => {
     Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
   })
 
-  {
-    sql: makeSql(raw),
-    raw,
+  let pool = {
+    query: config => raw->_query(config)->Promise.thenResolve(r => r.rows),
   }
+  _rawHandles->Utils.WeakMap.set(pool, raw)->ignore
+  pool
 }
 
-let beginSql = async (pool: pool, fn: sql => promise<'a>) => {
-  let client = await pool.raw->_connect
-  let clientSql = makeSql(client)
+let beginSql = async (pool: pool, fn: client => promise<'a>) => {
+  let raw = _rawHandles->Utils.WeakMap.get(pool)->Belt.Option.getUnsafe
+  let rawClient = await raw->_connect
+  let client: client = {
+    query: config => rawClient->_query(config)->Promise.thenResolve(r => r.rows),
+  }
   try {
-    let _ = await clientSql.query({text: "BEGIN"})
-    let result = await fn(clientSql)
-    let _ = await clientSql.query({text: "COMMIT"})
-    client->_release
+    let _ = await client.query({text: "BEGIN"})
+    let result = await fn(client)
+    let _ = await client.query({text: "COMMIT"})
+    rawClient->_release
     result
   } catch {
   | exn =>
     try {
-      let _ = await clientSql.query({text: "ROLLBACK"})
+      let _ = await client.query({text: "ROLLBACK"})
     } catch {
     | _ => ()
     }
     // Destroy the client instead of returning it to the pool
     // to avoid reusing a client in a potentially bad state after a failed transaction.
-    client->_releaseAndDestroy
+    rawClient->_releaseAndDestroy
     raise(exn)
   }
 }

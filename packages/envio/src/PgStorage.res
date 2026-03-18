@@ -148,6 +148,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
       //ignore composite indices
       let table = Table.mkTable(
         historyTableName,
+        ~stmtId="h" ++ entityConfig.index->Belt.Int.toString,
         ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
       )
 
@@ -378,30 +379,6 @@ type tableBatchSetQuery = {
   isInsertValues: bool,
 }
 
-// Apply JSON.stringify to specific field indices in a flattened column-major array.
-// Used for INSERT VALUES path when dbSchema can't be used (e.g. entity history
-// where itemSchema preserves Change variant → raw dict transformation).
-let jsonStringifyAtIndices = (
-  convert: array<unknown> => unknown,
-  jsonFieldIndices: array<int>,
-): (array<unknown> => unknown) => {
-  items => {
-    let result = convert(items)->(Utils.magic: unknown => array<unknown>)
-    let itemCount = items->Array.length
-    jsonFieldIndices->Js.Array2.forEach(fieldIdx => {
-      for i in 0 to itemCount - 1 {
-        let flatIdx = fieldIdx * itemCount + i
-        result->Js.Array2.unsafe_set(
-          flatIdx,
-          Js.Json.stringify(
-            result->Js.Array2.unsafe_get(flatIdx)->(Utils.magic: unknown => Js.Json.t),
-          )->(Utils.magic: string => unknown),
-        )
-      }
-    })
-    result->(Utils.magic: array<unknown> => unknown)
-  }
-}
 
 let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>): tableBatchSetQuery => {
   let {dbSchema, hasArrayField, jsonFieldIndices} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
@@ -448,9 +425,40 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
       ),
       convertOrThrow: if isHistoryUpdate {
         // Entity history uses S.object with transformation (Change variant → raw dict)
-        // that gets lost during dbSchema conversion. Use itemSchema with post-processing.
-        let unnestConvert = S.compile(
-          S.unnest(itemSchema->S.toUnknown)->S.preprocess(_ => {
+        // that gets lost during dbSchema conversion. Preprocess itemSchema to add
+        // JSON stringify for JSON fields before compilation.
+        let processedItemSchema = if jsonFieldIndices->Utils.Array.notEmpty {
+          let jsonFieldNames = table->Table.getFields->Belt.Array.keepMap(field => {
+            switch field.fieldType {
+            | Json => Some(field->Table.getDbFieldName)
+            | _ => None
+            }
+          })
+          // After the schema serializer produces a flat dict,
+          // JSON-stringify the JSON field values
+          itemSchema->S.toUnknown->S.preprocess(_ => {
+            serializer: value => {
+              let dict = value->(Utils.magic: unknown => dict<unknown>)
+              jsonFieldNames->Js.Array2.forEach(name => {
+                switch dict->Js.Dict.get(name) {
+                | Some(v) =>
+                  dict->Js.Dict.set(
+                    name,
+                    Js.Json.stringify(v->(Utils.magic: unknown => Js.Json.t))->(
+                      Utils.magic: string => unknown
+                    ),
+                  )
+                | None => ()
+                }
+              })
+              value
+            },
+          })
+        } else {
+          itemSchema->S.toUnknown
+        }
+        S.compile(
+          S.unnest(processedItemSchema)->S.preprocess(_ => {
             serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
           }),
           ~input=Value,
@@ -458,11 +466,6 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
           ~mode=Sync,
           ~typeValidation,
         )
-        if jsonFieldIndices->Utils.Array.notEmpty {
-          jsonStringifyAtIndices(unnestConvert, jsonFieldIndices)
-        } else {
-          unnestConvert
-        }
       } else {
         // Non-history tables with Array fields: dbSchema handles JSON stringify
         S.compile(
@@ -520,7 +523,7 @@ exception PgEncodingError({table: Table.table})
 
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
-let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
+let setOrThrow = async (sql: Pg.pool, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
   if items->Array.length === 0 {
     ()
   } else {
@@ -553,7 +556,7 @@ let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~
               : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
             values: data.convertOrThrow(chunk->(Utils.magic: array<'item> => array<unknown>)),
             // Don't prepare partial chunks - they vary in size and would pollute the cache
-            name: ?isFullChunk ? Some(`insert_${table.tableName}`) : None,
+            name: ?isFullChunk ? Some(`insert_${table.stmtId}`) : None,
           })
           responses->Js.Array2.push(response)->ignore
         })
@@ -563,7 +566,7 @@ let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~
         let _ = await sql.query({
           text: data.query,
           values: data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>)),
-          name: `upsert_${table.tableName}`,
+          name: `upsert_${table.stmtId}`,
         })
       }
     } catch {
@@ -674,18 +677,18 @@ let getConnectedPsqlExec = {
   }
 }
 
-let deleteByIdsOrThrow = async (sql: Pg.sql, ~pgSchema, ~ids, ~table: Table.table) => {
+let deleteByIdsOrThrow = async (sql: Pg.pool, ~pgSchema, ~ids, ~table: Table.table) => {
   switch await (
     switch ids {
     | [_] =>
       sql.query({
-        name: `delete_id_${table.tableName}`,
+        name: `delete_id_${table.stmtId}`,
         text: makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
         values: ids->Obj.magic,
       })
     | _ =>
       sql.query({
-        name: `delete_ids_${table.tableName}`,
+        name: `delete_ids_${table.stmtId}`,
         text: makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
         values: [ids]->Obj.magic,
       })
@@ -749,9 +752,9 @@ FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, 
 }
 
 let executeSet = (
-  sql: Pg.sql,
+  sql: Pg.pool,
   ~items: array<'a>,
-  ~dbFunction: (Pg.sql, array<'a>) => promise<unit>,
+  ~dbFunction: (Pg.pool, array<'a>) => promise<unit>,
 ) => {
   if items->Array.length > 0 {
     sql->dbFunction(items)
@@ -859,7 +862,7 @@ let rec writeBatch = async (
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
               promises->Belt.Array.push(
                 sql.query({
-                  name: `insert_deletes_${entityConfig.name}`,
+                  name: `insert_deletes_${entityConfig.index->Belt.Int.toString}`,
                   text: makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
                   values: (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
                 })
@@ -1147,7 +1150,7 @@ let make = (
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
-  let {sql} = pool
+  let sql = pool
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
@@ -1333,13 +1336,13 @@ let make = (
       switch ids {
       | [_] =>
         sql.query({
-          name: `load_id_${table.tableName}`,
+          name: `load_id_${table.stmtId}`,
           text: makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
           values: ids->Obj.magic,
         })
       | _ =>
         sql.query({
-          name: `load_ids_${table.tableName}`,
+          name: `load_ids_${table.stmtId}`,
           text: makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
           values: [ids]->Obj.magic,
         })
@@ -1606,14 +1609,14 @@ let make = (
     await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql.query({
-        name: `rollback_removed_${entityConfig.name}`,
+        name: `rollback_removed_${entityConfig.index->Belt.Int.toString}`,
         text: makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
         values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       })
       ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql.query({
-        name: `rollback_restored_${entityConfig.name}`,
+        name: `rollback_restored_${entityConfig.index->Belt.Int.toString}`,
         text: makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
         values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       })
