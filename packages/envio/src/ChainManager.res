@@ -81,6 +81,24 @@ let makeFromDbState = async (
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
+  // Set initial progress metrics from DB state so dashboards reflect
+  // the persisted state immediately on restart
+  let allChainsReady = ref(chainFetchersArr->Array.length > 0)
+  chainFetchersArr->Array.forEach(((chain, cf)) => {
+    let chainId = chain->ChainMap.Chain.toChainId
+    if cf.committedProgressBlockNumber >= 0 {
+      Prometheus.ProgressBlockNumber.set(~blockNumber=cf.committedProgressBlockNumber, ~chainId)
+    }
+    if cf->ChainFetcher.isLive {
+      Prometheus.ProgressReady.set(~chainId)
+    } else {
+      allChainsReady := false
+    }
+  })
+  if allChainsReady.contents {
+    Prometheus.ProgressReady.setAllReady()
+  }
+
   {
     committedCheckpointId: initialState.checkpointId,
     multichain: config.multichain,

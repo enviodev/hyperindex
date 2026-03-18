@@ -309,19 +309,22 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     }
   })
 
+  // Set envio_progress_ready per-chain independently as soon as each chain becomes live
+  chainFetchers
+  ->ChainMap.mapWithKey((chain, cf) => {
+    if cf->ChainFetcher.isLive {
+      Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+    }
+  })
+  ->ignore
+
+  // Set legacy indexer-wide metric only when all chains are ready
   let allChainsSyncedAtHead =
     chainFetchers
     ->ChainMap.values
     ->Array.every(cf => cf->ChainFetcher.isLive)
 
   if allChainsSyncedAtHead {
-    chainFetchers
-    ->ChainMap.mapWithKey((chain, cf) => {
-      if cf->ChainFetcher.isLive {
-        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
-      }
-    })
-    ->ignore
     Prometheus.ProgressReady.setAllReady()
   }
 
