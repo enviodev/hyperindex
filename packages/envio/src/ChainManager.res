@@ -89,7 +89,7 @@ let makeFromDbState = async (
     if cf.committedProgressBlockNumber >= 0 {
       Prometheus.ProgressBlockNumber.set(~blockNumber=cf.committedProgressBlockNumber, ~chainId)
     }
-    if cf->ChainFetcher.isLive {
+    if cf->ChainFetcher.isReady {
       Prometheus.ProgressReady.set(~chainId)
     } else {
       allChainsReady := false
