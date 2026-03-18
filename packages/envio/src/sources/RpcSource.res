@@ -1009,18 +1009,6 @@ let make = (
                     )
                   }
 
-                  let wrappedBlock = FieldSelection.makeFieldSelectionProxy(
-                    block,
-                    ~selectedFields=eventConfig.selectedBlockFields,
-                    ~entityType="block",
-                    ~eventName=eventConfig.name,
-                  )
-                  let wrappedTransaction = FieldSelection.makeFieldSelectionProxy(
-                    transaction,
-                    ~selectedFields=eventConfig.selectedTransactionFields,
-                    ~entityType="transaction",
-                    ~eventName=eventConfig.name,
-                  )
                   Internal.Event({
                     eventConfig: (eventConfig :> Internal.eventConfig),
                     timestamp: block->Evm.getTimestamp,
@@ -1030,8 +1018,8 @@ let make = (
                     event: {
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
-                      transaction: wrappedTransaction,
-                      block: wrappedBlock,
+                      transaction,
+                      block,
                       srcAddress: routedAddress,
                       logIndex: log.logIndex,
                     }->Internal.fromGenericEvent,

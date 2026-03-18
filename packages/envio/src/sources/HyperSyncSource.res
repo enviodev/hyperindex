@@ -222,18 +222,6 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     let {block, log, transaction} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
-    let wrappedBlock = FieldSelection.makeFieldSelectionProxy(
-      block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
-      ~selectedFields=eventConfig.selectedBlockFields,
-      ~entityType="block",
-      ~eventName=eventConfig.name,
-    )
-    let wrappedTransaction = FieldSelection.makeFieldSelectionProxy(
-      transaction,
-      ~selectedFields=eventConfig.selectedTransactionFields,
-      ~entityType="transaction",
-      ~eventName=eventConfig.name,
-    )
     Internal.Event({
       eventConfig: (eventConfig :> Internal.eventConfig),
       timestamp: block.timestamp->Belt.Option.getUnsafe,
@@ -243,8 +231,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       event: {
         chainId,
         params,
-        transaction: wrappedTransaction,
-        block: wrappedBlock,
+        transaction,
+        block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
         srcAddress: log.address,
         logIndex: log.logIndex,
       }->Internal.fromGenericEvent,

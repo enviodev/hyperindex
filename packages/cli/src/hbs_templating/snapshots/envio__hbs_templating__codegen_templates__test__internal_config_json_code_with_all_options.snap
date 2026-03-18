@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2667
+assertion_line: 2669
 expression: project_template.internal_config_json_code
 ---
 {
@@ -40,9 +40,6 @@ expression: project_template.internal_config_json_code
           {
             "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
             "blockFields": [
-              "number",
-              "timestamp",
-              "hash",
               "parentHash",
               "miner"
             ],

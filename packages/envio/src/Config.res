@@ -424,6 +424,10 @@ let publicConfigSchema = S.schema(s =>
   }
 )
 
+// Always-included block fields (number, timestamp, hash) are not in the JSON;
+// they're prepended at runtime so they're always present.
+let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
+
 // Enrich EVM event configs with field selections from the JSON config.
 // Mutates the event configs in-place to set selectedBlockFields/selectedTransactionFields.
 let enrichEvmFieldSelections = (
@@ -449,7 +453,12 @@ let enrichEvmFieldSelections = (
     let evmEvent = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
     let je = fieldsByName->Js.Dict.get(evmEvent.name)
     let blockFields = switch je->Option.flatMap(j => j["blockFields"]) {
-    | Some(fields) => fields->(Utils.magic: array<string> => array<Internal.evmBlockField>)
+    | Some(fields) =>
+      // Prepend always-included block fields for per-event overrides too
+      Array.concat(
+        alwaysIncludedBlockFields,
+        fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
+      )
     | None => globalBlockFields
     }
     let transactionFields = switch je->Option.flatMap(j => j["transactionFields"]) {
@@ -503,9 +512,6 @@ let fromPublic = (
   }
 
   // Extract global EVM field selections (used as defaults for events without per-event overrides)
-  // Always-included block fields (number, timestamp, hash) are not in the JSON;
-  // we prepend them here so they're always present.
-  let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
   let (globalBlockFields, globalTransactionFields) = switch publicConfig["evm"] {
   | Some(evm) => (
       Array.concat(alwaysIncludedBlockFields, evm["globalBlockFields"]->Option.getWithDefault([])),

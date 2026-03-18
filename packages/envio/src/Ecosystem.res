@@ -19,11 +19,7 @@ let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onB
   | _ => {
       let blockEvent = Js.Dict.empty()
       blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
-      let rawBlock = blockEvent->(Utils.magic: Js.Dict.t<unknown> => Internal.blockEvent)
-      // Block handlers only support the block number field;
-      // all other fields throw a friendly error guiding the user to request support.
-      let proxiedBlock = FieldSelection.makeBlockHandlerProxy(rawBlock)
-      {block: proxiedBlock->(Utils.magic: FieldSelection.proxy<Internal.blockEvent> => Internal.blockEvent), context}
+      {block: blockEvent->(Utils.magic: Js.Dict.t<unknown> => Internal.blockEvent), context}
     }
   }
 }

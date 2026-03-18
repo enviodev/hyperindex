@@ -1742,7 +1742,9 @@ type testIndexer = {{
                                     let fs = field_selection_by_sighash.get(selector.as_str());
                                     InternalContractEventItem {
                                         event: sig,
-                                        block_fields: fs.map(|fs| fs.block_fields.iter().map(|f| f.name.clone()).collect()),
+                                        block_fields: fs.map(|fs| fs.block_fields.iter()
+                                            .filter(|f| !matches!(f.name.as_str(), "number" | "timestamp" | "hash"))
+                                            .map(|f| f.name.clone()).collect()),
                                         transaction_fields: fs.map(|fs| fs.transaction_fields.iter().map(|f| f.name.clone()).collect()),
                                     }
                                 })
