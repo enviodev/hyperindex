@@ -9,6 +9,7 @@ function insertRawEvent(sql: any, row: any) {
   const columnNames = columns.map((c) => `"${c}"`).join(", ");
   return preparedUnsafe(
     sql,
+    "insert_raw_events",
     `INSERT INTO raw_events (${columnNames}) VALUES (${placeholders})`,
     values
   );

@@ -110,7 +110,9 @@ let pruneStaleEntityHistory = (
   ~pgSchema,
   ~safeCheckpointId,
 ): promise<unit> => {
+  let tableName = historyTableName(~entityName, ~entityIndex)
   sql->Pg.preparedUnsafe(
+    ~name=`eh_prune_${tableName}`,
     makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
     [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
@@ -136,8 +138,10 @@ FROM missing_history;`
 }
 
 let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
+  let tableName = historyTableName(~entityName, ~entityIndex)
   sql
   ->Pg.preparedUnsafe(
+    ~name=`eh_backfill_${tableName}`,
     makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
     [ids]->Obj.magic,
   )
@@ -145,12 +149,11 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
 }
 
 let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+  let tableName = historyTableName(~entityName, ~entityIndex)
   sql
   ->Pg.preparedUnsafe(
-    `DELETE FROM "${pgSchema}"."${historyTableName(
-        ~entityName,
-        ~entityIndex,
-      )}" WHERE "${checkpointIdFieldName}" > $1;`,
+    ~name=`eh_rollback_${tableName}`,
+    `DELETE FROM "${pgSchema}"."${tableName}" WHERE "${checkpointIdFieldName}" > $1;`,
     [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
   ->Promise.ignoreValue

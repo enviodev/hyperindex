@@ -15,9 +15,10 @@ export const unsafe = (pool: Pool, text: string): Promise<any[]> =>
 
 export const preparedUnsafe = (
   pool: Pool,
+  _name: string,
   text: string,
   values: unknown
-): Promise<any[]> => pool.query({ text, values } as any).then((r: any) => r.rows);
+): Promise<any[]> => pool.query({ text, values, name: _name } as any).then((r: any) => r.rows);
 
 const originalConsoleLog = console.log;
 

@@ -1,4 +1,4 @@
-type sql
+type pool
 
 @unboxed
 type sslOptions =
@@ -25,7 +25,6 @@ type poolConfig = {
   password?: string,
   ssl?: sslOptions,
   max?: int,
-  onnotice?: string => unit,
 }
 
 // Raw pg bindings (internal)
@@ -45,39 +44,21 @@ type queryConfig = {
   values: unknown,
   name?: string,
 }
-type pool
-@module("pg") @new external makePool: pgConfig => pool = "Pool"
+@module("pg") @new external _makePool: pgConfig => pool = "Pool"
 
-// Internal bindings on the opaque sql type.
 // Both pg.Pool and pg.Client support .query()
-@send external _query: (sql, string) => promise<{"rows": 'a}> = "query"
-@send external _queryWithConfig: (sql, queryConfig) => promise<{"rows": 'a}> = "query"
+@send external _query: (pool, string) => promise<{"rows": 'a}> = "query"
+@send external _queryWithConfig: (pool, queryConfig) => promise<{"rows": 'a}> = "query"
 // Pool-only: acquire a client for transactions
-@send external _connect: sql => promise<sql> = "connect"
+@send external _connect: pool => promise<pool> = "connect"
 // Client-only: release back to pool.
 // Pass true to destroy the client instead of returning it to the pool.
-@send external _release: (sql, @as(json`false`) _) => unit = "release"
-@send external _releaseAndDestroy: (sql, @as(json`true`) _) => unit = "release"
+@send external _release: (pool, @as(json`false`) _) => unit = "release"
+@send external _releaseAndDestroy: (pool, @as(json`true`) _) => unit = "release"
 // Event emitter (both Pool and Client)
-@send external _on: (sql, string, 'handler) => unit = "on"
+@send external _on: (pool, string, 'handler) => unit = "on"
 
-// Statement name cache for prepared queries.
-// Uses an incrementing counter for collision-free, stable names.
-let statementNameCounter = ref(0)
-let statementNameCache = Js.Dict.empty()
-
-let getStatementName = (text: string): string => {
-  switch statementNameCache->Js.Dict.get(text) {
-  | Some(name) => name
-  | None =>
-    let name = `s${statementNameCounter.contents->Js.Int.toString}`
-    statementNameCounter := statementNameCounter.contents + 1
-    statementNameCache->Js.Dict.set(text, name)
-    name
-  }
-}
-
-let makeSql = (~config: poolConfig): sql => {
+let makePool = (~config: poolConfig): pool => {
   let pgConfig: pgConfig = {
     host: ?config.host,
     port: ?config.port,
@@ -94,37 +75,37 @@ let makeSql = (~config: poolConfig): sql => {
     },
   }
 
-  let sql = makePool({...pgConfig, allowExitOnIdle: true})->(Utils.magic: pool => sql)
-
-  switch config.onnotice {
-  | Some(handler) =>
-    sql->_on("connect", (client: sql) => {
-      client->_on("notice", (msg: {"message": string}) => handler(msg["message"]))
-    })
-  | None => ()
-  }
+  let pool = _makePool({...pgConfig, allowExitOnIdle: true})
 
   // Prevent unhandled error events from crashing the process.
   // Individual query errors are still propagated through promises.
-  sql->_on("error", (err: Js.Exn.t) => {
+  pool->_on("error", (err: Js.Exn.t) => {
     Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
   })
 
-  sql
+  pool
 }
 
-let unsafe = (sql: sql, text: string): promise<'a> => {
-  sql->_query(text)->Promise.thenResolve(r => r["rows"])
+let unsafe = (pool: pool, text: string): promise<'a> => {
+  pool->_query(text)->Promise.thenResolve(r => r["rows"])
 }
 
-let preparedUnsafe = (sql: sql, text: string, values: unknown): promise<'a> => {
-  sql
-  ->_queryWithConfig({text, values, name: getStatementName(text)})
+// Postgres limits query names to 63 characters
+let maxStatementNameLength = 63
+
+let preparedUnsafe = (pool: pool, ~name: string, text: string, values: unknown): promise<'a> => {
+  let name = if name->String.length > maxStatementNameLength {
+    name->Js.String.slice(~from=0, ~to_=maxStatementNameLength)
+  } else {
+    name
+  }
+  pool
+  ->_queryWithConfig({text, values, name})
   ->Promise.thenResolve(r => r["rows"])
 }
 
-let beginSql = async (sql: sql, fn: sql => promise<'a>) => {
-  let client = await sql->_connect
+let beginSql = async (pool: pool, fn: pool => promise<'a>) => {
+  let client = await pool->_connect
   try {
     let _ = await client->_query("BEGIN")
     let result = await fn(client)

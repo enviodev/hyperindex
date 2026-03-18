@@ -1,7 +1,7 @@
 let getCacheRowCountFnName = "get_cache_row_count"
 
 let makeClient = () => {
-  Pg.makeSql(
+  Pg.makePool(
     ~config={
       host: Env.Db.host,
       port: Env.Db.port,
@@ -9,12 +9,6 @@ let makeClient = () => {
       password: Env.Db.password,
       database: Env.Db.database,
       ssl: Env.Db.ssl,
-      // TODO: think how we want to pipe these logs to pino.
-      onnotice: ?(
-        Env.userLogLevel == Some(#warn) || Env.userLogLevel == Some(#error)
-          ? None
-          : Some(_str => ())
-      ),
       max: Env.Db.maxConnections,
     },
   )
@@ -540,6 +534,9 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let isFullChunk = chunkSize === maxItemsPerQuery
 
           let response = sql->Pg.preparedUnsafe(
+            ~name=isFullChunk
+              ? `insert_${table.tableName}`
+              : `insert_${table.tableName}_${chunkSize->Belt.Int.toString}`,
             // Either use the sql query for full chunks from cache
             // or create a new one for partial chunks on the fly.
             isFullChunk
@@ -553,6 +550,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       } else {
         // Use UNNEST approach for single query
         await sql->Pg.preparedUnsafe(
+          ~name=`upsert_${table.tableName}`,
           data["query"],
           data["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>)),
         )
@@ -670,11 +668,13 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
     switch ids {
     | [_] =>
       sql->Pg.preparedUnsafe(
+        ~name=`delete_id_${table.tableName}`,
         makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
         ids->Obj.magic,
       )
     | _ =>
       sql->Pg.preparedUnsafe(
+        ~name=`delete_ids_${table.tableName}`,
         makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
         [ids]->Obj.magic,
       )
@@ -738,9 +738,9 @@ FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, 
 }
 
 let executeSet = (
-  sql: Pg.sql,
+  sql: Pg.pool,
   ~items: array<'a>,
-  ~dbFunction: (Pg.sql, array<'a>) => promise<unit>,
+  ~dbFunction: (Pg.pool, array<'a>) => promise<unit>,
 ) => {
   if items->Array.length > 0 {
     sql->dbFunction(items)
@@ -849,6 +849,7 @@ let rec writeBatch = async (
               promises->Belt.Array.push(
                 sql
                 ->Pg.preparedUnsafe(
+                  ~name=`insert_deletes_${entityConfig.name}`,
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
                   (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
                 )
@@ -1124,7 +1125,7 @@ AND NOT EXISTS (
 }
 
 let make = (
-  ~sql: Pg.sql,
+  ~sql: Pg.pool,
   ~pgHost,
   ~pgSchema,
   ~pgPort,
@@ -1320,11 +1321,13 @@ let make = (
       switch ids {
       | [_] =>
         sql->Pg.preparedUnsafe(
+          ~name=`load_id_${table.tableName}`,
           makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
           ids->Obj.magic,
         )
       | _ =>
         sql->Pg.preparedUnsafe(
+          ~name=`load_ids_${table.tableName}`,
           makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
           [ids]->Obj.magic,
         )
@@ -1368,6 +1371,7 @@ let make = (
       )
     }
     switch await sql->Pg.preparedUnsafe(
+      ~name=`load_field_${table.tableName}_${fieldName}`,
       makeLoadByFieldQuery(
         ~pgSchema,
         ~tableName=table.tableName,
@@ -1593,6 +1597,7 @@ let make = (
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Pg.preparedUnsafe(
+        ~name=`rollback_removed_${entityConfig.name}`,
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
@@ -1600,6 +1605,7 @@ let make = (
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Pg.preparedUnsafe(
+        ~name=`rollback_restored_${entityConfig.name}`,
         makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )

@@ -242,7 +242,7 @@ WHERE "id" = $1;`
         params->Js.Array2.push(value)->ignore
       })
 
-      promises->Js.Array2.push(sql->Pg.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Js.Array2.push(sql->Pg.preparedUnsafe(~name="chains_set_meta", query, params->Obj.magic))->ignore
     })
 
     Promise.all(promises)
@@ -279,7 +279,7 @@ WHERE "id" = $1;`
         ->ignore
       })
 
-      promises->Js.Array2.push(sql->Pg.preparedUnsafe(query, params->Obj.magic))->ignore
+      promises->Js.Array2.push(sql->Pg.preparedUnsafe(~name="chains_set_progress", query, params->Obj.magic))->ignore
     })
 
     Promise.all(promises)->Promise.ignoreValue
@@ -403,6 +403,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
     let checkpointIdStrings = checkpointIds->BigInt.arrayToStringArray
     sql
     ->Pg.preparedUnsafe(
+      ~name="checkpoints_insert",
       query,
       (
         checkpointIdStrings,
@@ -422,6 +423,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
   let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
     sql
     ->Pg.preparedUnsafe(
+      ~name="checkpoints_rollback",
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
       [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
     )
@@ -435,6 +437,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
   let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: bigint) => {
     sql
     ->Pg.preparedUnsafe(
+      ~name="checkpoints_prune",
       makePruneStaleCheckpointsQuery(~pgSchema),
       [safeCheckpointId->BigInt.toString]->Obj.magic,
     )
@@ -459,6 +462,7 @@ LIMIT 1;`
     let rawResult: promise<array<{"id": string}>> =
       sql
       ->Pg.preparedUnsafe(
+        ~name="checkpoints_rollback_target",
         makeGetRollbackTargetCheckpointQuery(~pgSchema),
         (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
       )
@@ -485,6 +489,7 @@ GROUP BY "${(#chain_id: field :> string)}";`
   ) => {
     sql
     ->Pg.preparedUnsafe(
+      ~name="checkpoints_rollback_diff",
       makeGetRollbackProgressDiffQuery(~pgSchema),
       [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
     )
