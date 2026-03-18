@@ -995,13 +995,11 @@ let rec writeBatch = async (
         }),
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
-        (async () => {
-          for i in 0 to updatedEffectsCache->Js.Array2.length - 1 {
-            let {effect, items, shouldInitialize}: Persistence.updatedEffectCache =
-              updatedEffectsCache->Js.Array2.unsafe_get(i)
-            await setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
-          }
-        })(),
+        updatedEffectsCache
+        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
+          setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
+        })
+        ->Promise.all,
       ))
 
       // Just in case, if there's a not PG-specific error.
