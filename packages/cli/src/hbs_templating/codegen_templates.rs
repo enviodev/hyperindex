@@ -1758,7 +1758,6 @@ type testIndexer = {{
                                     event: e.event_signature.clone(),
                                     name: e.name.clone(),
                                     block_fields: e.field_selection.as_ref().map(|fs| fs.block_fields.iter()
-                                        .filter(|f| !matches!(f.name.as_str(), "number" | "timestamp" | "hash"))
                                         .map(|f| f.name.clone()).collect()),
                                     transaction_fields: e.field_selection.as_ref().map(|fs| fs.transaction_fields.iter()
                                         .map(|f| f.name.clone()).collect()),

@@ -69,7 +69,8 @@ type evmTransactionField =
   | @as("gasUsedForL1") GasUsedForL1
   | @as("authorizationList") AuthorizationList
 
-let evmBlockFieldSchema = S.enum([
+@live
+let allEvmBlockFields: array<evmBlockField> = [
   Number,
   Timestamp,
   Hash,
@@ -97,9 +98,11 @@ let evmBlockFieldSchema = S.enum([
   SendCount,
   SendRoot,
   MixHash,
-])
+]
+let evmBlockFieldSchema = S.enum(allEvmBlockFields)
 
-let evmTransactionFieldSchema = S.enum([
+@live
+let allEvmTransactionFields: array<evmTransactionField> = [
   TransactionIndex,
   Hash,
   From,
@@ -132,7 +135,8 @@ let evmTransactionFieldSchema = S.enum([
   L1FeeScalar,
   GasUsedForL1,
   AuthorizationList,
-])
+]
+let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 
 // Static sets of nullable field names — matches the S.nullable wrapping in RpcSource field registries
 let nullableBlockFields = Utils.Set.fromArray(

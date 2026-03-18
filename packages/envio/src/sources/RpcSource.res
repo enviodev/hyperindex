@@ -544,7 +544,7 @@ let makeThrowingGetEventBlock = (
 type fieldSource = TransactionOnly | ReceiptOnly | Both
 
 type fieldDef = {
-  location: string,
+  location: Internal.evmTransactionField,
   jsonKey: string,
   schema: S.t<Js.Json.t>, // Type-erased schema (S.nullable for optional fields)
   source: fieldSource,
@@ -553,172 +553,175 @@ type fieldDef = {
 // Field registry: maps field location (= JS property name) to parsing info.
 // Only includes fields that require an RPC call. Log-derived fields (hash, transactionIndex) are special-cased.
 // Nullable wrapping matches Res::option in system_config.rs
-let makeFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<fieldDef> =>
+let makeFieldRegistry = (addressSchema: S.t<Js.Json.t>): Utils.Record.t<
+  Internal.evmTransactionField,
+  fieldDef,
+> =>
   [
     // TransactionOnly fields (only in eth_getTransactionByHash)
     {
-      location: "gas",
+      location: Gas,
       jsonKey: "gas",
       schema: Rpc.hexBigintSchema->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "gasPrice",
+      location: GasPrice,
       jsonKey: "gasPrice",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: TransactionOnly,
     },
-    {location: "input", jsonKey: "input", schema: S.string->toFieldSchema, source: TransactionOnly},
+    {location: Input, jsonKey: "input", schema: S.string->toFieldSchema, source: TransactionOnly},
     {
-      location: "nonce",
+      location: Nonce,
       jsonKey: "nonce",
       schema: Rpc.hexBigintSchema->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "value",
+      location: Value,
       jsonKey: "value",
       schema: Rpc.hexBigintSchema->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "v",
+      location: V,
       jsonKey: "v",
       schema: S.nullable(S.string)->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "r",
+      location: R,
       jsonKey: "r",
       schema: S.nullable(S.string)->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "s",
+      location: S,
       jsonKey: "s",
       schema: S.nullable(S.string)->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "yParity",
+      location: YParity,
       jsonKey: "yParity",
       schema: S.nullable(S.string)->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "maxPriorityFeePerGas",
+      location: MaxPriorityFeePerGas,
       jsonKey: "maxPriorityFeePerGas",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "maxFeePerGas",
+      location: MaxFeePerGas,
       jsonKey: "maxFeePerGas",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "maxFeePerBlobGas",
+      location: MaxFeePerBlobGas,
       jsonKey: "maxFeePerBlobGas",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: TransactionOnly,
     },
     {
-      location: "blobVersionedHashes",
+      location: BlobVersionedHashes,
       jsonKey: "blobVersionedHashes",
       schema: S.nullable(S.array(S.string))->toFieldSchema,
       source: TransactionOnly,
     },
     // ReceiptOnly fields (only in eth_getTransactionReceipt)
     {
-      location: "gasUsed",
+      location: GasUsed,
       jsonKey: "gasUsed",
       schema: Rpc.hexBigintSchema->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "cumulativeGasUsed",
+      location: CumulativeGasUsed,
       jsonKey: "cumulativeGasUsed",
       schema: Rpc.hexBigintSchema->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "effectiveGasPrice",
+      location: EffectiveGasPrice,
       jsonKey: "effectiveGasPrice",
       schema: Rpc.hexBigintSchema->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "contractAddress",
+      location: ContractAddress,
       jsonKey: "contractAddress",
       schema: S.nullable(addressSchema)->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "logsBloom",
+      location: LogsBloom,
       jsonKey: "logsBloom",
       schema: S.string->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "root",
+      location: Root,
       jsonKey: "root",
       schema: S.nullable(S.string)->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "status",
+      location: Status,
       jsonKey: "status",
       schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "l1Fee",
+      location: L1Fee,
       jsonKey: "l1Fee",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "l1GasPrice",
+      location: L1GasPrice,
       jsonKey: "l1GasPrice",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "l1GasUsed",
+      location: L1GasUsed,
       jsonKey: "l1GasUsed",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "l1FeeScalar",
+      location: L1FeeScalar,
       jsonKey: "l1FeeScalar",
       schema: S.nullable(Rpc.decimalFloatSchema)->toFieldSchema,
       source: ReceiptOnly,
     },
     {
-      location: "gasUsedForL1",
+      location: GasUsedForL1,
       jsonKey: "gasUsedForL1",
       schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema,
       source: ReceiptOnly,
     },
     // Both fields (available in both eth_getTransactionByHash and eth_getTransactionReceipt)
     {
-      location: "from",
+      location: From,
       jsonKey: "from",
       schema: S.nullable(addressSchema)->toFieldSchema,
       source: Both,
     },
-    {location: "to", jsonKey: "to", schema: S.nullable(addressSchema)->toFieldSchema, source: Both},
+    {location: To, jsonKey: "to", schema: S.nullable(addressSchema)->toFieldSchema, source: Both},
     {
-      location: "type",
+      location: Type,
       jsonKey: "type",
       schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema,
       source: Both,
     },
   ]
   ->Array.map(def => (def.location, def))
-  ->Js.Dict.fromArray
+  ->Utils.Record.fromArray
 
 let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
 let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
@@ -737,11 +740,11 @@ let parseFieldsFromJson = (
     let raw = jsonDict->Js.Dict.unsafeGet(def.jsonKey)
     try {
       let parsed = raw->S.parseOrThrow(def.schema)
-      mutTransactionAcc->Js.Dict.set(def.location, parsed)
+      mutTransactionAcc->Js.Dict.set((def.location :> string), parsed)
     } catch {
     | S.Raised(error) =>
       Js.Exn.raiseError(
-        `Invalid transaction field "${def.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
+        `Invalid transaction field "${(def.location :> string)}" found in the RPC response. Error: ${error->S.Error.reason}`,
       )
     }
   })
@@ -776,7 +779,7 @@ let makeThrowingGetEventTransaction = (
             | TransactionIndex => hasTransactionIndex := true
             | Hash => hasHash := true
             | _ =>
-              switch fieldRegistry->Js.Dict.get((fieldName :> string)) {
+              switch fieldRegistry->Utils.Record.get(fieldName) {
               | Some(def) =>
                 switch def.source {
                 | TransactionOnly => txFields->Js.Array2.push(def)->ignore
