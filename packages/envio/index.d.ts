@@ -378,11 +378,11 @@ type SvmChain<Id extends number = number> = {
 type IndexerConfigTypes = {
   evm?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, {}>;
+    events?: Record<string, Record<string, { transaction: object; block: object }>>;
   };
   fuel?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, {}>;
+    events?: Record<string, Record<string, { transaction: object; block: object }>>;
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
@@ -407,7 +407,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes> =
   "evm" extends keyof Config
     ? Config["evm"] extends {
         chains: infer Chains;
-        contracts?: Record<infer ContractName, any>;
+        events?: Record<infer ContractName, any>;
       }
       ? Chains extends Record<string, { id: number }>
         ? {
@@ -435,7 +435,7 @@ type FuelEcosystem<Config extends IndexerConfigTypes> =
   "fuel" extends keyof Config
     ? Config["fuel"] extends {
         chains: infer Chains;
-        contracts?: Record<infer ContractName, any>;
+        events?: Record<infer ContractName, any>;
       }
       ? Chains extends Record<string, { id: number }>
         ? {

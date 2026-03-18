@@ -503,6 +503,7 @@ impl EntityRecordTypeTemplate {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EventMod {
+    pub contract_name: String,
     pub sighash: String,
     pub topic_count: usize,
     pub event_name: String,
@@ -524,6 +525,7 @@ impl Display for EventMod {
 
 impl EventMod {
     fn to_string_internal(&self) -> String {
+        let contract_name = &self.contract_name;
         let sighash = &self.sighash;
         let topic_count = &self.topic_count;
         let event_name = &self.event_name;
@@ -568,6 +570,9 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
             Some(FuelEventKind::Transfer) => "transfer".to_string(),
             Some(FuelEventKind::LogData(_)) => sighash.to_string(),
         };
+
+        let block_import_name = format!("{contract_name}_{event_name}_block");
+        let transaction_import_name = format!("{contract_name}_{event_name}_transaction");
 
         let (block_type, transaction_type) =
             match self.custom_field_selection {
@@ -639,9 +644,9 @@ let contractName = contractName
 
 @genType
 type eventArgs = {data_type}
-@genType
+@genType.import(("../envio.d.ts", "{block_import_name}"))
 type block = {block_type}
-@genType
+@genType.import(("../envio.d.ts", "{transaction_import_name}"))
 type transaction = {transaction_type}
 
 @genType
@@ -794,9 +799,11 @@ impl EventTemplate {
     pub fn from_fuel_supply_event(
         config_event: &system_config::Event,
         fuel_event_kind: FuelEventKind,
+        contract_name: &str,
     ) -> Self {
         let event_name = config_event.name.capitalize();
         let event_mod = EventMod {
+            contract_name: contract_name.to_string(),
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
@@ -819,11 +826,12 @@ impl EventTemplate {
 
     pub fn from_fuel_transfer_event(
         config_event: &system_config::Event,
-
         fuel_event_kind: FuelEventKind,
+        contract_name: &str,
     ) -> Self {
         let event_name = config_event.name.capitalize();
         let event_mod = EventMod {
+            contract_name: contract_name.to_string(),
             sighash: config_event.sighash.to_string(),
             topic_count: 0, //Default to 0 for fuel,
             event_name: event_name.clone(),
@@ -847,6 +855,7 @@ impl EventTemplate {
     pub fn from_config_event(
         config_event: &system_config::Event,
         global_field_selection: &system_config::FieldSelection,
+        contract_name: &str,
     ) -> Result<Self> {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
@@ -884,6 +893,7 @@ impl EventTemplate {
                 };
 
                 let event_mod = EventMod {
+                    contract_name: contract_name.to_string(),
                     sighash: config_event.sighash.to_string(),
                     topic_count: params
                         .iter()
@@ -912,6 +922,7 @@ impl EventTemplate {
                 match &fuel_event_kind {
                     FuelEventKind::LogData(type_indent) => {
                         let event_mod = EventMod {
+                            contract_name: contract_name.to_string(),
                             sighash: config_event.sighash.to_string(),
                             topic_count: 0, //Default to 0 for fuel,
                             event_name: event_name.clone(),
@@ -936,10 +947,10 @@ impl EventTemplate {
                         })
                     }
                     FuelEventKind::Mint | FuelEventKind::Burn => {
-                        Ok(Self::from_fuel_supply_event(config_event, fuel_event_kind))
+                        Ok(Self::from_fuel_supply_event(config_event, fuel_event_kind, contract_name))
                     }
                     FuelEventKind::Call | FuelEventKind::Transfer => Ok(
-                        Self::from_fuel_transfer_event(config_event, fuel_event_kind),
+                        Self::from_fuel_transfer_event(config_event, fuel_event_kind, contract_name),
                     ),
                 }
             }
@@ -966,7 +977,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, global_field_selection))
+            .map(|event| EventTemplate::from_config_event(event, global_field_selection, &contract.name))
             .collect::<Result<_>>()?;
 
         let chain_ids = contract.get_chain_ids(config);
@@ -1155,6 +1166,8 @@ struct FieldSelection {
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
     block_type: String,
+    transaction_type_ts: String,
+    block_type_ts: String,
 }
 
 struct FieldSelectionOptions {
@@ -1228,6 +1241,8 @@ impl FieldSelection {
             block_fields: block_field_templates,
             transaction_type: transaction_expr.to_string(),
             block_type: block_expr.to_string(),
+            transaction_type_ts: transaction_expr.to_ts_type_string(),
+            block_type_ts: block_expr.to_ts_type_string(),
         }
     }
 
@@ -1940,23 +1955,53 @@ type testIndexer = {{
                 )
             });
 
-            // Generate EvmContracts type
-            let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
-                cfg.contracts
-                    .keys()
-                    .map(|name| format!("  \"{}\": {{}};", name))
-                    .collect()
-            } else {
-                vec![]
-            };
-            parts.push(if evm_contracts_entries.is_empty() {
-                "export type EvmContracts = {};".to_string()
-            } else {
-                format!(
-                    "export type EvmContracts = {{\n{}\n}};",
-                    evm_contracts_entries.join("\n")
-                )
-            });
+            // Generate EvmEvents type with per-event block/transaction types
+            {
+                let mut individual_types = Vec::new();
+                let evm_events_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+                    cfg.contracts
+                        .values()
+                        .map(|contract| {
+                            let event_entries: Vec<String> = contract.events.iter().map(|event| {
+                                let event_name = event.name.capitalize();
+                                let fs = match &event.field_selection {
+                                    Some(custom_fs) => FieldSelection::new(FieldSelectionOptions {
+                                        transaction_fields: custom_fs.transaction_fields.clone(),
+                                        block_fields: custom_fs.block_fields.clone(),
+                                    }),
+                                    None => FieldSelection::global_selection(&cfg.field_selection),
+                                };
+                                let block_name = format!("{}_{}_block", contract.name, event_name);
+                                let tx_name = format!("{}_{}_transaction", contract.name, event_name);
+                                individual_types.push(format!("export type {} = {};", block_name, fs.block_type_ts));
+                                individual_types.push(format!("export type {} = {};", tx_name, fs.transaction_type_ts));
+                                format!(
+                                    "      \"{}\": {{ transaction: {}; block: {} }};",
+                                    event_name, tx_name, block_name
+                                )
+                            }).collect();
+                            format!(
+                                "  \"{}\": {{\n{}\n  }};",
+                                contract.name,
+                                event_entries.join("\n")
+                            )
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+                for t in &individual_types {
+                    parts.push(t.clone());
+                }
+                parts.push(if evm_events_entries.is_empty() {
+                    "export type EvmEvents = {};".to_string()
+                } else {
+                    format!(
+                        "export type EvmEvents = {{\n{}\n}};",
+                        evm_events_entries.join("\n")
+                    )
+                });
+            }
 
             // Generate FuelChains type
             let fuel_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
@@ -1983,23 +2028,53 @@ type testIndexer = {{
                 )
             });
 
-            // Generate FuelContracts type
-            let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
-                cfg.contracts
-                    .keys()
-                    .map(|name| format!("  \"{}\": {{}};", name))
-                    .collect()
-            } else {
-                vec![]
-            };
-            parts.push(if fuel_contracts_entries.is_empty() {
-                "export type FuelContracts = {};".to_string()
-            } else {
-                format!(
-                    "export type FuelContracts = {{\n{}\n}};",
-                    fuel_contracts_entries.join("\n")
-                )
-            });
+            // Generate FuelEvents type with per-event block/transaction types
+            {
+                let mut individual_types = Vec::new();
+                let fuel_events_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
+                    cfg.contracts
+                        .values()
+                        .map(|contract| {
+                            let event_entries: Vec<String> = contract.events.iter().map(|event| {
+                                let event_name = event.name.capitalize();
+                                let fs = match &event.field_selection {
+                                    Some(custom_fs) => FieldSelection::new(FieldSelectionOptions {
+                                        transaction_fields: custom_fs.transaction_fields.clone(),
+                                        block_fields: custom_fs.block_fields.clone(),
+                                    }),
+                                    None => FieldSelection::global_selection(&cfg.field_selection),
+                                };
+                                let block_name = format!("{}_{}_block", contract.name, event_name);
+                                let tx_name = format!("{}_{}_transaction", contract.name, event_name);
+                                individual_types.push(format!("export type {} = {};", block_name, fs.block_type_ts));
+                                individual_types.push(format!("export type {} = {};", tx_name, fs.transaction_type_ts));
+                                format!(
+                                    "      \"{}\": {{ transaction: {}; block: {} }};",
+                                    event_name, tx_name, block_name
+                                )
+                            }).collect();
+                            format!(
+                                "  \"{}\": {{\n{}\n  }};",
+                                contract.name,
+                                event_entries.join("\n")
+                            )
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+                for t in &individual_types {
+                    parts.push(t.clone());
+                }
+                parts.push(if fuel_events_entries.is_empty() {
+                    "export type FuelEvents = {};".to_string()
+                } else {
+                    format!(
+                        "export type FuelEvents = {{\n{}\n}};",
+                        fuel_events_entries.join("\n")
+                    )
+                });
+            }
 
             // Generate SvmChains type
             let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
@@ -2401,9 +2476,9 @@ let contractName = contractName
 
 @genType
 type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
-@genType
+@genType.import(("../envio.d.ts", "Contract1_NewGravatar_block"))
 type block = Block.t
-@genType
+@genType.import(("../envio.d.ts", "Contract1_NewGravatar_transaction"))
 type transaction = Transaction.t
 
 @genType
@@ -2468,7 +2543,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
                 .to_string(),
             event_signature: String::new(),
             field_selection: None,
-        }, &global_field_selection)
+        }, &global_field_selection, "Gravatar")
         .unwrap();
 
         assert_eq!(
@@ -2484,9 +2559,9 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
-@genType
+@genType.import(("../envio.d.ts", "Gravatar_NewGravatar_block"))
 type block = Block.t
-@genType
+@genType.import(("../envio.d.ts", "Gravatar_NewGravatar_transaction"))
 type transaction = Transaction.t
 
 @genType
@@ -2557,7 +2632,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
                     data_type: TypeIdent::option(TypeIdent::Address),
                 }],
             }),
-        }, &global_field_selection)
+        }, &global_field_selection, "Gravatar")
         .unwrap();
 
         assert_eq!(
@@ -2573,9 +2648,9 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
-@genType
+@genType.import(("../envio.d.ts", "Gravatar_NewGravatar_block"))
 type block = {number: int, timestamp: int, hash: string}
-@genType
+@genType.import(("../envio.d.ts", "Gravatar_NewGravatar_transaction"))
 type transaction = {from: option<Address.t>}
 
 @genType

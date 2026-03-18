@@ -1,15 +1,21 @@
 ---
-source: cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2431
+source: packages/cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.envio_dts_code
 ---
 export type EvmChains = {};
-export type EvmContracts = {};
+export type EvmEvents = {};
 export type FuelChains = {
   "0": { id: 0 };
 };
-export type FuelContracts = {
-  "Greeter": {};
+export type Greeter_NewGreeting_block = { number: number; timestamp: number; hash: string; id: string; height: number; time: number };
+export type Greeter_NewGreeting_transaction = { id: string };
+export type Greeter_ClearGreeting_block = { number: number; timestamp: number; hash: string; id: string; height: number; time: number };
+export type Greeter_ClearGreeting_transaction = { id: string };
+export type FuelEvents = {
+  "Greeter": {
+      "NewGreeting": { transaction: Greeter_NewGreeting_transaction; block: Greeter_NewGreeting_block };
+      "ClearGreeting": { transaction: Greeter_ClearGreeting_transaction; block: Greeter_ClearGreeting_block };
+  };
 };
 export type SvmChains = {};
 export type Enums = {};
