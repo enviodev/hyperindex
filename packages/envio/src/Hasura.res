@@ -102,16 +102,6 @@ let bulkKeepGoingErrorsSchema = S.array(
   parser: a => Belt.Array.keepMapU(a, a => a),
 })
 
-// Queue to ensure Hasura configuration requests run sequentially.
-// Concurrent requests can cause race conditions in Hasura metadata API.
-let queue = ref(Promise.resolve())
-
-let enqueue = fn => {
-  let promise = queue.contents->Promise.then(_ => fn())->Promise.catch(_ => fn())
-  queue := promise->Promise.catch(_ => Promise.resolve())
-  promise
-}
-
 let clearHasuraMetadata = async (~endpoint, ~auth) => {
   try {
     let result = await clearMetadataRoute->Rest.fetch(auth, ~client=Rest.client(endpoint))
@@ -129,7 +119,7 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
   }
 }
 
-let trackTablesUnsafe = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>) => {
+let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
       {
@@ -278,10 +268,7 @@ let executeBulkKeepGoing = async (~endpoint, ~auth, ~operations: array<bulkOpera
   }
 }
 
-let trackTables = (~endpoint, ~auth, ~pgSchema, ~tableNames) =>
-  enqueue(() => trackTablesUnsafe(~endpoint, ~auth, ~pgSchema, ~tableNames))
-
-let trackDatabaseUnsafe = async (
+let trackDatabase = async (
   ~endpoint,
   ~auth,
   ~pgSchema,
@@ -302,7 +289,7 @@ let trackDatabaseUnsafe = async (
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
 
-  await trackTablesUnsafe(~endpoint, ~auth, ~pgSchema, ~tableNames)
+  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
 
   // Collect all operations for bulk execution
   let allOperations = []
@@ -365,25 +352,3 @@ let trackDatabaseUnsafe = async (
 
   await executeBulkKeepGoing(~endpoint, ~auth, ~operations=allOperations)
 }
-
-let trackDatabase = (
-  ~endpoint,
-  ~auth,
-  ~pgSchema,
-  ~userEntities,
-  ~aggregateEntities,
-  ~responseLimit,
-  ~schema,
-) =>
-  enqueue(
-    () =>
-      trackDatabaseUnsafe(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~userEntities,
-        ~aggregateEntities,
-        ~responseLimit,
-        ~schema,
-      ),
-  )
