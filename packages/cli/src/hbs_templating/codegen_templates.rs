@@ -276,7 +276,7 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
     for gql_enum in gql_enums {
         writeln!(code, "module {} = {{", gql_enum.name.capitalized).unwrap();
         writeln!(code, "  @genType").unwrap();
-        write!(code, "  type t =\n").unwrap();
+        writeln!(code, "  type t =").unwrap();
         for param in &gql_enum.params {
             writeln!(code, "    | @as(\"{}\") {}", param.original, param.capitalized).unwrap();
         }
@@ -575,8 +575,6 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
                     let field_selection = FieldSelection::new(FieldSelectionOptions {
                         transaction_fields: field_selection.transaction_fields.clone(),
                         block_fields: field_selection.block_fields.clone(),
-                        transaction_type_name: "transaction".to_string(),
-                        block_type_name: "block".to_string(),
                     });
                     (
                         field_selection.block_type,
@@ -1162,8 +1160,6 @@ struct FieldSelection {
 struct FieldSelectionOptions {
     transaction_fields: Vec<SelectedField>,
     block_fields: Vec<SelectedField>,
-    transaction_type_name: String,
-    block_type_name: String,
 }
 
 impl FieldSelection {
@@ -1239,8 +1235,6 @@ impl FieldSelection {
         Self::new(FieldSelectionOptions {
             transaction_fields: cfg.transaction_fields.clone(),
             block_fields: cfg.block_fields.clone(),
-            transaction_type_name: "t".to_string(),
-            block_type_name: "t".to_string(),
         })
     }
 
@@ -1270,8 +1264,6 @@ impl FieldSelection {
         Self::new(FieldSelectionOptions {
             transaction_fields: transaction_fields.into_iter().collect::<Vec<_>>(),
             block_fields: block_fields.into_iter().collect::<Vec<_>>(),
-            transaction_type_name: "t".to_string(),
-            block_type_name: "t".to_string(),
         })
     }
 }
