@@ -181,7 +181,9 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
-  let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
+  let shouldSetAllReady = ref(false)
+  let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
+    let cf = prev
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
     let maybeChainAfterBatch =
@@ -268,7 +270,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
      * The given chain fetcher is fetching at the head or latest processed block >= endblock
      * The given chain has processed all events on the queue
      * see https://github.com/Float-Capital/indexer/pull/1388 */
-    if cf->ChainFetcher.hasProcessedToEndblock {
+    let cf = if cf->ChainFetcher.hasProcessedToEndblock {
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
         cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
@@ -307,26 +309,17 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
       //Default to just returning cf
       cf
     }
-  })
 
-  // Set envio_progress_ready per-chain when it first becomes ready,
-  // and the legacy indexer-wide metric when all chains are ready
-  let allChainsReady = ref(true)
-  chainFetchers
-  ->ChainMap.mapWithKey((chain, cf) => {
-    if cf->ChainFetcher.isReady {
-      // Only set the metric on the transition to ready (wasn't ready before this batch)
-      let prev = chainManager.chainFetchers->ChainMap.get(chain)
-      if !(prev->ChainFetcher.isReady) {
-        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
-      }
-    } else {
-      allChainsReady := false
+    // Set envio_progress_ready per-chain when it first becomes ready
+    if cf->ChainFetcher.isReady && !(prev->ChainFetcher.isReady) {
+      Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+      shouldSetAllReady := true
     }
-  })
-  ->ignore
 
-  if allChainsReady.contents {
+    cf
+  })
+
+  if shouldSetAllReady.contents {
     Prometheus.ProgressReady.setAllReady()
   }
 

@@ -76,6 +76,69 @@ describe("E2E tests", () => {
     ).toEqual([{value: "1", labels: Js.Dict.empty()}])
   })
 
+  Async.it("Prom metrics are set independently per chain", async t => {
+    let sourceMock1337 = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let sourceMock100 = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#100,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock1337.source]),
+        },
+        {
+          chain: #100,
+          sourceConfig: Config.CustomSources([sourceMock100.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Enter reorg threshold for both chains
+    let _ = await Promise.all2((
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+    ))
+
+    // Advance only chain 1337 to head
+    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    await indexerMock.getBatchWritePromise()
+
+    // Chain 1337 should be ready, chain 100 should not
+    t.expect(
+      await indexerMock.metric("envio_progress_ready"),
+      ~message="Only chain 1337 should be ready",
+    ).toEqual([
+      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
+    ])
+    t.expect(
+      await indexerMock.metric("hyperindex_synced_to_head"),
+      ~message="All-ready metric should not be set since chain 100 is not ready",
+    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
+
+    // Now advance chain 100 to head
+    sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    await indexerMock.getBatchWritePromise()
+
+    // Both chains should now be ready
+    t.expect(
+      await indexerMock.metric("envio_progress_ready"),
+      ~message="Both chains should be ready",
+    ).toEqual([
+      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
+      {value: "1", labels: Js.Dict.fromArray([("chainId", "100")])},
+    ])
+    t.expect(
+      await indexerMock.metric("hyperindex_synced_to_head"),
+      ~message="All-ready metric should be set when both chains are ready",
+    ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+  })
+
   Async.it("Shouldn't allow context access after hander is resolved", async t => {
     let errors = []
 
