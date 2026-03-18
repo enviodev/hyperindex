@@ -628,6 +628,8 @@ module Record = {
   type t<'key, 'value>
 
   external fromDict: Js.Dict.t<'value> => t<'key, 'value> = "%identity"
+  let fromArray: array<('key, 'value)> => t<'key, 'value> = pairs =>
+    pairs->(magic: array<('key, 'value)> => array<(string, 'value)>)->Js.Dict.fromArray->fromDict
 
   @get_index external getUnsafe: (t<'key, 'value>, 'key) => 'value = ""
   @get_index external get: (t<'key, 'value>, 'key) => option<'value> = ""

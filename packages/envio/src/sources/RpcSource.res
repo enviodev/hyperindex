@@ -402,42 +402,42 @@ let checksumAddressSchema: S.t<Js.Json.t> =
 
 // Block field definition for per-field parsing
 type blockFieldDef = {
-  location: string,
+  location: Internal.evmBlockField,
   jsonKey: string,
   schema: S.t<Js.Json.t>, // Type-erased schema
 }
 
 // Block field registry: maps field location (= JS property name) to parsing info.
 let makeBlockFieldRegistry = (addressSchema: S.t<Js.Json.t>): Utils.Record.t<Internal.evmBlockField, blockFieldDef> =>
-  ([
-    {location: "number", jsonKey: "number", schema: Rpc.hexIntSchema->toFieldSchema},
-    {location: "timestamp", jsonKey: "timestamp", schema: Rpc.hexIntSchema->toFieldSchema},
-    {location: "hash", jsonKey: "hash", schema: S.string->toFieldSchema},
-    {location: "parentHash", jsonKey: "parentHash", schema: S.string->toFieldSchema},
-    {location: "nonce", jsonKey: "nonce", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
-    {location: "sha3Uncles", jsonKey: "sha3Uncles", schema: S.string->toFieldSchema},
-    {location: "logsBloom", jsonKey: "logsBloom", schema: S.string->toFieldSchema},
-    {location: "transactionsRoot", jsonKey: "transactionsRoot", schema: S.string->toFieldSchema},
-    {location: "stateRoot", jsonKey: "stateRoot", schema: S.string->toFieldSchema},
-    {location: "receiptsRoot", jsonKey: "receiptsRoot", schema: S.string->toFieldSchema},
-    {location: "miner", jsonKey: "miner", schema: addressSchema},
-    {location: "difficulty", jsonKey: "difficulty", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
-    {location: "totalDifficulty", jsonKey: "totalDifficulty", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
-    {location: "extraData", jsonKey: "extraData", schema: S.string->toFieldSchema},
-    {location: "size", jsonKey: "size", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: "gasLimit", jsonKey: "gasLimit", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: "gasUsed", jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: "uncles", jsonKey: "uncles", schema: S.nullable(S.array(S.string))->toFieldSchema},
-    {location: "baseFeePerGas", jsonKey: "baseFeePerGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
-    {location: "blobGasUsed", jsonKey: "blobGasUsed", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
-    {location: "excessBlobGas", jsonKey: "excessBlobGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
-    {location: "parentBeaconBlockRoot", jsonKey: "parentBeaconBlockRoot", schema: S.nullable(S.string)->toFieldSchema},
-    {location: "withdrawalsRoot", jsonKey: "withdrawalsRoot", schema: S.nullable(S.string)->toFieldSchema},
-    {location: "l1BlockNumber", jsonKey: "l1BlockNumber", schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema},
-    {location: "sendCount", jsonKey: "sendCount", schema: S.nullable(S.string)->toFieldSchema},
-    {location: "sendRoot", jsonKey: "sendRoot", schema: S.nullable(S.string)->toFieldSchema},
-    {location: "mixHash", jsonKey: "mixHash", schema: S.nullable(S.string)->toFieldSchema},
-  ]->Array.map(def => (def.location, def))->Js.Dict.fromArray)->Utils.Record.fromDict
+  [
+    {location: Number, jsonKey: "number", schema: Rpc.hexIntSchema->toFieldSchema},
+    {location: Timestamp, jsonKey: "timestamp", schema: Rpc.hexIntSchema->toFieldSchema},
+    {location: Hash, jsonKey: "hash", schema: S.string->toFieldSchema},
+    {location: ParentHash, jsonKey: "parentHash", schema: S.string->toFieldSchema},
+    {location: Nonce, jsonKey: "nonce", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: Sha3Uncles, jsonKey: "sha3Uncles", schema: S.string->toFieldSchema},
+    {location: LogsBloom, jsonKey: "logsBloom", schema: S.string->toFieldSchema},
+    {location: TransactionsRoot, jsonKey: "transactionsRoot", schema: S.string->toFieldSchema},
+    {location: StateRoot, jsonKey: "stateRoot", schema: S.string->toFieldSchema},
+    {location: ReceiptsRoot, jsonKey: "receiptsRoot", schema: S.string->toFieldSchema},
+    {location: Miner, jsonKey: "miner", schema: addressSchema},
+    {location: Difficulty, jsonKey: "difficulty", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: TotalDifficulty, jsonKey: "totalDifficulty", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: ExtraData, jsonKey: "extraData", schema: S.string->toFieldSchema},
+    {location: Size, jsonKey: "size", schema: Rpc.hexBigintSchema->toFieldSchema},
+    {location: GasLimit, jsonKey: "gasLimit", schema: Rpc.hexBigintSchema->toFieldSchema},
+    {location: GasUsed, jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema},
+    {location: Uncles, jsonKey: "uncles", schema: S.nullable(S.array(S.string))->toFieldSchema},
+    {location: BaseFeePerGas, jsonKey: "baseFeePerGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: BlobGasUsed, jsonKey: "blobGasUsed", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: ExcessBlobGas, jsonKey: "excessBlobGas", schema: S.nullable(Rpc.hexBigintSchema)->toFieldSchema},
+    {location: ParentBeaconBlockRoot, jsonKey: "parentBeaconBlockRoot", schema: S.nullable(S.string)->toFieldSchema},
+    {location: WithdrawalsRoot, jsonKey: "withdrawalsRoot", schema: S.nullable(S.string)->toFieldSchema},
+    {location: L1BlockNumber, jsonKey: "l1BlockNumber", schema: S.nullable(Rpc.hexIntSchema)->toFieldSchema},
+    {location: SendCount, jsonKey: "sendCount", schema: S.nullable(S.string)->toFieldSchema},
+    {location: SendRoot, jsonKey: "sendRoot", schema: S.nullable(S.string)->toFieldSchema},
+    {location: MixHash, jsonKey: "mixHash", schema: S.nullable(S.string)->toFieldSchema},
+  ]->Array.map(def => (def.location, def))->Utils.Record.fromArray
 
 let blockFieldRegistryLowercase = makeBlockFieldRegistry(lowercaseAddressSchema)
 let blockFieldRegistryChecksum = makeBlockFieldRegistry(checksumAddressSchema)
@@ -453,11 +453,11 @@ let parseBlockFieldsFromJson = (
     let raw = jsonDict->Js.Dict.unsafeGet(def.jsonKey)
     try {
       let parsed = raw->S.parseOrThrow(def.schema)
-      mutBlockAcc->Js.Dict.set(def.location, parsed)
+      mutBlockAcc->Js.Dict.set((def.location :> string), parsed)
     } catch {
     | S.Raised(error) =>
       Js.Exn.raiseError(
-        `Invalid block field "${def.location}" found in the RPC response. Error: ${error->S.Error.reason}`,
+        `Invalid block field "${(def.location :> string)}" found in the RPC response. Error: ${error->S.Error.reason}`,
       )
     }
   })

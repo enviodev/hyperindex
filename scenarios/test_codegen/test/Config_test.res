@@ -78,7 +78,7 @@ describe("Config.fromPublic", () => {
         "contracts": {
           "greeter": {
             "abi": [{"type":"event","name":"NewGreeting","inputs":[],"anonymous":false}],
-            "events": [{ "event": "NewGreeting()" }]
+            "events": [{ "event": "NewGreeting()", "name": "NewGreeting" }]
           }
         },
         "addressFormat": "checksum"
@@ -129,7 +129,7 @@ describe("Config.fromPublic", () => {
         "contracts": {
           "Greeter": {
             "abi": [{"type":"event","name":"NewGreeting","inputs":[],"anonymous":false}],
-            "events": [{ "event": "NewGreeting()" }]
+            "events": [{ "event": "NewGreeting()", "name": "NewGreeting" }]
           }
         },
         "addressFormat": "checksum"
