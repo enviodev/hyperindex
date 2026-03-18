@@ -1167,10 +1167,32 @@ struct FieldSelectionOptions {
 }
 
 impl FieldSelection {
+    fn default_block_fields() -> Vec<SelectedField> {
+        vec![
+            SelectedField {
+                name: "number".to_string(),
+                data_type: TypeIdent::Int,
+            },
+            SelectedField {
+                name: "timestamp".to_string(),
+                data_type: TypeIdent::Int,
+            },
+            SelectedField {
+                name: "hash".to_string(),
+                data_type: TypeIdent::String,
+            },
+        ]
+    }
+
     fn new(options: FieldSelectionOptions) -> Self {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
-        for field in options.block_fields.into_iter() {
+        // Always include number, timestamp, hash in the type definition
+        let all_fields: Vec<_> = Self::default_block_fields()
+            .into_iter()
+            .chain(options.block_fields)
+            .collect();
+        for field in all_fields {
             let res_name = RecordField::to_valid_rescript_name(&field.name);
             let name: CaseOptions = field.name.into();
 
@@ -1768,7 +1790,6 @@ type testIndexer = {{
                             "checksum"
                         },
                         global_block_fields: cfg.field_selection.block_fields.iter()
-                            .filter(|f| !matches!(f.name.as_str(), "number" | "timestamp" | "hash"))
                             .map(|f| f.name.clone()).collect(),
                         global_transaction_fields: cfg.field_selection.transaction_fields.iter().map(|f| f.name.clone()).collect(),
                     }),
@@ -2562,7 +2583,7 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = {}
+type block = {number: int, timestamp: int, hash: string}
 @genType
 type transaction = {from: option<Address.t>}
 

@@ -1708,20 +1708,7 @@ impl FieldSelection {
             }
         }
 
-        let mut selected_block_fields = vec![
-            SelectedField {
-                name: "number".to_string(),
-                data_type: TypeIdent::Int,
-            },
-            SelectedField {
-                name: "timestamp".to_string(),
-                data_type: TypeIdent::Int,
-            },
-            SelectedField {
-                name: "hash".to_string(),
-                data_type: TypeIdent::String,
-            },
-        ];
+        let mut selected_block_fields = vec![];
 
         type Res = TypeIdent;
         type Block = BlockField;

@@ -278,10 +278,7 @@ let entityJsonSchema = S.schema(s =>
   }
 )
 
-let getFieldTypeAndSchema = (
-  prop,
-  ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
-) => {
+let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>) => {
   let typ = prop["type"]
   let isNullable = prop["isNullable"]->Option.getWithDefault(false)
   let isArray = prop["isArray"]->Option.getWithDefault(false)
@@ -317,8 +314,16 @@ let getFieldTypeAndSchema = (
   | other => Js.Exn.raiseError("Unknown field type in entity config: " ++ other)
   }
 
-  let fieldSchema = if isArray {S.array(baseSchema)->S.toUnknown} else {baseSchema}
-  let fieldSchema = if isNullable {S.null(fieldSchema)->S.toUnknown} else {fieldSchema}
+  let fieldSchema = if isArray {
+    S.array(baseSchema)->S.toUnknown
+  } else {
+    baseSchema
+  }
+  let fieldSchema = if isNullable {
+    S.null(fieldSchema)->S.toUnknown
+  } else {
+    fieldSchema
+  }
 
   (fieldType, fieldSchema, isNullable, isArray, isIndex)
 }
@@ -338,21 +343,22 @@ let parseEntitiesFromJson = (
   entitiesJson->Array.mapWithIndex((index, entityJson) => {
     let entityName = entityJson["name"]
 
-    let fields: array<Table.fieldOrDerived> =
-      entityJson["properties"]->Array.map(prop => {
-        let (fieldType, fieldSchema, isNullable, isArray, isIndex) =
-          getFieldTypeAndSchema(prop, ~enumConfigsByName)
-        Table.mkField(
-          prop["name"],
-          fieldType,
-          ~fieldSchema,
-          ~isPrimaryKey=prop["name"] === "id",
-          ~isNullable,
-          ~isArray,
-          ~isIndex,
-          ~linkedEntity=?prop["linkedEntity"],
-        )
-      })
+    let fields: array<Table.fieldOrDerived> = entityJson["properties"]->Array.map(prop => {
+      let (fieldType, fieldSchema, isNullable, isArray, isIndex) = getFieldTypeAndSchema(
+        prop,
+        ~enumConfigsByName,
+      )
+      Table.mkField(
+        prop["name"],
+        fieldType,
+        ~fieldSchema,
+        ~isPrimaryKey=prop["name"] === "id",
+        ~isNullable,
+        ~isArray,
+        ~isIndex,
+        ~linkedEntity=?prop["linkedEntity"],
+      )
+    })
 
     let derivedFields: array<Table.fieldOrDerived> =
       entityJson["derivedFields"]
@@ -369,10 +375,12 @@ let parseEntitiesFromJson = (
       entityJson["compositeIndices"]
       ->Option.getWithDefault([])
       ->Array.map(ci =>
-        ci->Array.map(f => {
-          Table.fieldName: f["fieldName"],
-          direction: f["direction"] == "Asc" ? Table.Asc : Table.Desc,
-        })
+        ci->Array.map(
+          f => {
+            Table.fieldName: f["fieldName"],
+            direction: f["direction"] == "Asc" ? Table.Asc : Table.Desc,
+          },
+        )
       )
 
     let table = Table.mkTable(
@@ -386,14 +394,16 @@ let parseEntitiesFromJson = (
     // to match the database column names used in Table.toSqlParams
     let schema = S.schema(s => {
       let dict = Js.Dict.empty()
-      entityJson["properties"]->Array.forEach(prop => {
-        let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
-        let dbFieldName = switch prop["linkedEntity"] {
-        | Some(_) => prop["name"] ++ "_id"
-        | None => prop["name"]
-        }
-        dict->Js.Dict.set(dbFieldName, s.matches(fieldSchema))
-      })
+      entityJson["properties"]->Array.forEach(
+        prop => {
+          let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
+          let dbFieldName = switch prop["linkedEntity"] {
+          | Some(_) => prop["name"] ++ "_id"
+          | None => prop["name"]
+          }
+          dict->Js.Dict.set(dbFieldName, s.matches(fieldSchema))
+        },
+      )
       dict
     })
 
@@ -401,7 +411,9 @@ let parseEntitiesFromJson = (
       Internal.name: entityName,
       index,
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
-      rowsSchema: S.array(schema)->(Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>),
+      rowsSchema: S.array(schema)->(
+        Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
+      ),
       table,
     }->Internal.fromGenericEntityConfig
   })
@@ -449,30 +461,39 @@ let enrichEvmFieldSelections = (
     })
   | None => ()
   }
-  events->Array.forEach(event => {
+  events->Js.Array2.forEachi((event, i) => {
     let evmEvent = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    switch fieldsByName->Js.Dict.get(evmEvent.name) {
-    | Some(je) =>
-      evmEvent.selectedBlockFields = switch je["blockFields"] {
-      | Some(fields) =>
-        // Prepend always-included block fields for per-event overrides too
-        Utils.Set.fromArray(
-          Array.concat(
-            alwaysIncludedBlockFields,
-            fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
-          ),
-        )
-      | None => globalBlockFieldsSet
-      }
-      evmEvent.selectedTransactionFields = switch je["transactionFields"] {
-      | Some(fields) =>
-        Utils.Set.fromArray(fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>))
-      | None => globalTransactionFieldsSet
-      }
-    | None =>
-      evmEvent.selectedBlockFields = globalBlockFieldsSet
-      evmEvent.selectedTransactionFields = globalTransactionFieldsSet
+    let (selectedBlockFields, selectedTransactionFields) = switch fieldsByName->Js.Dict.get(
+      evmEvent.name,
+    ) {
+    | Some(je) => (
+        switch je["blockFields"] {
+        | Some(fields) =>
+          // Prepend always-included block fields for per-event overrides too
+          Utils.Set.fromArray(
+            Array.concat(
+              alwaysIncludedBlockFields,
+              fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
+            ),
+          )
+        | None => globalBlockFieldsSet
+        },
+        switch je["transactionFields"] {
+        | Some(fields) =>
+          Utils.Set.fromArray(
+            fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>),
+          )
+        | None => globalTransactionFieldsSet
+        },
+      )
+    | None => (globalBlockFieldsSet, globalTransactionFieldsSet)
     }
+    events->Js.Array2.unsafe_set(
+      i,
+      {...evmEvent, selectedBlockFields, selectedTransactionFields}->(
+        Utils.magic: Internal.evmEventConfig => Internal.eventConfig
+      ),
+    )
   })
 }
 
@@ -484,7 +505,9 @@ let fromPublic = (
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
-    Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`)
+    Js.Exn.raiseError(
+      `Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
+    )
   }
 
   // Determine ecosystem from publicConfig (extract just chains for unified handling)
@@ -521,7 +544,10 @@ let fromPublic = (
   let (globalBlockFieldsSet, globalTransactionFieldsSet) = switch publicConfig["evm"] {
   | Some(evm) => (
       Utils.Set.fromArray(
-        Array.concat(alwaysIncludedBlockFields, evm["globalBlockFields"]->Option.getWithDefault([])),
+        Array.concat(
+          alwaysIncludedBlockFields,
+          evm["globalBlockFields"]->Option.getWithDefault([]),
+        ),
       ),
       Utils.Set.fromArray(evm["globalTransactionFields"]->Option.getWithDefault([])),
     )
@@ -578,6 +604,7 @@ let fromPublic = (
             }
           },
         )
+
         // Enrich EVM event configs with field selections from JSON config
         if ecosystemName == Ecosystem.Evm {
           enrichEvmFieldSelections(
@@ -684,18 +711,12 @@ let fromPublic = (
       | Ecosystem.Fuel =>
         switch publicChainConfig["hypersync"] {
         | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})
-        | None =>
-          Js.Exn.raiseError(
-            `Chain ${chainName} is missing hypersync endpoint in config`,
-          )
+        | None => Js.Exn.raiseError(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
         switch publicChainConfig["rpc"] {
         | Some(rpc) => SvmSourceConfig({rpc: rpc})
-        | None =>
-          Js.Exn.raiseError(
-            `Chain ${chainName} is missing rpc endpoint in config`,
-          )
+        | None => Js.Exn.raiseError(`Chain ${chainName} is missing rpc endpoint in config`)
         }
       }
 
@@ -753,8 +774,7 @@ let fromPublic = (
     ->Option.getWithDefault([])
     ->parseEntitiesFromJson(~enumConfigsByName)
 
-  let allEntities =
-    userEntities->Js.Array2.concat([DynamicContractRegistry.entityConfig])
+  let allEntities = userEntities->Js.Array2.concat([DynamicContractRegistry.entityConfig])
 
   let userEntitiesByName =
     userEntities
@@ -814,4 +834,3 @@ let getChain = (config, ~chainId) => {
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
 }
-

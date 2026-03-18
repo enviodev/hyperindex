@@ -224,7 +224,9 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
           fetchState: switch cf.fetchState.firstEventBlock {
           | Some(_) => cf.fetchState
           | None =>
-            switch batch->Batch.findFirstEventBlockNumber(~chainId=chain->ChainMap.Chain.toChainId) {
+            switch batch->Batch.findFirstEventBlockNumber(
+              ~chainId=chain->ChainMap.Chain.toChainId,
+            ) {
             | Some(_) as firstEventBlock => {...cf.fetchState, firstEventBlock}
             | None => cf.fetchState
             }
@@ -415,7 +417,10 @@ let validatePartitionQueryResponse = (
           // The previous rollback subtracted from all chains' counters,
           // but was never committed to DB. So we must undo the subtraction
           // for every chain before the new rollback subtracts again.
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.mapWithKey((c, chainFetcher) => {
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.mapWithKey((
+            c,
+            chainFetcher,
+          ) => {
             switch eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
               c->ChainMap.Chain.toChainId,
             ) {

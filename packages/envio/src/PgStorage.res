@@ -43,7 +43,11 @@ let directionToIndexName = (direction: Table.indexFieldDirection) =>
   | Desc => "_desc"
   }
 
-let makeCreateCompositeIndexQuery = (~tableName, ~indexFields: array<Table.compositeIndexField>, ~pgSchema) => {
+let makeCreateCompositeIndexQuery = (
+  ~tableName,
+  ~indexFields: array<Table.compositeIndexField>,
+  ~pgSchema,
+) => {
   let indexName =
     tableName ++
     "_" ++
@@ -428,7 +432,9 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
       ),
       "convertOrThrow": S.compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
-          serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
+          serializer: Utils.Array.flatten->(
+            Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown
+          ),
         }),
         ~input=Value,
         ~output=Unknown,
@@ -599,7 +605,9 @@ let getConnectedPsqlExec = {
                     switch error {
                     | Value(_) =>
                       resolve(
-                        Error(`Please check if "psql" binary is installed or Docker container "${containerName}" is running.`),
+                        Error(
+                          `Please check if "psql" binary is installed or Docker container "${containerName}" is running.`,
+                        ),
                       )
                     | Null =>
                       resolve(

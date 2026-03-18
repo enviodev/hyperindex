@@ -32,14 +32,18 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     selectedTransactionFields,
     isWildcard,
   }) => {
-    selectedBlockFields->Utils.Set.toArray->Array.forEach(name => {
+    selectedBlockFields
+    ->Utils.Set.toArray
+    ->Array.forEach(name => {
       let nameStr = (name :> string)
       if !(Internal.nullableBlockFields->Utils.Set.has(name)) {
         nonOptionalBlockFieldNames->Utils.Set.add(nameStr)->ignore
       }
       capitalizedBlockFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
     })
-    selectedTransactionFields->Utils.Set.toArray->Array.forEach(name => {
+    selectedTransactionFields
+    ->Utils.Set.toArray
+    ->Array.forEach(name => {
       let nameStr = (name :> string)
       if !(Internal.nullableTransactionFields->Utils.Set.has(name)) {
         nonOptionalTransactionFieldNames->Utils.Set.add(nameStr)->ignore
@@ -317,8 +321,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       )
     }
 
-    let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -519,7 +522,10 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
     getBlockHashes,
     getHeightOrThrow: async () => {
       let timerRef = Hrtime.makeTimer()
-      let result = switch await HyperSyncJsonApi.heightRoute->Rest.fetch(apiToken, ~client=jsonApiClient) {
+      let result = switch await HyperSyncJsonApi.heightRoute->Rest.fetch(
+        apiToken,
+        ~client=jsonApiClient,
+      ) {
       | Value(height) => height
       | ErrorMessage(m) if m === malformedTokenMessage =>
         Logging.error(`Your ENVIO_API_TOKEN is malformed. The indexer will not be able to fetch events. Update the token and restart the indexer using 'pnpm envio start'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
@@ -530,8 +536,17 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       | ErrorMessage(m) => Js.Exn.raiseError(m)
       }
       let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
-      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~seconds)
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+      )
+      Prometheus.SourceRequestCount.addSeconds(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+        ~seconds,
+      )
       result
     },
     getItemsOrThrow,

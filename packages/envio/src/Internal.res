@@ -70,25 +70,116 @@ type evmTransactionField =
   | @as("authorizationList") AuthorizationList
 
 let evmBlockFieldSchema = S.enum([
-  Number, Timestamp, Hash, ParentHash, Nonce, Sha3Uncles, LogsBloom,
-  TransactionsRoot, StateRoot, ReceiptsRoot, Miner, Difficulty,
-  TotalDifficulty, ExtraData, Size, GasLimit, GasUsed, Uncles,
-  BaseFeePerGas, BlobGasUsed, ExcessBlobGas, ParentBeaconBlockRoot,
-  WithdrawalsRoot, L1BlockNumber, SendCount, SendRoot, MixHash,
+  Number,
+  Timestamp,
+  Hash,
+  ParentHash,
+  Nonce,
+  Sha3Uncles,
+  LogsBloom,
+  TransactionsRoot,
+  StateRoot,
+  ReceiptsRoot,
+  Miner,
+  Difficulty,
+  TotalDifficulty,
+  ExtraData,
+  Size,
+  GasLimit,
+  GasUsed,
+  Uncles,
+  BaseFeePerGas,
+  BlobGasUsed,
+  ExcessBlobGas,
+  ParentBeaconBlockRoot,
+  WithdrawalsRoot,
+  L1BlockNumber,
+  SendCount,
+  SendRoot,
+  MixHash,
 ])
 
 let evmTransactionFieldSchema = S.enum([
-  TransactionIndex, Hash, From, To, Gas, GasPrice, MaxPriorityFeePerGas,
-  MaxFeePerGas, CumulativeGasUsed, EffectiveGasPrice, GasUsed, Input,
-  Nonce, Value, V, R, S, ContractAddress, LogsBloom, Root, Status,
-  YParity, AccessList, MaxFeePerBlobGas, BlobVersionedHashes, Type,
-  L1Fee, L1GasPrice, L1GasUsed, L1FeeScalar, GasUsedForL1,
+  TransactionIndex,
+  Hash,
+  From,
+  To,
+  Gas,
+  GasPrice,
+  MaxPriorityFeePerGas,
+  MaxFeePerGas,
+  CumulativeGasUsed,
+  EffectiveGasPrice,
+  GasUsed,
+  Input,
+  Nonce,
+  Value,
+  V,
+  R,
+  S,
+  ContractAddress,
+  LogsBloom,
+  Root,
+  Status,
+  YParity,
+  AccessList,
+  MaxFeePerBlobGas,
+  BlobVersionedHashes,
+  Type,
+  L1Fee,
+  L1GasPrice,
+  L1GasUsed,
+  L1FeeScalar,
+  GasUsedForL1,
   AuthorizationList,
 ])
 
 // Static sets of nullable field names — matches the S.nullable wrapping in RpcSource field registries
-let nullableBlockFields = Utils.Set.fromArray(([Nonce, Difficulty, TotalDifficulty, Uncles, BaseFeePerGas, BlobGasUsed, ExcessBlobGas, ParentBeaconBlockRoot, WithdrawalsRoot, L1BlockNumber, SendCount, SendRoot, MixHash]: array<evmBlockField>))
-let nullableTransactionFields = Utils.Set.fromArray(([GasPrice, V, R, S, YParity, MaxPriorityFeePerGas, MaxFeePerGas, MaxFeePerBlobGas, BlobVersionedHashes, ContractAddress, Root, Status, L1Fee, L1GasPrice, L1GasUsed, L1FeeScalar, GasUsedForL1, From, To, Type]: array<evmTransactionField>))
+let nullableBlockFields = Utils.Set.fromArray(
+  (
+    [
+      Nonce,
+      Difficulty,
+      TotalDifficulty,
+      Uncles,
+      BaseFeePerGas,
+      BlobGasUsed,
+      ExcessBlobGas,
+      ParentBeaconBlockRoot,
+      WithdrawalsRoot,
+      L1BlockNumber,
+      SendCount,
+      SendRoot,
+      MixHash,
+    ]: array<evmBlockField>
+  ),
+)
+let nullableTransactionFields = Utils.Set.fromArray(
+  (
+    [
+      GasPrice,
+      V,
+      R,
+      S,
+      YParity,
+      MaxPriorityFeePerGas,
+      MaxFeePerGas,
+      MaxFeePerBlobGas,
+      BlobVersionedHashes,
+      ContractAddress,
+      Root,
+      Status,
+      L1Fee,
+      L1GasPrice,
+      L1GasUsed,
+      L1FeeScalar,
+      GasUsedForL1,
+      From,
+      To,
+      Type,
+    ]: array<evmTransactionField>
+  ),
+)
 
 // Shared EVM transaction fields type used by both RPC and HyperSync sources
 // Field names match HyperSyncClient.ResponseTypes.transaction for consistency
@@ -262,8 +353,8 @@ type evmEventConfig = {
   ...eventConfig,
   getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventParams,
-  mutable selectedBlockFields: Utils.Set.t<evmBlockField>,
-  mutable selectedTransactionFields: Utils.Set.t<evmTransactionField>,
+  selectedBlockFields: Utils.Set.t<evmBlockField>,
+  selectedTransactionFields: Utils.Set.t<evmTransactionField>,
 }
 type evmContractConfig = {
   name: string,

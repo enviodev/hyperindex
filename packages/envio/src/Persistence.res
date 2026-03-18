@@ -142,7 +142,8 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.entityConfig])
+  let allEntities =
+    userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.entityConfig])
   let allEnums =
     allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
@@ -203,8 +204,7 @@ let init = {
         resolveRef.contents()
       }
     } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
+    | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
     }
   }
 }
