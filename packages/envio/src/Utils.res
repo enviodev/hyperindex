@@ -623,6 +623,16 @@ external entries: t<'value> => Js_iterator.t<('value, 'value)> = "entries"
   external forEachWithSet: (t<'value>, ('value, 'value, t<'value>) => unit) => unit = "forEach"
 }
 
+// Typed-key dictionary backed by Js.Dict. Keys must be @unboxed string variants.
+module Record = {
+  type t<'key, 'value>
+
+  external fromDict: Js.Dict.t<'value> => t<'key, 'value> = "%identity"
+
+  @get_index external getUnsafe: (t<'key, 'value>, 'key) => 'value = ""
+  @get_index external get: (t<'key, 'value>, 'key) => option<'value> = ""
+}
+
 module WeakMap = {
   type t<'k, 'v> = Js.WeakMap.t<'k, 'v>
 

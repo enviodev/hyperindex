@@ -203,6 +203,7 @@ let publicConfigChainSchema = S.schema(s =>
 let contractEventItemSchema = S.schema(s =>
   {
     "event": s.matches(S.string),
+    "name": s.matches(S.string),
     "blockFields": s.matches(S.option(S.array(S.string))),
     "transactionFields": s.matches(S.option(S.array(S.string))),
   }
@@ -433,15 +434,15 @@ let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestam
 let enrichEvmFieldSelections = (
   events: array<Internal.eventConfig>,
   ~jsonEvents: option<array<_>>,
-  ~globalBlockFields: array<Internal.evmBlockField>,
-  ~globalTransactionFields: array<Internal.evmTransactionField>,
+  ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>,
+  ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>,
 ) => {
-  // Build a lookup by event name extracted from the event signature
+  // Build a lookup by event name for events with per-event field overrides
   let fieldsByName: Js.Dict.t<_> = Js.Dict.empty()
   switch jsonEvents {
   | Some(jes) =>
     jes->Array.forEach(je => {
-      let name = je["event"]->Js.String2.split("(")->Array.getUnsafe(0)
+      let name = je["name"]
       if je["blockFields"] != None || je["transactionFields"] != None {
         fieldsByName->Js.Dict.set(name, je)
       }
@@ -449,24 +450,29 @@ let enrichEvmFieldSelections = (
   | None => ()
   }
   events->Array.forEach(event => {
-    // Cast to evmEventConfig to set the selected fields (safe: all EVM events have these fields)
     let evmEvent = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    let je = fieldsByName->Js.Dict.get(evmEvent.name)
-    let blockFields = switch je->Option.flatMap(j => j["blockFields"]) {
-    | Some(fields) =>
-      // Prepend always-included block fields for per-event overrides too
-      Array.concat(
-        alwaysIncludedBlockFields,
-        fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
-      )
-    | None => globalBlockFields
+    switch fieldsByName->Js.Dict.get(evmEvent.name) {
+    | Some(je) =>
+      evmEvent.selectedBlockFields = switch je["blockFields"] {
+      | Some(fields) =>
+        // Prepend always-included block fields for per-event overrides too
+        Utils.Set.fromArray(
+          Array.concat(
+            alwaysIncludedBlockFields,
+            fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
+          ),
+        )
+      | None => globalBlockFieldsSet
+      }
+      evmEvent.selectedTransactionFields = switch je["transactionFields"] {
+      | Some(fields) =>
+        Utils.Set.fromArray(fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>))
+      | None => globalTransactionFieldsSet
+      }
+    | None =>
+      evmEvent.selectedBlockFields = globalBlockFieldsSet
+      evmEvent.selectedTransactionFields = globalTransactionFieldsSet
     }
-    let transactionFields = switch je->Option.flatMap(j => j["transactionFields"]) {
-    | Some(fields) => fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>)
-    | None => globalTransactionFields
-    }
-    evmEvent.selectedBlockFields = Utils.Set.fromArray(blockFields)
-    evmEvent.selectedTransactionFields = Utils.Set.fromArray(transactionFields)
   })
 }
 
@@ -511,32 +517,40 @@ let fromPublic = (
   | _ => None
   }
 
-  // Extract global EVM field selections (used as defaults for events without per-event overrides)
-  let (globalBlockFields, globalTransactionFields) = switch publicConfig["evm"] {
+  // Create global field selection Sets once (shared across events without per-event overrides)
+  let (globalBlockFieldsSet, globalTransactionFieldsSet) = switch publicConfig["evm"] {
   | Some(evm) => (
-      Array.concat(alwaysIncludedBlockFields, evm["globalBlockFields"]->Option.getWithDefault([])),
-      evm["globalTransactionFields"]->Option.getWithDefault([]),
+      Utils.Set.fromArray(
+        Array.concat(alwaysIncludedBlockFields, evm["globalBlockFields"]->Option.getWithDefault([])),
+      ),
+      Utils.Set.fromArray(evm["globalTransactionFields"]->Option.getWithDefault([])),
     )
-  | None => (alwaysIncludedBlockFields, [])
+  | None => (Utils.Set.fromArray(alwaysIncludedBlockFields), Utils.Set.make())
   }
 
-  // Store ABI, event signatures, and per-event field selections for each contract
-  let contractsWithAbis: Js.Dict.t<(EvmTypes.Abi.t, array<string>, option<array<_>>)> =
-    switch publicContractsConfig {
-    | Some(contractsDict) =>
-      contractsDict
-      ->Js.Dict.entries
-      ->Js.Array2.map(((contractName, contractConfig)) => {
-        let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
-        let eventSignatures = switch contractConfig["events"] {
-        | Some(events) => events->Array.map(eventItem => eventItem["event"])
-        | None => []
-        }
-        (contractName->Utils.String.capitalize, (abi, eventSignatures, contractConfig["events"]))
-      })
-      ->Js.Dict.fromArray
-    | None => Js.Dict.empty()
-    }
+  // Store ABI and event signatures for each contract
+  let contractsWithAbis: Js.Dict.t<(EvmTypes.Abi.t, array<string>)> = Js.Dict.empty()
+  // Per-event field selection overrides, keyed by capitalized contract name
+  let jsonEventsByContract: Js.Dict.t<array<_>> = Js.Dict.empty()
+  switch publicContractsConfig {
+  | Some(contractsDict) =>
+    contractsDict
+    ->Js.Dict.entries
+    ->Array.forEach(((contractName, contractConfig)) => {
+      let capitalizedName = contractName->Utils.String.capitalize
+      let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
+      let eventSignatures = switch contractConfig["events"] {
+      | Some(events) => events->Array.map(eventItem => eventItem["event"])
+      | None => []
+      }
+      contractsWithAbis->Js.Dict.set(capitalizedName, (abi, eventSignatures))
+      switch contractConfig["events"] {
+      | Some(events) => jsonEventsByContract->Js.Dict.set(capitalizedName, events)
+      | None => ()
+      }
+    })
+  | None => ()
+  }
 
   // Index codegenChains by id for efficient lookup
   let codegenChainById = Js.Dict.empty()
@@ -549,7 +563,7 @@ let fromPublic = (
   codegenChains->Array.forEach(codegenChain => {
     let mergedContracts = codegenChain.contracts->Array.map(codegenContract => {
       switch contractsWithAbis->Js.Dict.get(codegenContract.name) {
-      | Some((abi, eventSignatures, jsonEvents)) =>
+      | Some((abi, eventSignatures)) =>
         // Parse addresses based on ecosystem and address format
         let parsedAddresses = codegenContract.addresses->Array.map(
           addressString => {
@@ -568,9 +582,9 @@ let fromPublic = (
         if ecosystemName == Ecosystem.Evm {
           enrichEvmFieldSelections(
             codegenContract.events,
-            ~jsonEvents,
-            ~globalBlockFields,
-            ~globalTransactionFields,
+            ~jsonEvents=jsonEventsByContract->Js.Dict.get(codegenContract.name),
+            ~globalBlockFieldsSet,
+            ~globalTransactionFieldsSet,
           )
         }
         // Convert codegenContract to contract by adding abi and eventSignatures

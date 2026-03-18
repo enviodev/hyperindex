@@ -1206,18 +1206,6 @@ impl EvmAbi {
             .collect()
     }
 
-    /// Returns (signature, selector hex, topic_count) for each ABI event
-    pub fn get_event_details(&self) -> Vec<(String, String, usize)> {
-        self.typed
-            .events()
-            .map(|e| {
-                let indexed_count = e.inputs.iter().filter(|i| i.indexed).count();
-                let topic_count = if e.anonymous { indexed_count } else { indexed_count + 1 };
-                (Self::event_signature_from_abi_event(e), e.selector().to_string(), topic_count)
-            })
-            .collect()
-    }
-
     pub fn from_file(
         abi_file_path: &Option<String>,
         project_paths: &ParsedProjectPaths,

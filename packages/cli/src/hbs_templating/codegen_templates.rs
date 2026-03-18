@@ -216,6 +216,7 @@ struct InternalChainConfig {
 #[serde(rename_all = "camelCase")]
 struct InternalContractEventItem {
     event: String,
+    name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     block_fields: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1733,6 +1734,7 @@ type testIndexer = {{
                             contract.events.iter()
                                 .map(|e| InternalContractEventItem {
                                     event: e.event_signature.clone(),
+                                    name: e.name.clone(),
                                     block_fields: e.field_selection.as_ref().map(|fs| fs.block_fields.iter()
                                         .filter(|f| !matches!(f.name.as_str(), "number" | "timestamp" | "hash"))
                                         .map(|f| f.name.clone()).collect()),

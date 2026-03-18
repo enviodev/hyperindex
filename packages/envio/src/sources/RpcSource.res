@@ -408,8 +408,8 @@ type blockFieldDef = {
 }
 
 // Block field registry: maps field location (= JS property name) to parsing info.
-let makeBlockFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<blockFieldDef> =>
-  [
+let makeBlockFieldRegistry = (addressSchema: S.t<Js.Json.t>): Utils.Record.t<Internal.evmBlockField, blockFieldDef> =>
+  ([
     {location: "number", jsonKey: "number", schema: Rpc.hexIntSchema->toFieldSchema},
     {location: "timestamp", jsonKey: "timestamp", schema: Rpc.hexIntSchema->toFieldSchema},
     {location: "hash", jsonKey: "hash", schema: S.string->toFieldSchema},
@@ -437,7 +437,7 @@ let makeBlockFieldRegistry = (addressSchema: S.t<Js.Json.t>): Js.Dict.t<blockFie
     {location: "sendCount", jsonKey: "sendCount", schema: S.nullable(S.string)->toFieldSchema},
     {location: "sendRoot", jsonKey: "sendRoot", schema: S.nullable(S.string)->toFieldSchema},
     {location: "mixHash", jsonKey: "mixHash", schema: S.nullable(S.string)->toFieldSchema},
-  ]->Array.map(def => (def.location, def))->Js.Dict.fromArray
+  ]->Array.map(def => (def.location, def))->Js.Dict.fromArray)->Utils.Record.fromDict
 
 let blockFieldRegistryLowercase = makeBlockFieldRegistry(lowercaseAddressSchema)
 let blockFieldRegistryChecksum = makeBlockFieldRegistry(checksumAddressSchema)
@@ -481,10 +481,7 @@ let makeThrowingGetEventBlock = (
       | None => {
           let fields: array<blockFieldDef> = []
           selectedBlockFields->Utils.Set.forEach(fieldName => {
-            switch blockFieldRegistry->Js.Dict.get((fieldName :> string)) {
-            | Some(def) => fields->Js.Array2.push(def)->ignore
-            | None => () // Unknown field — skip silently
-            }
+            fields->Js.Array2.push(blockFieldRegistry->Utils.Record.getUnsafe(fieldName))->ignore
           })
 
           let fn = if selectedBlockFields->Utils.Set.size == 0 {

@@ -713,6 +713,23 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   })
 })
 
+describe("RpcSource - blockFieldRegistry completeness", () => {
+  it("blockFieldRegistry contains all evmBlockField variants", t => {
+    let registry = RpcSource.blockFieldRegistryLowercase
+    let allBlockFields: array<Internal.evmBlockField> = [
+      Number, Timestamp, Hash, ParentHash, Nonce, Sha3Uncles, LogsBloom,
+      TransactionsRoot, StateRoot, ReceiptsRoot, Miner, Difficulty,
+      TotalDifficulty, ExtraData, Size, GasLimit, GasUsed, Uncles,
+      BaseFeePerGas, BlobGasUsed, ExcessBlobGas, ParentBeaconBlockRoot,
+      WithdrawalsRoot, L1BlockNumber, SendCount, SendRoot, MixHash,
+    ]
+    let missing = allBlockFields->Js.Array2.filter(field =>
+      registry->Utils.Record.get(field) == None
+    )
+    t.expect(missing->(Utils.magic: array<Internal.evmBlockField> => array<string>)).toEqual([])
+  })
+})
+
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
