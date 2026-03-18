@@ -1,4 +1,5 @@
 open Vitest
+open Internal
 
 let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
 
@@ -55,18 +56,6 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   let neverGetTransactionJson = _ => Js.Exn.raiseError("getTransactionJson should not be called")
   let neverGetReceiptJson = _ => Js.Exn.raiseError("getReceiptJson should not be called")
 
-  it("Panics with invalid schema", t => {
-    t.expect(
-      () => {
-        RpcSource.makeThrowingGetEventTransaction(
-          ~getTransactionJson=neverGetTransactionJson,
-          ~getReceiptJson=neverGetReceiptJson,
-          ~lowercaseAddresses=false,
-        )(mockLog(), ~transactionSchema=S.string)
-      },
-    ).toThrowError("Unexpected internal error: transactionSchema is not an object")
-  })
-
   Async.it(
     "Returns empty object when empty field selection. Doesn't make a transaction request",
     async t => {
@@ -76,7 +65,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~lowercaseAddresses=false,
       )
       t.expect(
-        await mockLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
+        await mockLog()->getEventTransactionOrThrow(~selectedTransactionFields=Utils.Set.fromArray([])),
       ).toEqual(
         %raw(`{}`),
       )
@@ -91,12 +80,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "transactionIndex": s.matches(S.int),
-            },
-        ),
+        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex]),
       ),
     ).toEqual(
       {
@@ -113,12 +97,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "hash": s.matches(S.string),
-            },
-        ),
+        ~selectedTransactionFields=Utils.Set.fromArray([Hash]),
       ),
     ).toEqual(
       {
@@ -135,13 +114,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "hash": s.matches(S.string),
-              "transactionIndex": s.matches(S.int),
-            },
-        ),
+        ~selectedTransactionFields=Utils.Set.fromArray([Hash, TransactionIndex]),
       ),
     ).toEqual(
       {
@@ -150,7 +123,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       },
     )
 
-    // In different fields order in the schema
+    // In different fields order
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionJson=neverGetTransactionJson,
       ~getReceiptJson=neverGetReceiptJson,
@@ -158,13 +131,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "transactionIndex": s.matches(S.int),
-              "hash": s.matches(S.string),
-            },
-        ),
+        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex, Hash]),
       ),
     ).toEqual(
       {
@@ -195,30 +162,13 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     t.expect(
       await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "hash": s.matches(S.string),
-              "transactionIndex": s.matches(S.int),
-              "from": s.matches(Address.schema),
-              "to": s.matches(Address.schema),
-              "gas": s.matches(BigInt.nativeSchema),
-              "gasPrice": s.matches(BigInt.nativeSchema),
-              "maxPriorityFeePerGas": s.matches(BigInt.nativeSchema),
-              "maxFeePerGas": s.matches(BigInt.nativeSchema),
-              "input": s.matches(S.string),
-              "nonce": s.matches(BigInt.nativeSchema),
-              "value": s.matches(BigInt.nativeSchema),
-              "v": s.matches(S.string),
-              "r": s.matches(S.string),
-              "s": s.matches(S.string),
-              "yParity": s.matches(S.string),
-              // Receipt fields
-              "gasUsed": s.matches(BigInt.nativeSchema),
-              "effectiveGasPrice": s.matches(BigInt.nativeSchema),
-              "status": s.matches(S.int),
-            },
-        ),
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          Hash, TransactionIndex, From, To, Gas, GasPrice,
+          MaxPriorityFeePerGas, MaxFeePerGas, Input, Nonce,
+          Value, V, R, S, YParity,
+          // Receipt fields
+          GasUsed, EffectiveGasPrice, Status,
+        ]),
       ),
     ).toEqual(
       {
@@ -266,21 +216,10 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       // Per-field parsing handles this — absent fields are simply not included.
       t.expect(
         await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "hash": s.matches(S.string),
-                "from": s.matches(Address.schema),
-                "to": s.matches(Address.schema),
-                "gas": s.matches(BigInt.nativeSchema),
-                "gasPrice": s.matches(BigInt.nativeSchema),
-                "nonce": s.matches(BigInt.nativeSchema),
-                "value": s.matches(BigInt.nativeSchema),
-                "type": s.matches(S.int),
-                "maxFeePerGas": s.matches(BigInt.nativeSchema),
-                "maxPriorityFeePerGas": s.matches(BigInt.nativeSchema),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([
+            Hash, From, To, Gas, GasPrice, Nonce, Value, Type,
+            MaxFeePerGas, MaxPriorityFeePerGas,
+          ]),
         ),
       ).toEqual(
         {
@@ -316,13 +255,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "from": s.matches(Address.schema),
-                "gas": s.matches(BigInt.nativeSchema),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([From, Gas]),
         ),
       ).toEqual(
         {
@@ -346,12 +279,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "gasUsed": s.matches(BigInt.nativeSchema),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([GasUsed]),
         ),
       ).toEqual(
         {"gasUsed": 21000n},
@@ -370,12 +298,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "cumulativeGasUsed": s.matches(BigInt.nativeSchema),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([CumulativeGasUsed]),
         ),
       ).toEqual(
         {"cumulativeGasUsed": 500000n},
@@ -394,12 +317,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([EffectiveGasPrice]),
         ),
       ).toEqual(
         {"effectiveGasPrice": 17699339493n},
@@ -422,16 +340,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "hash": s.matches(S.string),
-                "gas": s.matches(BigInt.nativeSchema),
-                "gasUsed": s.matches(BigInt.nativeSchema),
-                "effectiveGasPrice": s.matches(BigInt.nativeSchema),
-                "status": s.matches(S.int),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([Hash, Gas, GasUsed, EffectiveGasPrice, Status]),
         ),
       ).toEqual(
         {
@@ -457,13 +366,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "gas": s.matches(BigInt.nativeSchema),
-                "input": s.matches(S.string),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([Gas, Input]),
         ),
       ).toEqual(
         {
@@ -497,12 +400,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "gas": s.matches(BigInt.nativeSchema),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([Gas]),
         ),
       ).toEqual(
         {"gas": 21000n},
@@ -521,12 +419,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
       t.expect(
         await mockLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "l1FeeScalar": s.matches(S.float),
-              },
-          ),
+          ~selectedTransactionFields=Utils.Set.fromArray([L1FeeScalar]),
         ),
       ).toEqual(
         {"l1FeeScalar": 0.684},
@@ -542,12 +435,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
     try {
       let _ = await mockLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "gas": s.matches(BigInt.nativeSchema),
-            },
-        ),
+        ~selectedTransactionFields=Utils.Set.fromArray([Gas]),
       )
       Js.Exn.raiseError("Should have thrown")
     } catch {
@@ -571,13 +459,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     )
 
     let result = await mockLog()->getEventTransactionOrThrow(
-      ~transactionSchema=S.schema(
-        s =>
-          {
-            "from": s.matches(Address.schema),
-            "contractAddress": s.matches(Address.schema),
-          },
-      ),
+      ~selectedTransactionFields=Utils.Set.fromArray([From, ContractAddress]),
     )
     t.expect(
       result,
@@ -596,17 +478,6 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   let toJson = (block: Internal.eventBlock) =>
     block->(Utils.magic: Internal.eventBlock => Js.Json.t)
 
-  it("Panics with invalid schema", t => {
-    t.expect(
-      () => {
-        RpcSource.makeThrowingGetEventBlock(
-          ~getBlockJson=neverGetBlockJson,
-          ~lowercaseAddresses=false,
-        )(mockLog(), ~blockSchema=S.string)
-      },
-    ).toThrowError("Unexpected internal error: blockSchema is not an object")
-  })
-
   Async.it(
     "Returns empty object when empty field selection. Doesn't make a block request",
     async t => {
@@ -615,7 +486,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         ~lowercaseAddresses=false,
       )
       t.expect(
-        (await mockLog()->getEventBlockOrThrow(~blockSchema=S.object(_ => ())))->toJson,
+        (await mockLog()->getEventBlockOrThrow(~selectedBlockFields=Utils.Set.fromArray([])))->toJson,
       ).toEqual(
         %raw(`{}`),
       )
@@ -632,12 +503,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "number": s.matches(S.int),
-            },
-        ),
+        ~selectedBlockFields=Utils.Set.fromArray([Number]),
       ))->toJson,
     ).toEqual(
       %raw(`{"number": 123456}`),
@@ -654,14 +520,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "number": s.matches(S.int),
-              "timestamp": s.matches(S.int),
-              "hash": s.matches(S.string),
-            },
-        ),
+        ~selectedBlockFields=Utils.Set.fromArray([Number, Timestamp, (Hash: evmBlockField)]),
       ))->toJson,
     ).toEqual(
       %raw(`{"number": 123456, "timestamp": 100000000, "hash": "0xabcdef"}`),
@@ -686,13 +545,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "gasUsed": s.matches(BigInt.nativeSchema),
-              "gasLimit": s.matches(BigInt.nativeSchema),
-            },
-        ),
+        ~selectedBlockFields=Utils.Set.fromArray([(GasUsed: evmBlockField), GasLimit]),
       ))->toJson,
     ).toEqual(
       %raw(`{"gasUsed": 21000n, "gasLimit": 30000000n}`),
@@ -713,12 +566,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=true,
     )
     let result = await mockLog()->getEventBlockOrThrow(
-      ~blockSchema=S.schema(
-        s =>
-          {
-            "miner": s.matches(Address.schema),
-          },
-      ),
+      ~selectedBlockFields=Utils.Set.fromArray([Miner]),
     )
     t.expect(result->toJson).toEqual(
       %raw(`{"miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"}`),
@@ -739,12 +587,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     let result = await mockLog()->getEventBlockOrThrow(
-      ~blockSchema=S.schema(
-        s =>
-          {
-            "miner": s.matches(Address.schema),
-          },
-      ),
+      ~selectedBlockFields=Utils.Set.fromArray([Miner]),
     )
     t.expect(result->toJson).toEqual(
       %raw(`{"miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"}`),
@@ -769,12 +612,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     t.expect(
       (await mockLog()->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "gasUsed": s.matches(BigInt.nativeSchema),
-            },
-        ),
+        ~selectedBlockFields=Utils.Set.fromArray([(GasUsed: evmBlockField)]),
       ))->toJson,
     ).toEqual(
       %raw(`{"gasUsed": 21000n}`),
@@ -796,12 +634,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     try {
       let _ = await mockLog()->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "gasUsed": s.matches(BigInt.nativeSchema),
-            },
-        ),
+        ~selectedBlockFields=Utils.Set.fromArray([(GasUsed: evmBlockField)]),
       )
       Js.Exn.raiseError("Should have thrown")
     } catch {
@@ -829,13 +662,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
       ~lowercaseAddresses=false,
     )
     let result = (await mockLog()->getEventBlockOrThrow(
-      ~blockSchema=S.schema(
-        s =>
-          {
-            "baseFeePerGas": s.matches(S.nullable(BigInt.nativeSchema)),
-            "difficulty": s.matches(S.nullable(BigInt.nativeSchema)),
-          },
-      ),
+      ~selectedBlockFields=Utils.Set.fromArray([BaseFeePerGas, Difficulty]),
     ))->toJson
     t.expect(result).toEqual(
       %raw(`{"baseFeePerGas": 1000000000n, "difficulty": 17179869184n}`),
@@ -863,18 +690,15 @@ describe("RpcSource - getEventBlockOrThrow", () => {
 
     t.expect(
       (await log->getEventBlockOrThrow(
-        ~blockSchema=S.schema(
-          s =>
-            {
-              "number": s.matches(S.int),
-              "timestamp": s.matches(S.int),
-              "hash": s.matches(S.string),
-              "gasUsed": s.matches(BigInt.nativeSchema),
-              "gasLimit": s.matches(BigInt.nativeSchema),
-              "baseFeePerGas": s.matches(S.nullable(BigInt.nativeSchema)),
-              "parentHash": s.matches(S.string),
-            },
-        ),
+        ~selectedBlockFields=Utils.Set.fromArray([
+          Number,
+          Timestamp,
+          (Hash: evmBlockField),
+          GasUsed,
+          GasLimit,
+          BaseFeePerGas,
+          ParentHash,
+        ]),
       ))->toJson,
     ).toEqual(
       %raw(`{
@@ -887,6 +711,33 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949"
       }`),
     )
+  })
+})
+
+describe("RpcSource - fieldRegistry completeness", () => {
+  it("blockFieldRegistry contains all evmBlockField variants", t => {
+    let registry = RpcSource.blockFieldRegistryLowercase
+    let missing = Internal.allEvmBlockFields->Js.Array2.filter(field =>
+      registry->Utils.Record.get(field) == None
+    )
+    t.expect(missing->(Utils.magic: array<evmBlockField> => array<string>)).toEqual([])
+  })
+
+  it("fieldRegistry contains all non-log-derived evmTransactionField variants", t => {
+    let registry = RpcSource.fieldRegistryLowercase
+    // TransactionIndex and Hash are log-derived, AccessList and AuthorizationList are not in the RPC registry
+    let logDerivedOrUnsupported: array<evmTransactionField> = [
+      TransactionIndex,
+      Hash,
+      AccessList,
+      AuthorizationList,
+    ]
+    let missing =
+      Internal.allEvmTransactionFields->Js.Array2.filter(field =>
+        registry->Utils.Record.get(field) == None &&
+          logDerivedOrUnsupported->Js.Array2.every(excluded => excluded != field)
+      )
+    t.expect(missing->(Utils.magic: array<evmTransactionField> => array<string>)).toEqual([])
   })
 })
 

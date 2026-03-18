@@ -7,6 +7,11 @@ full_batch_size: 1000
 rollback_on_reorg: false
 save_full_history: true
 raw_events: true
+field_selection:
+  transaction_fields:
+    - hash
+  block_fields:
+    - parentHash
 chains:
   - id: 1
     rpc:
@@ -27,4 +32,12 @@ chains:
         address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
         events:
           - event: "NewGravatar"
+            field_selection:
+              transaction_fields:
+                - hash
+                - from
+                - value
+              block_fields:
+                - parentHash
+                - miner
           - event: "UpdatedGravatar"

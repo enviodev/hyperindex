@@ -209,17 +209,9 @@ module GetBlockByNumber = {
 
   let resultSchema = S.null(blockSchema)
 
-  let route = makeRpcRoute(
-    "eth_getBlockByNumber",
-    paramsSchema,
-    resultSchema,
-  )
+  let route = makeRpcRoute("eth_getBlockByNumber", paramsSchema, resultSchema)
 
-  let rawRoute = makeRpcRoute(
-    "eth_getBlockByNumber",
-    paramsSchema,
-    S.null(S.json(~validate=false)),
-  )
+  let rawRoute = makeRpcRoute("eth_getBlockByNumber", paramsSchema, S.null(S.json(~validate=false)))
 }
 
 module GetBlockHeight = {

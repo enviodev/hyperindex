@@ -25,9 +25,7 @@ let set = (~contractName, ~eventName, registration) => {
   eventRegistrations->Js.Dict.set(getKey(~contractName, ~eventName), registration)
 }
 
-type registrations = {
-  onBlockByChainId: dict<array<Internal.onBlockConfig>>,
-}
+type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
 
 type activeRegistration = {
   ecosystem: Ecosystem.t,
@@ -166,8 +164,7 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
   })
 }
 
-let getHandler = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).handler
+let getHandler = (~contractName, ~eventName) => get(~contractName, ~eventName).handler
 
 let getContractRegister = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).contractRegister
@@ -220,7 +217,11 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
   switch eventOptions {
   | Some(value) =>
     let value =
-      value->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
+      value->(
+        Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
+          Internal.eventFilters,
+        >
+      )
     let t = get(~contractName, ~eventName)
     switch t.eventOptions {
     | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
@@ -238,7 +239,13 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
   }
 }
 
-let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Logging.getLogger()) => {
+let setHandler = (
+  ~contractName,
+  ~eventName,
+  handler,
+  ~eventOptions,
+  ~logger=Logging.getLogger(),
+) => {
   withRegistration(_registration => {
     let t = get(~contractName, ~eventName)
     let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
@@ -246,24 +253,36 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Log
     | None =>
       setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
       let t = get(~contractName, ~eventName)
-      set(~contractName, ~eventName, {
-        ...t,
-        handler: Some(newHandler),
-      })
+      set(
+        ~contractName,
+        ~eventName,
+        {
+          ...t,
+          handler: Some(newHandler),
+        },
+      )
     | Some(prevHandler) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
+          v->(
+            Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
+              Internal.eventFilters,
+            >
+          )
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedHandler: Internal.handler = async args => {
           await prevHandler(args)
           await newHandler(args)
         }
-        set(~contractName, ~eventName, {
-          ...t,
-          handler: Some(composedHandler),
-        })
+        set(
+          ~contractName,
+          ~eventName,
+          {
+            ...t,
+            handler: Some(composedHandler),
+          },
+        )
       } else {
         raiseDuplicateRegistration(
           ~contractName,
@@ -276,36 +295,55 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Log
   })
 }
 
-let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOptions, ~logger=Logging.getLogger()) => {
+let setContractRegister = (
+  ~contractName,
+  ~eventName,
+  contractRegister,
+  ~eventOptions,
+  ~logger=Logging.getLogger(),
+) => {
   withRegistration(_registration => {
     let t = get(~contractName, ~eventName)
-    let newContractRegister = contractRegister->(
-      Utils.magic: Internal.genericContractRegister<
-        Internal.genericContractRegisterArgs<'event, 'context>,
-      > => Internal.contractRegister
-    )
+    let newContractRegister =
+      contractRegister->(
+        Utils.magic: Internal.genericContractRegister<
+          Internal.genericContractRegisterArgs<'event, 'context>,
+        > => Internal.contractRegister
+      )
     switch t.contractRegister {
     | None =>
       setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
       let t = get(~contractName, ~eventName)
-      set(~contractName, ~eventName, {
-        ...t,
-        contractRegister: Some(newContractRegister),
-      })
+      set(
+        ~contractName,
+        ~eventName,
+        {
+          ...t,
+          contractRegister: Some(newContractRegister),
+        },
+      )
     | Some(prevContractRegister) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<Internal.eventFilters>)
+          v->(
+            Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
+              Internal.eventFilters,
+            >
+          )
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedContractRegister: Internal.contractRegister = async args => {
           await prevContractRegister(args)
           await newContractRegister(args)
         }
-        set(~contractName, ~eventName, {
-          ...t,
-          contractRegister: Some(composedContractRegister),
-        })
+        set(
+          ~contractName,
+          ~eventName,
+          {
+            ...t,
+            contractRegister: Some(composedContractRegister),
+          },
+        )
       } else {
         raiseDuplicateRegistration(
           ~contractName,
