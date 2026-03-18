@@ -158,6 +158,10 @@ module ProgressReady = {
     "help": "All chains fully synced",
   })
 
+  let init = (~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=0)
+  }
+
   let set = (~chainId) => {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=1)
   }

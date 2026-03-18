@@ -87,6 +87,7 @@ let makeFromDbState = async (
   chainFetchersArr->Array.forEach(((chain, cf)) => {
     let chainId = chain->ChainMap.Chain.toChainId
     Prometheus.ProgressBlockNumber.set(~blockNumber=cf.committedProgressBlockNumber, ~chainId)
+    Prometheus.ProgressReady.init(~chainId)
     if cf->ChainFetcher.isReady {
       Prometheus.ProgressReady.set(~chainId)
     } else {

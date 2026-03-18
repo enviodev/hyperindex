@@ -181,7 +181,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
-  let shouldSetAllReady = ref(false)
+  let allChainsReady = ref(true)
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
     let cf = prev
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
@@ -311,15 +311,18 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
     }
 
     // Set envio_progress_ready per-chain when it first becomes ready
-    if cf->ChainFetcher.isReady && !(prev->ChainFetcher.isReady) {
-      Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
-      shouldSetAllReady := true
+    if cf->ChainFetcher.isReady {
+      if !(prev->ChainFetcher.isReady) {
+        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+      }
+    } else {
+      allChainsReady := false
     }
 
     cf
   })
 
-  if shouldSetAllReady.contents {
+  if allChainsReady.contents {
     Prometheus.ProgressReady.setAllReady()
   }
 

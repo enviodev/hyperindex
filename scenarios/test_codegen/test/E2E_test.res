@@ -114,6 +114,7 @@ describe("E2E tests", () => {
       await indexerMock.metric("envio_progress_ready"),
       ~message="Only chain 1337 should be ready",
     ).toEqual([
+      {value: "0", labels: Js.Dict.fromArray([("chainId", "100")])},
       {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
     ])
     t.expect(
@@ -130,8 +131,8 @@ describe("E2E tests", () => {
       await indexerMock.metric("envio_progress_ready"),
       ~message="Both chains should be ready",
     ).toEqual([
-      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
       {value: "1", labels: Js.Dict.fromArray([("chainId", "100")])},
+      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
     ])
     t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
