@@ -530,11 +530,11 @@ let makeCacheTable = (~effectName) => {
 @genType.import(("./Types.ts", "Invalid"))
 type noEventFilters
 
-type checkpointId = float
+type checkpointId = bigint
 
 type reorgCheckpoint = {
   @as("id")
-  checkpointId: float,
+  checkpointId: bigint,
   @as("chain_id")
   chainId: int,
   @as("block_number")

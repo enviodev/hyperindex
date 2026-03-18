@@ -2,7 +2,7 @@ let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema
 
 type contextParams = {
   item: Internal.item,
-  checkpointId: float,
+  checkpointId: Internal.checkpointId,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,

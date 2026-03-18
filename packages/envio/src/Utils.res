@@ -1,6 +1,7 @@
 @@directive("import packageJson from '../package.json' with { type: 'json' }")
 
 external magic: 'a => 'b = "%identity"
+@val external floatToInt: float => int = "Math.trunc"
 
 @val external importPath: string => promise<unknown> = "import"
 

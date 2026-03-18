@@ -825,7 +825,7 @@ let rec writeBatch = async (
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (batchDeleteEntityIds, batchDeleteCheckpointIds)->Obj.magic,
+                  (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
                 )
                 ->Promise.ignoreValue,
               )
@@ -1280,7 +1280,7 @@ let make = (
         endBlock: chainConfig.endBlock,
         maxReorgDepth: chainConfig.maxReorgDepth,
         progressBlockNumber: -1,
-        numEventsProcessed: 0,
+        numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
         dynamicContracts: [],
@@ -1492,13 +1492,25 @@ let make = (
       }),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": float}>>),
+      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<Internal.reorgCheckpoint>>),
+      ->(
+        Utils.magic: promise<array<unknown>> => promise<
+          array<{"id": string, "chain_id": int, "block_number": int, "block_hash": string}>,
+        >
+      ),
     ))
 
-    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]
+    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringUnsafe
+
+    // Convert string checkpoint IDs from DB to bigint
+    let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
+      checkpointId: raw["id"]->BigInt.fromStringUnsafe,
+      chainId: raw["chain_id"],
+      blockNumber: raw["block_number"],
+      blockHash: raw["block_hash"],
+    })
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
@@ -1557,14 +1569,14 @@ let make = (
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId]->(Utils.magic: array<Internal.checkpointId> => unknown),
+        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId]->(Utils.magic: array<Internal.checkpointId> => unknown),
+        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
