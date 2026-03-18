@@ -36,7 +36,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     ->Utils.Set.toArray
     ->Array.forEach(name => {
       let nameStr = (name :> string)
-      if !(Internal.nullableBlockFields->Utils.Set.has(name)) {
+      if !(Internal.evmNullableBlockFields->Utils.Set.has(name)) {
         nonOptionalBlockFieldNames->Utils.Set.add(nameStr)->ignore
       }
       capitalizedBlockFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore
@@ -45,7 +45,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     ->Utils.Set.toArray
     ->Array.forEach(name => {
       let nameStr = (name :> string)
-      if !(Internal.nullableTransactionFields->Utils.Set.has(name)) {
+      if !(Internal.evmNullableTransactionFields->Utils.Set.has(name)) {
         nonOptionalTransactionFieldNames->Utils.Set.add(nameStr)->ignore
       }
       capitalizedTransactionFields->Utils.Set.add(nameStr->Utils.String.capitalize)->ignore

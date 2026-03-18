@@ -136,8 +136,8 @@ let allEvmTransactionFields: array<evmTransactionField> = [
 ]
 let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 
-// Static sets of nullable field names — matches the S.nullable wrapping in RpcSource field registries
-let nullableBlockFields = Utils.Set.fromArray(
+// Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
+let evmNullableBlockFields = Utils.Set.fromArray(
   (
     [
       Nonce,
@@ -156,7 +156,7 @@ let nullableBlockFields = Utils.Set.fromArray(
     ]: array<evmBlockField>
   ),
 )
-let nullableTransactionFields = Utils.Set.fromArray(
+let evmNullableTransactionFields = Utils.Set.fromArray(
   (
     [
       GasPrice,
