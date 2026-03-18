@@ -300,9 +300,10 @@ module Indexer = {
       }
     }
 
-    let sql = PgStorage.makeClient()
+    let pool = PgStorage.makeClient()
+    let {sql} = pool
     let pgSchema = Env.Db.publicSchema
-    let storage = Indexer.Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let storage = Indexer.Generated.makeStorage(~pool, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
       ...Indexer.Generated.codegenPersistence,
       storageStatus: Persistence.Unknown,
@@ -375,10 +376,7 @@ module Indexer = {
       },
       query: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
-        sql
-        ->Pg.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
-        )
+        sql.query({text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName)})
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(ec.rowsSchema)
         })
@@ -387,10 +385,9 @@ module Indexer = {
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
         let historyTableName = PgStorage.getEntityHistory(~entityConfig=ec).table.tableName
-        sql
-        ->Pg.unsafe(
-          `SELECT * FROM "${pgSchema}"."${historyTableName}" ORDER BY "id", "${EntityHistory.checkpointIdFieldName}";`,
-        )
+        sql.query({
+          text: `SELECT * FROM "${pgSchema}"."${historyTableName}" ORDER BY "id", "${EntityHistory.checkpointIdFieldName}";`,
+        })
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(
             S.array(
@@ -415,35 +412,28 @@ module Indexer = {
         )
       },
       queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
-        sql
-        ->Pg.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-        )
+        sql.query({text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName)})
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(entityConfig.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryCheckpoints: () => {
-        sql
-        ->Pg.unsafe(
-          PgStorage.makeLoadAllQuery(
+        sql.query({
+          text: PgStorage.makeLoadAllQuery(
             ~pgSchema,
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
-        )
+        })
         ->Promise.thenResolve(rows =>
-          rows
-          ->(Utils.magic: unknown => array<unknown>)
-          ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+          rows->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
       queryEffectCache: (effectName: string) => {
-        sql
-        ->Pg.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
-        )
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": Js.Json.t}>>)
+        sql.query({
+          text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
+        })
+        ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": Js.Json.t}>>)
       },
       metric: async name => {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {

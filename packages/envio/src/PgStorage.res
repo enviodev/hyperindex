@@ -372,8 +372,39 @@ VALUES${placeholders.contents}` ++
 // Constants for chunking
 let maxItemsPerQuery = 500
 
-let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
-  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+type tableBatchSetQuery = {
+  query: string,
+  convertOrThrow: array<unknown> => unknown,
+  isInsertValues: bool,
+}
+
+// Apply JSON.stringify to specific field indices in a flattened column-major array.
+// Used for INSERT VALUES path when dbSchema can't be used (e.g. entity history
+// where itemSchema preserves Change variant → raw dict transformation).
+let jsonStringifyAtIndices = (
+  convert: array<unknown> => unknown,
+  jsonFieldIndices: array<int>,
+): (array<unknown> => unknown) => {
+  items => {
+    let result = convert(items)->(Utils.magic: unknown => array<unknown>)
+    let itemCount = items->Array.length
+    jsonFieldIndices->Js.Array2.forEach(fieldIdx => {
+      for i in 0 to itemCount - 1 {
+        let flatIdx = fieldIdx * itemCount + i
+        result->Js.Array2.unsafe_set(
+          flatIdx,
+          Js.Json.stringify(
+            result->Js.Array2.unsafe_get(flatIdx)->(Utils.magic: unknown => Js.Json.t),
+          )->(Utils.magic: string => unknown),
+        )
+      }
+    })
+    result->(Utils.magic: array<unknown> => unknown)
+  }
+}
+
+let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>): tableBatchSetQuery => {
+  let {dbSchema, hasArrayField, jsonFieldIndices} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
 
   // Should move this to a better place
   // We need it for the isRawEvents check in makeTableBatchSet
@@ -397,40 +428,27 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
 
   if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
     {
-      "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
-      "convertOrThrow": S.compile(
+      query: makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      convertOrThrow: S.compile(
         S.unnest(dbSchema),
         ~input=Value,
         ~output=Unknown,
         ~mode=Sync,
         ~typeValidation,
       ),
-      "isInsertValues": false,
+      isInsertValues: false,
     }
   } else {
     {
-      "query": makeInsertValuesSetQuery(
+      query: makeInsertValuesSetQuery(
         ~pgSchema,
         ~table,
         ~itemSchema,
         ~itemsCount=maxItemsPerQuery,
       ),
-      // pg driver doesn't auto-serialize JSONB values like postgres.js did.
-      // Use itemSchema (not dbSchema) for the unnest serialization to preserve
-      // schema transformations (e.g. entity history Change variant → raw dict).
-      // Then stringify JSONB values in a post-processing step.
-      "convertOrThrow": {
-        // Find JSONB field indices to stringify them after unnest+flatten
-        let jsonFieldIndices = {
-          let indices = []
-          table->Table.getFields->Js.Array2.forEachi((field, idx) => {
-            switch field.fieldType {
-            | Json => indices->Js.Array2.push(idx)->ignore
-            | _ => ()
-            }
-          })
-          indices
-        }
+      convertOrThrow: if isHistoryUpdate {
+        // Entity history uses S.object with transformation (Change variant → raw dict)
+        // that gets lost during dbSchema conversion. Use itemSchema with post-processing.
         let unnestConvert = S.compile(
           S.unnest(itemSchema->S.toUnknown)->S.preprocess(_ => {
             serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
@@ -441,28 +459,23 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
           ~typeValidation,
         )
         if jsonFieldIndices->Utils.Array.notEmpty {
-          let wrapWithJsonStringify: (. array<unknown> => unknown, array<int>) => array<unknown> => unknown = %raw(`
-            function(unnestConvert, jsonFieldIndices) {
-              return function(items) {
-                var result = unnestConvert(items);
-                var itemCount = items.length;
-                for (var j = 0; j < jsonFieldIndices.length; j++) {
-                  var fieldIdx = jsonFieldIndices[j];
-                  for (var i = 0; i < itemCount; i++) {
-                    var flatIdx = fieldIdx * itemCount + i;
-                    result[flatIdx] = JSON.stringify(result[flatIdx]);
-                  }
-                }
-                return result;
-              }
-            }
-          `)
-          wrapWithJsonStringify(. unnestConvert, jsonFieldIndices)
+          jsonStringifyAtIndices(unnestConvert, jsonFieldIndices)
         } else {
           unnestConvert
         }
+      } else {
+        // Non-history tables with Array fields: dbSchema handles JSON stringify
+        S.compile(
+          S.unnest(dbSchema)->S.preprocess(_ => {
+            serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
+          }),
+          ~input=Value,
+          ~output=Unknown,
+          ~mode=Sync,
+          ~typeValidation,
+        )
       },
-      "isInsertValues": true,
+      isInsertValues: true,
     }
   }
 }
@@ -507,7 +520,7 @@ exception PgEncodingError({table: Table.table})
 
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
-let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
+let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
   if items->Array.length === 0 {
     ()
   } else {
@@ -526,34 +539,32 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
     }
 
     try {
-      if data["isInsertValues"] {
+      if data.isInsertValues {
         let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
         let responses = []
         chunks->Js.Array2.forEach(chunk => {
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
-          let response = sql->Pg.preparedUnsafe(
-            ~name=isFullChunk
-              ? `insert_${table.tableName}`
-              : `insert_${table.tableName}_${chunkSize->Belt.Int.toString}`,
-            // Either use the sql query for full chunks from cache
-            // or create a new one for partial chunks on the fly.
-            isFullChunk
-              ? data["query"]
+          let response = sql.query({
+            text: isFullChunk
+              ? data.query
+              // Create a new query for partial chunks on the fly.
               : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
-            data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>)),
-          )
+            values: data.convertOrThrow(chunk->(Utils.magic: array<'item> => array<unknown>)),
+            // Don't prepare partial chunks - they vary in size and would pollute the cache
+            name: ?isFullChunk ? Some(`insert_${table.tableName}`) : None,
+          })
           responses->Js.Array2.push(response)->ignore
         })
         let _ = await Promise.all(responses)
       } else {
         // Use UNNEST approach for single query
-        await sql->Pg.preparedUnsafe(
-          ~name=`upsert_${table.tableName}`,
-          data["query"],
-          data["convertOrThrow"](items->(Utils.magic: array<'item> => array<unknown>)),
-        )
+        let _ = await sql.query({
+          text: data.query,
+          values: data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>)),
+          name: `upsert_${table.tableName}`,
+        })
       }
     } catch {
     | S.Raised(_) as exn =>
@@ -663,21 +674,21 @@ let getConnectedPsqlExec = {
   }
 }
 
-let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
+let deleteByIdsOrThrow = async (sql: Pg.sql, ~pgSchema, ~ids, ~table: Table.table) => {
   switch await (
     switch ids {
     | [_] =>
-      sql->Pg.preparedUnsafe(
-        ~name=`delete_id_${table.tableName}`,
-        makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
-        ids->Obj.magic,
-      )
+      sql.query({
+        name: `delete_id_${table.tableName}`,
+        text: makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
+        values: ids->Obj.magic,
+      })
     | _ =>
-      sql->Pg.preparedUnsafe(
-        ~name=`delete_ids_${table.tableName}`,
-        makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
-        [ids]->Obj.magic,
-      )
+      sql.query({
+        name: `delete_ids_${table.tableName}`,
+        text: makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
+        values: [ids]->Obj.magic,
+      })
     }
   ) {
   | exception exn =>
@@ -738,9 +749,9 @@ FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, 
 }
 
 let executeSet = (
-  sql: Pg.pool,
+  sql: Pg.sql,
   ~items: array<'a>,
-  ~dbFunction: (Pg.pool, array<'a>) => promise<unit>,
+  ~dbFunction: (Pg.sql, array<'a>) => promise<unit>,
 ) => {
   if items->Array.length > 0 {
     sql->dbFunction(items)
@@ -750,7 +761,7 @@ let executeSet = (
 }
 
 let rec writeBatch = async (
-  sql,
+  pool: Pg.pool,
   ~batch: Batch.t,
   ~rawEvents,
   ~pgSchema,
@@ -847,12 +858,11 @@ let rec writeBatch = async (
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
               promises->Belt.Array.push(
-                sql
-                ->Pg.preparedUnsafe(
-                  ~name=`insert_deletes_${entityConfig.name}`,
-                  makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
-                )
+                sql.query({
+                  name: `insert_deletes_${entityConfig.name}`,
+                  text: makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
+                  values: (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
+                })
                 ->Promise.ignoreValue,
               )
             }
@@ -904,7 +914,7 @@ let rec writeBatch = async (
 
           let _ = await promises->Promise.all
         } catch {
-        // There's a race condition that sql->Pg.beginSql
+        // There's a race condition that pool->Pg.beginSql
         // might throw PG error, earlier, than the handled error
         // from setOrThrow will be passed through.
         // This is needed for the utf8 encoding fix.
@@ -941,7 +951,7 @@ let rec writeBatch = async (
 
             // Improtant: Don't rethrow here, since it'll result in
             // an unhandled rejected promise error.
-            // That's fine not to throw, since sql->Pg.beginSql
+            // That's fine not to throw, since pool->Pg.beginSql
             // will fail anyways.
           }
         }
@@ -976,7 +986,7 @@ let rec writeBatch = async (
 
     try {
       let _ = await Promise.all2((
-        sql->Pg.beginSql(async sql => {
+        pool->Pg.beginSql(async sql => {
           //Rollback tables need to happen first in the traction
           switch rollbackTables {
           | Some(rollbackTables) =>
@@ -1059,7 +1069,7 @@ let rec writeBatch = async (
     let _ = escapeTables->Utils.Set.add(table)
     // Retry with specifying which tables to escape.
     await writeBatch(
-      sql,
+      pool,
       ~escapeTables,
       ~rawEvents,
       ~batch,
@@ -1125,7 +1135,7 @@ AND NOT EXISTS (
 }
 
 let make = (
-  ~sql: Pg.pool,
+  ~pool: Pg.pool,
   ~pgHost,
   ~pgSchema,
   ~pgPort,
@@ -1137,6 +1147,7 @@ let make = (
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
+  let {sql} = pool
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
@@ -1150,11 +1161,11 @@ let make = (
   ])
 
   let isInitialized = async () => {
-    let envioTables = await sql->Pg.unsafe(
-      `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND (table_name = '${// This is for indexer before envio@2.28
+    let envioTables = await sql.query({
+      text: `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND (table_name = '${// This is for indexer before envio@2.28
         "event_sync_state"}' OR table_name = '${InternalTable.Chains.table.tableName}');`,
-    )
-    envioTables->Utils.Array.notEmpty
+    })
+    envioTables->Js.Array2.length > 0
   }
 
   let restoreEffectCache = async (~withUpload) => {
@@ -1179,9 +1190,8 @@ let make = (
               let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
               let table = Internal.makeCacheTable(~effectName)
 
-              sql
-              ->Pg.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
-              ->Promise.then(() => {
+              sql.query({text: makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false)})
+              ->Promise.then(_ => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
                 let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
@@ -1217,7 +1227,8 @@ let make = (
     }
 
     let cacheTableInfo: array<schemaCacheTableInfo> =
-      await sql->Pg.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema))
+      (await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)}))
+      ->(Utils.magic: array<unknown> => array<schemaCacheTableInfo>)
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
       // Integration with other tools like Hasura
@@ -1242,7 +1253,8 @@ let make = (
 
   let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
     let schemaTableNames: array<schemaTableName> =
-      await sql->Pg.unsafe(makeSchemaTableNamesQuery(~pgSchema))
+      (await sql.query({text: makeSchemaTableNamesQuery(~pgSchema)}))
+      ->(Utils.magic: array<unknown> => array<schemaTableName>)
 
     // The initialization query will completely drop the schema and recreate it from scratch.
     // So we need to check if the schema is not used for anything else than envio.
@@ -1282,10 +1294,10 @@ let make = (
       ~isHasuraEnabled,
     )
     // Execute all queries within a single transaction for integrity
-    let _ = await sql->Pg.beginSql(sql => {
+    let _ = await pool->Pg.beginSql(sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Js.Array2.map(query => sql->Pg.unsafe(query)))
+      Promise.all(queries->Js.Array2.map(query => sql.query({text: query})))
     })
 
     let cache = await restoreEffectCache(~withUpload=true)
@@ -1320,17 +1332,17 @@ let make = (
     switch await (
       switch ids {
       | [_] =>
-        sql->Pg.preparedUnsafe(
-          ~name=`load_id_${table.tableName}`,
-          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          ids->Obj.magic,
-        )
+        sql.query({
+          name: `load_id_${table.tableName}`,
+          text: makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
+          values: ids->Obj.magic,
+        })
       | _ =>
-        sql->Pg.preparedUnsafe(
-          ~name=`load_ids_${table.tableName}`,
-          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
-          [ids]->Obj.magic,
-        )
+        sql.query({
+          name: `load_ids_${table.tableName}`,
+          text: makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
+          values: [ids]->Obj.magic,
+        })
       }
     ) {
     | exception exn =>
@@ -1370,16 +1382,16 @@ let make = (
         }),
       )
     }
-    switch await sql->Pg.preparedUnsafe(
-      ~name=`load_field_${table.tableName}_${fieldName}`,
-      makeLoadByFieldQuery(
+    switch await sql.query({
+      name: `load_field_${table.tableName}_${fieldName}`,
+      text: makeLoadByFieldQuery(
         ~pgSchema,
         ~tableName=table.tableName,
         ~fieldName,
         ~operator=(operator :> string),
       ),
-      params,
-    ) {
+      values: params,
+    }) {
     | exception exn =>
       raise(
         Persistence.StorageError({
@@ -1424,9 +1436,9 @@ let make = (
 
     if initialize {
       let _ =
-        await sql->Pg.unsafe(
-          makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
-        )
+        await sql.query({
+          text: makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
+        })
       // Integration with other tools like Hasura
       switch onNewTables {
       | Some(onNewTables) => await onNewTables(~tableNames=[table.tableName])
@@ -1440,8 +1452,8 @@ let make = (
   let dumpEffectCache = async () => {
     try {
       let cacheTableInfo: array<schemaCacheTableInfo> =
-        (await sql
-        ->Pg.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
+        ((await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)}))
+        ->(Utils.magic: array<unknown> => array<schemaCacheTableInfo>))
         ->Js.Array2.filter(i => i.count > 0)
 
       if cacheTableInfo->Utils.Array.notEmpty {
@@ -1519,11 +1531,9 @@ let make = (
           sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
-      sql
-      ->Pg.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
+      sql.query({text: InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema)})
       ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
-      sql
-      ->Pg.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
+      sql.query({text: InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema)})
       ->(
         Utils.magic: promise<array<unknown>> => promise<
           array<{"id": string, "chain_id": int, "block_number": int, "block_hash": string}>,
@@ -1558,7 +1568,7 @@ let make = (
 
   let reset = async () => {
     let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
-    await sql->Pg.unsafe(query)->Promise.ignoreValue
+    await sql.query({text: query})->Promise.ignoreValue
   }
 
   let setChainMeta = chainsData =>
@@ -1595,21 +1605,19 @@ let make = (
   ) => {
     await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
-      sql
-      ->Pg.preparedUnsafe(
-        ~name=`rollback_removed_${entityConfig.name}`,
-        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
-      )
-      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
+      sql.query({
+        name: `rollback_removed_${entityConfig.name}`,
+        text: makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
+        values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      })
+      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
-      sql
-      ->Pg.preparedUnsafe(
-        ~name=`rollback_restored_${entityConfig.name}`,
-        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
-      )
-      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+      sql.query({
+        name: `rollback_restored_${entityConfig.name}`,
+        text: makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
+        values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      })
+      ->(Utils.magic: promise<array<unknown>> => promise<array<unknown>>),
     ))
   }
 
@@ -1644,7 +1652,7 @@ let make = (
     }
 
     await writeBatch(
-      sql,
+      pool,
       ~batch,
       ~rawEvents,
       ~pgSchema,

@@ -217,11 +217,11 @@ let makeGeneratedConfig = () => {
 let configWithoutRegistrations = makeGeneratedConfig()
 let allEntities = configWithoutRegistrations.allEntities
 
-let initialSql = PgStorage.makeClient()
+let initialPool = PgStorage.makeClient()
 let storagePgSchema = Env.Db.publicSchema
-let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
+let makeStorage = (~pool, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
   PgStorage.make(
-    ~sql,
+    ~pool,
     ~pgSchema,
     ~pgHost=Env.Db.host,
     ~pgUser=Env.Db.user,
@@ -292,7 +292,7 @@ let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.
 let codegenPersistence = Persistence.make(
   ~userEntities=configWithoutRegistrations.userEntities,
   ~allEnums=configWithoutRegistrations.allEnums,
-  ~storage=makeStorage(~sql=initialSql),
+  ~storage=makeStorage(~pool=initialPool),
 )
 
 }

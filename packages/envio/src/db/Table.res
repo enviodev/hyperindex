@@ -257,6 +257,7 @@ type sqlParams<'entity> = {
   quotedNonPrimaryFieldNames: array<string>,
   arrayFieldTypes: array<string>,
   hasArrayField: bool,
+  jsonFieldIndices: array<int>,
 }
 
 let toSqlParams = (table: table, ~schema, ~pgSchema) => {
@@ -264,6 +265,8 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
   let quotedNonPrimaryFieldNames = []
   let arrayFieldTypes = []
   let hasArrayField = ref(false)
+  let jsonFieldIndices = []
+  let fieldIndex = ref(0)
 
   let dbSchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
     switch schema->S.classify {
@@ -280,10 +283,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               hasArrayField := true
               S.array(child->coerceSchema)->S.toUnknown
             }
-          | JSON(_) => {
-              hasArrayField := true
-              schema
-            }
+          | JSON(_) => schema
           | _ => schema
           }
 
@@ -298,7 +298,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
         // that doesn't classify as JSON even though the column is JSONB.
         let coercedSchema = switch field {
         | Field({fieldType: Json}) => {
-            hasArrayField := true
+            jsonFieldIndices->Js.Array2.push(fieldIndex.contents)->ignore
             schema->coerceSchema->S.preprocess(_ => {
               serializer: value =>
                 Js.Json.stringify(value->(Utils.magic: unknown => Js.Json.t))->(
@@ -308,6 +308,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
           }
         | _ => schema->coerceSchema
         }
+        fieldIndex := fieldIndex.contents + 1
 
         quotedFieldNames
         ->Js.Array2.push(inlinedLocation)
@@ -353,6 +354,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
     quotedNonPrimaryFieldNames,
     arrayFieldTypes,
     hasArrayField: hasArrayField.contents,
+    jsonFieldIndices,
   }
 }
 

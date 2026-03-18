@@ -1,4 +1,5 @@
-type pool
+// Internal: both pg.Pool and pg.Client share the query interface at JS level
+type rawHandle
 
 @unboxed
 type sslOptions =
@@ -41,22 +42,54 @@ type pgConfig = {
 }
 type queryConfig = {
   text: string,
-  values: unknown,
+  values?: unknown,
   name?: string,
 }
-@module("pg") @new external _makePool: pgConfig => pool = "Pool"
-
-// Both pg.Pool and pg.Client support .query()
-@send external _query: (pool, string) => promise<{"rows": 'a}> = "query"
-@send external _queryWithConfig: (pool, queryConfig) => promise<{"rows": 'a}> = "query"
+type queryResult = {
+  rows: array<unknown>,
+}
+@module("pg") @new external _makePool: pgConfig => rawHandle = "Pool"
+@send external _query: (rawHandle, queryConfig) => promise<queryResult> = "query"
 // Pool-only: acquire a client for transactions
-@send external _connect: pool => promise<pool> = "connect"
+@send external _connect: rawHandle => promise<rawHandle> = "connect"
 // Client-only: release back to pool.
 // Pass true to destroy the client instead of returning it to the pool.
-@send external _release: (pool, @as(json`false`) _) => unit = "release"
-@send external _releaseAndDestroy: (pool, @as(json`true`) _) => unit = "release"
+@send external _release: (rawHandle, @as(json`false`) _) => unit = "release"
+@send external _releaseAndDestroy: (rawHandle, @as(json`true`) _) => unit = "release"
 // Event emitter (both Pool and Client)
-@send external _on: (pool, string, 'handler) => unit = "on"
+@send external _on: (rawHandle, string, 'handler) => unit = "on"
+
+// Postgres limits query names to 63 characters
+let maxStatementNameLength = 63
+
+// Hash long statement names to prevent collisions when truncating
+let hashName: string => string = %raw(`
+  function(name) {
+    return name.slice(0, 31) + require('node:crypto').createHash('md5').update(name).digest('hex').slice(0, 32);
+  }
+`)
+
+type sql = {
+  query: queryConfig => promise<array<unknown>>,
+}
+
+let makeSql = (raw: rawHandle): sql => {
+  query: config => {
+    let config = switch config.name {
+    | Some(name) if name->String.length > maxStatementNameLength => {
+        ...config,
+        name: hashName(name),
+      }
+    | _ => config
+    }
+    raw->_query(config)->Promise.thenResolve(r => r.rows)
+  },
+}
+
+type pool = {
+  sql: sql,
+  raw: rawHandle,
+}
 
 let makePool = (~config: poolConfig): pool => {
   let pgConfig: pgConfig = {
@@ -75,47 +108,33 @@ let makePool = (~config: poolConfig): pool => {
     },
   }
 
-  let pool = _makePool({...pgConfig, allowExitOnIdle: true})
+  let raw = _makePool({...pgConfig, allowExitOnIdle: true})
 
   // Prevent unhandled error events from crashing the process.
   // Individual query errors are still propagated through promises.
-  pool->_on("error", (err: Js.Exn.t) => {
+  raw->_on("error", (err: Js.Exn.t) => {
     Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
   })
 
-  pool
-}
-
-let unsafe = (pool: pool, text: string): promise<'a> => {
-  pool->_query(text)->Promise.thenResolve(r => r["rows"])
-}
-
-// Postgres limits query names to 63 characters
-let maxStatementNameLength = 63
-
-let preparedUnsafe = (pool: pool, ~name: string, text: string, values: unknown): promise<'a> => {
-  let name = if name->String.length > maxStatementNameLength {
-    name->Js.String.slice(~from=0, ~to_=maxStatementNameLength)
-  } else {
-    name
+  {
+    sql: makeSql(raw),
+    raw,
   }
-  pool
-  ->_queryWithConfig({text, values, name})
-  ->Promise.thenResolve(r => r["rows"])
 }
 
-let beginSql = async (pool: pool, fn: pool => promise<'a>) => {
-  let client = await pool->_connect
+let beginSql = async (pool: pool, fn: sql => promise<'a>) => {
+  let client = await pool.raw->_connect
+  let clientSql = makeSql(client)
   try {
-    let _ = await client->_query("BEGIN")
-    let result = await fn(client)
-    let _ = await client->_query("COMMIT")
+    let _ = await clientSql.query({text: "BEGIN"})
+    let result = await fn(clientSql)
+    let _ = await clientSql.query({text: "COMMIT"})
     client->_release
     result
   } catch {
   | exn =>
     try {
-      let _ = await client->_query("ROLLBACK")
+      let _ = await clientSql.query({text: "ROLLBACK"})
     } catch {
     | _ => ()
     }

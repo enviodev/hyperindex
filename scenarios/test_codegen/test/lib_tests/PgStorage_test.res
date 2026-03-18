@@ -914,7 +914,7 @@ LIMIT 1;`
           ~pgSchema="test_schema",
         )
 
-        let expectedQuery = `SELECT 
+        let expectedQuery = `SELECT
   "chain_id",
   SUM("events_processed") as events_processed_diff,
   MIN("block_number") - 1 as new_progress_block_number
