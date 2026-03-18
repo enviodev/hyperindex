@@ -69,7 +69,6 @@ type evmTransactionField =
   | @as("gasUsedForL1") GasUsedForL1
   | @as("authorizationList") AuthorizationList
 
-@live
 let allEvmBlockFields: array<evmBlockField> = [
   Number,
   Timestamp,
@@ -101,7 +100,6 @@ let allEvmBlockFields: array<evmBlockField> = [
 ]
 let evmBlockFieldSchema = S.enum(allEvmBlockFields)
 
-@live
 let allEvmTransactionFields: array<evmTransactionField> = [
   TransactionIndex,
   Hash,

@@ -714,20 +714,30 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   })
 })
 
-describe("RpcSource - blockFieldRegistry completeness", () => {
+describe("RpcSource - fieldRegistry completeness", () => {
   it("blockFieldRegistry contains all evmBlockField variants", t => {
     let registry = RpcSource.blockFieldRegistryLowercase
-    let allBlockFields: array<evmBlockField> = [
-      Number, Timestamp, (Hash: evmBlockField), ParentHash, (Nonce: evmBlockField), Sha3Uncles, (LogsBloom: evmBlockField),
-      TransactionsRoot, StateRoot, ReceiptsRoot, Miner, Difficulty,
-      TotalDifficulty, ExtraData, Size, GasLimit, GasUsed, Uncles,
-      BaseFeePerGas, BlobGasUsed, ExcessBlobGas, ParentBeaconBlockRoot,
-      WithdrawalsRoot, L1BlockNumber, SendCount, SendRoot, MixHash,
-    ]
-    let missing = allBlockFields->Js.Array2.filter(field =>
+    let missing = Internal.allEvmBlockFields->Js.Array2.filter(field =>
       registry->Utils.Record.get(field) == None
     )
     t.expect(missing->(Utils.magic: array<evmBlockField> => array<string>)).toEqual([])
+  })
+
+  it("fieldRegistry contains all non-log-derived evmTransactionField variants", t => {
+    let registry = RpcSource.fieldRegistryLowercase
+    // TransactionIndex and Hash are log-derived, AccessList and AuthorizationList are not in the RPC registry
+    let logDerivedOrUnsupported: array<evmTransactionField> = [
+      TransactionIndex,
+      Hash,
+      AccessList,
+      AuthorizationList,
+    ]
+    let missing =
+      Internal.allEvmTransactionFields->Js.Array2.filter(field =>
+        registry->Utils.Record.get(field) == None &&
+          logDerivedOrUnsupported->Js.Array2.every(excluded => excluded != field)
+      )
+    t.expect(missing->(Utils.magic: array<evmTransactionField> => array<string>)).toEqual([])
   })
 })
 
