@@ -48,7 +48,6 @@ module Gauge = {
   @send external get: gauge => promise<{"values": array<dict<string>>}> = "get"
 }
 
-
 module Summary = {
   type summary
   @new @module("prom-client") external makeSummary: customMetric<'a> => summary = "Summary"

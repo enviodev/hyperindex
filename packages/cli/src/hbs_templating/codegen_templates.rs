@@ -144,6 +144,10 @@ struct InternalEvmConfig<'a> {
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     contracts: std::collections::BTreeMap<&'a str, InternalContractConfig>,
     address_format: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    global_block_fields: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    global_transaction_fields: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -212,6 +216,11 @@ struct InternalChainConfig {
 #[serde(rename_all = "camelCase")]
 struct InternalContractEventItem {
     event: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_fields: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction_fields: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Debug)]
@@ -267,7 +276,7 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
     for gql_enum in gql_enums {
         writeln!(code, "module {} = {{", gql_enum.name.capitalized).unwrap();
         writeln!(code, "  @genType").unwrap();
-        write!(code, "  type t =\n").unwrap();
+        writeln!(code, "  type t =").unwrap();
         for param in &gql_enum.params {
             writeln!(code, "    | @as(\"{}\") {}", param.original, param.capitalized).unwrap();
         }
@@ -503,6 +512,7 @@ pub struct EventMod {
     pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
     pub custom_field_selection: Option<system_config::FieldSelection>,
+    pub global_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
 }
 
@@ -559,27 +569,21 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
             Some(FuelEventKind::LogData(_)) => sighash.to_string(),
         };
 
-        let (block_type, block_schema, transaction_type, transaction_schema) =
+        let (block_type, transaction_type) =
             match self.custom_field_selection {
                 Some(ref field_selection) => {
                     let field_selection = FieldSelection::new(FieldSelectionOptions {
                         transaction_fields: field_selection.transaction_fields.clone(),
                         block_fields: field_selection.block_fields.clone(),
-                        transaction_type_name: "transaction".to_string(),
-                        block_type_name: "block".to_string(),
                     });
                     (
                         field_selection.block_type,
-                        field_selection.block_schema,
                         field_selection.transaction_type,
-                        field_selection.transaction_schema,
                     )
                 }
                 None => (
                     "Block.t".to_string(),
-                    "Block.schema".to_string(),
                     "Transaction.t".to_string(),
-                    "Transaction.schema".to_string(),
                 ),
             };
 
@@ -600,9 +604,9 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = {parse_event_filters_code}
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: {convert_hyper_sync_event_args_code},
+  selectedBlockFields: Utils.Set.make(),
+  selectedTransactionFields: Utils.Set.make(),
   {base_event_config_code}
 }}
 }}"#
@@ -659,8 +663,6 @@ block: block,
 {types_code}
 
 let paramsRawEventSchema = {params_raw_event_schema}
-let blockSchema = {block_schema}
-let transactionSchema = {transaction_schema}
 
 @genType
 type eventFilter = {event_filter_type}
@@ -805,6 +807,7 @@ impl EventTemplate {
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
+            global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -831,6 +834,7 @@ impl EventTemplate {
                 .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
+            global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
         };
         EventTemplate {
@@ -840,7 +844,10 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
+    pub fn from_config_event(
+        config_event: &system_config::Event,
+        global_field_selection: &system_config::FieldSelection,
+    ) -> Result<Self> {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
@@ -890,6 +897,7 @@ impl EventTemplate {
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
+                    global_field_selection: Some(global_field_selection.clone()),
                     fuel_event_kind: None,
                 };
 
@@ -917,6 +925,7 @@ impl EventTemplate {
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
+                            global_field_selection: None,
                             fuel_event_kind: Some(fuel_event_kind),
                         };
 
@@ -953,10 +962,11 @@ impl ContractTemplate {
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = contract.handler_path.clone();
+        let global_field_selection = &config.field_selection;
         let codegen_events = contract
             .events
             .iter()
-            .map(EventTemplate::from_config_event)
+            .map(|event| EventTemplate::from_config_event(event, global_field_selection))
             .collect::<Result<_>>()?;
 
         let chain_ids = contract.get_chain_ids(config);
@@ -1144,23 +1154,41 @@ struct FieldSelection {
     transaction_fields: Vec<SelectedFieldTemplate>,
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
-    transaction_schema: String,
     block_type: String,
-    block_schema: String,
 }
 
 struct FieldSelectionOptions {
     transaction_fields: Vec<SelectedField>,
     block_fields: Vec<SelectedField>,
-    transaction_type_name: String,
-    block_type_name: String,
 }
 
 impl FieldSelection {
+    fn default_block_fields() -> Vec<SelectedField> {
+        vec![
+            SelectedField {
+                name: "number".to_string(),
+                data_type: TypeIdent::Int,
+            },
+            SelectedField {
+                name: "timestamp".to_string(),
+                data_type: TypeIdent::Int,
+            },
+            SelectedField {
+                name: "hash".to_string(),
+                data_type: TypeIdent::String,
+            },
+        ]
+    }
+
     fn new(options: FieldSelectionOptions) -> Self {
         let mut block_field_templates = vec![];
         let mut all_block_fields = vec![];
-        for field in options.block_fields.into_iter() {
+        // Always include number, timestamp, hash in the type definition
+        let all_fields: Vec<_> = Self::default_block_fields()
+            .into_iter()
+            .chain(options.block_fields)
+            .collect();
+        for field in all_fields {
             let res_name = RecordField::to_valid_rescript_name(&field.name);
             let name: CaseOptions = field.name.into();
 
@@ -1199,13 +1227,7 @@ impl FieldSelection {
             transaction_fields: transaction_field_templates,
             block_fields: block_field_templates,
             transaction_type: transaction_expr.to_string(),
-            transaction_schema: transaction_expr.to_rescript_schema(
-                &options.transaction_type_name,
-                &SchemaMode::ForFieldSelection,
-            ),
             block_type: block_expr.to_string(),
-            block_schema: block_expr
-                .to_rescript_schema(&options.block_type_name, &SchemaMode::ForFieldSelection),
         }
     }
 
@@ -1213,8 +1235,6 @@ impl FieldSelection {
         Self::new(FieldSelectionOptions {
             transaction_fields: cfg.transaction_fields.clone(),
             block_fields: cfg.block_fields.clone(),
-            transaction_type_name: "t".to_string(),
-            block_type_name: "t".to_string(),
         })
     }
 
@@ -1244,8 +1264,6 @@ impl FieldSelection {
         Self::new(FieldSelectionOptions {
             transaction_fields: transaction_fields.into_iter().collect::<Vec<_>>(),
             block_fields: block_fields.into_iter().collect::<Vec<_>>(),
-            transaction_type_name: "t".to_string(),
-            block_type_name: "t".to_string(),
         })
     }
 }
@@ -1724,13 +1742,20 @@ type testIndexer = {{
                     let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
                     let abi_compact = serde_json::to_string(&abi_value)?;
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
-                    // Extract event signatures for EVM contracts
+                    // Extract event details for EVM contracts, with per-event field selection
                     let events = match &contract.abi {
-                        Abi::Evm(abi) => abi
-                            .get_event_signatures()
-                            .into_iter()
-                            .map(|sig| InternalContractEventItem { event: sig })
-                            .collect(),
+                        Abi::Evm(_) => {
+                            contract.events.iter()
+                                .map(|e| InternalContractEventItem {
+                                    event: e.event_signature.clone(),
+                                    name: e.name.clone(),
+                                    block_fields: e.field_selection.as_ref().map(|fs| fs.block_fields.iter()
+                                        .map(|f| f.name.clone()).collect()),
+                                    transaction_fields: e.field_selection.as_ref().map(|fs| fs.transaction_fields.iter()
+                                        .map(|f| f.name.clone()).collect()),
+                                })
+                                .collect()
+                        }
                         Abi::Fuel(_) => vec![],
                     };
                     Ok((
@@ -1755,6 +1780,9 @@ type testIndexer = {{
                         } else {
                             "checksum"
                         },
+                        global_block_fields: cfg.field_selection.block_fields.iter()
+                            .map(|f| f.name.clone()).collect(),
+                        global_transaction_fields: cfg.field_selection.transaction_fields.iter().map(|f| f.name.clone()).collect(),
                     }),
                     None,
                     None,
@@ -2402,8 +2430,6 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.object((s): eventArgs => {{id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)}})
-let blockSchema = Block.schema
-let transactionSchema = Transaction.schema
 
 @genType
 type eventFilter = {{}}
@@ -2416,9 +2442,9 @@ let {{getEventFiltersOrThrow, filterByAddresses}} = LogSelection.parseEventFilte
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {{id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }}->(Utils.magic: eventArgs => Internal.eventParams),
+  selectedBlockFields: Utils.Set.make(),
+  selectedTransactionFields: Utils.Set.make(),
   id,
 name,
 contractName,
@@ -2434,13 +2460,15 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
 
     #[test]
     fn event_template_with_empty_params() {
+        let global_field_selection = FieldSelection::empty();
         let event_template = EventTemplate::from_config_event(&system_config::Event {
             name: "NewGravatar".to_string(),
             kind: system_config::EventKind::Params(vec![]),
             sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                 .to_string(),
+            event_signature: String::new(),
             field_selection: None,
-        })
+        }, &global_field_selection)
         .unwrap();
 
         assert_eq!(
@@ -2485,8 +2513,6 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
-let blockSchema = Block.schema
-let transactionSchema = Transaction.schema
 
 @genType
 type eventFilter = {}
@@ -2499,9 +2525,9 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  selectedBlockFields: Utils.Set.make(),
+  selectedTransactionFields: Utils.Set.make(),
   id,
 name,
 contractName,
@@ -2517,11 +2543,13 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
 
     #[test]
     fn event_template_with_custom_field_selection() {
+        let global_field_selection = FieldSelection::empty();
         let event_template = EventTemplate::from_config_event(&system_config::Event {
             name: "NewGravatar".to_string(),
             kind: system_config::EventKind::Params(vec![]),
             sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                 .to_string(),
+            event_signature: String::new(),
             field_selection: Some(FieldSelection {
                 block_fields: vec![],
                 transaction_fields: vec![SelectedField {
@@ -2529,7 +2557,7 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
                     data_type: TypeIdent::option(TypeIdent::Address),
                 }],
             }),
-        })
+        }, &global_field_selection)
         .unwrap();
 
         assert_eq!(
@@ -2546,7 +2574,7 @@ let contractName = contractName
 @genType
 type eventArgs = unit
 @genType
-type block = {}
+type block = {number: int, timestamp: int, hash: string}
 @genType
 type transaction = {from: option<Address.t>}
 
@@ -2574,8 +2602,6 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
 let paramsRawEventSchema = S.literal(%raw(`null`))->S.shape(_ => ())
-let blockSchema = S.object((_): block => {})
-let transactionSchema = S.object((s): transaction => {from: s.field("from", S.nullable(Address.schema))})
 
 @genType
 type eventFilter = {}
@@ -2588,9 +2614,9 @@ let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFilters
   getEventFiltersOrThrow,
   filterByAddresses,
   dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-  blockSchema: blockSchema->(Utils.magic: S.t<block> => S.t<Internal.eventBlock>),
-  transactionSchema: transactionSchema->(Utils.magic: S.t<transaction> => S.t<Internal.eventTransaction>),
   convertHyperSyncEventArgs: _ => ()->(Utils.magic: eventArgs => Internal.eventParams),
+  selectedBlockFields: Utils.Set.make(),
+  selectedTransactionFields: Utils.Set.make(),
   id,
 name,
 contractName,
@@ -2701,4 +2727,5 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
         let project_template = get_project_template_helper("lowercase-contract-name.yaml");
         insta::assert_snapshot!(project_template.internal_config_json_code);
     }
+
 }
