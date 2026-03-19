@@ -15,6 +15,17 @@ export type EvmEvents = {
       "UpdatedGravatar": { transaction: Contract1_UpdatedGravatar_transaction; block: Contract1_UpdatedGravatar_block };
   };
 };
+export type EvmEventNameMap = {
+  "Contract1": "NewGravatar" | "UpdatedGravatar";
+};
+export type EvmEvent<
+  C extends keyof EvmEventNameMap = keyof EvmEventNameMap,
+  N extends EvmEventNameMap[C] = EvmEventNameMap[C],
+> = Extract<
+  | { contractName: "Contract1"; name: "NewGravatar"; params: { id: bigint; owner: Address; displayName: string; imageUrl: string } }
+  | { contractName: "Contract1"; name: "UpdatedGravatar"; params: { id: bigint; owner: Address; displayName: string; imageUrl: string } }
+  , { contractName: C; name: N }
+>;
 export type FuelChains = {};
 export type FuelEvents = {};
 export type SvmChains = {};

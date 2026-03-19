@@ -4,6 +4,8 @@ expression: project_template.envio_dts_code
 ---
 export type EvmChains = {};
 export type EvmEvents = {};
+export type EvmEventNameMap = {};
+export type EvmEvent = never;
 export type FuelChains = {
   "0": { id: 0 };
 };
