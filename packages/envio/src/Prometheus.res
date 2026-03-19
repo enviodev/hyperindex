@@ -100,7 +100,13 @@ module SafeCounter = MakeSafePromMetric({
   let make = PromClient.Counter.makeCounter
   let labels = PromClient.Counter.labels
   let handleInt = PromClient.Counter.incMany
-  let handleFloat = PromClient.Counter.incMany->(Utils.magic: ((PromClient.Counter.counter, int) => unit) => ((PromClient.Counter.counter, float) => unit))
+  let handleFloat =
+    PromClient.Counter.incMany->(
+      Utils.magic: ((PromClient.Counter.counter, int) => unit) => (
+        PromClient.Counter.counter,
+        float,
+      ) => unit
+    )
 })
 
 module SafeGauge = MakeSafePromMetric({
@@ -110,7 +116,6 @@ module SafeGauge = MakeSafePromMetric({
   let handleInt = PromClient.Gauge.set
   let handleFloat = PromClient.Gauge.setFloat
 })
-
 
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
@@ -260,7 +265,6 @@ module PreloadHandler = {
     count->SafeCounter.increment(~labels)
   }
 }
-
 
 module FetchingBlockRange = {
   let timeCounter = SafeCounter.makeOrThrow(
@@ -512,8 +516,6 @@ module SourceHeight = {
   }
 }
 
-
-
 module ReorgCount = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_reorg_detected_total",
@@ -601,10 +603,7 @@ module RollbackHistoryPrune = {
   )
 
   let increment = (~timeSeconds, ~entityName) => {
-    timeCounter->SafeCounter.handleFloat(
-      ~labels={entityName},
-      ~value=timeSeconds,
-    )
+    timeCounter->SafeCounter.handleFloat(~labels={entityName}, ~value=timeSeconds)
     counter->SafeCounter.increment(~labels={entityName})
   }
 }

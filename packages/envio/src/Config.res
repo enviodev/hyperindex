@@ -203,6 +203,9 @@ let publicConfigChainSchema = S.schema(s =>
 let contractEventItemSchema = S.schema(s =>
   {
     "event": s.matches(S.string),
+    "name": s.matches(S.string),
+    "blockFields": s.matches(S.option(S.array(S.string))),
+    "transactionFields": s.matches(S.option(S.array(S.string))),
   }
 )
 
@@ -229,6 +232,8 @@ let publicConfigEvmSchema = S.schema(s =>
     "chains": s.matches(S.dict(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
+    "globalBlockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
+    "globalTransactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
   }
 )
 
@@ -273,10 +278,7 @@ let entityJsonSchema = S.schema(s =>
   }
 )
 
-let getFieldTypeAndSchema = (
-  prop,
-  ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
-) => {
+let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>) => {
   let typ = prop["type"]
   let isNullable = prop["isNullable"]->Option.getWithDefault(false)
   let isArray = prop["isArray"]->Option.getWithDefault(false)
@@ -312,8 +314,16 @@ let getFieldTypeAndSchema = (
   | other => Js.Exn.raiseError("Unknown field type in entity config: " ++ other)
   }
 
-  let fieldSchema = if isArray {S.array(baseSchema)->S.toUnknown} else {baseSchema}
-  let fieldSchema = if isNullable {S.null(fieldSchema)->S.toUnknown} else {fieldSchema}
+  let fieldSchema = if isArray {
+    S.array(baseSchema)->S.toUnknown
+  } else {
+    baseSchema
+  }
+  let fieldSchema = if isNullable {
+    S.null(fieldSchema)->S.toUnknown
+  } else {
+    fieldSchema
+  }
 
   (fieldType, fieldSchema, isNullable, isArray, isIndex)
 }
@@ -333,21 +343,22 @@ let parseEntitiesFromJson = (
   entitiesJson->Array.mapWithIndex((index, entityJson) => {
     let entityName = entityJson["name"]
 
-    let fields: array<Table.fieldOrDerived> =
-      entityJson["properties"]->Array.map(prop => {
-        let (fieldType, fieldSchema, isNullable, isArray, isIndex) =
-          getFieldTypeAndSchema(prop, ~enumConfigsByName)
-        Table.mkField(
-          prop["name"],
-          fieldType,
-          ~fieldSchema,
-          ~isPrimaryKey=prop["name"] === "id",
-          ~isNullable,
-          ~isArray,
-          ~isIndex,
-          ~linkedEntity=?prop["linkedEntity"],
-        )
-      })
+    let fields: array<Table.fieldOrDerived> = entityJson["properties"]->Array.map(prop => {
+      let (fieldType, fieldSchema, isNullable, isArray, isIndex) = getFieldTypeAndSchema(
+        prop,
+        ~enumConfigsByName,
+      )
+      Table.mkField(
+        prop["name"],
+        fieldType,
+        ~fieldSchema,
+        ~isPrimaryKey=prop["name"] === "id",
+        ~isNullable,
+        ~isArray,
+        ~isIndex,
+        ~linkedEntity=?prop["linkedEntity"],
+      )
+    })
 
     let derivedFields: array<Table.fieldOrDerived> =
       entityJson["derivedFields"]
@@ -364,10 +375,12 @@ let parseEntitiesFromJson = (
       entityJson["compositeIndices"]
       ->Option.getWithDefault([])
       ->Array.map(ci =>
-        ci->Array.map(f => {
-          Table.fieldName: f["fieldName"],
-          direction: f["direction"] == "Asc" ? Table.Asc : Table.Desc,
-        })
+        ci->Array.map(
+          f => {
+            Table.fieldName: f["fieldName"],
+            direction: f["direction"] == "Asc" ? Table.Asc : Table.Desc,
+          },
+        )
       )
 
     let table = Table.mkTable(
@@ -381,14 +394,16 @@ let parseEntitiesFromJson = (
     // to match the database column names used in Table.toSqlParams
     let schema = S.schema(s => {
       let dict = Js.Dict.empty()
-      entityJson["properties"]->Array.forEach(prop => {
-        let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
-        let dbFieldName = switch prop["linkedEntity"] {
-        | Some(_) => prop["name"] ++ "_id"
-        | None => prop["name"]
-        }
-        dict->Js.Dict.set(dbFieldName, s.matches(fieldSchema))
-      })
+      entityJson["properties"]->Array.forEach(
+        prop => {
+          let (_, fieldSchema, _, _, _) = getFieldTypeAndSchema(prop, ~enumConfigsByName)
+          let dbFieldName = switch prop["linkedEntity"] {
+          | Some(_) => prop["name"] ++ "_id"
+          | None => prop["name"]
+          }
+          dict->Js.Dict.set(dbFieldName, s.matches(fieldSchema))
+        },
+      )
       dict
     })
 
@@ -396,7 +411,9 @@ let parseEntitiesFromJson = (
       Internal.name: entityName,
       index,
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
-      rowsSchema: S.array(schema)->(Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>),
+      rowsSchema: S.array(schema)->(
+        Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
+      ),
       table,
     }->Internal.fromGenericEntityConfig
   })
@@ -420,6 +437,66 @@ let publicConfigSchema = S.schema(s =>
   }
 )
 
+// Always-included block fields (number, timestamp, hash) are not in the JSON;
+// they're prepended at runtime so they're always present.
+let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
+
+// Enrich EVM event configs with field selections from the JSON config.
+// Mutates the event configs in-place to set selectedBlockFields/selectedTransactionFields.
+let enrichEvmFieldSelections = (
+  events: array<Internal.eventConfig>,
+  ~jsonEvents: option<array<_>>,
+  ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>,
+  ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>,
+) => {
+  // Build a lookup by event name for events with per-event field overrides
+  let fieldsByName: Js.Dict.t<_> = Js.Dict.empty()
+  switch jsonEvents {
+  | Some(jes) =>
+    jes->Array.forEach(je => {
+      let name = je["name"]
+      if je["blockFields"] != None || je["transactionFields"] != None {
+        fieldsByName->Js.Dict.set(name, je)
+      }
+    })
+  | None => ()
+  }
+  events->Js.Array2.forEachi((event, i) => {
+    let evmEvent = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    let (selectedBlockFields, selectedTransactionFields) = switch fieldsByName->Js.Dict.get(
+      evmEvent.name,
+    ) {
+    | Some(je) => (
+        switch je["blockFields"] {
+        | Some(fields) =>
+          // Prepend always-included block fields for per-event overrides too
+          Utils.Set.fromArray(
+            Array.concat(
+              alwaysIncludedBlockFields,
+              fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
+            ),
+          )
+        | None => globalBlockFieldsSet
+        },
+        switch je["transactionFields"] {
+        | Some(fields) =>
+          Utils.Set.fromArray(
+            fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>),
+          )
+        | None => globalTransactionFieldsSet
+        },
+      )
+    | None => (globalBlockFieldsSet, globalTransactionFieldsSet)
+    }
+    events->Js.Array2.unsafe_set(
+      i,
+      {...evmEvent, selectedBlockFields, selectedTransactionFields}->(
+        Utils.magic: Internal.evmEventConfig => Internal.eventConfig
+      ),
+    )
+  })
+}
+
 let fromPublic = (
   publicConfigJson: Js.Json.t,
   ~codegenChains: array<codegenChain>=[],
@@ -428,7 +505,9 @@ let fromPublic = (
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
-    Js.Exn.raiseError(`Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`)
+    Js.Exn.raiseError(
+      `Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
+    )
   }
 
   // Determine ecosystem from publicConfig (extract just chains for unified handling)
@@ -461,21 +540,42 @@ let fromPublic = (
   | _ => None
   }
 
-  // Store both ABI and event signatures for each contract (using inline tuple)
-  let contractsWithAbis: Js.Dict.t<(EvmTypes.Abi.t, array<string>)> = switch publicContractsConfig {
+  // Create global field selection Sets once (shared across events without per-event overrides)
+  let (globalBlockFieldsSet, globalTransactionFieldsSet) = switch publicConfig["evm"] {
+  | Some(evm) => (
+      Utils.Set.fromArray(
+        Array.concat(
+          alwaysIncludedBlockFields,
+          evm["globalBlockFields"]->Option.getWithDefault([]),
+        ),
+      ),
+      Utils.Set.fromArray(evm["globalTransactionFields"]->Option.getWithDefault([])),
+    )
+  | None => (Utils.Set.fromArray(alwaysIncludedBlockFields), Utils.Set.make())
+  }
+
+  // Store ABI and event signatures for each contract
+  let contractsWithAbis: Js.Dict.t<(EvmTypes.Abi.t, array<string>)> = Js.Dict.empty()
+  // Per-event field selection overrides, keyed by capitalized contract name
+  let jsonEventsByContract: Js.Dict.t<array<_>> = Js.Dict.empty()
+  switch publicContractsConfig {
   | Some(contractsDict) =>
     contractsDict
     ->Js.Dict.entries
-    ->Js.Array2.map(((contractName, contractConfig)) => {
+    ->Array.forEach(((contractName, contractConfig)) => {
+      let capitalizedName = contractName->Utils.String.capitalize
       let abi = contractConfig["abi"]->(Utils.magic: Js.Json.t => EvmTypes.Abi.t)
       let eventSignatures = switch contractConfig["events"] {
       | Some(events) => events->Array.map(eventItem => eventItem["event"])
       | None => []
       }
-      (contractName->Utils.String.capitalize, (abi, eventSignatures))
+      contractsWithAbis->Js.Dict.set(capitalizedName, (abi, eventSignatures))
+      switch contractConfig["events"] {
+      | Some(events) => jsonEventsByContract->Js.Dict.set(capitalizedName, events)
+      | None => ()
+      }
     })
-    ->Js.Dict.fromArray
-  | None => Js.Dict.empty()
+  | None => ()
   }
 
   // Index codegenChains by id for efficient lookup
@@ -504,6 +604,16 @@ let fromPublic = (
             }
           },
         )
+
+        // Enrich EVM event configs with field selections from JSON config
+        if ecosystemName == Ecosystem.Evm {
+          enrichEvmFieldSelections(
+            codegenContract.events,
+            ~jsonEvents=jsonEventsByContract->Js.Dict.get(codegenContract.name),
+            ~globalBlockFieldsSet,
+            ~globalTransactionFieldsSet,
+          )
+        }
         // Convert codegenContract to contract by adding abi and eventSignatures
         {
           name: codegenContract.name,
@@ -601,18 +711,12 @@ let fromPublic = (
       | Ecosystem.Fuel =>
         switch publicChainConfig["hypersync"] {
         | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})
-        | None =>
-          Js.Exn.raiseError(
-            `Chain ${chainName} is missing hypersync endpoint in config`,
-          )
+        | None => Js.Exn.raiseError(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
         switch publicChainConfig["rpc"] {
         | Some(rpc) => SvmSourceConfig({rpc: rpc})
-        | None =>
-          Js.Exn.raiseError(
-            `Chain ${chainName} is missing rpc endpoint in config`,
-          )
+        | None => Js.Exn.raiseError(`Chain ${chainName} is missing rpc endpoint in config`)
         }
       }
 
@@ -670,8 +774,7 @@ let fromPublic = (
     ->Option.getWithDefault([])
     ->parseEntitiesFromJson(~enumConfigsByName)
 
-  let allEntities =
-    userEntities->Js.Array2.concat([DynamicContractRegistry.entityConfig])
+  let allEntities = userEntities->Js.Array2.concat([DynamicContractRegistry.entityConfig])
 
   let userEntitiesByName =
     userEntities
@@ -731,4 +834,3 @@ let getChain = (config, ~chainId) => {
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
 }
-

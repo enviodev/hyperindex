@@ -125,8 +125,14 @@ module GetLogs = {
 
     {
       log,
-      block: event.block->(Utils.magic: option<HyperSyncClient.ResponseTypes.block> => HyperSyncClient.ResponseTypes.block),
-      transaction: event.transaction->(Utils.magic: option<HyperSyncClient.ResponseTypes.transaction> => Internal.eventTransaction),
+      block: event.block->(
+        Utils.magic: option<
+          HyperSyncClient.ResponseTypes.block,
+        > => HyperSyncClient.ResponseTypes.block
+      ),
+      transaction: event.transaction->(
+        Utils.magic: option<HyperSyncClient.ResponseTypes.transaction> => Internal.eventTransaction
+      ),
     }
   }
 
@@ -284,7 +290,15 @@ module BlockData = {
           `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~sourceName, ~chainId, ~logger)
+        await queryBlockData(
+          ~serverUrl,
+          ~apiToken,
+          ~fromBlock,
+          ~toBlock,
+          ~sourceName,
+          ~chainId,
+          ~logger,
+        )
       }
     | Some(res) =>
       switch res->convertResponse {
@@ -306,7 +320,14 @@ module BlockData = {
     }
   }
 
-  let queryBlockDataMulti = async (~serverUrl, ~apiToken, ~blockNumbers, ~sourceName, ~chainId, ~logger) => {
+  let queryBlockDataMulti = async (
+    ~serverUrl,
+    ~apiToken,
+    ~blockNumbers,
+    ~sourceName,
+    ~chainId,
+    ~logger,
+  ) => {
     switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstBlock) => {
