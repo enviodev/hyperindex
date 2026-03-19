@@ -512,14 +512,17 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
-          let response = sql->Postgres.preparedUnsafe(
-            // Either use the sql query for full chunks from cache
-            // or create a new one for partial chunks on the fly.
-            isFullChunk
-              ? data["query"]
-              : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
-            data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>)),
+          let params = data["convertOrThrow"](
+            chunk->(Utils.magic: array<'item> => array<unknown>),
           )
+          // Use prepared query only for full batches where the cached query is reused.
+          // Partial chunks generate unique SQL each time, so preparation has no benefit.
+          let response = isFullChunk
+            ? sql->Postgres.preparedUnsafe(data["query"], params)
+            : sql->Postgres.unpreparedUnsafe(
+                makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
+                params,
+              )
           responses->Js.Array2.push(response)->ignore
         })
         let _ = await Promise.all(responses)
