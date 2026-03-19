@@ -1582,6 +1582,8 @@ let make = (
     ))
   }
 
+  let stats = Persistence.makeStats()
+
   let writeBatchMethod = async (
     ~batch,
     ~rawEvents,
@@ -1612,6 +1614,8 @@ let make = (
     | None => None
     }
 
+    let timerRef = Hrtime.makeTimer()
+
     await writeBatch(
       sql,
       ~batch,
@@ -1626,9 +1630,28 @@ let make = (
       ~updatedEntities,
       ~sinkPromise,
     )
+
+    let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    // Distribute write time proportionally across tables by entity count
+    let totalCount = updatedEntities->Belt.Array.reduce(0, (acc, {updates}) =>
+      acc + updates->Array.length
+    )
+    updatedEntities->Belt.Array.forEach(({entityConfig, updates}) => {
+      let count = updates->Array.length->Belt.Int.toFloat
+      let tableStats = stats->Persistence.getTableStats(~tableName=entityConfig.name)
+      tableStats.write.total = tableStats.write.total +. count
+      let proportionalSeconds = if totalCount > 0 {
+        seconds *. count /. totalCount->Belt.Int.toFloat
+      } else {
+        0.
+      }
+      tableStats.write.seconds = proportionalSeconds
+      tableStats.write.totalSeconds = tableStats.write.totalSeconds +. proportionalSeconds
+    })
   }
 
   {
+    stats,
     isInitialized,
     initialize,
     resumeInitialState,

@@ -107,6 +107,7 @@ let sendRequest = (proxy: t, ~payload: workerPayload): promise<Js.Json.t> => {
 }
 
 let makeStorage = (proxy: t): Persistence.storage => {
+  stats: Persistence.makeStats(),
   isInitialized: async () => true,
   initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?) => {
     Js.Exn.raiseError(

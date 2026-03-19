@@ -227,12 +227,61 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   let runtimeRegistry = PromClient.makeRegistry()
   PromClient.collectDefaultMetrics({"register": runtimeRegistry})
 
+  let getWriteMetrics = () => {
+    let storageStats = switch ctx.persistence.storageStatus {
+    | Ready(_) => Some(ctx.persistence.storage.stats)
+    | _ => None
+    }
+    let entries = switch storageStats {
+    | Some(s) => s.byTable->Js.Dict.entries
+    | None => []
+    }
+    // Sort by totalSeconds descending and take top 5
+    let _ = entries->Js.Array2.sortInPlaceWith(((_, a), (_, b)) =>
+      if b.write.totalSeconds > a.write.totalSeconds {
+        1
+      } else if b.write.totalSeconds < a.write.totalSeconds {
+        -1
+      } else {
+        0
+      }
+    )
+    let top = entries->Js.Array2.slice(~start=0, ~end_=5)
+    let buf = []
+    top->Js.Array2.forEach(((name, s)) => {
+      buf
+      ->Js.Array2.push(
+        `envio_entity_write_total{entity="${name}"} ${s.write.total->Float.toString}`,
+      )
+      ->ignore
+      buf
+      ->Js.Array2.push(
+        `envio_entity_write_seconds{entity="${name}"} ${s.write.seconds->Float.toString}`,
+      )
+      ->ignore
+      buf
+      ->Js.Array2.push(
+        `envio_entity_write_total_seconds{entity="${name}"} ${s.write.totalSeconds->Float.toString}`,
+      )
+      ->ignore
+    })
+    buf->Js.Array2.joinWith("\n")
+  }
+
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
     let _ =
       PromClient.defaultRegister
       ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+      ->Promise.thenResolve(metrics => {
+        let writeMetrics = getWriteMetrics()
+        let combined = if writeMetrics === "" {
+          metrics
+        } else {
+          metrics ++ "\n" ++ writeMetrics ++ "\n"
+        }
+        res->endWithData(combined)
+      })
   })
 
   app->get("/metrics/runtime", (_req, res) => {

@@ -35,6 +35,26 @@ type initialState = {
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
 
+type writeStats = {
+  mutable total: float,
+  mutable seconds: float,
+  mutable totalSeconds: float,
+}
+type tableStats = {write: writeStats}
+type stats = {byTable: dict<tableStats>}
+
+let makeStats = () => {byTable: Js.Dict.empty()}
+
+let getTableStats = (stats, ~tableName) => {
+  switch stats.byTable->Utils.Dict.dangerouslyGetNonOption(tableName) {
+  | Some(s) => s
+  | None =>
+    let s = {write: {total: 0., seconds: 0., totalSeconds: 0.}}
+    stats.byTable->Js.Dict.set(tableName, s)
+    s
+  }
+}
+
 type operator = [#">" | #"=" | #"<"]
 
 type updatedEffectCache = {
@@ -49,6 +69,7 @@ type updatedEntity = {
 }
 
 type storage = {
+  stats: stats,
   // Should return true if we already have persisted data
   // and we can skip initialization
   isInitialized: unit => promise<bool>,
