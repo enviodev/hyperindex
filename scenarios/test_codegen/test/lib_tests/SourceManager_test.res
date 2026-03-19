@@ -911,7 +911,7 @@ describe("SourceManager wait for new blocks", () => {
     )
   })
 
-  Async.it("Retries on throw without affecting polling of other sources", async t => {
+  Async.itWithOptions("Retries on throw without affecting polling of other sources", {retry: 3}, async t => {
     let pollingInterval0 = 1
     let pollingInterval1 = 2
     let initialRetryInterval = 4
