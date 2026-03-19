@@ -1544,8 +1544,8 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     // Update events_processed to a value > int32 max to verify uint52 column works
-    let {sql} = PgStorage.makeClient()
-    let _ = await sql.query({
+    let pool = PgStorage.makeClient()
+    let _ = await pool.query({
       text: `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
     })
 

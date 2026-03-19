@@ -301,7 +301,7 @@ module Indexer = {
     }
 
     let pool = PgStorage.makeClient()
-    let {sql} = pool
+    let sql = pool->(Utils.magic: Pg.pool => Pg.sql)
     let pgSchema = Env.Db.publicSchema
     let storage = Indexer.Generated.makeStorage(~pool, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
@@ -377,8 +377,8 @@ module Indexer = {
       query: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
         sql.query({text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName)})
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(ec.rowsSchema)
+        ->Promise.thenResolve(({rows}) => {
+          rows->S.parseOrThrow(ec.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
@@ -388,8 +388,8 @@ module Indexer = {
         sql.query({
           text: `SELECT * FROM "${pgSchema}"."${historyTableName}" ORDER BY "id", "${EntityHistory.checkpointIdFieldName}";`,
         })
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(
+        ->Promise.thenResolve(({rows}) => {
+          rows->S.parseOrThrow(
             S.array(
               S.union([
                 PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
@@ -413,8 +413,8 @@ module Indexer = {
       },
       queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
         sql.query({text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName)})
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
+        ->Promise.thenResolve(({rows}) => {
+          rows->S.parseOrThrow(entityConfig.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
@@ -425,7 +425,7 @@ module Indexer = {
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
         })
-        ->Promise.thenResolve(rows =>
+        ->Promise.thenResolve(({rows}) =>
           rows->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
@@ -433,6 +433,7 @@ module Indexer = {
         sql.query({
           text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
         })
+        ->Promise.thenResolve(({rows}) => rows)
         ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": Js.Json.t}>>)
       },
       metric: async name => {
