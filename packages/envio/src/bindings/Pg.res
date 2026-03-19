@@ -45,14 +45,19 @@ type queryResult = {
   rows: array<unknown>,
 }
 
-// pool is the raw pg.Pool object. Also used for pg.Client from connect,
-// since both share the same query interface.
-type pool
+type sql = {query: queryConfig => promise<queryResult>}
+type client = {
+  query: queryConfig => promise<queryResult>,
+  release: bool => unit,
+}
+type pool = {
+  query: queryConfig => promise<queryResult>,
+  connect: unit => promise<client>,
+  on: (string, Js.Exn.t => unit) => unit,
+}
+external poolToSql: pool => sql = "%identity"
+external clientToSql: client => sql = "%identity"
 @module("pg") @new external makeRawPool: pgConfig => pool = "Pool"
-@send external query: (pool, queryConfig) => promise<queryResult> = "query"
-@send external connect: pool => promise<pool> = "connect"
-@send external release: (pool, bool) => unit = "release"
-@send external on: (pool, string, 'handler) => unit = "on"
 
 let makePool = (~config: poolConfig): pool => {
   let pgConfig: pgConfig = {
@@ -75,31 +80,31 @@ let makePool = (~config: poolConfig): pool => {
 
   // Prevent unhandled error events from crashing the process.
   // Individual query errors are still propagated through promises.
-  pool->on("error", (err: Js.Exn.t) => {
+  pool.on("error", (err: Js.Exn.t) => {
     Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
   })
 
   pool
 }
 
-let beginSql = async (pool: pool, fn: pool => promise<'a>) => {
-  let client = await pool->connect
+let beginSql = async (pool: pool, fn: sql => promise<'a>) => {
+  let client = await pool.connect()
   try {
-    let _ = await client->query({text: "BEGIN"})
-    let result = await fn(client)
-    let _ = await client->query({text: "COMMIT"})
-    client->release(false)
+    let _ = await client.query({text: "BEGIN"})
+    let result = await fn(client->clientToSql)
+    let _ = await client.query({text: "COMMIT"})
+    client.release(false)
     result
   } catch {
   | exn =>
     try {
-      let _ = await client->query({text: "ROLLBACK"})
+      let _ = await client.query({text: "ROLLBACK"})
     } catch {
     | _ => ()
     }
     // Destroy the client instead of returning it to the pool
     // to avoid reusing a client in a potentially bad state after a failed transaction.
-    client->release(true)
+    client.release(true)
     raise(exn)
   }
 }

@@ -523,7 +523,7 @@ exception PgEncodingError({table: Table.table})
 
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
-let setOrThrow = async (sql: Pg.pool, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
+let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
   if items->Array.length === 0 {
     ()
   } else {
@@ -549,7 +549,7 @@ let setOrThrow = async (sql: Pg.pool, ~items, ~table: Table.table, ~itemSchema, 
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
-          let response = sql->Pg.query({
+          let response = sql.query({
             text: isFullChunk
               ? data.query
               // Create a new query for partial chunks on the fly.
@@ -563,7 +563,7 @@ let setOrThrow = async (sql: Pg.pool, ~items, ~table: Table.table, ~itemSchema, 
         let _ = await Promise.all(responses)
       } else {
         // Use UNNEST approach for single query
-        let _ = await sql->Pg.query({
+        let _ = await sql.query({
           text: data.query,
           values: data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>)),
           name: `upsert_${table.stmtId}`,
@@ -677,17 +677,17 @@ let getConnectedPsqlExec = {
   }
 }
 
-let deleteByIdsOrThrow = async (sql: Pg.pool, ~pgSchema, ~ids, ~table: Table.table) => {
+let deleteByIdsOrThrow = async (sql: Pg.sql, ~pgSchema, ~ids, ~table: Table.table) => {
   switch await (
     switch ids {
     | [_] =>
-      sql->Pg.query({
+      sql.query({
         name: `delete_id_${table.stmtId}`,
         text: makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
         values: ids->Obj.magic,
       })
     | _ =>
-      sql->Pg.query({
+      sql.query({
         name: `delete_ids_${table.stmtId}`,
         text: makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
         values: [ids]->Obj.magic,
@@ -752,9 +752,9 @@ FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, 
 }
 
 let executeSet = (
-  sql: Pg.pool,
+  sql: Pg.sql,
   ~items: array<'a>,
-  ~dbFunction: (Pg.pool, array<'a>) => promise<unit>,
+  ~dbFunction: (Pg.sql, array<'a>) => promise<unit>,
 ) => {
   if items->Array.length > 0 {
     sql->dbFunction(items)
@@ -861,7 +861,7 @@ let rec writeBatch = async (
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
               promises->Belt.Array.push(
-                sql->Pg.query({
+                sql.query({
                   name: `insert_deletes_${entityConfig.index->Belt.Int.toString}`,
                   text: makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
                   values: (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
@@ -1150,7 +1150,7 @@ let make = (
   ~onInitialize=?,
   ~onNewTables=?,
 ): Persistence.storage => {
-  let sql = pool
+  let sql = pool->Pg.poolToSql
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
@@ -1164,7 +1164,7 @@ let make = (
   ])
 
   let isInitialized = async () => {
-    let {rows: envioTables} = await sql->Pg.query({
+    let {rows: envioTables} = await sql.query({
       text: `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND (table_name = '${// This is for indexer before envio@2.28
         "event_sync_state"}' OR table_name = '${InternalTable.Chains.table.tableName}');`,
     })
@@ -1193,7 +1193,7 @@ let make = (
               let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
               let table = Internal.makeCacheTable(~effectName)
 
-              sql->Pg.query({text: makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false)})
+              sql.query({text: makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false)})
               ->Promise.then(_ => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
@@ -1230,7 +1230,7 @@ let make = (
     }
 
     let cacheTableInfo: array<schemaCacheTableInfo> =
-      (await sql->Pg.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)})).rows
+      (await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)})).rows
       ->(Utils.magic: array<unknown> => array<schemaCacheTableInfo>)
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
@@ -1256,7 +1256,7 @@ let make = (
 
   let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
     let schemaTableNames: array<schemaTableName> =
-      (await sql->Pg.query({text: makeSchemaTableNamesQuery(~pgSchema)})).rows
+      (await sql.query({text: makeSchemaTableNamesQuery(~pgSchema)})).rows
       ->(Utils.magic: array<unknown> => array<schemaTableName>)
 
     // The initialization query will completely drop the schema and recreate it from scratch.
@@ -1300,7 +1300,7 @@ let make = (
     let _ = await pool->Pg.beginSql(sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Js.Array2.map(query => sql->Pg.query({text: query})))
+      Promise.all(queries->Js.Array2.map(query => sql.query({text: query})))
     })
 
     let cache = await restoreEffectCache(~withUpload=true)
@@ -1335,13 +1335,13 @@ let make = (
     switch await (
       switch ids {
       | [_] =>
-        sql->Pg.query({
+        sql.query({
           name: `load_id_${table.stmtId}`,
           text: makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
           values: ids->Obj.magic,
         })
       | _ =>
-        sql->Pg.query({
+        sql.query({
           name: `load_ids_${table.stmtId}`,
           text: makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
           values: [ids]->Obj.magic,
@@ -1385,7 +1385,7 @@ let make = (
         }),
       )
     }
-    switch await sql->Pg.query({
+    switch await sql.query({
       name: `load_field_${table.tableName}_${fieldName}`,
       text: makeLoadByFieldQuery(
         ~pgSchema,
@@ -1439,7 +1439,7 @@ let make = (
 
     if initialize {
       let _ =
-        await sql->Pg.query({
+        await sql.query({
           text: makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
         })
       // Integration with other tools like Hasura
@@ -1455,7 +1455,7 @@ let make = (
   let dumpEffectCache = async () => {
     try {
       let cacheTableInfo: array<schemaCacheTableInfo> =
-        ((await sql->Pg.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)})).rows
+        ((await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)})).rows
         ->(Utils.magic: array<unknown> => array<schemaCacheTableInfo>))
         ->Js.Array2.filter(i => i.count > 0)
 
@@ -1534,11 +1534,11 @@ let make = (
           sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
-      sql->Pg.query({text: InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema)})
+      sql.query({text: InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema)})
       ->Promise.thenResolve(r =>
         r.rows->(Utils.magic: array<unknown> => array<{"id": string}>)
       ),
-      sql->Pg.query({text: InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema)})
+      sql.query({text: InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema)})
       ->Promise.thenResolve(r =>
         r.rows->(
           Utils.magic: array<unknown> => array<{"id": string, "chain_id": int, "block_number": int, "block_hash": string}>
@@ -1573,7 +1573,7 @@ let make = (
 
   let reset = async () => {
     let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
-    await sql->Pg.query({text: query})->Promise.ignoreValue
+    await sql.query({text: query})->Promise.ignoreValue
   }
 
   let setChainMeta = chainsData =>
@@ -1610,7 +1610,7 @@ let make = (
   ) => {
     await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
-      sql->Pg.query({
+      sql.query({
         name: `rollback_removed_${entityConfig.index->Belt.Int.toString}`,
         text: makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
         values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
@@ -1619,7 +1619,7 @@ let make = (
         r.rows->(Utils.magic: array<unknown> => array<{"id": string}>)
       ),
       // Get entities that should be restored to their state at or before rollback target
-      sql->Pg.query({
+      sql.query({
         name: `rollback_restored_${entityConfig.index->Belt.Int.toString}`,
         text: makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
         values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),

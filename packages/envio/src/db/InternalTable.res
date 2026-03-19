@@ -204,8 +204,8 @@ WHERE "${(#id: field :> string)}" = $1;`
 FROM "${pgSchema}"."${table.tableName}" as chains;`
   }
 
-  let getInitialState = (sql: Pg.pool, ~pgSchema) => {
-    sql->Pg.query({text: makeGetInitialStateQuery(~pgSchema)})
+  let getInitialState = (sql: Pg.sql, ~pgSchema) => {
+    sql.query({text: makeGetInitialStateQuery(~pgSchema)})
     ->Promise.thenResolve(r => r.rows->(Utils.magic: array<unknown> => array<rawInitialState>))
   }
 
@@ -223,7 +223,7 @@ SET ${setClauses->Js.Array2.joinWith(",\n    ")}
 WHERE "id" = $1;`
   }
 
-  let setMeta = (sql: Pg.pool, ~pgSchema, ~chainsData: dict<metaFields>) => {
+  let setMeta = (sql: Pg.sql, ~pgSchema, ~chainsData: dict<metaFields>) => {
     let query = makeMetaFieldsUpdateQuery(~pgSchema)
 
     let promises = []
@@ -241,7 +241,7 @@ WHERE "id" = $1;`
         params->Js.Array2.push(value)->ignore
       })
 
-      promises->Js.Array2.push(sql->Pg.query({name: "chains_set_meta", text: query, values: params->Obj.magic}))->ignore
+      promises->Js.Array2.push(sql.query({name: "chains_set_meta", text: query, values: params->Obj.magic}))->ignore
     })
 
     Promise.all(promises)
@@ -254,7 +254,7 @@ WHERE "id" = $1;`
     totalEventsProcessed: float,
   }
 
-  let setProgressedChains = (sql: Pg.pool, ~pgSchema, ~progressedChains: array<progressedChain>) => {
+  let setProgressedChains = (sql: Pg.sql, ~pgSchema, ~progressedChains: array<progressedChain>) => {
     let query = makeProgressFieldsUpdateQuery(~pgSchema)
 
     let promises = []
@@ -278,7 +278,7 @@ WHERE "id" = $1;`
         ->ignore
       })
 
-      promises->Js.Array2.push(sql->Pg.query({name: "chains_set_progress", text: query, values: params->Obj.magic}))->ignore
+      promises->Js.Array2.push(sql.query({name: "chains_set_progress", text: query, values: params->Obj.magic}))->ignore
     })
 
     Promise.all(promises)->Promise.ignoreValue
@@ -388,7 +388,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
   }
 
   let insert = (
-    sql: Pg.pool,
+    sql: Pg.sql,
     ~pgSchema,
     ~checkpointIds,
     ~checkpointChainIds,
@@ -400,7 +400,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
     let checkpointIdStrings = checkpointIds->BigInt.arrayToStringArray
-    sql->Pg.query({
+    sql.query({
       name: "checkpoints_insert",
       text: query,
       values: (
@@ -418,8 +418,8 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
     ->Promise.ignoreValue
   }
 
-  let rollback = (sql: Pg.pool, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
-    sql->Pg.query({
+  let rollback = (sql: Pg.sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+    sql.query({
       name: "checkpoints_rollback",
       text: `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
       values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
@@ -431,8 +431,8 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
     `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
   }
 
-  let pruneStaleCheckpoints = (sql: Pg.pool, ~pgSchema, ~safeCheckpointId: bigint) => {
-    sql->Pg.query({
+  let pruneStaleCheckpoints = (sql: Pg.sql, ~pgSchema, ~safeCheckpointId: bigint) => {
+    sql.query({
       name: "checkpoints_prune",
       text: makePruneStaleCheckpointsQuery(~pgSchema),
       values: [safeCheckpointId->BigInt.toString]->Obj.magic,
@@ -450,12 +450,12 @@ LIMIT 1;`
   }
 
   let getRollbackTargetCheckpoint = (
-    sql: Pg.pool,
+    sql: Pg.sql,
     ~pgSchema,
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
   ) => {
-    sql->Pg.query({
+    sql.query({
       name: "checkpoints_rollback_target",
       text: makeGetRollbackTargetCheckpointQuery(~pgSchema),
       values: (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
@@ -477,11 +477,11 @@ GROUP BY "${(#chain_id: field :> string)}";`
   }
 
   let getRollbackProgressDiff = (
-    sql: Pg.pool,
+    sql: Pg.sql,
     ~pgSchema,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => {
-    sql->Pg.query({
+    sql.query({
       name: "checkpoints_rollback_diff",
       text: makeGetRollbackProgressDiffQuery(~pgSchema),
       values: [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
