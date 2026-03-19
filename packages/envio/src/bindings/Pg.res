@@ -59,10 +59,14 @@ type queryResult = {
 // Event emitter (both Pool and Client)
 @send external _on: (_handle, string, 'handler) => unit = "on"
 
-type pool = {
+type sql = {
   query: queryConfig => promise<array<unknown>>,
 }
-type client = pool
+type pool = sql
+type client = {
+  query: queryConfig => promise<array<unknown>>,
+}
+external clientToSql: client => sql = "%identity"
 
 // WeakMap to store the raw pg.Pool handle for beginSql
 let _rawHandles: Utils.WeakMap.t<pool, _handle> = Utils.WeakMap.make()
@@ -92,7 +96,7 @@ let makePool = (~config: poolConfig): pool => {
     Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
   })
 
-  let pool = {
+  let pool: pool = {
     query: config => raw->_query(config)->Promise.thenResolve(r => r.rows),
   }
   _rawHandles->Utils.WeakMap.set(pool, raw)->ignore
