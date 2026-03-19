@@ -10,16 +10,6 @@ export const createSql = () =>
     database: process.env.ENVIO_PG_DATABASE ?? "envio-dev",
   });
 
-export const unsafe = (pool: Pool, text: string): Promise<any[]> =>
-  pool.query(text).then((r) => r.rows);
-
-export const preparedUnsafe = (
-  pool: Pool,
-  _name: string,
-  text: string,
-  values: unknown
-): Promise<any[]> => pool.query({ text, values, name: _name } as any).then((r: any) => r.rows);
-
 const originalConsoleLog = console.log;
 
 export const disableConsoleLog = () => {

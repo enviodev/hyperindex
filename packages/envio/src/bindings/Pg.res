@@ -67,6 +67,7 @@ let makePool = (~config: poolConfig): pool => {
     password: ?config.password,
     database: ?config.database,
     max: ?config.max,
+    allowExitOnIdle: true,
     ssl: ?switch config.ssl {
     | Some(Require) => Some(Options({rejectUnauthorized: false}))
     | Some(VerifyFull) => Some(Options({rejectUnauthorized: true}))
@@ -76,7 +77,7 @@ let makePool = (~config: poolConfig): pool => {
     },
   }
 
-  let pool = makeRawPool({...pgConfig, allowExitOnIdle: true})
+  let pool = makeRawPool(pgConfig)
 
   // Prevent unhandled error events from crashing the process.
   // Individual query errors are still propagated through promises.
