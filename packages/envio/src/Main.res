@@ -295,6 +295,7 @@ let start = async (
 
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
+  Prometheus.ProcessStartTimeSeconds.set()
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
   if !isTest {
