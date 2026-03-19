@@ -25,7 +25,6 @@ type poolConfig = {
   max?: int,
 }
 
-// Raw pg bindings (internal)
 @unboxed type ssl = Bool(bool) | Options({rejectUnauthorized: bool})
 type pgConfig = {
   host?: string,
@@ -46,23 +45,14 @@ type queryResult = {
   rows: array<unknown>,
 }
 
-// Internal handle for raw pg.Pool JS object, used only in makePool
-type _handle
-@module("pg") @new external _makePool: pgConfig => _handle = "Pool"
-@send external _query: (_handle, queryConfig) => promise<queryResult> = "query"
-@send external _connect: _handle => promise<_handle> = "connect"
-@send external _release: (_handle, bool) => unit = "release"
-@send external _on: (_handle, string, 'handler) => unit = "on"
-
-type client = {
-  query: queryConfig => promise<queryResult>,
-  release: (~destroy: bool=?) => unit,
-}
-
-type pool = {
-  query: queryConfig => promise<queryResult>,
-  connect: unit => promise<client>,
-}
+// pool is the raw pg.Pool object. Also used for pg.Client from connect,
+// since both share the same query interface.
+type pool
+@module("pg") @new external makeRawPool: pgConfig => pool = "Pool"
+@send external query: (pool, queryConfig) => promise<queryResult> = "query"
+@send external connect: pool => promise<pool> = "connect"
+@send external release: (pool, bool) => unit = "release"
+@send external on: (pool, string, 'handler) => unit = "on"
 
 let makePool = (~config: poolConfig): pool => {
   let pgConfig: pgConfig = {
@@ -81,44 +71,35 @@ let makePool = (~config: poolConfig): pool => {
     },
   }
 
-  let raw = _makePool({...pgConfig, allowExitOnIdle: true})
+  let pool = makeRawPool({...pgConfig, allowExitOnIdle: true})
 
   // Prevent unhandled error events from crashing the process.
   // Individual query errors are still propagated through promises.
-  raw->_on("error", (err: Js.Exn.t) => {
+  pool->on("error", (err: Js.Exn.t) => {
     Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
   })
 
-  {
-    query: config => raw->_query(config),
-    connect: () =>
-      raw->_connect->Promise.thenResolve(rawClient => {
-        {
-          query: config => rawClient->_query(config),
-          release: (~destroy=?) => rawClient->_release(destroy->Belt.Option.getWithDefault(false)),
-        }
-      }),
-  }
+  pool
 }
 
-let beginSql = async (pool: pool, fn: client => promise<'a>) => {
-  let client = await pool.connect()
+let beginSql = async (pool: pool, fn: pool => promise<'a>) => {
+  let client = await pool->connect
   try {
-    let _ = await client.query({text: "BEGIN"})
+    let _ = await client->query({text: "BEGIN"})
     let result = await fn(client)
-    let _ = await client.query({text: "COMMIT"})
-    client.release()
+    let _ = await client->query({text: "COMMIT"})
+    client->release(false)
     result
   } catch {
   | exn =>
     try {
-      let _ = await client.query({text: "ROLLBACK"})
+      let _ = await client->query({text: "ROLLBACK"})
     } catch {
     | _ => ()
     }
     // Destroy the client instead of returning it to the pool
     // to avoid reusing a client in a potentially bad state after a failed transaction.
-    client.release(~destroy=true)
+    client->release(true)
     raise(exn)
   }
 }
