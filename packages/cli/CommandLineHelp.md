@@ -242,7 +242,7 @@ Development commands for starting, stopping, and restarting the indexer with aut
 
 ###### **Options:**
 
-* `-r`, `--restart` — Clear your database and restart indexing from scratch
+* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/schema changes, use this flag when you need a restart without making changes
 
 
 
