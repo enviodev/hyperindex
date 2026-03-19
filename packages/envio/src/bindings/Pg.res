@@ -110,6 +110,26 @@ let beginSql = async (pool: pool, fn: sql => promise<'a>) => {
   }
 }
 
+// pg-types default parser for NUMERIC[] (OID 1231) converts elements to numbers,
+// but BigInt.schema and BigDecimal.schema expect string inputs.
+// Override to keep elements as strings.
+module PgTypes = {
+  type arrayParserResult<'a> = {parse: unit => 'a}
+  type arrayParserModule = {create: (string, unknown) => arrayParserResult<unknown>}
+
+  @module("pg") @scope("types")
+  external setTypeParser: (int, string => unknown) => unit = "setTypeParser"
+
+  @module("pg") @scope("types")
+  external arrayParser: arrayParserModule = "arrayParser"
+}
+
+// OID 1231 = NUMERIC[]. Parse elements as strings, not numbers.
+let stringIdentity: unknown = %raw(`String`)
+PgTypes.setTypeParser(1231, val =>
+  PgTypes.arrayParser.create(val, stringIdentity).parse()
+)
+
 @unboxed
 type columnType =
   | @as("INTEGER") Integer
@@ -122,6 +142,5 @@ type columnType =
   | @as("BIGSERIAL") BigSerial
   | @as("JSONB") JsonB
   | @as("TIMESTAMP WITH TIME ZONE") TimestampWithTimezone
-  | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithTimezoneNull
   | @as("TIMESTAMP") TimestampWithoutTimezone
   | Custom(string)

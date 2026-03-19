@@ -381,11 +381,49 @@ type tableBatchSetQuery = {
   query: string,
   convertOrThrow: array<unknown> => array<unknown>,
   isInsertValues: bool,
+  jsonStringifier: option<array<unknown> => array<unknown>>,
 }
 
 
+// pg driver doesn't auto-serialize JSONB values like postgres.js did.
+// Pre-stringify JSON field values in items before schema processing.
+let makeJsonStringifier = (table: Table.table, jsonFieldIndices: array<int>) => {
+  if jsonFieldIndices->Utils.Array.notEmpty {
+    let jsonFieldNames = table->Table.getFields->Belt.Array.keepMap(field => {
+      switch field.fieldType {
+      | Json => Some(field->Table.getDbFieldName)
+      | _ => None
+      }
+    })
+    Some(
+      (items: array<unknown>) =>
+        items->Js.Array2.map(item => {
+          let dict = Js.Dict.fromArray(
+            Js.Dict.entries(item->(Utils.magic: unknown => dict<unknown>)),
+          )
+          jsonFieldNames->Js.Array2.forEach(name => {
+            switch dict->Js.Dict.get(name) {
+            | Some(v) =>
+              dict->Js.Dict.set(
+                name,
+                Js.Json.stringify(v->(Utils.magic: unknown => Js.Json.t))->(
+                  Utils.magic: string => unknown
+                ),
+              )
+            | None => ()
+            }
+          })
+          dict->(Utils.magic: dict<unknown> => unknown)
+        }),
+    )
+  } else {
+    None
+  }
+}
+
 let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>): tableBatchSetQuery => {
   let {dbSchema, hasArrayField, jsonFieldIndices} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+  let jsonStringifier = makeJsonStringifier(table, jsonFieldIndices)
 
   // Should move this to a better place
   // We need it for the isRawEvents check in makeTableBatchSet
@@ -408,16 +446,19 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
   let typeValidation = false
 
   if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
-    {
-      query: makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
-      convertOrThrow: S.compile(
+    let baseConvert =
+      S.compile(
         S.unnest(dbSchema),
         ~input=Value,
         ~output=Unknown,
         ~mode=Sync,
         ~typeValidation,
-      )->(Utils.magic: (array<unknown> => unknown) => (array<unknown> => array<unknown>)),
+      )->(Utils.magic: (array<unknown> => unknown) => (array<unknown> => array<unknown>))
+    {
+      query: makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      convertOrThrow: baseConvert,
       isInsertValues: false,
+      jsonStringifier,
     }
   } else {
     {
@@ -429,49 +470,19 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
       ),
       convertOrThrow: (if isHistoryUpdate {
         // Entity history uses S.object with transformation (Change variant → raw dict)
-        // that gets lost during dbSchema conversion. Preprocess itemSchema to add
-        // JSON stringify for JSON fields before compilation.
-        let processedItemSchema = if jsonFieldIndices->Utils.Array.notEmpty {
-          let jsonFieldNames = table->Table.getFields->Belt.Array.keepMap(field => {
-            switch field.fieldType {
-            | Json => Some(field->Table.getDbFieldName)
-            | _ => None
-            }
-          })
-          // After the schema serializer produces a flat dict,
-          // JSON-stringify the JSON field values
-          itemSchema->S.toUnknown->S.preprocess(_ => {
-            serializer: value => {
-              let dict = value->(Utils.magic: unknown => dict<unknown>)
-              jsonFieldNames->Js.Array2.forEach(name => {
-                switch dict->Js.Dict.get(name) {
-                | Some(v) =>
-                  dict->Js.Dict.set(
-                    name,
-                    Js.Json.stringify(v->(Utils.magic: unknown => Js.Json.t))->(
-                      Utils.magic: string => unknown
-                    ),
-                  )
-                | None => ()
-                }
-              })
-              value
-            },
-          })
-        } else {
-          itemSchema->S.toUnknown
-        }
+        // that gets lost during dbSchema conversion. Use itemSchema directly.
+        // JSON serialization is handled by jsonStringifier in setOrThrow.
         S.compile(
-          S.unnest(processedItemSchema)->S.preprocess(_ => {
+          S.unnest(itemSchema->S.toUnknown)->S.preprocess(_ => {
             serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
           }),
           ~input=Value,
           ~output=Unknown,
           ~mode=Sync,
           ~typeValidation,
-        )
+        )->Obj.magic
       } else {
-        // Non-history tables with Array fields: dbSchema handles JSON stringify
+        // Non-history tables with Array fields
         S.compile(
           S.unnest(dbSchema)->S.preprocess(_ => {
             serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
@@ -480,9 +491,10 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
           ~output=Unknown,
           ~mode=Sync,
           ~typeValidation,
-        )
-      })->(Utils.magic: (array<unknown> => unknown) => (array<unknown> => array<unknown>)),
+        )->Obj.magic
+      }: array<unknown> => array<unknown>),
       isInsertValues: true,
+      jsonStringifier,
     }
   }
 }
@@ -545,6 +557,13 @@ let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~
       }
     }
 
+    // Pre-stringify JSON field values for pg driver compatibility
+    let prepareItems = (rawItems: array<unknown>): array<unknown> =>
+      switch data.jsonStringifier {
+      | Some(stringify) => stringify(rawItems)
+      | None => rawItems
+      }
+
     try {
       if data.isInsertValues {
         let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
@@ -558,7 +577,7 @@ let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~
               ? data.query
               // Create a new query for partial chunks on the fly.
               : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
-            values: data.convertOrThrow(chunk->(Utils.magic: array<'item> => array<unknown>)),
+            values: data.convertOrThrow(prepareItems(chunk->(Utils.magic: array<'item> => array<unknown>))),
             // Don't prepare partial chunks - they vary in size and would pollute the cache
             name: ?isFullChunk ? Some(`insert_${table.stmtId}`) : None,
           })
@@ -569,7 +588,7 @@ let setOrThrow = async (sql: Pg.sql, ~items, ~table: Table.table, ~itemSchema, ~
         // Use UNNEST approach for single query
         let _ = await sql.query({
           text: data.query,
-          values: data.convertOrThrow(items->(Utils.magic: array<'item> => array<unknown>)),
+          values: data.convertOrThrow(prepareItems(items->(Utils.magic: array<'item> => array<unknown>))),
           name: `upsert_${table.stmtId}`,
         })
       }
@@ -1392,7 +1411,7 @@ let make = (
       )
     }
     switch await sql.query({
-      name: `load_field_${table.tableName}_${fieldName}`,
+      name: `load_field_${table.tableName}_${fieldName}_${(operator :> string)}`,
       text: makeLoadByFieldQuery(
         ~pgSchema,
         ~tableName=table.tableName,

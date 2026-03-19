@@ -109,7 +109,7 @@ let getPgFieldType = (
   ~pgSchema,
   ~isArray,
   ~isNumericArrayAsText,
-  ~isNullable,
+  ~isNullable as _,
 ) => {
   let columnType = switch fieldType {
   | String => (Pg.Text :> string)
@@ -136,8 +136,7 @@ let getPgFieldType = (
   | Serial => (Pg.Serial :> string)
   | BigSerial => (Pg.BigSerial :> string)
   | Json => (Pg.JsonB :> string)
-  | Date =>
-    (isNullable ? Pg.TimestampWithTimezoneNull : Pg.TimestampWithTimezone :> string)
+  | Date => (Pg.TimestampWithTimezone :> string)
   | Enum({config}) => `"${pgSchema}".${config.name}`
   | Entity(_) => (Pg.Text :> string) // FIXME: Will it work correctly if id is not a text column?
   }
@@ -298,18 +297,13 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
         }
 
         // pg driver doesn't auto-serialize JSONB values like postgres.js did.
-        // Check the table field type rather than the schema classification,
-        // since the schema may be a typed schema (e.g., effect cache output)
-        // that doesn't classify as JSON even though the column is JSONB.
+        // Track JSON field indices for post-hoc serialization in PgStorage.
+        // For JSON fields, use S.unknown in dbSchema to avoid S.unnest+S.compile issues
+        // with complex schema types, and handle serialization externally.
         let coercedSchema = switch field {
         | Field({fieldType: Json}) => {
             jsonFieldIndices->Js.Array2.push(fieldIndex.contents)->ignore
-            schema->coerceSchema->S.preprocess(_ => {
-              serializer: value =>
-                Js.Json.stringify(value->(Utils.magic: unknown => Js.Json.t))->(
-                  Utils.magic: string => unknown
-                ),
-            })
+            S.unknown
           }
         | _ => schema->coerceSchema
         }
@@ -339,7 +333,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
             )
             switch f.fieldType {
             | Enum(_) => `${(Text: Pg.columnType :> string)}[]::${pgFieldType}`
-            | Boolean => `${(Integer: Pg.columnType :> string)}[]::${pgFieldType}`
+            | Boolean => pgFieldType
             | _ => pgFieldType
             }
           | DerivedFrom(_) => (Text: Pg.columnType :> string) ++ "[]"
