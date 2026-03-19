@@ -251,17 +251,17 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     top->Js.Array2.forEach(((name, s)) => {
       buf
       ->Js.Array2.push(
-        `envio_entity_write_total{entity="${name}"} ${s.write.total->Float.toString}`,
+        `envio_storage_write_rows{entity="${name}"} ${s.write.total->Float.toString}`,
       )
       ->ignore
       buf
       ->Js.Array2.push(
-        `envio_entity_write_seconds{entity="${name}"} ${s.write.seconds->Float.toString}`,
+        `envio_storage_write_seconds{entity="${name}"} ${s.write.seconds->Float.toString}`,
       )
       ->ignore
       buf
       ->Js.Array2.push(
-        `envio_entity_write_total_seconds{entity="${name}"} ${s.write.totalSeconds->Float.toString}`,
+        `envio_storage_write_seconds_total{entity="${name}"} ${s.write.totalSeconds->Float.toString}`,
       )
       ->ignore
     })
