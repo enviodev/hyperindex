@@ -1633,6 +1633,7 @@ let make = (
       let count = updates->Array.length->Belt.Int.toFloat
       let tableStats = stats->Persistence.getTableStats(~tableName=entityConfig.name)
       tableStats.write.rows = tableStats.write.rows +. count
+      stats.totalRows = stats.totalRows +. count
     })
   }
 

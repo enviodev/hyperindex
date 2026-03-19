@@ -228,34 +228,10 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   PromClient.collectDefaultMetrics({"register": runtimeRegistry})
 
   let getWriteMetrics = () => {
-    let storageStats = switch ctx.persistence.storageStatus {
-    | Ready(_) => Some(ctx.persistence.storage.stats)
-    | _ => None
+    switch ctx.persistence.storageStatus {
+    | Ready(_) => ctx.persistence.storage.stats->Persistence.getWriteMetrics
+    | _ => ""
     }
-    let entries = switch storageStats {
-    | Some(s) => s.byTable->Js.Dict.entries
-    | None => []
-    }
-    // Sort by rows descending and take top 5
-    let _ = entries->Js.Array2.sortInPlaceWith(((_, a), (_, b)) =>
-      if b.write.rows > a.write.rows {
-        1
-      } else if b.write.rows < a.write.rows {
-        -1
-      } else {
-        0
-      }
-    )
-    let top = entries->Js.Array2.slice(~start=0, ~end_=5)
-    let buf = []
-    top->Js.Array2.forEach(((name, s)) => {
-      buf
-      ->Js.Array2.push(
-        `envio_storage_write_rows{table="${name}"} ${s.write.rows->Float.toString}`,
-      )
-      ->ignore
-    })
-    buf->Js.Array2.joinWith("\n")
   }
 
   app->get("/metrics", (_req, res) => {
