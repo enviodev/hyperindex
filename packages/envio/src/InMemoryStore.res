@@ -98,6 +98,41 @@ let getInMemTable = (
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
 
+let totalEntityCount = (inMemoryStore: t) => {
+  let count = ref(0)
+  inMemoryStore.entities
+  ->Js.Dict.values
+  ->Belt.Array.forEach(table => {
+    count := count.contents + table->InMemoryTable.Entity.getEntityCount
+  })
+  count.contents
+}
+
+// After a background write completes, clean up entities that were written
+// and evict stale loaded entities. Also clear rawEvents and effect caches.
+let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
+  inMemoryStore.entities
+  ->Js.Dict.values
+  ->Belt.Array.forEach(table => {
+    table->InMemoryTable.Entity.cleanupAfterWrite(~writtenCheckpointId)
+  })
+
+  // Clear raw events - they've been written
+  inMemoryStore.rawEvents.dict
+  ->Js.Dict.keys
+  ->Belt.Array.forEach(key => {
+    inMemoryStore.rawEvents.dict->Utils.Dict.deleteInPlace(key)
+  })
+
+  // Clear effect cache write tracking
+  inMemoryStore.effects
+  ->Js.Dict.values
+  ->Belt.Array.forEach(table => {
+    Js.Array2.removeCountInPlace(table.idsToStore, ~pos=0, ~count=table.idsToStore->Array.length)->ignore
+    table.invalidationsCount = 0
+  })
+}
+
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
     inMemoryStore->getInMemTable(~entityConfig=InternalTable.DynamicContractRegistry.entityConfig)

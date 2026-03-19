@@ -52,6 +52,8 @@ type t = {
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
+  inMemoryStore: InMemoryStore.t,
+  backgroundWriter: BackgroundWriter.t,
 }
 
 let make = (
@@ -71,6 +73,11 @@ let make = (
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     id: 0,
+    inMemoryStore: InMemoryStore.make(~entities=ctx.persistence.allEntities),
+    backgroundWriter: BackgroundWriter.make(
+      ~persistence=ctx.persistence,
+      ~initialCheckpointId=chainManager.committedCheckpointId,
+    ),
   }
 }
 
@@ -658,6 +665,13 @@ let actionReducer = (state: t, action: action) => {
         ? [PruneStaleEntityHistory]
         : []
 
+    // After a rollback batch, reset the in-memory store since the rollback
+    // used a separate diff store and invalidated the cached state
+    let wasRollback = switch state.rollbackState {
+    | RollbackReady(_) => true
+    | _ => false
+    }
+
     let state = {
       ...state,
       // Can safely reset rollback state, since overwrite is not possible.
@@ -666,6 +680,9 @@ let actionReducer = (state: t, action: action) => {
       chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
       currentlyProcessingBatch: false,
       processedBatches: state.processedBatches + 1,
+      inMemoryStore: wasRollback
+        ? InMemoryStore.make(~entities=state.ctx.persistence.allEntities)
+        : state.inMemoryStore,
     }
 
     let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -870,6 +887,10 @@ let injectedTaskReducer = (
     let {chainManager, writeThrottlers} = state
     switch shouldExit {
     | ExitWithSuccess =>
+      // Await any background writes before exiting
+      if state.backgroundWriter->BackgroundWriter.isWriting {
+        let _ = await state.backgroundWriter->BackgroundWriter.awaitCurrentWrite
+      }
       updateChainMetadataTable(
         chainManager,
         ~throttler=writeThrottlers.chainMetaData,
@@ -877,6 +898,17 @@ let injectedTaskReducer = (
       )
       dispatchAction(SuccessExit)
     | NoExit =>
+      // Check for background write errors
+      switch state.backgroundWriter.writePromise {
+      | None => ()
+      | Some(promise) =>
+        promise->Promise.thenResolve(result => {
+          switch result {
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+          | Ok() => ()
+          }
+        })->Promise.done
+      }
       updateChainMetadataTable(
         chainManager,
         ~throttler=writeThrottlers.chainMetaData,
@@ -904,17 +936,15 @@ let injectedTaskReducer = (
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isPreparingRollback(state) {
-      //In the case of a rollback, use the provided in memory store
-      //With rolled back values
-      let rollbackInMemStore = switch state.rollbackState {
-      | RollbackReady({diffInMemoryStore}) => Some(diffInMemoryStore)
-      | _ => None
+      let isRollback = switch state.rollbackState {
+      | RollbackReady(_) => true
+      | _ => false
       }
 
       let batch =
         state.chainManager->ChainManager.createBatch(
           ~batchSizeTarget=state.ctx.config.batchSize,
-          ~isRollback=rollbackInMemStore !== None,
+          ~isRollback,
         )
 
       let progressedChainsById = batch.progressedChainsById
@@ -957,13 +987,26 @@ let injectedTaskReducer = (
           }
         }
       } else {
+        // If rollback is pending or in-memory store is too big, wait for background write
+        let shouldWaitForWrite =
+          isRollback ||
+          state.inMemoryStore->InMemoryStore.totalEntityCount > Env.maxInMemoryEntities
+        if shouldWaitForWrite && state.backgroundWriter->BackgroundWriter.isWriting {
+          switch await state.backgroundWriter->BackgroundWriter.awaitCurrentWrite {
+          | Error(errHandler) =>
+            dispatchAction(ErrorExit(errHandler))
+          | Ok() => ()
+          }
+        }
+
         dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
-        let inMemoryStore =
-          rollbackInMemStore->Option.getWithDefault(
-            InMemoryStore.make(~entities=state.ctx.persistence.allEntities),
-          )
+        // For rollback, use the diff in-memory store. Otherwise reuse the persistent one.
+        let inMemoryStore = switch state.rollbackState {
+        | RollbackReady({diffInMemoryStore}) => diffInMemoryStore
+        | _ => state.inMemoryStore
+        }
 
         inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
 
@@ -983,7 +1026,48 @@ let injectedTaskReducer = (
           dispatchAction(ErrorExit(errHandler))
         | res =>
           switch res {
-          | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
+          | Ok({loaderDuration, handlerDuration}) =>
+            let logger = Logging.getLogger()
+
+            if isRollback {
+              // Rollback writes must be synchronous to ensure consistency
+              switch await state.backgroundWriter->BackgroundWriter.forceWrite(
+                ~writeArgs={
+                  batch,
+                  config: state.ctx.config,
+                  inMemoryStore,
+                  isInReorgThreshold,
+                },
+              ) {
+              | Ok() =>
+                let dbWriteDuration = 0. // Already measured inside forceWrite
+                EventProcessing.registerProcessEventBatchMetrics(
+                  ~logger,
+                  ~loadDuration=loaderDuration,
+                  ~handlerDuration,
+                  ~dbWriteDuration,
+                )
+                dispatchAction(EventBatchProcessed({batch: batch}))
+              | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+              }
+            } else {
+              // Queue background write - don't block next batch
+              state.backgroundWriter->BackgroundWriter.startWrite(
+                ~writeArgs={
+                  batch,
+                  config: state.ctx.config,
+                  inMemoryStore,
+                  isInReorgThreshold,
+                },
+              )
+              EventProcessing.registerProcessEventBatchMetrics(
+                ~logger,
+                ~loadDuration=loaderDuration,
+                ~handlerDuration,
+                ~dbWriteDuration=0.,
+              )
+              dispatchAction(EventBatchProcessed({batch: batch}))
+            }
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         }
@@ -1010,6 +1094,16 @@ let injectedTaskReducer = (
     | {rollbackState: FoundReorgDepth(_), currentlyProcessingBatch: true} =>
       Logging.info("Waiting for batch to finish processing before executing rollback")
     | {rollbackState: FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber})} =>
+      // Ensure all background writes complete before rollback
+      // so that DB state is consistent for rollback queries
+      if state.backgroundWriter->BackgroundWriter.isWriting {
+        switch await state.backgroundWriter->BackgroundWriter.awaitCurrentWrite {
+        | Error(errHandler) =>
+          dispatchAction(ErrorExit(errHandler))
+        | Ok() => ()
+        }
+      }
+
       let startTime = Hrtime.makeTimer()
 
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(reorgChain)

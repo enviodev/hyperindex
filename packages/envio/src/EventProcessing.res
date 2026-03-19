@@ -385,6 +385,11 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
+type processResult = {
+  loaderDuration: float,
+  handlerDuration: float,
+}
+
 let processEventBatch = async (
   ~batch: Batch.t,
   ~inMemoryStore: InMemoryStore.t,
@@ -436,30 +441,10 @@ let processEventBatch = async (
 
     let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
-    try {
-      await ctx.persistence->Persistence.writeBatch(
-        ~batch,
-        ~config=ctx.config,
-        ~inMemoryStore,
-        ~isInReorgThreshold,
-      )
+    let loaderDuration = elapsedTimeAfterLoaders
+    let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
 
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      let loaderDuration = elapsedTimeAfterLoaders
-      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
-      registerProcessEventBatchMetrics(
-        ~logger,
-        ~loadDuration=loaderDuration,
-        ~handlerDuration,
-        ~dbWriteDuration,
-      )
-      Ok()
-    } catch {
-    | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.make(~msg=message, ~logger)->Error
-    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-    }
+    Ok({loaderDuration, handlerDuration})
   } catch {
   | ProcessingError({message, exn, item}) =>
     exn
