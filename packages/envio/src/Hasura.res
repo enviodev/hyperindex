@@ -59,21 +59,31 @@ let rawBodyRoute = Rest.route(() => {
 })
 
 let sendOperation = async (~endpoint, ~auth, ~operation: Js.Json.t) => {
-  try {
-    let _ = await rawBodyRoute->Rest.fetch(
-      {
-        "bodyString": operation->Js.Json.stringify,
-        "auth": auth,
-      },
-      ~client=Rest.client(endpoint),
-    )
-  } catch {
-  | exn =>
-    Logging.warn({
-      "msg": "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
-      "err": exn->Utils.prettifyExn,
-    })
+  let maxRetries = 3
+  let rec retry = async (~attempt) => {
+    try {
+      let _ = await rawBodyRoute->Rest.fetch(
+        {
+          "bodyString": operation->Js.Json.stringify,
+          "auth": auth,
+        },
+        ~client=Rest.client(endpoint),
+      )
+    } catch {
+    | exn =>
+      if attempt < maxRetries {
+        let backoffMs = Js.Math.pow_float(~base=2.0, ~exp=attempt->Belt.Int.toFloat)->Belt.Float.toInt * 1000
+        await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
+        await retry(~attempt=attempt + 1)
+      } else {
+        Logging.warn({
+          "msg": "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
+          "err": exn->Utils.prettifyExn,
+        })
+      }
+    }
   }
+  await retry(~attempt=0)
 }
 
 let clearHasuraMetadata = async (~endpoint, ~auth) => {
@@ -276,5 +286,5 @@ let trackDatabase = async (
     }
   }
 
-  Logging.trace("Hasura configuration completed")
+  Logging.info("Hasura configuration completed")
 }
