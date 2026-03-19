@@ -2,3 +2,6 @@ packages:
   - "packages/*"
   - "scenarios/*"
   - "scenarios/*/generated"
+onlyBuiltDependencies:
+  - rescript
+  - esbuild
