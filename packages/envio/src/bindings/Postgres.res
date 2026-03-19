@@ -98,6 +98,7 @@ external makeSql: (~config: poolConfig) => sql = "default"
 // external sql:  array<string>  => (sql, array<string>) => int = "sql"
 
 @send external unsafe: (sql, string) => promise<'a> = "unsafe"
+@send external unpreparedUnsafe: (sql, string, unknown) => promise<'a> = "unsafe"
 @send
 external preparedUnsafe: (sql, string, unknown, @as(json`{prepare: true}`) _) => promise<'a> =
   "unsafe"
