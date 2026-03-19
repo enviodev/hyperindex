@@ -21,11 +21,12 @@ let calculateTargetBufferSize = (~activeChainsCount) => {
   | Some(size) => size
   | None =>
     switch activeChainsCount {
-    | 1 => 50_000
+    | 1 => 60_000
     | 2 => 30_000
     | 3 => 20_000
     | 4 => 15_000
-    | _ => 10_000
+    | 5 => 10_000
+    | _ => 5_000
     }
   }
 }
@@ -79,6 +80,23 @@ let makeFromDbState = async (
     ->Promise.all
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
+
+  // Set initial progress metrics from DB state so dashboards reflect
+  // the persisted state immediately on restart
+  let allChainsReady = ref(chainFetchersArr->Array.length > 0)
+  chainFetchersArr->Array.forEach(((chain, cf)) => {
+    let chainId = chain->ChainMap.Chain.toChainId
+    Prometheus.ProgressBlockNumber.set(~blockNumber=cf.committedProgressBlockNumber, ~chainId)
+    Prometheus.ProgressReady.init(~chainId)
+    if cf->ChainFetcher.isReady {
+      Prometheus.ProgressReady.set(~chainId)
+    } else {
+      allChainsReady := false
+    }
+  })
+  if allChainsReady.contents {
+    Prometheus.ProgressReady.setAllReady()
+  }
 
   {
     committedCheckpointId: initialState.checkpointId,

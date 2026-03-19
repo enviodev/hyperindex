@@ -235,7 +235,11 @@ let make = ({chain, endpointUrl}: options): t => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
-    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getLogs")
+    Prometheus.SourceRequestCount.increment(
+      ~sourceName=name,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~method="getLogs",
+    )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
       ~serverUrl=endpointUrl,
       ~fromBlock,
@@ -286,8 +290,7 @@ let make = ({chain, endpointUrl}: options): t => {
       )
     }
 
-    let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -501,8 +504,17 @@ let make = ({chain, endpointUrl}: options): t => {
       let timerRef = Hrtime.makeTimer()
       let height = await HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
       let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight")
-      Prometheus.SourceRequestCount.addSeconds(~sourceName=name, ~chainId=chain->ChainMap.Chain.toChainId, ~method="getHeight", ~seconds)
+      Prometheus.SourceRequestCount.increment(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+      )
+      Prometheus.SourceRequestCount.addSeconds(
+        ~sourceName=name,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~method="getHeight",
+        ~seconds,
+      )
       height
     },
     getItemsOrThrow,

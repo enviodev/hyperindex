@@ -82,6 +82,3 @@ let ecosystem: Ecosystem.t = {
   getId,
   cleanUpRawEventFieldsInPlace,
 }
-
-
-

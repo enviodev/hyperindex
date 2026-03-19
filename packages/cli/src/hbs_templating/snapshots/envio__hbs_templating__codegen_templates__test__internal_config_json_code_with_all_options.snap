@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2650
+assertion_line: 2664
 expression: project_template.internal_config_json_code
 ---
 {
@@ -38,15 +38,32 @@ expression: project_template.internal_config_json_code
         "handler": "./src/EventHandler.js",
         "events": [
           {
-            "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+            "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
+            "name": "NewGravatar",
+            "blockFields": [
+              "parentHash",
+              "miner"
+            ],
+            "transactionFields": [
+              "hash",
+              "from",
+              "value"
+            ]
           },
           {
-            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"
+            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)",
+            "name": "UpdatedGravatar"
           }
         ]
       }
     },
-    "addressFormat": "checksum"
+    "addressFormat": "checksum",
+    "globalBlockFields": [
+      "parentHash"
+    ],
+    "globalTransactionFields": [
+      "hash"
+    ]
   },
   "enums": {
     "Status": [

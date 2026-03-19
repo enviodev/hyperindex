@@ -43,7 +43,11 @@ let directionToIndexName = (direction: Table.indexFieldDirection) =>
   | Desc => "_desc"
   }
 
-let makeCreateCompositeIndexQuery = (~tableName, ~indexFields: array<Table.compositeIndexField>, ~pgSchema) => {
+let makeCreateCompositeIndexQuery = (
+  ~tableName,
+  ~indexFields: array<Table.compositeIndexField>,
+  ~pgSchema,
+) => {
   let indexName =
     tableName ++
     "_" ++
@@ -428,7 +432,9 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
       ),
       "convertOrThrow": S.compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
-          serializer: Utils.Array.flatten->(Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown),
+          serializer: Utils.Array.flatten->(
+            Utils.magic: (array<array<'a>> => array<'a>) => unknown => unknown
+          ),
         }),
         ~input=Value,
         ~output=Unknown,
@@ -506,14 +512,17 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
-          let response = sql->Postgres.preparedUnsafe(
-            // Either use the sql query for full chunks from cache
-            // or create a new one for partial chunks on the fly.
-            isFullChunk
-              ? data["query"]
-              : makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
-            data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>)),
+          let params = data["convertOrThrow"](
+            chunk->(Utils.magic: array<'item> => array<unknown>),
           )
+          // Use prepared query only for full batches where the cached query is reused.
+          // Partial chunks generate unique SQL each time, so preparation has no benefit.
+          let response = isFullChunk
+            ? sql->Postgres.preparedUnsafe(data["query"], params)
+            : sql->Postgres.unpreparedUnsafe(
+                makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
+                params,
+              )
           responses->Js.Array2.push(response)->ignore
         })
         let _ = await Promise.all(responses)
@@ -599,7 +608,9 @@ let getConnectedPsqlExec = {
                     switch error {
                     | Value(_) =>
                       resolve(
-                        Error(`Please check if "psql" binary is installed or Docker container "${containerName}" is running.`),
+                        Error(
+                          `Please check if "psql" binary is installed or Docker container "${containerName}" is running.`,
+                        ),
                       )
                     | Null =>
                       resolve(

@@ -113,6 +113,22 @@ jobs:
       - name: Cargo Test
         run: cargo test --no-default-features
 
+  # Hypersync endpoint health check - non-blocking, external dependency
+  hypersync-health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
       - name: Hypersync Health Test
         run: cargo test --features integration_tests
 

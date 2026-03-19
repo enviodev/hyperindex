@@ -1,6 +1,4 @@
-type registrations = {
-  onBlockByChainId: dict<array<Internal.onBlockConfig>>,
-}
+type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
 
 let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Config.multichain) => unit
 let isPendingRegistration: unit => bool
@@ -21,7 +19,10 @@ let setContractRegister: (
   ~logger: Pino.t=?,
 ) => unit
 let getHandler: (~contractName: string, ~eventName: string) => option<Internal.handler>
-let getContractRegister: (~contractName: string, ~eventName: string) => option<Internal.contractRegister>
+let getContractRegister: (
+  ~contractName: string,
+  ~eventName: string,
+) => option<Internal.contractRegister>
 let getEventFilters: (~contractName: string, ~eventName: string) => option<Js.Json.t>
 let isWildcard: (~contractName: string, ~eventName: string) => bool
 let hasRegistration: (~contractName: string, ~eventName: string) => bool

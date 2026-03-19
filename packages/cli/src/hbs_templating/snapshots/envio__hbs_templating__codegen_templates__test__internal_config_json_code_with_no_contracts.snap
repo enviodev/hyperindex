@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2676
+assertion_line: 2693
 expression: project_template.internal_config_json_code
 ---
 {

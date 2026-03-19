@@ -243,7 +243,9 @@ module OptimizedPartitions = {
           } else {
             let partitionsByMergeBlock =
               mergingPartitions->Utils.Dict.getOrInsertEmptyDict(contractName)
-            switch partitionsByMergeBlock->Utils.Dict.dangerouslyGetByIntNonOption(potentialMergeBlock) {
+            switch partitionsByMergeBlock->Utils.Dict.dangerouslyGetByIntNonOption(
+              potentialMergeBlock,
+            ) {
             | Some(existingPartition) =>
               let result = mergePartitionsAtBlock(
                 ~p1=existingPartition,
@@ -405,19 +407,19 @@ module OptimizedPartitions = {
     // arriving after a later query with bigger range).
     let shouldUpdateBlockRange =
       latestFetchedBlock.blockNumber > p.latestBlockRangeUpdateBlock &&
-      switch query.toBlock {
-      | None => latestFetchedBlock.blockNumber < knownHeight - 10 // Don't update block range when very close to the head
-      | Some(queryToBlock) =>
-        // Update on partial response (direct capacity evidence),
-        // or when the query's intended range covers at least the partition's
-        // current chunk range — meaning it was a capacity-based split chunk,
-        // not a small gap-fill whose toBlock is an artificial boundary.
-        latestFetchedBlock.blockNumber < queryToBlock ||
-          switch getMinHistoryRange(p) {
-          | None => false // Chunking not active yet, don't update
-          | Some(minHistoryRange) => queryToBlock - query.fromBlock + 1 >= minHistoryRange
-          }
-      }
+        switch query.toBlock {
+        | None => latestFetchedBlock.blockNumber < knownHeight - 10 // Don't update block range when very close to the head
+        | Some(queryToBlock) =>
+          // Update on partial response (direct capacity evidence),
+          // or when the query's intended range covers at least the partition's
+          // current chunk range — meaning it was a capacity-based split chunk,
+          // not a small gap-fill whose toBlock is an artificial boundary.
+          latestFetchedBlock.blockNumber < queryToBlock ||
+            switch getMinHistoryRange(p) {
+            | None => false // Chunking not active yet, don't update
+            | Some(minHistoryRange) => queryToBlock - query.fromBlock + 1 >= minHistoryRange
+            }
+        }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
 
