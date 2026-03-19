@@ -105,7 +105,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
             let state = gsManager->GlobalStateManager.getState
             let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
             let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-            chainFetcher->ChainFetcher.isLive
+            chainFetcher->ChainFetcher.isReady
           }
         },
       },
@@ -295,6 +295,7 @@ let start = async (
 
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
+  Prometheus.ProcessStartTimeSeconds.set()
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
   if !isTest {

@@ -163,6 +163,10 @@ module ProgressReady = {
     "help": "All chains fully synced",
   })
 
+  let init = (~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=0)
+  }
+
   let set = (~chainId) => {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=1)
   }
@@ -333,6 +337,17 @@ module Info = {
 
   let set = (~version) => {
     gauge->SafeGauge.handleInt(~labels={"version": version}, ~value=1)
+  }
+}
+
+module ProcessStartTimeSeconds = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_process_start_time_seconds",
+    "help": "Start time of the process since unix epoch in seconds.",
+  })
+
+  let set = () => {
+    gauge->PromClient.Gauge.setFloat(Js.Date.now() /. 1000.0)
   }
 }
 
