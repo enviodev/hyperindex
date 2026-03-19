@@ -87,7 +87,7 @@ pub enum JsonSchema {
 
 #[derive(Debug, Args)]
 pub struct DevArgs {
-    ///Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/handler changes, use this flag when you need a restart without making changes
+    ///Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/schema changes, use this flag when you need a restart without making changes
     #[arg(short = 'r', long, action)]
     pub restart: bool,
 }
