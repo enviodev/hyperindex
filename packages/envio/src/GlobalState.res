@@ -181,7 +181,9 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
-  let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
+  let allChainsReady = ref(true)
+  let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
+    let cf = prev
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
     let maybeChainAfterBatch =
@@ -270,15 +272,15 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
      * The given chain fetcher is fetching at the head or latest processed block >= endblock
      * The given chain has processed all events on the queue
      * see https://github.com/Float-Capital/indexer/pull/1388 */
-    if cf->ChainFetcher.hasProcessedToEndblock {
+    let cf = if cf->ChainFetcher.hasProcessedToEndblock {
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
-        cf->ChainFetcher.isLive ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
+        cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
       {
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
       }
-    } else if !(cf->ChainFetcher.isLive) && cf.isProgressAtHead {
+    } else if !(cf->ChainFetcher.isReady) && cf.isProgressAtHead {
       //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
       //its not already set
       //CASE1
@@ -309,21 +311,20 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
       //Default to just returning cf
       cf
     }
-  })
 
-  let allChainsSyncedAtHead =
-    chainFetchers
-    ->ChainMap.values
-    ->Array.every(cf => cf->ChainFetcher.isLive)
-
-  if allChainsSyncedAtHead {
-    chainFetchers
-    ->ChainMap.mapWithKey((chain, cf) => {
-      if cf->ChainFetcher.isLive {
+    // Set envio_progress_ready per-chain when it first becomes ready
+    if cf->ChainFetcher.isReady {
+      if !(prev->ChainFetcher.isReady) {
         Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
       }
-    })
-    ->ignore
+    } else {
+      allChainsReady := false
+    }
+
+    cf
+  })
+
+  if allChainsReady.contents {
     Prometheus.ProgressReady.setAllReady()
   }
 

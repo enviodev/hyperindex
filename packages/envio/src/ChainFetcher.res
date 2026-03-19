@@ -527,4 +527,4 @@ let getLastKnownValidBlock = async (
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
 
-let isLive = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+let isReady = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
