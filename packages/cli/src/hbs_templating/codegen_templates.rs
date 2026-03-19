@@ -1955,20 +1955,17 @@ type testIndexer = {{
                 )
             });
 
-            // Generate EvmEvents type with per-event block/transaction types
+            // Generate EvmContracts type with per-event block/transaction types
             // and EvmEvent discriminated union type
             {
                 let mut individual_types = Vec::new();
-                // Collect data for EvmEventNameMap and EvmEvent union
-                let mut evm_event_name_map_entries: Vec<String> = Vec::new();
+                // Collect data for EvmEvent discriminated union
                 let mut evm_event_union_members: Vec<String> = Vec::new();
 
                 let evm_events_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                     cfg.contracts
                         .values()
                         .map(|contract| {
-                            let mut event_names_for_map: Vec<String> = Vec::new();
-
                             let event_entries: Vec<String> = contract.events.iter().map(|event| {
                                 let event_name = event.name.capitalize();
                                 let fs = match &event.field_selection {
@@ -1982,9 +1979,6 @@ type testIndexer = {{
                                 let tx_name = format!("{}_{}_transaction", contract.name, event_name);
                                 individual_types.push(format!("export type {} = {};", block_name, fs.block_type_ts));
                                 individual_types.push(format!("export type {} = {};", tx_name, fs.transaction_type_ts));
-
-                                // Collect event name for the name map
-                                event_names_for_map.push(format!("\"{}\"", event_name));
 
                                 // Build params TS type for the EvmEvent union
                                 let params_ts = match &event.kind {
@@ -2015,13 +2009,6 @@ type testIndexer = {{
                                 )
                             }).collect();
 
-                            // Add entry to EvmEventNameMap
-                            evm_event_name_map_entries.push(format!(
-                                "  \"{}\": {};",
-                                contract.name,
-                                event_names_for_map.join(" | ")
-                            ));
-
                             format!(
                                 "  \"{}\": {{\n{}\n  }};",
                                 contract.name,
@@ -2036,25 +2023,20 @@ type testIndexer = {{
                     parts.push(t.clone());
                 }
                 parts.push(if evm_events_entries.is_empty() {
-                    "export type EvmEvents = {};".to_string()
+                    "export type EvmContracts = {};".to_string()
                 } else {
                     format!(
-                        "export type EvmEvents = {{\n{}\n}};",
+                        "export type EvmContracts = {{\n{}\n}};",
                         evm_events_entries.join("\n")
                     )
                 });
 
-                // Generate EvmEventNameMap and EvmEvent types
+                // Generate EvmEvent discriminated union type (uses EvmContracts as the name map)
                 if evm_event_union_members.is_empty() {
-                    parts.push("export type EvmEventNameMap = {};".to_string());
                     parts.push("export type EvmEvent = never;".to_string());
                 } else {
                     parts.push(format!(
-                        "export type EvmEventNameMap = {{\n{}\n}};",
-                        evm_event_name_map_entries.join("\n")
-                    ));
-                    parts.push(format!(
-                        "export type EvmEvent<\n  C extends keyof EvmEventNameMap = keyof EvmEventNameMap,\n  N extends EvmEventNameMap[C] = EvmEventNameMap[C],\n> = Extract<\n{}\n  , {{ contractName: C; name: N }}\n>;",
+                        "export type EvmEvent<\n  C extends keyof EvmContracts = keyof EvmContracts,\n  N extends keyof EvmContracts[C] = keyof EvmContracts[C],\n> = Extract<\n{}\n  , {{ contractName: C; name: N }}\n>;",
                         evm_event_union_members.join("\n")
                     ));
                 }

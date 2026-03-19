@@ -9,18 +9,15 @@ export type Contract1_NewGravatar_block = { number: number; timestamp: number; h
 export type Contract1_NewGravatar_transaction = {};
 export type Contract1_UpdatedGravatar_block = { number: number; timestamp: number; hash: string };
 export type Contract1_UpdatedGravatar_transaction = {};
-export type EvmEvents = {
+export type EvmContracts = {
   "Contract1": {
       "NewGravatar": { transaction: Contract1_NewGravatar_transaction; block: Contract1_NewGravatar_block };
       "UpdatedGravatar": { transaction: Contract1_UpdatedGravatar_transaction; block: Contract1_UpdatedGravatar_block };
   };
 };
-export type EvmEventNameMap = {
-  "Contract1": "NewGravatar" | "UpdatedGravatar";
-};
 export type EvmEvent<
-  C extends keyof EvmEventNameMap = keyof EvmEventNameMap,
-  N extends EvmEventNameMap[C] = EvmEventNameMap[C],
+  C extends keyof EvmContracts = keyof EvmContracts,
+  N extends keyof EvmContracts[C] = keyof EvmContracts[C],
 > = Extract<
   | { contractName: "Contract1"; name: "NewGravatar"; params: { id: bigint; owner: Address; displayName: string; imageUrl: string } }
   | { contractName: "Contract1"; name: "UpdatedGravatar"; params: { id: bigint; owner: Address; displayName: string; imageUrl: string } }

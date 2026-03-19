@@ -3,7 +3,7 @@
 // Use @genType.import to link the types back to ReScript code
 
 import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter } from "envio";
-import type { EvmChains, EvmEvents, EvmEventNameMap, EvmEvent, FuelChains, FuelEvents, SvmChains, Entities } from "../envio.d.ts";
+import type { EvmChains, EvmContracts, EvmEvent, FuelChains, FuelEvents, SvmChains, Entities } from "../envio.d.ts";
 
 // Utility type to check if an object type is empty
 type IsEmptyObject<T> = keyof T extends never ? true : false;
@@ -19,9 +19,9 @@ export type EvmChainId = IsEmptyObject<EvmChains> extends true
   : EvmChains[keyof EvmChains]["id"];
 
 /** Union of all configured EVM contract names. */
-export type EvmContractName = IsEmptyObject<EvmEvents> extends true
+export type EvmContractName = IsEmptyObject<EvmContracts> extends true
   ? "EvmContractName is not available. Configure EVM contracts in config.yaml and run 'pnpm envio codegen'"
-  : keyof EvmEvents;
+  : keyof EvmContracts;
 
 /** Discriminated union of all configured EVM events. Filterable by contract name and event name. */
 export type { EvmEvent };
@@ -55,7 +55,7 @@ export type SvmChainId = IsEmptyObject<SvmChains> extends true
 type IndexerConfigTypes = (IsEmptyObject<EvmChains> extends true
   ? {}
   : {
-      evm: { chains: EvmChains; events: EvmEvents };
+      evm: { chains: EvmChains; events: EvmContracts };
     }) &
   (IsEmptyObject<FuelChains> extends true
     ? {}
