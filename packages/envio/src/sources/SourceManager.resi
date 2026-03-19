@@ -10,13 +10,13 @@ let getSourceRole: (
 
 let hasLiveSource: t => bool
 
-let fallbackRecoveryThreshold: int
-
 let make: (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency: int,
   ~newBlockFallbackStallTimeout: int=?,
+  ~newBlockFallbackStallTimeoutLive: int=?,
   ~stalledPollingInterval: int=?,
+  ~fallbackRecoveryTimeout: int=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
 ) => t
 
