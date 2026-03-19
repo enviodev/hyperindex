@@ -1632,7 +1632,6 @@ let make = (
     )
 
     let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-    stats.batchCount = stats.batchCount +. 1.
     // Distribute write time proportionally across tables by entity count
     let totalCount = updatedEntities->Belt.Array.reduce(0, (acc, {updates}) =>
       acc + updates->Array.length

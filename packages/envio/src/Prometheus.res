@@ -128,9 +128,21 @@ module ProcessingBatch = {
     "help": "Cumulative time spent executing event handlers during batch processing.",
   })
 
-  let registerMetrics = (~loadDuration, ~handlerDuration) => {
+  let writeTimeCounter = PromClient.Counter.makeCounter({
+    "name": "envio_storage_write_seconds",
+    "help": "Cumulative time spent writing batch data to storage.",
+  })
+
+  let writeCount = PromClient.Counter.makeCounter({
+    "name": "envio_storage_write_total",
+    "help": "Total number of batch writes to storage.",
+  })
+
+  let registerMetrics = (~loadDuration, ~handlerDuration, ~dbWriteDuration) => {
     loadTimeCounter->PromClient.Counter.incMany(loadDuration->(Utils.magic: float => int))
     handlerTimeCounter->PromClient.Counter.incMany(handlerDuration->(Utils.magic: float => int))
+    writeTimeCounter->PromClient.Counter.incMany(dbWriteDuration->(Utils.magic: float => int))
+    writeCount->PromClient.Counter.inc
   }
 }
 

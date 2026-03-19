@@ -255,24 +255,6 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
       )
       ->ignore
     })
-    // Aggregate batch-level write metrics from stats
-    switch storageStats {
-    | Some(s) => {
-        let totalSeconds =
-          entries->Js.Array2.reduce((acc, (_, t)) => acc +. t.write.totalSeconds, 0.)
-        buf
-        ->Js.Array2.push(
-          `envio_storage_write_seconds ${totalSeconds->Float.toString}`,
-        )
-        ->ignore
-        buf
-        ->Js.Array2.push(
-          `envio_storage_write_total ${s.batchCount->Float.toString}`,
-        )
-        ->ignore
-      }
-    | None => ()
-    }
     buf->Js.Array2.joinWith("\n")
   }
 

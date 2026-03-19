@@ -41,9 +41,9 @@ type writeStats = {
   mutable totalSeconds: float,
 }
 type tableStats = {write: writeStats}
-type stats = {byTable: dict<tableStats>, mutable batchCount: float}
+type stats = {byTable: dict<tableStats>}
 
-let makeStats = () => {byTable: Js.Dict.empty(), batchCount: 0.}
+let makeStats = () => {byTable: Js.Dict.empty()}
 
 let getTableStats = (stats, ~tableName) => {
   switch stats.byTable->Utils.Dict.dangerouslyGetNonOption(tableName) {
