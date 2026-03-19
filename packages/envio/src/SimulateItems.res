@@ -73,9 +73,10 @@ let parse = (
       let item = rawJson->(Utils.magic: Js.Json.t => simulateEventItem)
 
       // Parse params using the event's schema
+      // Use undefined for events with no params (e.g. EmptyEvent()) to match codegen behavior
       let params = switch item.params {
       | Some(paramsJson) => paramsJson->S.parseOrThrow(eventConfig.paramsRawEventSchema)
-      | None => Js.Dict.empty()->(Utils.magic: dict<unit> => Internal.eventParams)
+      | None => %raw(`undefined`)->(Utils.magic: 'a => Internal.eventParams)
       }
 
       let blockNumber = switch item.number {
