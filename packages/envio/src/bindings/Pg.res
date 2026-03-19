@@ -47,11 +47,11 @@ type queryResult = {
 
 type sql = {query: queryConfig => promise<queryResult>}
 type client = {
-  query: queryConfig => promise<queryResult>,
-  release: bool => unit,
+  ...sql,
+  release: (~destroy: bool=?) => unit,
 }
 type pool = {
-  query: queryConfig => promise<queryResult>,
+  ...sql,
   connect: unit => promise<client>,
   on: (string, Js.Exn.t => unit) => unit,
 }
@@ -93,7 +93,7 @@ let beginSql = async (pool: pool, fn: sql => promise<'a>) => {
     let _ = await client.query({text: "BEGIN"})
     let result = await fn(client->clientToSql)
     let _ = await client.query({text: "COMMIT"})
-    client.release(false)
+    client.release()
     result
   } catch {
   | exn =>
@@ -104,7 +104,7 @@ let beginSql = async (pool: pool, fn: sql => promise<'a>) => {
     }
     // Destroy the client instead of returning it to the pool
     // to avoid reusing a client in a potentially bad state after a failed transaction.
-    client.release(true)
+    client.release(~destroy=true)
     raise(exn)
   }
 }
