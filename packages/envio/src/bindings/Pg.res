@@ -1,6 +1,3 @@
-// Internal: the underlying pg.Pool/pg.Client JS object
-type _handle
-
 @unboxed
 type sslOptions =
   | Bool(bool)
@@ -48,28 +45,25 @@ type queryConfig = {
 type queryResult = {
   rows: array<unknown>,
 }
+
+// Internal handle for raw pg.Pool JS object, used only in makePool
+type _handle
 @module("pg") @new external _makePool: pgConfig => _handle = "Pool"
 @send external _query: (_handle, queryConfig) => promise<queryResult> = "query"
-// Pool-only: acquire a client for transactions
 @send external _connect: _handle => promise<_handle> = "connect"
-// Client-only: release back to pool.
-// Pass true to destroy the client instead of returning it to the pool.
-@send external _release: (_handle, @as(json`false`) _) => unit = "release"
-@send external _releaseAndDestroy: (_handle, @as(json`true`) _) => unit = "release"
-// Event emitter (both Pool and Client)
+@send external _release: (_handle, bool) => unit = "release"
 @send external _on: (_handle, string, 'handler) => unit = "on"
 
-type sql = {
-  query: queryConfig => promise<array<unknown>>,
-}
-type pool = sql
 type client = {
   query: queryConfig => promise<array<unknown>>,
+  release: unit => unit,
+  releaseAndDestroy: unit => unit,
 }
-external clientToSql: client => sql = "%identity"
 
-// WeakMap to store the raw pg.Pool handle for beginSql
-let _rawHandles: Utils.WeakMap.t<pool, _handle> = Utils.WeakMap.make()
+type pool = {
+  query: queryConfig => promise<array<unknown>>,
+  connect: unit => promise<client>,
+}
 
 let makePool = (~config: poolConfig): pool => {
   let pgConfig: pgConfig = {
@@ -96,24 +90,26 @@ let makePool = (~config: poolConfig): pool => {
     Js.Console.error2("Pool error:", err->Js.Exn.message->Belt.Option.getWithDefault("Unknown error"))
   })
 
-  let pool: pool = {
+  {
     query: config => raw->_query(config)->Promise.thenResolve(r => r.rows),
+    connect: () =>
+      raw->_connect->Promise.thenResolve(rawClient => {
+        {
+          query: config => rawClient->_query(config)->Promise.thenResolve(r => r.rows),
+          release: () => rawClient->_release(false),
+          releaseAndDestroy: () => rawClient->_release(true),
+        }
+      }),
   }
-  _rawHandles->Utils.WeakMap.set(pool, raw)->ignore
-  pool
 }
 
 let beginSql = async (pool: pool, fn: client => promise<'a>) => {
-  let raw = _rawHandles->Utils.WeakMap.get(pool)->Belt.Option.getUnsafe
-  let rawClient = await raw->_connect
-  let client: client = {
-    query: config => rawClient->_query(config)->Promise.thenResolve(r => r.rows),
-  }
+  let client = await pool.connect()
   try {
     let _ = await client.query({text: "BEGIN"})
     let result = await fn(client)
     let _ = await client.query({text: "COMMIT"})
-    rawClient->_release
+    client.release()
     result
   } catch {
   | exn =>
@@ -124,7 +120,7 @@ let beginSql = async (pool: pool, fn: client => promise<'a>) => {
     }
     // Destroy the client instead of returning it to the pool
     // to avoid reusing a client in a potentially bad state after a failed transaction.
-    rawClient->_releaseAndDestroy
+    client.releaseAndDestroy()
     raise(exn)
   }
 }

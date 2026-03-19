@@ -990,7 +990,7 @@ let rec writeBatch = async (
     try {
       let _ = await Promise.all2((
         pool->Pg.beginSql(async client => {
-          let sql = client->Pg.clientToSql
+          let sql = client->(Utils.magic: Pg.client => Pg.pool)
           //Rollback tables need to happen first in the traction
           switch rollbackTables {
           | Some(rollbackTables) =>
@@ -1299,10 +1299,9 @@ let make = (
     )
     // Execute all queries within a single transaction for integrity
     let _ = await pool->Pg.beginSql(client => {
-      let sql = client->Pg.clientToSql
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Js.Array2.map(query => sql.query({text: query})))
+      Promise.all(queries->Js.Array2.map(query => client.query({text: query})))
     })
 
     let cache = await restoreEffectCache(~withUpload=true)
