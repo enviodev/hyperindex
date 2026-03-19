@@ -144,12 +144,7 @@ VALUES ${valuesRows->Js.Array2.joinWith(",\n       ")};`,
   }
 
   // Fields that can be updated outside of the batch transaction
-  let metaFields: array<field> = [
-    #buffer_block,
-    #first_event_block,
-    #ready_at,
-    #_is_hyper_sync,
-  ]
+  let metaFields: array<field> = [#buffer_block, #first_event_block, #ready_at, #_is_hyper_sync]
 
   let makeMetaFieldsUpdateQuery = (~pgSchema) => {
     // Generate SET clauses with parameter placeholders

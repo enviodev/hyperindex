@@ -748,9 +748,9 @@ module Source = {
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
-                            blockSchema: S.object(_ => ())->Utils.magic,
-                            transactionSchema: S.object(_ => ())->Utils.magic,
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+                            selectedBlockFields: Utils.Set.make(),
+                            selectedTransactionFields: Utils.Set.make(),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -838,13 +838,7 @@ let mockRawEventRow: InternalTable.RawEvents.t = {
   eventName: "SimpleNftCreated",
   blockNumber: 1000,
   logIndex: 10,
-  transactionFields: S.reverseConvertToJsonOrThrow(
-    {
-      Transaction.transactionIndex: 20,
-      hash: "0x1234567890abcdef",
-    },
-    Transaction.schema,
-  ),
+  transactionFields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
   srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
   blockHash: "0x9876543210fedcba9876543210fedcba987654321",
   blockTimestamp: 1620720000,
@@ -860,8 +854,8 @@ let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47
 let evmEventConfig = (
   ~id=eventId,
   ~contractName="ERC20",
-  ~blockSchema: option<S.t<'block>>=?,
-  ~transactionSchema: option<S.t<'transaction>>=?,
+  ~blockFieldNames: array<Internal.evmBlockField>=[],
+  ~transactionFieldNames: array<Internal.evmTransactionField>=[],
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
@@ -879,12 +873,6 @@ let evmEventConfig = (
     paramsRawEventSchema: S.literal(%raw(`null`))
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    blockSchema: blockSchema
-    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
-    ->Utils.magic,
-    transactionSchema: transactionSchema
-    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
-    ->Utils.magic,
     getEventFiltersOrThrow: _ =>
       switch dependsOnAddresses {
       | Some(true) =>
@@ -915,5 +903,7 @@ let evmEventConfig = (
         ])
       },
     convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
+    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
   }
 }

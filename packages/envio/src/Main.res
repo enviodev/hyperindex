@@ -105,7 +105,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
             let state = gsManager->GlobalStateManager.getState
             let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
             let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-            chainFetcher->ChainFetcher.isLive
+            chainFetcher->ChainFetcher.isReady
           }
         },
       },
@@ -249,8 +249,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     if code === "EADDRINUSE" {
       Logging.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
-        `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++
-        `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
+        `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
       )
     } else {
       Logging.errorWithExn(err, "Failed to start indexer server")
@@ -296,6 +295,7 @@ let start = async (
 
   let envioVersion = Utils.EnvioPackage.value.version
   Prometheus.Info.set(~version=envioVersion)
+  Prometheus.ProcessStartTimeSeconds.set()
   Prometheus.RollbackEnabled.set(~enabled=ctx.config.shouldRollbackOnReorg)
 
   if !isTest {

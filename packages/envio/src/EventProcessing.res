@@ -13,7 +13,7 @@ let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.c
   ->ChainMap.entries
   ->Array.forEach(((chain, chainFetcher)) => {
     let chainId = chain->ChainMap.Chain.toChainId->Int.toString
-    let isLive = chainFetcher->ChainFetcher.isLive
+    let isLive = chainFetcher->ChainFetcher.isReady
 
     chains->Js.Dict.set(
       chainId,
@@ -41,7 +41,10 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
         new->Js.Dict.set(
           key,
           Js.typeof(value) === "bigint"
-            ? value->(Utils.magic: unknown => bigint)->BigInt.toString->(Utils.magic: string => unknown)
+            ? value
+              ->(Utils.magic: unknown => bigint)
+              ->BigInt.toString
+              ->(Utils.magic: string => unknown)
             : value,
         )
       }
@@ -372,11 +375,7 @@ let registerProcessEventBatchMetrics = (
     "write_time_elapsed": dbWriteDuration,
   })
 
-  Prometheus.ProcessingBatch.registerMetrics(
-    ~loadDuration,
-    ~handlerDuration,
-    ~dbWriteDuration,
-  )
+  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration, ~dbWriteDuration)
 }
 
 type logPartitionInfo = {
@@ -435,8 +434,7 @@ let processEventBatch = async (
       )
     }
 
-    let elapsedTimeAfterProcessing =
-      timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
 
     try {
       await ctx.persistence->Persistence.writeBatch(

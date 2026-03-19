@@ -100,7 +100,13 @@ module SafeCounter = MakeSafePromMetric({
   let make = PromClient.Counter.makeCounter
   let labels = PromClient.Counter.labels
   let handleInt = PromClient.Counter.incMany
-  let handleFloat = PromClient.Counter.incMany->(Utils.magic: ((PromClient.Counter.counter, int) => unit) => ((PromClient.Counter.counter, float) => unit))
+  let handleFloat =
+    PromClient.Counter.incMany->(
+      Utils.magic: ((PromClient.Counter.counter, int) => unit) => (
+        PromClient.Counter.counter,
+        float,
+      ) => unit
+    )
 })
 
 module SafeGauge = MakeSafePromMetric({
@@ -110,7 +116,6 @@ module SafeGauge = MakeSafePromMetric({
   let handleInt = PromClient.Gauge.set
   let handleFloat = PromClient.Gauge.setFloat
 })
-
 
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
@@ -157,6 +162,10 @@ module ProgressReady = {
     "name": "hyperindex_synced_to_head",
     "help": "All chains fully synced",
   })
+
+  let init = (~chainId) => {
+    gauge->SafeGauge.handleInt(~labels=chainId, ~value=0)
+  }
 
   let set = (~chainId) => {
     gauge->SafeGauge.handleInt(~labels=chainId, ~value=1)
@@ -257,7 +266,6 @@ module PreloadHandler = {
   }
 }
 
-
 module FetchingBlockRange = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_fetching_block_range_seconds",
@@ -329,6 +337,17 @@ module Info = {
 
   let set = (~version) => {
     gauge->SafeGauge.handleInt(~labels={"version": version}, ~value=1)
+  }
+}
+
+module ProcessStartTimeSeconds = {
+  let gauge = PromClient.Gauge.makeGauge({
+    "name": "envio_process_start_time_seconds",
+    "help": "Start time of the process since unix epoch in seconds.",
+  })
+
+  let set = () => {
+    gauge->PromClient.Gauge.setFloat(Js.Date.now() /. 1000.0)
   }
 }
 
@@ -508,8 +527,6 @@ module SourceHeight = {
   }
 }
 
-
-
 module ReorgCount = {
   let counter = SafeCounter.makeOrThrow(
     ~name="envio_reorg_detected_total",
@@ -597,10 +614,7 @@ module RollbackHistoryPrune = {
   )
 
   let increment = (~timeSeconds, ~entityName) => {
-    timeCounter->SafeCounter.handleFloat(
-      ~labels={entityName},
-      ~value=timeSeconds,
-    )
+    timeCounter->SafeCounter.handleFloat(~labels={entityName}, ~value=timeSeconds)
     counter->SafeCounter.increment(~labels={entityName})
   }
 }

@@ -107,4 +107,3 @@ module Index = {
     | Single(index) => SingleIndex.evaluate(index, ~fieldName, ~fieldValue)
     }
 }
-

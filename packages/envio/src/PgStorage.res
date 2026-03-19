@@ -32,7 +32,11 @@ let directionToIndexName = (direction: Table.indexFieldDirection) =>
   | Desc => "_desc"
   }
 
-let makeCreateCompositeIndexQuery = (~tableName, ~indexFields: array<Table.compositeIndexField>, ~pgSchema) => {
+let makeCreateCompositeIndexQuery = (
+  ~tableName,
+  ~indexFields: array<Table.compositeIndexField>,
+  ~pgSchema,
+) => {
   let indexName =
     tableName ++
     "_" ++
@@ -644,7 +648,9 @@ let getConnectedPsqlExec = {
                     switch error {
                     | Value(_) =>
                       resolve(
-                        Error(`Please check if "psql" binary is installed or Docker container "${containerName}" is running.`),
+                        Error(
+                          `Please check if "psql" binary is installed or Docker container "${containerName}" is running.`,
+                        ),
                       )
                     | Null =>
                       resolve(
