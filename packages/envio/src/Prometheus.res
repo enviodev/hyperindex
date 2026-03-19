@@ -58,11 +58,21 @@ module MakeSafePromMetric = (
         Js.Exn.raiseError("Duplicate prometheus metric name: " ++ name)
       } else {
         metricNames->Utils.Set.add(name)->ignore
-        let metric = M.make({
-          "name": name,
-          "help": help,
-          "labelNames": labelNames,
-        })
+        // Try to create the metric. If prom-client already has it registered
+        // (e.g. module loaded from two different paths in pnpm), reuse it.
+        let metric = try {
+          M.make({
+            "name": name,
+            "help": help,
+            "labelNames": labelNames,
+          })
+        } catch {
+        | _ =>
+          switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
+          | Some(existing) => existing->(Utils.magic: PromClient.metricInstance => M.t)
+          | None => Js.Exn.raiseError("Failed to create or find prometheus metric: " ++ name)
+          }
+        }
 
         {metric, labelSchema}
       }
@@ -117,23 +127,49 @@ module SafeGauge = MakeSafePromMetric({
   let handleFloat = PromClient.Gauge.setFloat
 })
 
+// Create a counter, reusing an existing one from the global registry if already registered.
+// This handles the case where the module is loaded from multiple paths (pnpm store duplication).
+let makeCounterSafe = config => {
+  try {
+    PromClient.Counter.makeCounter(config)
+  } catch {
+  | _ =>
+    switch PromClient.defaultRegister->PromClient.getSingleMetric(config["name"]) {
+    | Some(existing) => existing->(Utils.magic: PromClient.metricInstance => PromClient.Counter.counter)
+    | None => Js.Exn.raiseError("Failed to create or find prometheus counter: " ++ config["name"])
+    }
+  }
+}
+
+let makeGaugeSafe = config => {
+  try {
+    PromClient.Gauge.makeGauge(config)
+  } catch {
+  | _ =>
+    switch PromClient.defaultRegister->PromClient.getSingleMetric(config["name"]) {
+    | Some(existing) => existing->(Utils.magic: PromClient.metricInstance => PromClient.Gauge.gauge)
+    | None => Js.Exn.raiseError("Failed to create or find prometheus gauge: " ++ config["name"])
+    }
+  }
+}
+
 module ProcessingBatch = {
-  let loadTimeCounter = PromClient.Counter.makeCounter({
+  let loadTimeCounter = makeCounterSafe({
     "name": "envio_preload_seconds",
     "help": "Cumulative time spent on preloading entities during batch processing.",
   })
 
-  let handlerTimeCounter = PromClient.Counter.makeCounter({
+  let handlerTimeCounter = makeCounterSafe({
     "name": "envio_processing_seconds",
     "help": "Cumulative time spent executing event handlers during batch processing.",
   })
 
-  let writeTimeCounter = PromClient.Counter.makeCounter({
+  let writeTimeCounter = makeCounterSafe({
     "name": "envio_storage_write_seconds",
     "help": "Cumulative time spent writing batch data to storage.",
   })
 
-  let writeCount = PromClient.Counter.makeCounter({
+  let writeCount = makeCounterSafe({
     "name": "envio_storage_write_total",
     "help": "Total number of batch writes to storage.",
   })
@@ -158,7 +194,7 @@ module ProgressReady = {
   )
 
   // Keep legacy metric name for backward compatibility
-  let legacyGauge = PromClient.Gauge.makeGauge({
+  let legacyGauge = makeGaugeSafe({
     "name": "hyperindex_synced_to_head",
     "help": "All chains fully synced",
   })
@@ -341,7 +377,7 @@ module Info = {
 }
 
 module ProcessStartTimeSeconds = {
-  let gauge = PromClient.Gauge.makeGauge({
+  let gauge = makeGaugeSafe({
     "name": "envio_process_start_time_seconds",
     "help": "Start time of the process since unix epoch in seconds.",
   })
@@ -436,7 +472,7 @@ module IndexingBufferSize = {
 }
 
 module IndexingTargetBufferSize = {
-  let gauge = PromClient.Gauge.makeGauge({
+  let gauge = makeGaugeSafe({
     "name": "envio_indexing_target_buffer_size",
     "help": "The target buffer size per chain for indexing. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
   })
@@ -552,7 +588,7 @@ module ReorgDetectionBlockNumber = {
 }
 
 module ReorgThreshold = {
-  let gauge = PromClient.Gauge.makeGauge({
+  let gauge = makeGaugeSafe({
     "name": "envio_reorg_threshold",
     "help": "Whether indexing is currently within the reorg threshold",
   })
@@ -563,7 +599,7 @@ module ReorgThreshold = {
 }
 
 module RollbackEnabled = {
-  let gauge = PromClient.Gauge.makeGauge({
+  let gauge = makeGaugeSafe({
     "name": "envio_rollback_enabled",
     "help": "Whether rollback on reorg is enabled",
   })
@@ -574,17 +610,17 @@ module RollbackEnabled = {
 }
 
 module RollbackSuccess = {
-  let timeCounter = PromClient.Counter.makeCounter({
+  let timeCounter = makeCounterSafe({
     "name": "envio_rollback_seconds",
     "help": "Rollback on reorg total time.",
   })
 
-  let counter = PromClient.Counter.makeCounter({
+  let counter = makeCounterSafe({
     "name": "envio_rollback_total",
     "help": "Number of successful rollbacks on reorg",
   })
 
-  let eventsCounter = PromClient.Counter.makeCounter({
+  let eventsCounter = makeCounterSafe({
     "name": "envio_rollback_events",
     "help": "Number of events rollbacked on reorg",
   })
@@ -632,7 +668,7 @@ module RollbackTargetBlockNumber = {
 }
 
 module ProcessingMaxBatchSize = {
-  let gauge = PromClient.Gauge.makeGauge({
+  let gauge = makeGaugeSafe({
     "name": "envio_processing_max_batch_size",
     "help": "The maximum number of items to process in a single batch.",
   })
