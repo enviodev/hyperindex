@@ -36,9 +36,7 @@ type initialState = {
 }
 
 type writeStats = {
-  mutable total: float,
-  mutable seconds: float,
-  mutable totalSeconds: float,
+  mutable rows: float,
 }
 type tableStats = {write: writeStats}
 type stats = {byTable: dict<tableStats>}
@@ -49,7 +47,7 @@ let getTableStats = (stats, ~tableName) => {
   switch stats.byTable->Utils.Dict.dangerouslyGetNonOption(tableName) {
   | Some(s) => s
   | None =>
-    let s = {write: {total: 0., seconds: 0., totalSeconds: 0.}}
+    let s = {write: {rows: 0.}}
     stats.byTable->Js.Dict.set(tableName, s)
     s
   }

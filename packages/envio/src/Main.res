@@ -236,11 +236,11 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     | Some(s) => s.byTable->Js.Dict.entries
     | None => []
     }
-    // Sort by totalSeconds descending and take top 5
+    // Sort by rows descending and take top 5
     let _ = entries->Js.Array2.sortInPlaceWith(((_, a), (_, b)) =>
-      if b.write.totalSeconds > a.write.totalSeconds {
+      if b.write.rows > a.write.rows {
         1
-      } else if b.write.totalSeconds < a.write.totalSeconds {
+      } else if b.write.rows < a.write.rows {
         -1
       } else {
         0
@@ -251,7 +251,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     top->Js.Array2.forEach(((name, s)) => {
       buf
       ->Js.Array2.push(
-        `envio_storage_write_rows{entity="${name}"} ${s.write.total->Float.toString}`,
+        `envio_storage_write_rows{table="${name}"} ${s.write.rows->Float.toString}`,
       )
       ->ignore
     })
