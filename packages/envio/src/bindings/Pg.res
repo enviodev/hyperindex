@@ -39,7 +39,7 @@ type pgConfig = {
 }
 type queryConfig = {
   text: string,
-  values?: unknown,
+  values?: array<unknown>,
   name?: string,
 }
 type queryResult = {
@@ -55,13 +55,12 @@ type _handle
 @send external _on: (_handle, string, 'handler) => unit = "on"
 
 type client = {
-  query: queryConfig => promise<array<unknown>>,
-  release: unit => unit,
-  releaseAndDestroy: unit => unit,
+  query: queryConfig => promise<queryResult>,
+  release: (~destroy: bool=?) => unit,
 }
 
 type pool = {
-  query: queryConfig => promise<array<unknown>>,
+  query: queryConfig => promise<queryResult>,
   connect: unit => promise<client>,
 }
 
@@ -91,13 +90,12 @@ let makePool = (~config: poolConfig): pool => {
   })
 
   {
-    query: config => raw->_query(config)->Promise.thenResolve(r => r.rows),
+    query: config => raw->_query(config),
     connect: () =>
       raw->_connect->Promise.thenResolve(rawClient => {
         {
-          query: config => rawClient->_query(config)->Promise.thenResolve(r => r.rows),
-          release: () => rawClient->_release(false),
-          releaseAndDestroy: () => rawClient->_release(true),
+          query: config => rawClient->_query(config),
+          release: (~destroy=?) => rawClient->_release(destroy->Belt.Option.getWithDefault(false)),
         }
       }),
   }
@@ -120,7 +118,7 @@ let beginSql = async (pool: pool, fn: client => promise<'a>) => {
     }
     // Destroy the client instead of returning it to the pool
     // to avoid reusing a client in a potentially bad state after a failed transaction.
-    client.releaseAndDestroy()
+    client.release(~destroy=true)
     raise(exn)
   }
 }

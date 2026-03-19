@@ -113,7 +113,7 @@ let pruneStaleEntityHistory = (
   sql.query({
     name: `eh_prune_${entityIndex->Belt.Int.toString}`,
     text: makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    values: [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    values: [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
   })
   ->Promise.ignoreValue
 }
@@ -151,7 +151,7 @@ let rollback = (sql: Pg.pool, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTar
   sql.query({
     name: `eh_rollback_${entityIndex->Belt.Int.toString}`,
     text: `DELETE FROM "${pgSchema}"."${tableName}" WHERE "${checkpointIdFieldName}" > $1;`,
-    values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
   })
   ->Promise.ignoreValue
 }

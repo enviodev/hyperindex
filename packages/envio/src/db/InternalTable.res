@@ -206,7 +206,7 @@ FROM "${pgSchema}"."${table.tableName}" as chains;`
 
   let getInitialState = (sql: Pg.pool, ~pgSchema) => {
     sql.query({text: makeGetInitialStateQuery(~pgSchema)})
-    ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
+    ->Promise.thenResolve(r => r.rows->(Utils.magic: array<unknown> => array<rawInitialState>))
   }
 
   let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
@@ -412,7 +412,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
       )->(
         Utils.magic: (
           (array<string>, array<int>, array<int>, array<Js.Null.t<string>>, array<int>)
-        ) => unknown
+        ) => array<unknown>
       ),
     })
     ->Promise.ignoreValue
@@ -422,7 +422,7 @@ SELECT * FROM unnest($1::${(BigInt: Pg.columnType :> string)}[],$2::${(Integer: 
     sql.query({
       name: "checkpoints_rollback",
       text: `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
-      values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
     })
     ->Promise.ignoreValue
   }
@@ -455,14 +455,13 @@ LIMIT 1;`
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
   ) => {
-    let rawResult: promise<array<{"id": string}>> =
-      sql.query({
-        name: "checkpoints_rollback_target",
-        text: makeGetRollbackTargetCheckpointQuery(~pgSchema),
-        values: (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
-      })
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>)
-    rawResult->Promise.thenResolve(rows => {
+    sql.query({
+      name: "checkpoints_rollback_target",
+      text: makeGetRollbackTargetCheckpointQuery(~pgSchema),
+      values: (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
+    })
+    ->Promise.thenResolve(r => {
+      let rows = r.rows->(Utils.magic: array<unknown> => array<{"id": string}>)
       rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->BigInt.fromStringUnsafe)
     })
   }
@@ -487,14 +486,14 @@ GROUP BY "${(#chain_id: field :> string)}";`
       text: makeGetRollbackProgressDiffQuery(~pgSchema),
       values: [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
     })
-    ->(
-      Utils.magic: promise<array<unknown>> => promise<
-        array<{
+    ->Promise.thenResolve(r =>
+      r.rows->(
+        Utils.magic: array<unknown> => array<{
           "chain_id": int,
           "events_processed_diff": string,
           "new_progress_block_number": int,
-        }>,
-      >
+        }>
+      )
     )
   }
 }

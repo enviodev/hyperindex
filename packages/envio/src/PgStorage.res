@@ -375,7 +375,7 @@ let maxItemsPerQuery = 500
 
 type tableBatchSetQuery = {
   query: string,
-  convertOrThrow: array<unknown> => unknown,
+  convertOrThrow: array<unknown> => array<unknown>,
   isInsertValues: bool,
 }
 
@@ -412,7 +412,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
         ~output=Unknown,
         ~mode=Sync,
         ~typeValidation,
-      ),
+      )->(Utils.magic: (array<unknown> => unknown) => (array<unknown> => array<unknown>)),
       isInsertValues: false,
     }
   } else {
@@ -423,7 +423,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
         ~itemSchema,
         ~itemsCount=maxItemsPerQuery,
       ),
-      convertOrThrow: if isHistoryUpdate {
+      convertOrThrow: (if isHistoryUpdate {
         // Entity history uses S.object with transformation (Change variant → raw dict)
         // that gets lost during dbSchema conversion. Preprocess itemSchema to add
         // JSON stringify for JSON fields before compilation.
@@ -477,7 +477,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
           ~mode=Sync,
           ~typeValidation,
         )
-      },
+      })->(Utils.magic: (array<unknown> => unknown) => (array<unknown> => array<unknown>)),
       isInsertValues: true,
     }
   }
@@ -1165,7 +1165,7 @@ let make = (
   ])
 
   let isInitialized = async () => {
-    let envioTables = await sql.query({
+    let {rows: envioTables} = await sql.query({
       text: `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND (table_name = '${// This is for indexer before envio@2.28
         "event_sync_state"}' OR table_name = '${InternalTable.Chains.table.tableName}');`,
     })
@@ -1231,7 +1231,7 @@ let make = (
     }
 
     let cacheTableInfo: array<schemaCacheTableInfo> =
-      (await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)}))
+      (await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)})).rows
       ->(Utils.magic: array<unknown> => array<schemaCacheTableInfo>)
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
@@ -1257,7 +1257,7 @@ let make = (
 
   let initialize = async (~chainConfigs=[], ~entities=[], ~enums=[]): Persistence.initialState => {
     let schemaTableNames: array<schemaTableName> =
-      (await sql.query({text: makeSchemaTableNamesQuery(~pgSchema)}))
+      (await sql.query({text: makeSchemaTableNamesQuery(~pgSchema)})).rows
       ->(Utils.magic: array<unknown> => array<schemaTableName>)
 
     // The initialization query will completely drop the schema and recreate it from scratch.
@@ -1356,7 +1356,7 @@ let make = (
           reason: exn,
         }),
       )
-    | rows =>
+    | {rows} =>
       try rows->S.parseOrThrow(rowsSchema) catch {
       | exn =>
         raise(
@@ -1403,7 +1403,7 @@ let make = (
           reason: exn,
         }),
       )
-    | rows =>
+    | {rows} =>
       try rows->S.parseOrThrow(rowsSchema) catch {
       | exn =>
         raise(
@@ -1456,7 +1456,7 @@ let make = (
   let dumpEffectCache = async () => {
     try {
       let cacheTableInfo: array<schemaCacheTableInfo> =
-        ((await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)}))
+        ((await sql.query({text: makeSchemaCacheTableInfoQuery(~pgSchema)})).rows
         ->(Utils.magic: array<unknown> => array<schemaCacheTableInfo>))
         ->Js.Array2.filter(i => i.count > 0)
 
@@ -1536,12 +1536,14 @@ let make = (
         })
       }),
       sql.query({text: InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema)})
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
+      ->Promise.thenResolve(r =>
+        r.rows->(Utils.magic: array<unknown> => array<{"id": string}>)
+      ),
       sql.query({text: InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema)})
-      ->(
-        Utils.magic: promise<array<unknown>> => promise<
-          array<{"id": string, "chain_id": int, "block_number": int, "block_hash": string}>,
-        >
+      ->Promise.thenResolve(r =>
+        r.rows->(
+          Utils.magic: array<unknown> => array<{"id": string, "chain_id": int, "block_number": int, "block_hash": string}>
+        )
       ),
     ))
 
@@ -1612,16 +1614,18 @@ let make = (
       sql.query({
         name: `rollback_removed_${entityConfig.index->Belt.Int.toString}`,
         text: makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
       })
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
+      ->Promise.thenResolve(r =>
+        r.rows->(Utils.magic: array<unknown> => array<{"id": string}>)
+      ),
       // Get entities that should be restored to their state at or before rollback target
       sql.query({
         name: `rollback_restored_${entityConfig.index->Belt.Int.toString}`,
         text: makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
       })
-      ->(Utils.magic: promise<array<unknown>> => promise<array<unknown>>),
+      ->Promise.thenResolve(r => r.rows),
     ))
   }
 
