@@ -46,7 +46,7 @@ pub enum CommandType {
     Init(InitArgs),
 
     /// Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
-    Dev,
+    Dev(DevArgs),
 
     /// Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
     Stop,
@@ -83,6 +83,13 @@ pub enum JsonSchema {
     Evm,
     Fuel,
     Svm,
+}
+
+#[derive(Debug, Args)]
+pub struct DevArgs {
+    ///Clear your database and restart indexing from scratch
+    #[arg(short = 'r', long, action)]
+    pub restart: bool,
 }
 
 #[derive(Debug, Args)]

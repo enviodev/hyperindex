@@ -238,7 +238,11 @@ Initialize Fuel indexer from an example template
 
 Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
 
-**Usage:** `envio dev`
+**Usage:** `envio dev [OPTIONS]`
+
+###### **Options:**
+
+* `-r`, `--restart` — Clear your database and restart indexing from scratch
 
 
 

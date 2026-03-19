@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 
-pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
+pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<()> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
@@ -85,28 +85,36 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         .await
         .context("Failed to read persisted state from the DB")?;
 
-    let (should_run_db_migrations, changes_detected) = match &persisted_state_db {
-        PersistedStateExists::Exists(persisted_state) =>
-        //In the case where the persisted state exists, compare it to current state
-        //determine whether to run migrations and which changes have occured to
-        //cause that.
-        {
-            let (should_run_db_migrations, changes_detected) =
-                current_state.should_run_db_migrations(persisted_state);
+    let (should_run_db_migrations, changes_detected) = if restart {
+        (true, vec![])
+    } else {
+        match &persisted_state_db {
+            PersistedStateExists::Exists(persisted_state) =>
+            //In the case where the persisted state exists, compare it to current state
+            //determine whether to run migrations and which changes have occured to
+            //cause that.
+            {
+                let (should_run_db_migrations, changes_detected) =
+                    current_state.should_run_db_migrations(persisted_state);
 
-            (should_run_db_migrations, changes_detected)
+                (should_run_db_migrations, changes_detected)
+            }
+            //Otherwise we should run db migrations
+            PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
         }
-        //Otherwise we should run db migrations
-        PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
     };
 
     if should_run_db_migrations {
-        match persisted_state_db {
-            PersistedStateExists::NotExists => {
-                println!("Db Migrations have not been run")
+        if restart {
+            println!("Restarting indexing from scratch");
+        } else {
+            match persisted_state_db {
+                PersistedStateExists::NotExists => {
+                    println!("Db Migrations have not been run")
+                }
+                PersistedStateExists::Corrupted => println!("Invalid DB persisted state"),
+                PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
             }
-            PersistedStateExists::Corrupted => println!("Invalid DB persisted state"),
-            PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
         }
         println!("Running db migrations");
 
