@@ -4,15 +4,15 @@ open Vitest
     {{#with contract.imported_events.[0] as | event |}}
 describe("{{contract.name.capitalized}} contract {{event.name}} event tests", () => {
   Async.it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async _t => {
-    let indexer = Indexer.Generated.createTestIndexer()
+    let indexer = Indexer.createTestIndexer()
 
     // TODO: Configure chain ID, start/end blocks, and event params for your contract
     let _ = await indexer.process({
       chains: {
-        chain1: Some({
+        chain1: {
           startBlock: 0,
           endBlock: 100,
-        }),
+        },
       },
     })
   })

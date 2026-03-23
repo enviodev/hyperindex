@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTestIndexer, TestHelpers, type User } from "generated";
-
-const { Addresses } = TestHelpers;
+import { createTestIndexer, Addresses, type User } from "generated";
 
 describe("Greeter template tests", () => {
   it("A NewGreeting event creates a User entity", async () => {

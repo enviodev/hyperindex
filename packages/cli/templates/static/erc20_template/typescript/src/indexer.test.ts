@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTestIndexer, TestHelpers, type Account } from "generated";
-
-const { Addresses } = TestHelpers;
+import { createTestIndexer, Addresses, type Account } from "generated";
 
 describe("Indexer Testing", () => {
   it("Should create accounts from ERC20 Transfer events", async () => {

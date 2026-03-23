@@ -11,23 +11,24 @@ describe("{{contract.name.capitalized}} contract {{event.name}} event tests", ()
   it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async () => {
     const indexer = createTestIndexer();
 
-    // TODO: Configure chain ID, start/end blocks, and event params for your contract
+    // Creating mock for {{contract.name.capitalized}} contract {{event.name}} event
+    const event = {
+      contract: "{{contract.name.capitalized}}" as const,
+      event: "{{event.name}}" as const,
+      params: {
+        {{#each event.params as |param|}}
+        // {{param.js_name}}: ...,
+        {{/each}}
+      },
+    };
+
+    // TODO: Configure chain ID and start/end blocks for your contract
     await indexer.process({
       chains: {
         1: {
           startBlock: 0,
           endBlock: 100,
-          simulate: [
-            {
-              contract: "{{contract.name.capitalized}}",
-              event: "{{event.name}}",
-              params: {
-                {{#each event.params as |param|}}
-                // {{param.js_name}}: ...,
-                {{/each}}
-              },
-            },
-          ],
+          simulate: [event],
         },
       },
     });
@@ -37,8 +38,15 @@ describe("{{contract.name.capitalized}} contract {{event.name}} event tests", ()
       {{event.entity_id_from_event_code}}
     );
 
-    // Asserting that the entity was created
-    expect(actual{{contract.name.capitalized}}{{event.name}}, "Entity should exist after processing").toBeDefined();
+    // Creating the expected entity
+    const expected{{contract.name.capitalized}}{{event.name}}: {{contract.name.capitalized}}_{{event.name}} = {
+      id: {{event.entity_id_from_event_code}},
+      {{#each event.params as |param|}}
+      {{param.js_name}}: event.params.{{param.js_name}},
+      {{/each}}
+    };
+    // Asserting that the entity in the mock database is the same as the expected entity
+    expect(actual{{contract.name.capitalized}}{{event.name}}, "Actual {{contract.name.capitalized}}{{event.name}} should be the same as the expected {{contract.name.capitalized}}{{event.name}}").toEqual(expected{{contract.name.capitalized}}{{event.name}});
   });
 });
     {{/with}}
