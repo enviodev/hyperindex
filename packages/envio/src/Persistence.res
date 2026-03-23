@@ -126,12 +126,22 @@ type storageStatus =
   | Initializing(promise<unit>)
   | Ready(initialState)
 
+type writeArgs = {
+  batch: Batch.t,
+  config: Config.t,
+  inMemoryStore: InMemoryStore.t,
+  isInReorgThreshold: bool,
+}
+
 type t = {
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
+  mutable writePromise: option<promise<result<unit, ErrorHandling.t>>>,
+  mutable pendingWrite: option<writeArgs>,
+  mutable writtenCheckpointId: bigint,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -152,6 +162,9 @@ let make = (
     allEnums,
     storageStatus: Unknown,
     storage,
+    writePromise: None,
+    pendingWrite: None,
+    writtenCheckpointId: 0n,
   }
 }
 
@@ -180,6 +193,7 @@ let init = {
             ~chainConfigs,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
+          persistence.writtenCheckpointId = initialState.checkpointId
           persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
@@ -191,6 +205,7 @@ let init = {
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
+          persistence.writtenCheckpointId = initialState.checkpointId
           persistence.storageStatus = Ready(initialState)
           let progress = Js.Dict.empty()
           initialState.chains->Js.Array2.forEach(c => {
@@ -363,4 +378,100 @@ let prepareRollbackDiff = async (
     "deletedEntities": deletedEntities,
     "setEntities": setEntities,
   }
+}
+
+let isWriting = persistence => persistence.writePromise !== None
+
+let getLastCheckpointId = (batch: Batch.t) =>
+  switch batch.checkpointIds->Utils.Array.last {
+  | Some(id) => id
+  | None => 0n
+  }
+
+let rec executeWrite = persistence => {
+  switch persistence.pendingWrite {
+  | None => ()
+  | Some({batch, config, inMemoryStore, isInReorgThreshold}) =>
+    persistence.pendingWrite = None
+
+    let logger = Logging.getLogger()
+    let timeRef = Hrtime.makeTimer()
+
+    let promise = (async () => {
+      try {
+        await persistence->writeBatch(
+          ~batch,
+          ~config,
+          ~inMemoryStore,
+          ~isInReorgThreshold,
+        )
+
+        let batchCheckpointId = batch->getLastCheckpointId
+        if batchCheckpointId > 0n {
+          persistence.writtenCheckpointId = batchCheckpointId
+        }
+
+        let dbWriteDuration = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+        logger->Logging.childTrace({
+          "msg": "Background write completed",
+          "write_time_elapsed": dbWriteDuration,
+        })
+
+        // After write completes, clean up the in-memory store
+        inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
+
+        persistence.writePromise = None
+
+        // If a new write was queued during this write, start it
+        executeWrite(persistence)
+
+        Ok()
+      } catch {
+      | StorageError({message, reason}) =>
+        persistence.writePromise = None
+        Error(reason->ErrorHandling.make(~msg=message, ~logger))
+      | exn =>
+        persistence.writePromise = None
+        Error(exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger))
+      }
+    })()
+
+    persistence.writePromise = Some(promise)
+  }
+}
+
+// Queue a write. If not currently writing, starts immediately.
+let startWrite = (persistence, ~writeArgs) => {
+  persistence.pendingWrite = Some(writeArgs)
+  if !isWriting(persistence) {
+    executeWrite(persistence)
+  }
+}
+
+// Await the current write and any pending writes.
+// Returns the last write result.
+let awaitCurrentWrite = async persistence => {
+  let lastResult = ref(Ok())
+  let continue = ref(true)
+  while continue.contents {
+    switch persistence.writePromise {
+    | Some(promise) =>
+      let result = await promise
+      lastResult := result
+    | None => continue := false
+    }
+  }
+  lastResult.contents
+}
+
+// Force a synchronous write: queue it, await everything.
+let forceWrite = async (persistence, ~writeArgs) => {
+  persistence.pendingWrite = Some(writeArgs)
+  switch persistence.writePromise {
+  | Some(promise) =>
+    let _ = await promise
+  | None => ()
+  }
+  executeWrite(persistence)
+  await awaitCurrentWrite(persistence)
 }

@@ -53,7 +53,6 @@ type t = {
   //responses based on the wrong stateId
   id: int,
   inMemoryStore: InMemoryStore.t,
-  backgroundWriter: BackgroundWriter.t,
 }
 
 let make = (
@@ -74,10 +73,6 @@ let make = (
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     id: 0,
     inMemoryStore: InMemoryStore.make(~entities=ctx.persistence.allEntities),
-    backgroundWriter: BackgroundWriter.make(
-      ~persistence=ctx.persistence,
-      ~initialCheckpointId=chainManager.committedCheckpointId,
-    ),
   }
 }
 
@@ -888,8 +883,8 @@ let injectedTaskReducer = (
     switch shouldExit {
     | ExitWithSuccess =>
       // Await any background writes before exiting
-      if state.backgroundWriter->BackgroundWriter.isWriting {
-        let _ = await state.backgroundWriter->BackgroundWriter.awaitCurrentWrite
+      if state.ctx.persistence->Persistence.isWriting {
+        let _ = await state.ctx.persistence->Persistence.awaitCurrentWrite
       }
       updateChainMetadataTable(
         chainManager,
@@ -899,7 +894,7 @@ let injectedTaskReducer = (
       dispatchAction(SuccessExit)
     | NoExit =>
       // Check for background write errors
-      switch state.backgroundWriter.writePromise {
+      switch state.ctx.persistence.writePromise {
       | None => ()
       | Some(promise) =>
         promise->Promise.thenResolve(result => {
@@ -991,16 +986,16 @@ let injectedTaskReducer = (
         let shouldWaitForWrite =
           isRollback ||
           state.inMemoryStore->InMemoryStore.totalChangeCount > Env.maxInMemoryEntities
-        if shouldWaitForWrite && state.backgroundWriter->BackgroundWriter.isWriting {
-          switch await state.backgroundWriter->BackgroundWriter.awaitCurrentWrite {
+        if shouldWaitForWrite && state.ctx.persistence->Persistence.isWriting {
+          switch await state.ctx.persistence->Persistence.awaitCurrentWrite {
           | Error(errHandler) =>
             dispatchAction(ErrorExit(errHandler))
           | Ok() => ()
           }
         }
 
-        dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
+        dispatchAction(StartProcessingBatch)
 
         // For rollback, use the diff in-memory store. Otherwise reuse the persistent one.
         let inMemoryStore = switch state.rollbackState {
@@ -1031,7 +1026,7 @@ let injectedTaskReducer = (
 
             if isRollback {
               // Rollback writes must be synchronous to ensure consistency
-              switch await state.backgroundWriter->BackgroundWriter.forceWrite(
+              switch await state.ctx.persistence->Persistence.forceWrite(
                 ~writeArgs={
                   batch,
                   config: state.ctx.config,
@@ -1052,7 +1047,7 @@ let injectedTaskReducer = (
               }
             } else {
               // Queue background write - don't block next batch
-              state.backgroundWriter->BackgroundWriter.startWrite(
+              state.ctx.persistence->Persistence.startWrite(
                 ~writeArgs={
                   batch,
                   config: state.ctx.config,
@@ -1096,8 +1091,8 @@ let injectedTaskReducer = (
     | {rollbackState: FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber})} =>
       // Ensure all background writes complete before rollback
       // so that DB state is consistent for rollback queries
-      if state.backgroundWriter->BackgroundWriter.isWriting {
-        switch await state.backgroundWriter->BackgroundWriter.awaitCurrentWrite {
+      if state.ctx.persistence->Persistence.isWriting {
+        switch await state.ctx.persistence->Persistence.awaitCurrentWrite {
         | Error(errHandler) =>
           dispatchAction(ErrorExit(errHandler))
         | Ok() => ()
