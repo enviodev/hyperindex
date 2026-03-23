@@ -8,6 +8,9 @@ type sourceState = {
   mutable unsubscribe: option<unit => unit>,
   mutable pendingHeightResolvers: array<int => unit>,
   mutable disabled: bool,
+  // Timestamp (ms) when this source last failed during executeQuery.
+  // Used to decide when to attempt recovery to this source if it's a primary.
+  mutable lastFailedAt: option<float>,
 }
 
 // Ideally the ChainFetcher name suits this better
@@ -28,9 +31,6 @@ type t = {
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
-  // Timestamp (ms) when we switched to a secondary source.
-  // After secondaryRecoveryTimeout ms, we attempt to switch back to a primary source.
-  mutable secondarySwitchTimestamp: option<float>,
   secondaryRecoveryTimeout: int,
   mutable hasLive: bool,
 }
@@ -107,6 +107,7 @@ let make = (
       unsubscribe: None,
       pendingHeightResolvers: [],
       disabled: false,
+      lastFailedAt: None,
     }),
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
@@ -118,7 +119,6 @@ let make = (
     secondaryRecoveryTimeout,
     statusStart: Hrtime.makeTimer(),
     status: Idle,
-    secondarySwitchTimestamp: None,
     hasLive,
   }
 }
@@ -393,17 +393,6 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
 
   sourceManager.activeSource = source
 
-  // Record the timestamp when we switch to a secondary source via stall timeout,
-  // so the recovery timer in executeQuery starts from the actual switch moment.
-  if (
-    status.contents === Stalled &&
-      sourceManager.secondarySwitchTimestamp === None &&
-      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) ===
-        Some(Secondary)
-  ) {
-    sourceManager.secondarySwitchTimestamp = Some(Js.Date.now())
-  }
-
   // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
   let log = status.contents === Stalled ? Logging.childInfo : Logging.childTrace
   logger->log({
@@ -463,28 +452,55 @@ let getNextSyncSourceState = (
   }
 }
 
-let getFirstPrimarySourceState = (sourceManager: t, ~isLive) => {
-  sourceManager.sourcesState->Js.Array2.find(s =>
-    !s.disabled &&
-      getSourceRole(~sourceFor=s.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) === Some(Primary)
-  )
-}
-
-// Called when activeSource changes to track secondary source state.
-// Sets secondarySwitchTimestamp when switching to a secondary source,
-// clears it when switching back to a primary source.
-let onActiveSourceChanged = (sourceManager: t, ~isLive) => {
+// Before executing a query, attempt recovery from secondary to primary sources.
+// Each primary source tracks its own lastFailedAt; if enough time has passed,
+// we try switching back to it.
+let attemptRecoveryToPrimary = (sourceManager: t, ~isLive) => {
+  // Skip if active source is already primary
   if (
-    getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) ===
+    getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) !==
       Some(Primary)
   ) {
-    sourceManager.secondarySwitchTimestamp = None
-  } else if sourceManager.secondarySwitchTimestamp === None {
-    sourceManager.secondarySwitchTimestamp = Some(Js.Date.now())
+    sourceManager.sourcesState->Js.Array2.find(sourceState => {
+      if sourceState.disabled {
+        false
+      } else {
+        switch getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
+        | Some(Primary) =>
+          switch sourceState.lastFailedAt {
+          | Some(failedAt)
+            if Js.Date.now() -. failedAt >=
+              sourceManager.secondaryRecoveryTimeout->Int.toFloat => true
+          | None => true
+          | _ => false
+          }
+        | _ => false
+        }
+      }
+    })
+  } else {
+    None
   }
 }
 
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
+  // Attempt recovery to a primary source before starting the query
+  switch sourceManager->attemptRecoveryToPrimary(~isLive) {
+  | Some(primarySourceState) =>
+    let logger = Logging.createChild(
+      ~params={
+        "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+      },
+    )
+    logger->Logging.childInfo({
+      "msg": "Attempting to switch back to primary source after secondary recovery period",
+      "source": primarySourceState.source.name,
+      "previousSource": sourceManager.activeSource.name,
+    })
+    sourceManager.activeSource = primarySourceState.source
+  | None => ()
+  }
+
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
@@ -532,6 +548,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         "numEvents": response.parsedQueueItems->Array.length,
         "stats": response.stats,
       })
+      sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
     | Source.GetItemsError(error) =>
@@ -611,6 +628,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             ~msg="The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
           )
         } else {
+          sourceState.lastFailedAt = Some(Js.Date.now())
           sourceStateRef := nextSourceState
           shouldUpdateActiveSource := false
           retryRef := 0
@@ -655,6 +673,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
         let shouldSwitch = nextSourceState !== sourceState
         if shouldSwitch {
+          sourceState.lastFailedAt = Some(Js.Date.now())
           logger->Logging.childInfo({
             "msg": "Switching to another data-source",
             "source": nextSourceState.source.name,
@@ -674,31 +693,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
   if shouldUpdateActiveSource.contents {
     sourceManager.activeSource = sourceStateRef.contents.source
-    sourceManager->onActiveSourceChanged(~isLive)
-  }
-
-  // Attempt recovery from secondary to primary after timeout
-  switch sourceManager.secondarySwitchTimestamp {
-  | Some(switchedAt)
-    if Js.Date.now() -. switchedAt >=
-      sourceManager.secondaryRecoveryTimeout->Int.toFloat =>
-    switch sourceManager->getFirstPrimarySourceState(~isLive) {
-    | Some(primarySourceState) =>
-      let logger = Logging.createChild(
-        ~params={
-          "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-        },
-      )
-      logger->Logging.childInfo({
-        "msg": "Attempting to switch back to primary source after secondary recovery period",
-        "source": primarySourceState.source.name,
-        "previousSource": sourceManager.activeSource.name,
-      })
-      sourceManager.activeSource = primarySourceState.source
-      sourceManager->onActiveSourceChanged(~isLive)
-    | None => ()
-    }
-  | _ => ()
   }
 
   responseRef.contents->Option.getUnsafe

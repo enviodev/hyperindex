@@ -257,7 +257,7 @@ describe("SourceManager source priority with Live sources", () => {
   )
 
   Async.it(
-    "During isLive=true with Live source: recovery from secondary goes to Live",
+    "During isLive=true with Live source: recovery from secondary goes to Live (not Sync)",
     async t => {
       let syncMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
       let liveMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Live)
@@ -266,10 +266,8 @@ describe("SourceManager source priority with Live sources", () => {
         ~sourceFor=Fallback,
       )
       let newBlockStallTimeoutLive = 0
-      let secondaryRecoveryTimeout = 5
       let sourceManager = SourceManager.make(~isLive=false,
         ~newBlockStallTimeoutLive,
-        ~secondaryRecoveryTimeout,
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
@@ -283,10 +281,8 @@ describe("SourceManager source priority with Live sources", () => {
         t.expect(sourceManager->SourceManager.getActiveSource).toBe(fallbackMock.source)
       }
 
-      // Wait for fallback recovery timeout to elapse
-      await Utils.delay(secondaryRecoveryTimeout)
-
-      // Run a successful query on fallback — should trigger recovery
+      // Live never failed in executeQuery, recovery is immediate.
+      // With isLive=true, Live is Primary so recovery goes to Live, not Sync.
       {
         let p =
           sourceManager->SourceManager.executeQuery(
@@ -294,9 +290,10 @@ describe("SourceManager source priority with Live sources", () => {
             ~isLive=true,
             ~knownHeight=100,
           )
-        switch fallbackMock.getItemsOrThrowCalls {
+        // The query goes to Live (recovered primary), not fallback
+        switch liveMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
-        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        | _ => Js.Exn.raiseError("Expected one pending call to liveMock")
         }
         let _ = await p
       }
@@ -1829,7 +1826,7 @@ but we still attempt the fallback source if it was the initial active source.
   )
 
   Async.it(
-    "After fallback recovery timeout elapses, switches back to the primary sync source",
+    "When switching to secondary via waitForNewBlock, immediately recovers to primary since it never failed",
     async t => {
       let syncMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
       let fallbackMock = Mock.Source.make(
@@ -1837,10 +1834,8 @@ but we still attempt the fallback source if it was the initial active source.
         ~sourceFor=Fallback,
       )
       let newBlockStallTimeout = 0
-      let secondaryRecoveryTimeout = 5
       let sourceManager = SourceManager.make(~isLive=false,
         ~newBlockStallTimeout,
-        ~secondaryRecoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
@@ -1857,7 +1852,73 @@ but we still attempt the fallback source if it was the initial active source.
         ).toBe(fallbackMock.source)
       }
 
-      // Query before timeout — should stay on fallback
+      // Even though active is fallback, sync never failed in executeQuery
+      // so recovery should switch back to sync immediately before the query
+      {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+        // Query goes to sync (recovered primary), not fallback
+        switch syncMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
+        }
+        let _ = await p
+      }
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Should recover to sync source immediately",
+      ).toBe(syncMock.source)
+    },
+  )
+
+  Async.it(
+    "After primary fails in executeQuery, waits for recovery timeout before retrying it",
+    async t => {
+      let syncMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let fallbackMock = Mock.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow],
+        ~sourceFor=Fallback,
+      )
+      let secondaryRecoveryTimeout = 5
+      let sourceManager = SourceManager.make(~isLive=false,
+        ~secondaryRecoveryTimeout,
+        ~sources=[syncMock.source, fallbackMock.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      // Fail sync with WithBackoff errors until it switches to fallback
+      {
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+        // Fail sync twice (retries 0, 1 don't switch), then on retry 2 it switches
+        for _ in 0 to 2 {
+          await Utils.delay(0)
+          syncMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+            call.reject(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: 100,
+                  retry: WithBackoff({message: "test fail", backoffMillis: 0}),
+                }),
+              ),
+            )
+          )
+        }
+        // Now it should have switched to fallback
+        await Utils.delay(0)
+        fallbackMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+          call.resolve([])
+        )
+        let _ = await p
+        t.expect(
+          sourceManager->SourceManager.getActiveSource,
+          ~message="Should have switched to fallback after sync failures",
+        ).toBe(fallbackMock.source)
+      }
+
+      // Query before timeout — should stay on fallback (sync has lastFailedAt set)
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
@@ -1870,19 +1931,20 @@ but we still attempt the fallback source if it was the initial active source.
 
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="Should stay on fallback before timeout elapses",
+        ~message="Should stay on fallback before recovery timeout elapses",
       ).toBe(fallbackMock.source)
 
-      // Wait for fallback recovery timeout to elapse
+      // Wait for recovery timeout to elapse
       await Utils.delay(secondaryRecoveryTimeout)
 
-      // Query after timeout — should trigger recovery to sync
+      // Query after timeout — recovery switches to sync before querying
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
-        switch fallbackMock.getItemsOrThrowCalls {
+        // Query goes to sync (recovered primary)
+        switch syncMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
-        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
         }
         let _ = await p
       }
@@ -1891,19 +1953,6 @@ but we still attempt the fallback source if it was the initial active source.
         sourceManager->SourceManager.getActiveSource,
         ~message="After recovery timeout, should switch back to sync source",
       ).toBe(syncMock.source)
-
-      // Verify the next query goes to the sync source
-      let p =
-        sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
-      t.expect(
-        syncMock.getItemsOrThrowCalls->Array.length,
-        ~message="Next query should use sync source",
-      ).toEqual(1)
-      switch syncMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([])
-      | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
-      }
-      t.expect((await p).parsedQueueItems).toEqual([])
     },
   )
 
@@ -1966,7 +2015,7 @@ but we still attempt the fallback source if it was the initial active source.
   )
 
   Async.it(
-    "After fallback recovery timeout, can recover to a live source when isLive",
+    "When switching to secondary via waitForNewBlock in live mode, immediately recovers to live primary",
     async t => {
       let liveMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Live)
       let fallbackMock = Mock.Source.make(
@@ -1974,10 +2023,8 @@ but we still attempt the fallback source if it was the initial active source.
         ~sourceFor=Fallback,
       )
       let newBlockStallTimeoutLive = 0
-      let secondaryRecoveryTimeout = 5
       let sourceManager = SourceManager.make(~isLive=false,
         ~newBlockStallTimeoutLive,
-        ~secondaryRecoveryTimeout,
         ~sources=[liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
@@ -1993,73 +2040,75 @@ but we still attempt the fallback source if it was the initial active source.
         ).toBe(fallbackMock.source)
       }
 
-      // Wait for fallback recovery timeout to elapse
-      await Utils.delay(secondaryRecoveryTimeout)
-
-      // Run a successful query — should trigger recovery to live
+      // Live never failed in executeQuery, so recovery is immediate
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=true, ~knownHeight=100)
-        switch fallbackMock.getItemsOrThrowCalls {
+        // Query goes to live (recovered primary), not fallback
+        switch liveMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
-        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        | _ => Js.Exn.raiseError("Expected one pending call to liveMock")
         }
         let _ = await p
       }
 
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="After recovery timeout, should switch back to live source",
+        ~message="Should recover to live source immediately",
       ).toBe(liveMock.source)
     },
   )
 
   Async.it(
-    "Recovery timestamp resets when returning to primary, and recovery works again after re-fallback",
+    "lastFailedAt clears on success, allowing recovery to work again after re-failure",
     async t => {
-      let syncMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let syncMock = Mock.Source.make([#getItemsOrThrow])
       let fallbackMock = Mock.Source.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
+        [#getItemsOrThrow],
         ~sourceFor=Fallback,
       )
-      let newBlockStallTimeout = 0
       let secondaryRecoveryTimeout = 5
       let sourceManager = SourceManager.make(~isLive=false,
-        ~newBlockStallTimeout,
         ~secondaryRecoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
 
-      // Switch to fallback
+      // Fail sync with WithBackoff until it switches to fallback
       {
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
-        await Utils.delay(newBlockStallTimeout)
-        fallbackMock.resolveGetHeightOrThrow(101)
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+        for _ in 0 to 2 {
+          await Utils.delay(0)
+          syncMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+            call.reject(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: 100,
+                  retry: WithBackoff({message: "test fail", backoffMillis: 0}),
+                }),
+              ),
+            )
+          )
+        }
+        await Utils.delay(0)
+        fallbackMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+          call.resolve([])
+        )
         let _ = await p
+        t.expect(
+          sourceManager->SourceManager.getActiveSource,
+          ~message="Should be on fallback after sync failures",
+        ).toBe(fallbackMock.source)
       }
 
-      // Wait for recovery timeout and trigger recovery
+      // Wait for recovery timeout, then recover to sync
       await Utils.delay(secondaryRecoveryTimeout)
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
-        switch fallbackMock.getItemsOrThrowCalls {
-        | [call] => call.resolve([])
-        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
-        }
-        let _ = await p
-      }
-
-      t.expect(
-        sourceManager->SourceManager.getActiveSource,
-        ~message="Should have recovered to sync",
-      ).toBe(syncMock.source)
-
-      // Sync source succeeds - timestamp should be cleared since active is Primary
-      {
-        let p =
-          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+        // Recovery switches to sync before query
         switch syncMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
         | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
@@ -2069,36 +2118,53 @@ but we still attempt the fallback source if it was the initial active source.
 
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="Active source should remain sync after successful query",
+        ~message="Should have recovered to sync",
       ).toBe(syncMock.source)
 
-      // Now simulate sync going down again via waitForNewBlock
+      // Fail sync again to switch back to fallback
       {
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=101)
-        await Utils.delay(newBlockStallTimeout)
-        fallbackMock.resolveGetHeightOrThrow(102)
+        let p =
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=101)
+        for _ in 0 to 2 {
+          await Utils.delay(0)
+          syncMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+            call.reject(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: 101,
+                  retry: WithBackoff({message: "test fail", backoffMillis: 0}),
+                }),
+              ),
+            )
+          )
+        }
+        await Utils.delay(0)
+        fallbackMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+          call.resolve([])
+        )
         let _ = await p
         t.expect(
           sourceManager->SourceManager.getActiveSource,
-          ~message="Should switch back to fallback via waitForNewBlock",
+          ~message="Should be on fallback again after second sync failure",
         ).toBe(fallbackMock.source)
       }
 
-      // Wait for recovery timeout again and trigger recovery
+      // Wait for recovery timeout again and recover
       await Utils.delay(secondaryRecoveryTimeout)
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=102)
-        switch fallbackMock.getItemsOrThrowCalls {
+        switch syncMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
-        | _ => Js.Exn.raiseError("Expected one pending call to fallbackMock")
+        | _ => Js.Exn.raiseError("Expected one pending call to syncMock")
         }
         let _ = await p
       }
 
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="Should recover to sync again after second fallback period",
+        ~message="Should recover to sync again after second recovery period",
       ).toBe(syncMock.source)
     },
   )
