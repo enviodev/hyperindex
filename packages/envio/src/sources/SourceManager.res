@@ -20,18 +20,18 @@ type t = {
   mutable statusStart: Hrtime.timeRef,
   mutable status: sourceManagerStatus,
   maxPartitionConcurrency: int,
-  newBlockFallbackStallTimeout: int,
-  newBlockFallbackStallTimeoutLive: int,
+  newBlockStallTimeout: int,
+  newBlockStallTimeoutLive: int,
   stalledPollingInterval: int,
   getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
-  // Timestamp (ms) when we switched to a fallback/secondary source.
-  // After fallbackRecoveryTimeout ms, we attempt to switch back to a primary source.
-  mutable fallbackSwitchTimestamp: option<float>,
-  fallbackRecoveryTimeout: int,
+  // Timestamp (ms) when we switched to a secondary source.
+  // After secondaryRecoveryTimeout ms, we attempt to switch back to a primary source.
+  mutable secondarySwitchTimestamp: option<float>,
+  secondaryRecoveryTimeout: int,
   mutable hasLive: bool,
 }
 
@@ -72,10 +72,10 @@ let make = (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency,
   ~isLive,
-  ~newBlockFallbackStallTimeout=60_000,
-  ~newBlockFallbackStallTimeoutLive=20_000,
+  ~newBlockStallTimeout=60_000,
+  ~newBlockStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
-  ~fallbackRecoveryTimeout=60_000,
+  ~secondaryRecoveryTimeout=60_000,
   ~getHeightRetryInterval=makeGetHeightRetryInterval(
     ~initialRetryInterval=1000,
     ~backoffMultiplicative=2,
@@ -111,14 +111,14 @@ let make = (
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
     fetchingPartitionsCount: 0,
-    newBlockFallbackStallTimeout,
-    newBlockFallbackStallTimeoutLive,
+    newBlockStallTimeout,
+    newBlockStallTimeoutLive,
     stalledPollingInterval,
     getHeightRetryInterval,
-    fallbackRecoveryTimeout,
+    secondaryRecoveryTimeout,
     statusStart: Hrtime.makeTimer(),
     status: Idle,
-    fallbackSwitchTimestamp: None,
+    secondarySwitchTimestamp: None,
     hasLive,
   }
 }
@@ -206,7 +206,7 @@ let fetchNext = async (
 
 type status = Active | Stalled | Done
 
-let disableSourceState = (sourceManager: t, sourceState: sourceState) => {
+let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true
     switch sourceState.unsubscribe {
@@ -214,7 +214,11 @@ let disableSourceState = (sourceManager: t, sourceState: sourceState) => {
     | None => ()
     }
     if sourceState.source.sourceFor === Live {
-      sourceManager.hasLive = false
+      // Only clear hasLive if no other non-disabled Live sources remain
+      let hasOtherLive = sourceManager.sourcesState->Js.Array2.some(s =>
+        s !== sourceState && !s.disabled && s.source.sourceFor === Live
+      )
+      sourceManager.hasLive = hasOtherLive
     }
     true
   } else {
@@ -315,16 +319,15 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  let hasLive = sourceManager.hasLive
   let primarySources = []
-  let fallbackSources = []
+  let secondarySources = []
   sourcesState->Array.forEach(sourceState => {
     let source = sourceState.source
     if sourceState.disabled {
       // Skip disabled sources
       ()
     } else {
-      switch getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) {
+      switch getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
       | Some(Primary) => primarySources->Array.push(sourceState)
       | Some(Secondary) =>
         // If the active source is acting as secondary, still include
@@ -333,7 +336,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
         if source === sourceManager.activeSource {
           primarySources->Array.push(sourceState)
         } else {
-          fallbackSources->Array.push(sourceState)
+          secondarySources->Array.push(sourceState)
         }
       | None => ()
       }
@@ -343,9 +346,9 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   let status = ref(Active)
 
   let stallTimeout = if isLive {
-    sourceManager.newBlockFallbackStallTimeoutLive
+    sourceManager.newBlockStallTimeoutLive
   } else {
-    sourceManager.newBlockFallbackStallTimeout
+    sourceManager.newBlockStallTimeout
   }
 
   let (source, newBlockHeight) = await Promise.race(
@@ -361,7 +364,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
         if status.contents !== Done {
           status := Stalled
 
-          switch fallbackSources {
+          switch secondarySources {
           | [] =>
             logger->Logging.childWarn(
               `No new blocks detected within ${(stallTimeout / 1000)
@@ -370,14 +373,14 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
           | _ =>
             logger->Logging.childWarn(
               `No new blocks detected within ${(stallTimeout / 1000)
-                  ->Int.toString}s. Continuing polling with fallback RPC sources from the configuration.`,
+                  ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
             )
           }
         }
-        // Promise.race will be forever pending if fallbackSources is empty
+        // Promise.race will be forever pending if secondarySources is empty
         // which is good for this use case
         Promise.race(
-          fallbackSources->Array.map(async sourceState => {
+          secondarySources->Array.map(async sourceState => {
             (
               sourceState.source,
               await sourceManager->getSourceNewHeight(~sourceState, ~knownHeight, ~status, ~logger),
@@ -390,18 +393,18 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
 
   sourceManager.activeSource = source
 
-  // Record the timestamp when we switch to a secondary/fallback source via stall timeout,
+  // Record the timestamp when we switch to a secondary source via stall timeout,
   // so the recovery timer in executeQuery starts from the actual switch moment.
   if (
     status.contents === Stalled &&
-      sourceManager.fallbackSwitchTimestamp === None &&
+      sourceManager.secondarySwitchTimestamp === None &&
       getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) ===
         Some(Secondary)
   ) {
-    sourceManager.fallbackSwitchTimestamp = Some(Js.Date.now())
+    sourceManager.secondarySwitchTimestamp = Some(Js.Date.now())
   }
 
-  // Show a higher level log if we displayed a warning/error after newBlockFallbackStallTimeout
+  // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
   let log = status.contents === Stalled ? Logging.childInfo : Logging.childTrace
   logger->log({
     "msg": `New blocks successfully found.`,
@@ -422,14 +425,13 @@ let getNextSyncSourceState = (
   // After multiple failures start returning secondary sources as well
   // But don't try it when primary sources fail because of invalid configuration
   // note: The logic might be changed in the future
-  ~attemptFallbacks=false,
+  ~attemptSecondary=false,
   ~isLive,
 ) => {
   let before = []
   let after = []
 
   let hasActive = ref(false)
-  let hasLive = sourceManager.hasLive
 
   sourceManager.sourcesState->Array.forEach(sourceState => {
     let source = sourceState.source
@@ -440,9 +442,9 @@ let getNextSyncSourceState = (
     } else if sourceState === currentSourceState {
       hasActive := true
     } else {
-      let shouldInclude = switch getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) {
+      let shouldInclude = switch getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
       | Some(Primary) => true
-      | Some(Secondary) => attemptFallbacks || sourceState === initialSourceState
+      | Some(Secondary) => attemptSecondary || sourceState === initialSourceState
       | None => false
       }
       if shouldInclude {
@@ -462,25 +464,23 @@ let getNextSyncSourceState = (
 }
 
 let getFirstPrimarySourceState = (sourceManager: t, ~isLive) => {
-  let hasLive = sourceManager.hasLive
   sourceManager.sourcesState->Js.Array2.find(s =>
     !s.disabled &&
-      getSourceRole(~sourceFor=s.source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
+      getSourceRole(~sourceFor=s.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) === Some(Primary)
   )
 }
 
-// Called when activeSource changes to track fallback/secondary state.
-// Sets fallbackSwitchTimestamp when switching to a secondary source,
+// Called when activeSource changes to track secondary source state.
+// Sets secondarySwitchTimestamp when switching to a secondary source,
 // clears it when switching back to a primary source.
 let onActiveSourceChanged = (sourceManager: t, ~isLive) => {
-  let hasLive = sourceManager.hasLive
   if (
-    getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive) ===
+    getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) ===
       Some(Primary)
   ) {
-    sourceManager.fallbackSwitchTimestamp = None
-  } else if sourceManager.fallbackSwitchTimestamp === None {
-    sourceManager.fallbackSwitchTimestamp = Some(Js.Date.now())
+    sourceManager.secondarySwitchTimestamp = None
+  } else if sourceManager.secondarySwitchTimestamp === None {
+    sourceManager.secondarySwitchTimestamp = Some(Js.Date.now())
   }
 }
 
@@ -547,7 +547,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
           // These errors are impossible to recover, so we disable the source
           // so it's not attempted anymore
-          let notAlreadyDisabled = sourceManager->disableSourceState(sourceState)
+          let notAlreadyDisabled = sourceManager->disableSource(sourceState)
 
           // In case there are multiple partitions
           // failing at the same time. Log only once
@@ -593,7 +593,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           sourceManager->getNextSyncSourceState(
             ~initialSourceState,
             ~currentSourceState=sourceState,
-            ~attemptFallbacks=true,
+            ~attemptSecondary=true,
             ~isLive,
           )
 
@@ -618,13 +618,13 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
         // Starting from the 11th failure (retry=10)
-        // include fallback sources for switch
+        // include secondary sources for switch
         // (previously it would consider only sync sources or the initial one)
         // This is a little bit tricky to find the right number,
         // because meaning between RPC and HyperSync is different for the error
         // but since Fallback was initially designed to be used only for height check
         // just keep the value high
-        let attemptFallbacks = retry >= 10
+        let attemptSecondary = retry >= 10
 
         let nextSourceState = switch retry {
         // Don't attempt a switch on first two failure
@@ -634,7 +634,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           if retry->mod(2) === 0 {
             sourceManager->getNextSyncSourceState(
               ~initialSourceState,
-              ~attemptFallbacks,
+              ~attemptSecondary,
               ~currentSourceState=sourceState,
               ~isLive,
             )
@@ -677,11 +677,11 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
     sourceManager->onActiveSourceChanged(~isLive)
   }
 
-  // Attempt recovery from fallback to primary after timeout
-  switch sourceManager.fallbackSwitchTimestamp {
+  // Attempt recovery from secondary to primary after timeout
+  switch sourceManager.secondarySwitchTimestamp {
   | Some(switchedAt)
     if Js.Date.now() -. switchedAt >=
-      sourceManager.fallbackRecoveryTimeout->Int.toFloat =>
+      sourceManager.secondaryRecoveryTimeout->Int.toFloat =>
     switch sourceManager->getFirstPrimarySourceState(~isLive) {
     | Some(primarySourceState) =>
       let logger = Logging.createChild(
@@ -690,7 +690,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         },
       )
       logger->Logging.childInfo({
-        "msg": "Attempting to switch back to primary source after fallback recovery period",
+        "msg": "Attempting to switch back to primary source after secondary recovery period",
         "source": primarySourceState.source.name,
         "previousSource": sourceManager.activeSource.name,
       })

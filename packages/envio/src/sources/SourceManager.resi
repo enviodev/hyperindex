@@ -12,10 +12,10 @@ let make: (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency: int,
   ~isLive: bool,
-  ~newBlockFallbackStallTimeout: int=?,
-  ~newBlockFallbackStallTimeoutLive: int=?,
+  ~newBlockStallTimeout: int=?,
+  ~newBlockStallTimeoutLive: int=?,
   ~stalledPollingInterval: int=?,
-  ~fallbackRecoveryTimeout: int=?,
+  ~secondaryRecoveryTimeout: int=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
 ) => t
 
