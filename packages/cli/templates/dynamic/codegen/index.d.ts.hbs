@@ -10,12 +10,8 @@ export type * from "./src/Types.ts";
 import type { Indexer, TestIndexer } from "./src/Types.ts";
 export const indexer: Indexer;
 export const createTestIndexer: () => TestIndexer;
-import { Addresses } from "envio";
-export { Addresses };
-
-export const TestHelpers: {
-  Addresses: typeof Addresses;
-};
+import { Addresses, TestHelpers } from "envio";
+export { Addresses, TestHelpers };
 
 export {
 {{#each gql_enums as |enum|}}

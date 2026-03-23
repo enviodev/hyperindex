@@ -145,3 +145,9 @@ let createEffect = (
     },
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }
+
+module TestHelpers = {
+  module Addresses = {
+    include TestHelpers_MockAddresses
+  }
+}

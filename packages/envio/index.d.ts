@@ -20,6 +20,10 @@ export const Addresses: {
   readonly defaultAddress: Address;
 };
 
+export const TestHelpers: {
+  Addresses: typeof Addresses;
+};
+
 /** Utility type to expand/flatten complex types for better IDE display. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 
