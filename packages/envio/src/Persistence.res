@@ -19,7 +19,7 @@ type initialChainState = {
   endBlock: option<int>,
   maxReorgDepth: int,
   progressBlockNumber: int,
-  numEventsProcessed: int,
+  numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   dynamicContracts: array<Internal.indexingContract>,
@@ -92,7 +92,7 @@ type storage = {
   getRollbackTargetCheckpoint: (
     ~reorgChainId: int,
     ~lastKnownValidBlockNumber: int,
-  ) => promise<array<{"id": Internal.checkpointId}>>,
+  ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
     ~rollbackTargetCheckpointId: Internal.checkpointId,
@@ -142,7 +142,8 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.entityConfig])
+  let allEntities =
+    userEntities->Js.Array2.concat([InternalTable.DynamicContractRegistry.entityConfig])
   let allEnums =
     allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
@@ -203,8 +204,7 @@ let init = {
         resolveRef.contents()
       }
     } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
+    | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
     }
   }
 }

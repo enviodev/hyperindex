@@ -76,6 +76,70 @@ describe("E2E tests", () => {
     ).toEqual([{value: "1", labels: Js.Dict.empty()}])
   })
 
+  Async.it("Prom metrics are set independently per chain", async t => {
+    let sourceMock1337 = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let sourceMock100 = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#100,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock1337.source]),
+        },
+        {
+          chain: #100,
+          sourceConfig: Config.CustomSources([sourceMock100.source]),
+        },
+      ],
+    )
+    await Utils.delay(0)
+
+    // Enter reorg threshold for both chains
+    let _ = await Promise.all2((
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+    ))
+
+    // Advance only chain 1337 to head
+    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    await indexerMock.getBatchWritePromise()
+
+    // Chain 1337 should be ready, chain 100 should not
+    t.expect(
+      await indexerMock.metric("envio_progress_ready"),
+      ~message="Only chain 1337 should be ready",
+    ).toEqual([
+      {value: "0", labels: Js.Dict.fromArray([("chainId", "100")])},
+      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
+    ])
+    t.expect(
+      await indexerMock.metric("hyperindex_synced_to_head"),
+      ~message="All-ready metric should not be set since chain 100 is not ready",
+    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
+
+    // Now advance chain 100 to head
+    sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    await indexerMock.getBatchWritePromise()
+
+    // Both chains should now be ready
+    t.expect(
+      await indexerMock.metric("envio_progress_ready"),
+      ~message="Both chains should be ready",
+    ).toEqual([
+      {value: "1", labels: Js.Dict.fromArray([("chainId", "100")])},
+      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
+    ])
+    t.expect(
+      await indexerMock.metric("hyperindex_synced_to_head"),
+      ~message="All-ready metric should be set when both chains are ready",
+    ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+  })
+
   Async.it("Shouldn't allow context access after hander is resolved", async t => {
     let errors = []
 
@@ -243,35 +307,35 @@ describe("E2E tests", () => {
       (
         [
           {
-            id: 2.,
+            id: 2n,
             chainId: 100,
             blockNumber: 150,
             blockHash: Js.Null.Null,
             eventsProcessed: 1,
           },
           {
-            id: 3.,
+            id: 3n,
             chainId: 1337,
             blockNumber: 100,
             blockHash: Js.Null.Value("0x100"),
             eventsProcessed: 0,
           },
           {
-            id: 4.,
+            id: 4n,
             chainId: 1337,
             blockNumber: 150,
             blockHash: Js.Null.Null,
             eventsProcessed: 1,
           },
           {
-            id: 5.,
+            id: 5n,
             chainId: 100,
             blockNumber: 151,
             blockHash: Js.Null.Null,
             eventsProcessed: 1,
           },
           {
-            id: 6.,
+            id: 6n,
             chainId: 100,
             blockNumber: 160,
             blockHash: Js.Null.Value("0x160"),
@@ -280,7 +344,7 @@ describe("E2E tests", () => {
         ],
         [
           Set({
-            checkpointId: 2.,
+            checkpointId: 2n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -288,7 +352,7 @@ describe("E2E tests", () => {
             },
           }),
           Set({
-            checkpointId: 4.,
+            checkpointId: 4n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -296,7 +360,7 @@ describe("E2E tests", () => {
             },
           }),
           Set({
-            checkpointId: 5.,
+            checkpointId: 5n,
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -348,11 +412,11 @@ describe("E2E tests", () => {
     )
 
     t.expect(
-      await indexerMock.metric("envio_effect_calls_count"),
+      await indexerMock.metric("envio_effect_call_total"),
       ~message="should have no effect calls in the beginning",
     ).toEqual([])
     t.expect(
-      await indexerMock.metric("envio_effect_cache_count"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="should have no effect cache in the beginning",
     ).toEqual([])
 
@@ -375,7 +439,7 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await indexerMock.metric("envio_effect_calls_count"),
+      await indexerMock.metric("envio_effect_call_total"),
       ~message="should increment effect calls count",
     ).toEqual(
       [
@@ -390,7 +454,7 @@ describe("E2E tests", () => {
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_effect_cache_count"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="should increment effect cache count",
     ).toEqual(
       [
@@ -401,7 +465,7 @@ describe("E2E tests", () => {
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_storage_load_count"),
+      await indexerMock.metric("envio_storage_load_total"),
       ~message="Shouldn't load anything from storage at this point",
     ).toEqual([])
     t.expect(
@@ -413,11 +477,11 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     t.expect(
-      await indexerMock.metric("envio_effect_calls_count"),
+      await indexerMock.metric("envio_effect_call_total"),
       ~message="Should reset the calls metric on restart",
     ).toEqual([])
     t.expect(
-      await indexerMock.metric("envio_effect_cache_count"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="should resume effect cache count on restart",
     ).toEqual(
       [
@@ -454,7 +518,7 @@ describe("E2E tests", () => {
       await Promise.all3((
         indexerMock.metric("envio_storage_load_where_size"),
         indexerMock.metric("envio_storage_load_size"),
-        indexerMock.metric("envio_storage_load_count"),
+        indexerMock.metric("envio_storage_load_total"),
       )),
       ~message="Time to load cache from storage now",
     ).toEqual(
@@ -481,8 +545,8 @@ describe("E2E tests", () => {
     )
     t.expect(
       await Promise.all2((
-        indexerMock.metric("envio_effect_calls_count"),
-        indexerMock.metric("envio_effect_cache_count"),
+        indexerMock.metric("envio_effect_call_total"),
+        indexerMock.metric("envio_effect_cache"),
       )),
       ~message="Should increment effect calls count and cache count",
     ).toEqual(
@@ -549,7 +613,7 @@ describe("E2E tests", () => {
       ],
     )
     t.expect(
-      await indexerMock.metric("envio_effect_cache_count"),
+      await indexerMock.metric("envio_effect_cache"),
       ~message="Shouldn't increment on invalidation",
     ).toEqual(
       [
@@ -689,8 +753,8 @@ describe("E2E tests", () => {
             // Check metrics while effects are executing
             await Utils.delay(3)
             let (queueMetric, activeMetric) = await Promise.all2((
-              indexerMock.metric("envio_effect_queue_count"),
-              indexerMock.metric("envio_effect_active_calls_count"),
+              indexerMock.metric("envio_effect_queue"),
+              indexerMock.metric("envio_effect_active_calls"),
             ))
             queueMetricDuringExecution := Some(queueMetric)
             activeMetricDuringExecution := Some(activeMetric)
@@ -709,7 +773,7 @@ describe("E2E tests", () => {
 
     // All effects should complete successfully - verify via calls count metric
     t.expect(
-      await indexerMock.metric("envio_effect_calls_count"),
+      await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 6 times total",
     ).toEqual([{value: "6", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
 
@@ -726,7 +790,7 @@ describe("E2E tests", () => {
 
     // Final check - queue should be empty
     t.expect(
-      await indexerMock.metric("envio_effect_queue_count"),
+      await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all windows complete",
     ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
   })
@@ -787,8 +851,8 @@ describe("E2E tests", () => {
             // Check metrics while effects are executing (shortly after trigger)
             await Utils.delay(3)
             let (queueMetric1, activeMetric1) = await Promise.all2((
-              indexerMock.metric("envio_effect_queue_count"),
-              indexerMock.metric("envio_effect_active_calls_count"),
+              indexerMock.metric("envio_effect_queue"),
+              indexerMock.metric("envio_effect_active_calls"),
             ))
             queueMetricDuringExecution := Some(queueMetric1)
             activeMetricDuringExecution := Some(activeMetric1)
@@ -796,7 +860,7 @@ describe("E2E tests", () => {
             // Check again after first window should complete
             await Utils.delay(14)
             queueMetricAfterFirstWindow :=
-              Some(await indexerMock.metric("envio_effect_queue_count"))
+              Some(await indexerMock.metric("envio_effect_queue"))
 
             let _ = await resultsPromise
           },
@@ -812,7 +876,7 @@ describe("E2E tests", () => {
 
     // Verify via calls count metric
     t.expect(
-      await indexerMock.metric("envio_effect_calls_count"),
+      await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 4 times total",
     ).toEqual([{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
 
@@ -840,7 +904,7 @@ describe("E2E tests", () => {
 
     // Final check - queue should be empty
     t.expect(
-      await indexerMock.metric("envio_effect_queue_count"),
+      await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all batches complete",
     ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
   })
@@ -1449,5 +1513,74 @@ describe("E2E tests", () => {
       addresses->Js.Dict.unsafeGet("Gravatar")->Array.length,
       ~message="Merged partition should have addresses from both DCs",
     ).toEqual(2)
+  })
+
+  Async.it("_meta and chain_metadata return events processed as a number (float4 cast)", async t => {
+    let sourceMock = Mock.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await Mock.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+      ~enableHasura=true,
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    sourceMock.resolveGetItemsOrThrow([
+      {
+        blockNumber: 50,
+        logIndex: 1,
+      },
+    ])
+    await indexerMock.getBatchWritePromise()
+
+    // Update events_processed to a value > int32 max to verify uint52 column works
+    let sql = PgStorage.makeClient()
+    let _ = await sql->Postgres.unsafe(
+      `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
+    )
+
+    // float4 cast in the views makes Hasura return numbers instead of strings
+    // float4 has ~7 digits of precision, so large values lose precision
+    t.expect(
+      await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
+      ~message="_meta should return eventsProcessed as a number (float4 not stringified by Hasura)",
+    ).toEqual(
+      {
+        data: {
+          "_meta": [
+            {
+              "chainId": 1337,
+              "eventsProcessed": 2147487700., // float4 precision loss from 2147487821
+            },
+          ],
+        },
+      },
+    )
+
+    t.expect(
+      await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
+      ~message="chain_metadata should return num_events_processed as a number (float4 not stringified)",
+    ).toEqual(
+      {
+        data: {
+          "chain_metadata": [
+            {
+              "chain_id": 1337,
+              "num_events_processed": 2147487700., // float4 precision loss from 2147487821
+            },
+          ],
+        },
+      },
+    )
   })
 })

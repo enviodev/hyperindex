@@ -107,7 +107,7 @@ let handleLoadByField = (
 let handleWriteBatch = (
   state: testIndexerState,
   ~updatedEntities: array<TestIndexerProxyStorage.serializableUpdatedEntity>,
-  ~checkpointIds: array<float>,
+  ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointBlockHashes: array<Js.Null.t<string>>,
@@ -140,7 +140,7 @@ let handleWriteBatch = (
           entityDict->Js.Dict.set(entityId, parsedEntity)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->Float.toString
+          let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -162,7 +162,7 @@ let handleWriteBatch = (
           Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->Float.toString
+          let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -209,7 +209,7 @@ let handleWriteBatch = (
     )
 
     // Add entity changes for this checkpoint
-    let checkpointKey = checkpointId->Float.toString
+    let checkpointKey = checkpointId->BigInt.toString
     switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
     | Some(entityChanges) =>
       entityChanges
@@ -220,11 +220,10 @@ let handleWriteBatch = (
           let entityObj: dict<unknown> = Js.Dict.empty()
           if sets->Array.length > 0 {
             // Transform sets to simplified {address, contract} objects
-            let simplifiedSets =
-              sets->Array.map(entity => {
-                let dc = entity->Utils.magic->castFromDcRegistry
-                {"address": dc.contractAddress, "contract": dc.contractName}
-              })
+            let simplifiedSets = sets->Array.map(entity => {
+              let dc = entity->Utils.magic->castFromDcRegistry
+              {"address": dc.contractAddress, "contract": dc.contractName}
+            })
             entityObj->Js.Dict.set("sets", simplifiedSets->Utils.magic)
           }
           // Note: deleted is not relevant for addresses since we use address string directly
@@ -273,7 +272,7 @@ let makeInitialState = (
       sourceBlockNumber: processChainConfig.endBlock,
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
-      numEventsProcessed: 0,
+      numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
       dynamicContracts,
@@ -325,15 +324,13 @@ let validateBlockRange = (
 }
 
 // Entity operations for direct manipulation outside of handlers
-let makeEntityGet = (
-  ~state: testIndexerState,
-  ~entityConfig: Internal.entityConfig,
-): (string => promise<option<Internal.entity>>) => {
+let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
+  string => promise<option<Internal.entity>>
+) => {
   entityId => {
     if state.processInProgress {
       Js.Exn.raiseError(
-        `Cannot call ${entityConfig.name}.get() while indexer.process() is running. ` ++
-        "Wait for process() to complete before accessing entities directly.",
+        `Cannot call ${entityConfig.name}.get() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
       )
     }
     let entityDict =
@@ -342,15 +339,13 @@ let makeEntityGet = (
   }
 }
 
-let makeEntitySet = (
-  ~state: testIndexerState,
-  ~entityConfig: Internal.entityConfig,
-): (Internal.entity => unit) => {
+let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
+  Internal.entity => unit
+) => {
   entity => {
     if state.processInProgress {
       Js.Exn.raiseError(
-        `Cannot call ${entityConfig.name}.set() while indexer.process() is running. ` ++
-        "Wait for process() to complete before modifying entities directly.",
+        `Cannot call ${entityConfig.name}.set() while indexer.process() is running. ` ++ "Wait for process() to complete before modifying entities directly.",
       )
     }
     let entityDict = switch state.entities->Js.Dict.get(entityConfig.name) {
@@ -441,8 +436,7 @@ let makeCreateTestIndexer = (
             get: () => {
               if state.processInProgress {
                 Js.Exn.raiseError(
-                  `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++
-                  "Wait for process() to complete before reading contract addresses.",
+                  `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++ "Wait for process() to complete before reading contract addresses.",
                 )
               }
               // Start with static config addresses
@@ -452,12 +446,14 @@ let makeCreateTestIndexer = (
               | Some(dcDict) =>
                 dcDict
                 ->Js.Dict.values
-                ->Array.forEach(entity => {
-                  let dc = entity->castFromDcRegistry
-                  if dc.contractName === contract.name && dc.chainId === chainConfig.id {
-                    addresses->Array.push(dc.contractAddress)->ignore
-                  }
-                })
+                ->Array.forEach(
+                  entity => {
+                    let dc = entity->castFromDcRegistry
+                    if dc.contractName === contract.name && dc.chainId === chainConfig.id {
+                      addresses->Array.push(dc.contractAddress)->ignore
+                    }
+                  },
+                )
               | None => ()
               }
               addresses
@@ -467,7 +463,10 @@ let makeCreateTestIndexer = (
         ->ignore
 
         chainObj
-        ->Utils.Object.definePropertyWithValue(contract.name, {enumerable: true, value: contractObj})
+        ->Utils.Object.definePropertyWithValue(
+          contract.name,
+          {enumerable: true, value: contractObj},
+        )
         ->ignore
       })
 
@@ -561,18 +560,12 @@ let makeCreateTestIndexer = (
         )
 
         Promise.make((resolve, reject) => {
-          // BigInt-safe JSON serialization (converts BigInt to string for simulate params)
-          let jsonStringifyBigIntSafe: 'a => string = %raw(`function(obj) {
-            return JSON.stringify(obj, function(_, v) {
-              return typeof v === "bigint" ? v.toString() : v;
-            })
-          }`)
           // Include initialState in workerData
           let workerDataObj = {
-            "processConfig": processConfig->Utils.magic->jsonStringifyBigIntSafe->Js.Json.parseExn,
-            "initialState": initialState->Utils.magic,
+            "processConfig": processConfig->(Utils.magic: 'a => Js.Json.t),
+            "initialState": initialState->(Utils.magic: Persistence.initialState => Js.Json.t),
           }
-          let workerData = workerDataObj->jsonStringifyBigIntSafe->Js.Json.parseExn
+          let workerData = workerDataObj->(Utils.magic: {"processConfig": Js.Json.t, "initialState": Js.Json.t} => Js.Json.t)
           let worker = try {
             NodeJs.WorkerThreads.makeWorker(
               workerPath,
@@ -662,9 +655,7 @@ type workerData = {
   initialState: Persistence.initialState,
 }
 
-let initTestWorker = (
-  ~makeGeneratedConfig: unit => Config.t,
-) => {
+let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
   if NodeJs.WorkerThreads.isMainThread {
     Js.Exn.raiseError("initTestWorker must be called from a worker thread")
   }

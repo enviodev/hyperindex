@@ -6,7 +6,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<int>})
+  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
   type t = {
@@ -133,7 +133,7 @@ type action =
   | SetRollbackState({
       diffInMemoryStore: InMemoryStore.t,
       rollbackedChainManager: ChainManager.t,
-      eventsProcessedDiffByChain: dict<int>,
+      eventsProcessedDiffByChain: dict<float>,
     })
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -162,7 +162,6 @@ let updateChainMetadataTable = (
         isHyperSync: (cf.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
         latestFetchedBlockNumber: cf.fetchState->FetchState.bufferBlockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Js.Null.fromOption,
-        numBatchesFetched: cf.numBatchesFetched,
       },
     )
   })
@@ -178,13 +177,13 @@ Takes in a chain manager and sets all chains timestamp caught up to head
 when valid state lines up and returns an updated chain manager
 */
 let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ctx: Ctx.t) => {
-  Prometheus.ProgressBatchCount.increment()
-
   let nextQueueItemIsNone = chainManager->ChainManager.nextItemIsNone
 
   let allChainsAtHead = chainManager->ChainManager.isProgressAtHead
   //Update the timestampCaughtUpToHeadOrEndblock values
-  let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
+  let allChainsReady = ref(true)
+  let chainFetchers = chainManager.chainFetchers->ChainMap.map(prev => {
+    let cf = prev
     let chain = ChainMap.Chain.makeUnsafe(~chainId=cf.chainConfig.id)
 
     let maybeChainAfterBatch =
@@ -227,7 +226,9 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
           fetchState: switch cf.fetchState.firstEventBlock {
           | Some(_) => cf.fetchState
           | None =>
-            switch batch->Batch.findFirstEventBlockNumber(~chainId=chain->ChainMap.Chain.toChainId) {
+            switch batch->Batch.findFirstEventBlockNumber(
+              ~chainId=chain->ChainMap.Chain.toChainId,
+            ) {
             | Some(_) as firstEventBlock => {...cf.fetchState, firstEventBlock}
             | None => cf.fetchState
             }
@@ -271,15 +272,15 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
      * The given chain fetcher is fetching at the head or latest processed block >= endblock
      * The given chain has processed all events on the queue
      * see https://github.com/Float-Capital/indexer/pull/1388 */
-    if cf->ChainFetcher.hasProcessedToEndblock {
+    let cf = if cf->ChainFetcher.hasProcessedToEndblock {
       // in the case this is already set, don't reset and instead propagate the existing value
       let timestampCaughtUpToHeadOrEndblock =
-        cf->ChainFetcher.isLive ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
+        cf->ChainFetcher.isReady ? cf.timestampCaughtUpToHeadOrEndblock : Js.Date.make()->Some
       {
         ...cf,
         timestampCaughtUpToHeadOrEndblock,
       }
-    } else if !(cf->ChainFetcher.isLive) && cf.isProgressAtHead {
+    } else if !(cf->ChainFetcher.isReady) && cf.isProgressAtHead {
       //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
       //its not already set
       //CASE1
@@ -310,15 +311,21 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
       //Default to just returning cf
       cf
     }
+
+    // Set envio_progress_ready per-chain when it first becomes ready
+    if cf->ChainFetcher.isReady {
+      if !(prev->ChainFetcher.isReady) {
+        Prometheus.ProgressReady.set(~chainId=chain->ChainMap.Chain.toChainId)
+      }
+    } else {
+      allChainsReady := false
+    }
+
+    cf
   })
 
-  let allChainsSyncedAtHead =
-    chainFetchers
-    ->ChainMap.values
-    ->Array.every(cf => cf->ChainFetcher.isLive)
-
-  if allChainsSyncedAtHead {
-    Prometheus.setAllChainsSyncedToHead()
+  if allChainsReady.contents {
+    Prometheus.ProgressReady.setAllReady()
   }
 
   {
@@ -333,7 +340,7 @@ let updateProgressedChains = (chainManager: ChainManager.t, ~batch: Batch.t, ~ct
 
 let validatePartitionQueryResponse = (
   state,
-  {chain, response, query} as partitionQueryResponse: partitionQueryResponse,
+  {chain, response} as partitionQueryResponse: partitionQueryResponse,
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
@@ -356,22 +363,13 @@ let validatePartitionQueryResponse = (
     )
   }
 
-  if Env.Benchmark.shouldSaveData {
-    Benchmark.addBlockRangeFetched(
-      ~totalTimeElapsed=stats.totalTimeElapsed,
-      ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0),
-      ~pageFetchTime=stats.pageFetchTime->Belt.Option.getWithDefault(0),
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~fromBlock=fromBlockQueried,
-      ~toBlock=latestFetchedBlockNumber,
-      ~numEvents=parsedQueueItems->Array.length,
-      ~numAddresses=query.addressesByContractName->FetchState.addressesByContractNameCount,
-      ~queryName=switch query {
-      | {selection: {dependsOnAddresses: false}} => `Wildcard Query`
-      | {selection: {dependsOnAddresses: true}} => `Normal Query`
-      },
-    )
-  }
+  Prometheus.FetchingBlockRange.increment(
+    ~chainId=chain->ChainMap.Chain.toChainId,
+    ~totalTimeElapsed=stats.totalTimeElapsed,
+    ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
+    ~numEvents=parsedQueueItems->Array.length,
+    ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
+  )
 
   let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
     chainFetcher.reorgDetection->ReorgDetection.registerReorgGuard(~reorgGuard, ~knownHeight)
@@ -416,16 +414,23 @@ let validatePartitionQueryResponse = (
       let chainManager = switch state.rollbackState {
       | RollbackReady({eventsProcessedDiffByChain}) => {
           ...state.chainManager,
-          chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcher => {
+          // Restore event counters for ALL chains, not just the reorg chain.
+          // The previous rollback subtracted from all chains' counters,
+          // but was never committed to DB. So we must undo the subtraction
+          // for every chain before the new rollback subtracts again.
+          chainFetchers: state.chainManager.chainFetchers->ChainMap.mapWithKey((
+            c,
+            chainFetcher,
+          ) => {
             switch eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
-              chain->ChainMap.Chain.toChainId,
+              c->ChainMap.Chain.toChainId,
             ) {
             | Some(eventsProcessedDiff) => {
                 ...chainFetcher,
                 // Since we detected a reorg, until rollback wasn't completed in the db
                 // We return the events processed counter to the pre-rollback value,
                 // to decrease it once more for the new rollback.
-                numEventsProcessed: chainFetcher.numEventsProcessed + eventsProcessedDiff,
+                numEventsProcessed: chainFetcher.numEventsProcessed +. eventsProcessedDiff,
               }
             | None => chainFetcher
             }
@@ -476,11 +481,6 @@ let submitPartitionQueryResponse = (
       ~newItemsWithDcs,
       ~knownHeight,
     )
-
-  let updatedChainFetcher = {
-    ...updatedChainFetcher,
-    numBatchesFetched: updatedChainFetcher.numBatchesFetched + 1,
-  }
 
   if !chainFetcher.isProgressAtHead && updatedChainFetcher.isProgressAtHead {
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
@@ -858,7 +858,7 @@ let injectedTaskReducer = (
             )
           }
           Prometheus.RollbackHistoryPrune.increment(
-            ~timeMillis=Hrtime.timeSince(timeRef)->Hrtime.toMillis,
+            ~timeSeconds=Hrtime.timeSince(timeRef)->Hrtime.toSecondsFloat,
             ~entityName=entityConfig.name,
           )
         }
@@ -918,7 +918,6 @@ let injectedTaskReducer = (
         )
 
       let progressedChainsById = batch.progressedChainsById
-      let totalBatchSize = batch.totalBatchSize
 
       let isInReorgThreshold = state.chainManager.isInReorgThreshold
       let shouldSaveHistory = state.ctx.config->Config.shouldSaveHistory(~isInReorgThreshold)
@@ -958,15 +957,6 @@ let injectedTaskReducer = (
           }
         }
       } else {
-        if Env.Benchmark.shouldSaveData {
-          let group = "Other"
-          Benchmark.addSummaryData(
-            ~group,
-            ~label=`Batch Size`,
-            ~value=totalBatchSize->Belt.Int.toFloat,
-          )
-        }
-
         dispatchAction(StartProcessingBatch)
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
@@ -1045,14 +1035,14 @@ let injectedTaskReducer = (
           ~reorgChainId,
           ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
         ) {
-        | [checkpoint] => checkpoint["id"]
-        | _ => 0.
+        | Some(checkpointId) => checkpointId
+        | None => 0n
         }
       }
 
       let eventsProcessedDiffByChain = Js.Dict.empty()
       let newProgressBlockNumberPerChain = Js.Dict.empty()
-      let rollbackedProcessedEvents = ref(0)
+      let rollbackedProcessedEvents = ref(0.)
 
       {
         let rollbackProgressDiff = await state.ctx.persistence.storage.getRollbackProgressDiff(
@@ -1062,21 +1052,18 @@ let injectedTaskReducer = (
           let diff = rollbackProgressDiff->Js.Array2.unsafe_get(idx)
           eventsProcessedDiffByChain->Utils.Dict.setByInt(
             diff["chain_id"],
-            switch diff["events_processed_diff"]->Int.fromString {
-            | Some(eventsProcessedDiff) => {
-                rollbackedProcessedEvents :=
-                  rollbackedProcessedEvents.contents + eventsProcessedDiff
-                eventsProcessedDiff
-              }
-            | None =>
-              Js.Exn.raiseError(
-                `Unexpedted case: Invalid events processed diff ${diff["events_processed_diff"]}`,
-              )
+            {
+              let eventsProcessedDiff = Float.fromString(
+                diff["events_processed_diff"],
+              )->Option.getExn
+              rollbackedProcessedEvents :=
+                rollbackedProcessedEvents.contents +. eventsProcessedDiff
+              eventsProcessedDiff
             },
           )
           newProgressBlockNumberPerChain->Utils.Dict.setByInt(
             diff["chain_id"],
-            if rollbackTargetCheckpointId === 0. && diff["chain_id"] === reorgChainId {
+            if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChainId {
               Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
             } else {
               diff["new_progress_block_number"]
@@ -1093,10 +1080,9 @@ let injectedTaskReducer = (
           let fetchState =
             cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
           let newTotalEventsProcessed =
-            cf.numEventsProcessed -
-            eventsProcessedDiffByChain
+            cf.numEventsProcessed -. (eventsProcessedDiffByChain
             ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
-            ->Option.getUnsafe
+            ->Option.getUnsafe)
 
           if cf.committedProgressBlockNumber !== newProgressBlockNumber {
             Prometheus.ProgressBlockNumber.set(
@@ -1132,8 +1118,24 @@ let injectedTaskReducer = (
             numEventsProcessed: newTotalEventsProcessed,
           }
 
-        | None => //If no change was produced on the given chain after the reorged chain, no need to rollback anything
-          cf
+        | None =>
+          // Even without a progress diff entry, the reorg chain must have its
+          // reorgDetection and fetchState rolled back. Otherwise the stale block hash
+          // stays in dataByBlockNumber and the same reorg is re-detected on the next
+          // fetch, causing an infinite reorg→rollback loop.
+          if chain == reorgChain {
+            {
+              ...cf,
+              reorgDetection: cf.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(
+                ~blockNumber=rollbackTargetBlockNumber,
+              ),
+              fetchState: cf.fetchState->FetchState.rollback(
+                ~targetBlockNumber=rollbackTargetBlockNumber,
+              ),
+            }
+          } else {
+            cf
+          }
         }
       })
 
@@ -1141,7 +1143,7 @@ let injectedTaskReducer = (
       let diff =
         await state.ctx.persistence->Persistence.prepareRollbackDiff(
           ~rollbackTargetCheckpointId,
-          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId +. 1.,
+          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
         )
 
       let chainManager = {
@@ -1160,7 +1162,7 @@ let injectedTaskReducer = (
         "targetCheckpointId": rollbackTargetCheckpointId,
       })
       Prometheus.RollbackSuccess.increment(
-        ~timeMillis=Hrtime.timeSince(startTime)->Hrtime.toMillis,
+        ~timeSeconds=Hrtime.timeSince(startTime)->Hrtime.toSecondsFloat,
         ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
       )
 

@@ -15,7 +15,7 @@ module RowAction = {
 // Prefix with envio_ to avoid colleasions
 let changeFieldName = "envio_change"
 let checkpointIdFieldName = "envio_checkpoint_id"
-let checkpointIdFieldType = Uint32
+let checkpointIdFieldType = UInt64
 let changeFieldType = Enum({config: RowAction.config->Table.fromGenericEnumConfig})
 
 let unsafeCheckpointIdSchema =
@@ -23,11 +23,11 @@ let unsafeCheckpointIdSchema =
   ->S.setName("CheckpointId")
   ->S.transform(s => {
     parser: string =>
-      switch string->Belt.Float.fromString {
-      | Some(float) => float
+      switch BigInt.fromString(string) {
       | None => s.fail("The string is not valid CheckpointId")
+      | Some(v) => v
       },
-    serializer: float => float->Belt.Float.toString,
+    serializer: bigint => bigint->BigInt.toString,
   })
 
 let makeSetUpdateSchema: S.t<'entity> => S.t<Change.t<'entity>> = entitySchema => {
@@ -112,7 +112,7 @@ let pruneStaleEntityHistory = (
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
     makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [safeCheckpointId]->(Utils.magic: array<float> => unknown),
+    [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
 }
 
@@ -144,14 +144,14 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
   ->Promise.ignoreValue
 }
 
-let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: float) => {
+let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
   sql
   ->Postgres.preparedUnsafe(
     `DELETE FROM "${pgSchema}"."${historyTableName(
         ~entityName,
         ~entityIndex,
       )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId]->(Utils.magic: array<float> => unknown),
+    [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
   ->Promise.ignoreValue
 }

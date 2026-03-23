@@ -48,16 +48,6 @@ module Gauge = {
   @send external get: gauge => promise<{"values": array<dict<string>>}> = "get"
 }
 
-module Histogram = {
-  type histogram
-  @new @module("prom-client") external make: customMetric<'a> => histogram = "Histogram"
-
-  @send external observe: (histogram, float) => unit = "observe"
-  @send external startTimer: histogram => unit => unit = "startTimer"
-
-  @send external labels: (histogram, 'labelsObject) => histogram = "labels"
-}
-
 module Summary = {
   type summary
   @new @module("prom-client") external makeSummary: customMetric<'a> => summary = "Summary"

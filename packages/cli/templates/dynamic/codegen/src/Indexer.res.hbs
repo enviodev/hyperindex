@@ -22,15 +22,11 @@ type contractRegistrations = {
 module Transaction = {
   @genType
   type t = {{field_selection.transaction_type}}
-
-  let schema = {{field_selection.transaction_schema}}
 }
 
 module Block = {
   @genType
   type t = {{field_selection.block_type}}
-
-  let schema = {{field_selection.block_schema}}
 }
 
 {{!-- For internal usage. The type and schema which agreage

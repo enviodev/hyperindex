@@ -46,7 +46,10 @@ let getClickHouseFieldType = (
   let baseType = switch fieldType {
   | Int32 => "Int32"
   | Uint32 => "UInt32"
+  | UInt52 => "UInt64"
+  | UInt64 => "UInt64"
   | Serial => "Int32"
+  | BigSerial => "Int64"
   | BigInt({?precision}) =>
     switch precision {
     | None => "String" // Fallback for unbounded BigInt
@@ -115,6 +118,23 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 S.array(dateSchema)->S.toUnknown
               } else {
                 dateSchema
+              }
+            }
+          // ClickHouse returns UInt64 values as strings, need to parse to float
+          | UInt52 => {
+              let uint52Schema =
+                S.float
+                ->S.preprocess(_ => {
+                  parser: unknown =>
+                    unknown->(Utils.magic: unknown => string)->Js.Float.fromString,
+                })
+                ->S.toUnknown
+              if f.isNullable {
+                S.null(uint52Schema)->S.toUnknown
+              } else if f.isArray {
+                S.array(uint52Schema)->S.toUnknown
+              } else {
+                uint52Schema
               }
             }
           | _ => f.fieldSchema
@@ -260,7 +280,7 @@ let makeCreateHistoryTableQuery = (~entityConfig: Internal.entityConfig, ~databa
     )}\` (
   ${fieldDefinitions->Js.Array2.joinWith(",\n  ")},
   \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
-      ~fieldType=Uint32,
+      ~fieldType=UInt64,
       ~isNullable=false,
       ~isArray=false,
     )},
@@ -283,7 +303,7 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
   let eventsProcessedField = (#events_processed: InternalTable.Checkpoints.field :> string)
 
   `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\` (
-  \`${idField}\` ${getClickHouseFieldType(~fieldType=Int32, ~isNullable=false, ~isArray=false)},
+  \`${idField}\` ${getClickHouseFieldType(~fieldType=UInt64, ~isNullable=false, ~isArray=false)},
   \`${chainIdField}\` ${getClickHouseFieldType(
       ~fieldType=Int32,
       ~isNullable=false,
@@ -300,7 +320,7 @@ let makeCreateCheckpointsTableQuery = (~database: string) => {
       ~isArray=false,
     )},
   \`${eventsProcessedField}\` ${getClickHouseFieldType(
-      ~fieldType=Int32,
+      ~fieldType=UInt64,
       ~isNullable=false,
       ~isArray=false,
     )}
@@ -379,7 +399,7 @@ let initialize = async (
 }
 
 // Resume ClickHouse sink after reorg by deleting rows with checkpoint IDs higher than target
-let resume = async (client, ~database: string, ~checkpointId: float) => {
+let resume = async (client, ~database: string, ~checkpointId: Internal.checkpointId) => {
   try {
     // Try to use the database - will throw if it doesn't exist
     try {
@@ -404,14 +424,14 @@ let resume = async (client, ~database: string, ~checkpointId: float) => {
       tables->Belt.Array.map(table => {
         let tableName = table["name"]
         client->exec({
-          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Belt.Float.toString}`,
+          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
         })
       }),
     )->Promise.ignoreValue
 
     // Delete stale checkpoints
     await client->exec({
-      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->Belt.Float.toString}`,
+      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
     })
   } catch {
   | Persistence.StorageError(_) as exn => raise(exn)

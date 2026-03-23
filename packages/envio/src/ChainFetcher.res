@@ -15,8 +15,7 @@ type t = {
   isProgressAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   committedProgressBlockNumber: int,
-  numEventsProcessed: int,
-  numBatchesFetched: int,
+  numEventsProcessed: float,
   reorgDetection: ReorgDetection.t,
   safeCheckpointTracking: option<SafeCheckpointTracking.t>,
 }
@@ -35,7 +34,6 @@ let make = (
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
-  ~numBatchesFetched,
   ~isInReorgThreshold,
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
@@ -90,7 +88,9 @@ let make = (
         ).getEventFiltersOrThrow
 
         // Check for non-evm chains
-        if getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool) {
+        if (
+          getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool)
+        ) {
           switch getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)) {
           | Static([]) => true
           | _ => false
@@ -261,7 +261,6 @@ let make = (
     committedProgressBlockNumber: progressBlockNumber,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
-    numBatchesFetched,
   }
 }
 
@@ -284,8 +283,7 @@ let makeFromConfig = (
     ~maxReorgDepth=chainConfig.maxReorgDepth,
     ~progressBlockNumber=-1,
     ~timestampCaughtUpToHeadOrEndblock=None,
-    ~numEventsProcessed=0,
-    ~numBatchesFetched=0,
+    ~numEventsProcessed=0.,
     ~targetBufferSize,
     ~logger,
     ~dynamicContracts=[],
@@ -332,7 +330,6 @@ let makeFromDbState = async (
       ? None
       : resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
-    ~numBatchesFetched=0,
     ~logger,
     ~targetBufferSize,
     ~isInReorgThreshold,
@@ -530,4 +527,4 @@ let getLastKnownValidBlock = async (
 
 let isActivelyIndexing = (chainFetcher: t) => chainFetcher.fetchState->FetchState.isActivelyIndexing
 
-let isLive = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None
+let isReady = (chainFetcher: t) => chainFetcher.timestampCaughtUpToHeadOrEndblock !== None

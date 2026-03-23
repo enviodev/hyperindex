@@ -1,6 +1,7 @@
 @@directive("import packageJson from '../package.json' with { type: 'json' }")
 
 external magic: 'a => 'b = "%identity"
+@val external floatToInt: float => int = "Math.trunc"
 
 @val external importPath: string => promise<unknown> = "import"
 
@@ -497,31 +498,6 @@ external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 module Schema = {
   let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
-  let getNonOptionalFieldNames = schema => {
-    let acc = []
-    switch schema->S.classify {
-    | Object({items}) =>
-      items->Js.Array2.forEach(item => {
-        switch item.schema->S.classify {
-        // Check for null, since we generate S.null schema for db serializing
-        // In the future it should be changed to Option only
-        | Null(_) => ()
-        | Option(_) => ()
-        | _ => acc->Js.Array2.push(item.location)->ignore
-        }
-      })
-    | _ => ()
-    }
-    acc
-  }
-
-  let getCapitalizedFieldNames = schema => {
-    switch schema->S.classify {
-    | Object({items}) => items->Js.Array2.map(item => item.location->String.capitalize)
-    | _ => []
-    }
-  }
-
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
   let dbDate =
@@ -646,6 +622,18 @@ external entries: t<'value> => Js_iterator.t<('value, 'value)> = "entries"
   )
   @send
   external forEachWithSet: (t<'value>, ('value, 'value, t<'value>) => unit) => unit = "forEach"
+}
+
+// Typed-key dictionary backed by Js.Dict. Keys must be @unboxed string variants.
+module Record = {
+  type t<'key, 'value>
+
+  external fromDict: Js.Dict.t<'value> => t<'key, 'value> = "%identity"
+  let fromArray: array<('key, 'value)> => t<'key, 'value> = pairs =>
+    pairs->(magic: array<('key, 'value)> => array<(string, 'value)>)->Js.Dict.fromArray->fromDict
+
+  @get_index external getUnsafe: (t<'key, 'value>, 'key) => 'value = ""
+  @get_index external get: (t<'key, 'value>, 'key) => option<'value> = ""
 }
 
 module WeakMap = {

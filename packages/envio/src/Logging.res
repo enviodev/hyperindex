@@ -154,7 +154,9 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
 let getItemLogger = {
   let cacheKey = "_logger"
   (item: Internal.item) => {
-    switch item->(Utils.magic: Internal.item => Js.Dict.t<Pino.t>)->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+    switch item
+    ->(Utils.magic: Internal.item => Js.Dict.t<Pino.t>)
+    ->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(l) => l
     | None => {
         let l = getLogger()->child(
@@ -185,7 +187,12 @@ let getItemLogger = {
 
 @inline
 let logForItem = (item, level: Pino.logLevel, message: string, ~params=?) => {
-  (item->getItemLogger->(Utils.magic: Pino.t => Js.Dict.t<(option<'a>, string) => unit>)->Js.Dict.unsafeGet((level :> string)))(params, message)
+  (
+    item
+    ->getItemLogger
+    ->(Utils.magic: Pino.t => Js.Dict.t<(option<'a>, string) => unit>)
+    ->Js.Dict.unsafeGet((level :> string))
+  )(params, message)
 }
 
 let noopLogger: Envio.logger = {

@@ -2,7 +2,7 @@ let codegenHelpMessage = `Rerun 'pnpm dev' to update generated code after schema
 
 type contextParams = {
   item: Internal.item,
-  checkpointId: float,
+  checkpointId: Internal.checkpointId,
   inMemoryStore: InMemoryStore.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
@@ -85,7 +85,9 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
   }
   if filterKeys->Array.length > 1 {
     Js.Exn.raiseError(
-      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Js.Array2.joinWith(", ")}.`,
+      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Js.Array2.joinWith(
+          ", ",
+        )}.`,
     )
   }
 
@@ -100,7 +102,9 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
   }
   if operatorKeys->Array.length > 1 {
     Js.Exn.raiseError(
-      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Js.Array2.joinWith(", ")}.`,
+      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Js.Array2.joinWith(
+          ", ",
+        )}.`,
     )
   }
 
@@ -232,7 +236,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           )
       )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
     | "getWhere" =>
-      ((filter) => getWhereHandler(params, filter->(Utils.magic: unknown => Js.Dict.t<Js.Dict.t<unknown>>)))->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
+      (
+        filter =>
+          getWhereHandler(params, filter->(Utils.magic: unknown => Js.Dict.t<Js.Dict.t<unknown>>))
+      )->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
     | "getOrThrow" =>
       (
         (entityId, ~message=?) =>
@@ -309,7 +316,10 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     }
     switch prop {
     | "log" =>
-      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->(Utils.magic: Envio.logger => unknown)
+      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->(
+        Utils.magic: Envio.logger => unknown
+      )
+
     | "effect" =>
       initEffect((params :> contextParams))->(
         Utils.magic: (
@@ -320,7 +330,9 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     | "isPreload" => params.isPreload->(Utils.magic: bool => unknown)
     | "chain" =>
       let chainId = params.item->Internal.getItemChainId
-      params.chains->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->(Utils.magic: option<Internal.chainInfo> => unknown)
+      params.chains
+      ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+      ->(Utils.magic: option<Internal.chainInfo> => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) =>
