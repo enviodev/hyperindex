@@ -98,12 +98,12 @@ let getInMemTable = (
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
 
-let totalEntityCount = (inMemoryStore: t) => {
+let totalChangeCount = (inMemoryStore: t) => {
   let count = ref(0)
   inMemoryStore.entities
   ->Js.Dict.values
   ->Belt.Array.forEach(table => {
-    count := count.contents + table->InMemoryTable.Entity.getEntityCount
+    count := count.contents + table->InMemoryTable.Entity.getChangeCount
   })
   count.contents
 }

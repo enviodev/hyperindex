@@ -990,7 +990,7 @@ let injectedTaskReducer = (
         // If rollback is pending or in-memory store is too big, wait for background write
         let shouldWaitForWrite =
           isRollback ||
-          state.inMemoryStore->InMemoryStore.totalEntityCount > Env.maxInMemoryEntities
+          state.inMemoryStore->InMemoryStore.totalChangeCount > Env.maxInMemoryEntities
         if shouldWaitForWrite && state.backgroundWriter->BackgroundWriter.isWriting {
           switch await state.backgroundWriter->BackgroundWriter.awaitCurrentWrite {
           | Error(errHandler) =>

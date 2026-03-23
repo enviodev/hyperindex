@@ -47,7 +47,7 @@ module Entity = {
   type t<'entity> = {
     table: t<string, entityWithIndices<'entity>>,
     fieldNameIndices: indexFieldNameToIndices,
-    mutable entityCount: int,
+    mutable changeCount: int,
   }
 
   // Helper to extract entity ID from any entity
@@ -73,7 +73,7 @@ module Entity = {
   let make = (): t<'entity> => {
     table: make(~hash=str => str),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
-    entityCount: 0,
+    changeCount: 0,
   }
 
   exception UndefinedKey(string)
@@ -143,15 +143,13 @@ module Entity = {
     // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
     ~allowOverWriteEntity=false,
   ) => {
-    let isNew = inMemTable.table.dict->Js.Dict.get(key->inMemTable.table.hash)->Option.isNone
-    let shouldWriteEntity = allowOverWriteEntity || isNew
+    let shouldWriteEntity =
+      allowOverWriteEntity ||
+      inMemTable.table.dict->Js.Dict.get(key->inMemTable.table.hash)->Option.isNone
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
     if shouldWriteEntity {
-      if isNew {
-        inMemTable.entityCount = inMemTable.entityCount + 1
-      }
       let entityIndices = Utils.Set.make()
       switch entity {
       | Some(entity) =>
@@ -194,13 +192,9 @@ module Entity = {
     | Delete(_) => None
     }
 
-    let existingRow = inMemTable.table->get(change->Change.getEntityId)
-    let isNew = existingRow->Option.isNone
-    if isNew {
-      inMemTable.entityCount = inMemTable.entityCount + 1
-    }
+    inMemTable.changeCount = inMemTable.changeCount + 1
 
-    let updatedEntityRecord = switch existingRow {
+    let updatedEntityRecord = switch inMemTable.table->get(change->Change.getEntityId) {
     | None => {latest, status: newStatus(), entityIndices: Utils.Set.make(), lastReferencedCheckpointId: checkpointId}
     | Some({status: Loaded, entityIndices}) => {
         latest,
@@ -372,12 +366,13 @@ module Entity = {
     ->Array.keepMap(rowToEntity)
   }
 
-  let getEntityCount = (inMemTable: t<'entity>) => inMemTable.entityCount
+  let getChangeCount = (inMemTable: t<'entity>) => inMemTable.changeCount
 
   // After a background write completes, reset Updated entities to Loaded
   // if they haven't been modified since the written checkpoint.
   // Evict stale Loaded entities not referenced after the written checkpoint.
   let cleanupAfterWrite = (inMemTable: t<'entity>, ~writtenCheckpointId: bigint) => {
+    let remainingChangeCount = ref(0)
     let keys = inMemTable.table.dict->Js.Dict.keys
     for idx in 0 to keys->Array.length - 1 {
       let key = keys->Js.Array2.unsafe_get(idx)
@@ -402,12 +397,12 @@ module Entity = {
               ~entityIndices=row.entityIndices,
             )
             inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
-            inMemTable.entityCount = inMemTable.entityCount - 1
           }
         } else {
           // Entity was referenced after the written checkpoint
           switch row.status {
           | Updated(update) =>
+            remainingChangeCount := remainingChangeCount.contents + 1
             // Clear already-written history but keep the update status
             // since it has changes newer than what was written
             inMemTable.table.dict->Js.Dict.set(
@@ -426,9 +421,10 @@ module Entity = {
         }
       }
     }
+    inMemTable.changeCount = remainingChangeCount.contents
   }
 
-  let clone = ({table, fieldNameIndices, entityCount}: t<'entity>) => {
+  let clone = ({table, fieldNameIndices, changeCount}: t<'entity>) => {
     table: table->clone,
     fieldNameIndices: {
       ...fieldNameIndices,
@@ -437,6 +433,6 @@ module Entity = {
       ->Array.map(((k, v)) => (k, v->clone))
       ->Js.Dict.fromArray,
     },
-    entityCount,
+    changeCount,
   }
 }
