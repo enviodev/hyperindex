@@ -15,6 +15,11 @@ export type {
 import type { Address } from "./src/Types.ts";
 export type { EffectCaller, Address } from "./src/Types.ts";
 
+export const Addresses: {
+  readonly mockAddresses: readonly Address[];
+  readonly defaultAddress: Address;
+};
+
 /** Utility type to expand/flatten complex types for better IDE display. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 

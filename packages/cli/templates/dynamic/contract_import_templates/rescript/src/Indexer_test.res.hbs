@@ -6,12 +6,24 @@ describe("{{contract.name.capitalized}} contract {{event.name}} event tests", ()
   Async.it("{{contract.name.capitalized}}_{{event.name}} is created correctly", async _t => {
     let indexer = Indexer.createTestIndexer()
 
-    // TODO: Configure chain ID, start/end blocks, and event params for your contract
+    // Creating mock for {{contract.name.capitalized}} contract {{event.name}} event
+    let event: TestIndexer.simulateItem = %raw(`{
+      contract: "{{contract.name.capitalized}}",
+      event: "{{event.name}}",
+      params: {
+        {{#each event.params as |param|}}
+        // {{param.res_name}}: ...,
+        {{/each}}
+      },
+    }`)
+
+    // TODO: Configure chain ID and start/end blocks for your contract
     let _ = await indexer.process({
       chains: {
         chain1: {
           startBlock: 0,
           endBlock: 100,
+          simulate: [event],
         },
       },
     })

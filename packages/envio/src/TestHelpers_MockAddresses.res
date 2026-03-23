@@ -2,7 +2,6 @@
 Note this file should remain top level since there are default types
 that can point to TestHelpers_MockAddresses.defaultAddress
 */
-@genType
 let mockAddresses = [
   "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
@@ -25,6 +24,5 @@ let mockAddresses = [
   "0xdD2FD4581271e230360230F9337D5c0430Bf44C0",
   "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
 ]->Belt.Array.map(Address.Evm.fromStringOrThrow)
-@genType
 let defaultAddress =
   mockAddresses[0]

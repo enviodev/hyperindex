@@ -1,8 +1,11 @@
 open Belt
 
+type simulateItem
+
 type chainConfig = {
   startBlock: int,
   endBlock: int,
+  simulate?: array<simulateItem>,
 }
 
 type processResult = {changes: array<unknown>}

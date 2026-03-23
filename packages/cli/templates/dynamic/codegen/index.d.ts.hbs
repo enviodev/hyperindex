@@ -10,12 +10,11 @@ export type * from "./src/Types.ts";
 import type { Indexer, TestIndexer } from "./src/Types.ts";
 export const indexer: Indexer;
 export const createTestIndexer: () => TestIndexer;
-import { Addresses as _Addresses } from "./src/TestHelpers.gen";
-
-export const Addresses: typeof _Addresses;
+import { Addresses } from "envio";
+export { Addresses };
 
 export const TestHelpers: {
-  Addresses: typeof _Addresses;
+  Addresses: typeof Addresses;
 };
 
 export {
