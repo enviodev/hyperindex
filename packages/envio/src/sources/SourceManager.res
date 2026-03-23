@@ -73,6 +73,7 @@ let hasLiveSource = (sourceManager: t) =>
 let make = (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency,
+  ~isLive=false,
   ~newBlockFallbackStallTimeout=60_000,
   ~newBlockFallbackStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
@@ -83,12 +84,14 @@ let make = (
     ~maxRetryInterval=60_000,
   ),
 ) => {
+  let hasLive = sources->Js.Array2.some(s => s.sourceFor === Live)
   let initialActiveSource =
     switch sources->Js.Array2.find(source =>
-      getSourceRole(~sourceFor=source.sourceFor, ~isLive=false, ~hasLive=false) === Some(Primary)
+      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
     ) {
     | Some(source) => source
-    | None => sources->Js.Array2.unsafe_get(0)
+    | None =>
+      Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
     }
   Prometheus.IndexingMaxConcurrency.set(
     ~maxConcurrency=maxPartitionConcurrency,
@@ -322,12 +325,10 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
       switch getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) {
       | Some(Primary) => primarySources->Array.push(sourceState)
       | Some(Secondary) =>
-        // If the active source is a Fallback acting as secondary, still include
+        // If the active source is acting as secondary, still include
         // it in the primary list so we don't wait for a timeout again
         // when all primary sources are still unavailable.
-        // Only for Fallback to avoid promoting Sync to primary
-        // when Live is the actual primary (isLive=true with Live present).
-        if source === sourceManager.activeSource && source.sourceFor === Fallback {
+        if source === sourceManager.activeSource {
           primarySources->Array.push(sourceState)
         } else {
           fallbackSources->Array.push(sourceState)
@@ -389,11 +390,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
 
   // Record the timestamp when we switch to a secondary/fallback source via stall timeout,
   // so the recovery timer in executeQuery starts from the actual switch moment.
-  let hasLive = sourceManager->hasLiveSource
   if (
     status.contents === Stalled &&
-      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Secondary) &&
-      sourceManager.fallbackSwitchTimestamp === None
+      sourceManager.fallbackSwitchTimestamp === None &&
+      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager->hasLiveSource) ===
+        Some(Secondary)
   ) {
     sourceManager.fallbackSwitchTimestamp = Some(Js.Date.now())
   }
@@ -464,6 +465,21 @@ let getFirstPrimarySourceState = (sourceManager: t, ~isLive) => {
     !s.disabled &&
       getSourceRole(~sourceFor=s.source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
   )
+}
+
+// Called when activeSource changes to track fallback/secondary state.
+// Sets fallbackSwitchTimestamp when switching to a secondary source,
+// clears it when switching back to a primary source.
+let onActiveSourceChanged = (sourceManager: t, ~isLive) => {
+  let hasLive = sourceManager->hasLiveSource
+  if (
+    getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive) ===
+      Some(Primary)
+  ) {
+    sourceManager.fallbackSwitchTimestamp = None
+  } else if sourceManager.fallbackSwitchTimestamp === None {
+    sourceManager.fallbackSwitchTimestamp = Some(Js.Date.now())
+  }
 }
 
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
@@ -656,42 +672,31 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
   if shouldUpdateActiveSource.contents {
     sourceManager.activeSource = sourceStateRef.contents.source
+    sourceManager->onActiveSourceChanged(~isLive)
   }
 
-  // Track when we switch to a secondary source, and attempt recovery after fallbackRecoveryTimeout
-  let hasLive = sourceManager->hasLiveSource
-  if (
-    getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive) ===
-      Some(Primary)
-  ) {
-    sourceManager.fallbackSwitchTimestamp = None
-  } else {
-    // Start tracking time if not already
-    if sourceManager.fallbackSwitchTimestamp === None {
-      sourceManager.fallbackSwitchTimestamp = Some(Js.Date.now())
+  // Attempt recovery from fallback to primary after timeout
+  switch sourceManager.fallbackSwitchTimestamp {
+  | Some(switchedAt)
+    if Js.Date.now() -. switchedAt >=
+      sourceManager.fallbackRecoveryTimeout->Int.toFloat =>
+    switch sourceManager->getFirstPrimarySourceState(~isLive) {
+    | Some(primarySourceState) =>
+      let logger = Logging.createChild(
+        ~params={
+          "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
+        },
+      )
+      logger->Logging.childInfo({
+        "msg": "Attempting to switch back to primary source after fallback recovery period",
+        "source": primarySourceState.source.name,
+        "previousSource": sourceManager.activeSource.name,
+      })
+      sourceManager.activeSource = primarySourceState.source
+      sourceManager->onActiveSourceChanged(~isLive)
+    | None => ()
     }
-    switch sourceManager.fallbackSwitchTimestamp {
-    | Some(switchedAt)
-      if Js.Date.now() -. switchedAt >=
-        sourceManager.fallbackRecoveryTimeout->Int.toFloat =>
-      sourceManager.fallbackSwitchTimestamp = None
-      switch sourceManager->getFirstPrimarySourceState(~isLive) {
-      | Some(primarySourceState) =>
-        let logger = Logging.createChild(
-          ~params={
-            "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-          },
-        )
-        logger->Logging.childInfo({
-          "msg": "Attempting to switch back to primary source after fallback recovery period",
-          "source": primarySourceState.source.name,
-          "previousSource": sourceManager.activeSource.name,
-        })
-        sourceManager.activeSource = primarySourceState.source
-      | None => ()
-      }
-    | _ => ()
-    }
+  | _ => ()
   }
 
   responseRef.contents->Option.getUnsafe

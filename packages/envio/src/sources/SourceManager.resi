@@ -13,6 +13,7 @@ let hasLiveSource: t => bool
 let make: (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency: int,
+  ~isLive: bool=?,
   ~newBlockFallbackStallTimeout: int=?,
   ~newBlockFallbackStallTimeoutLive: int=?,
   ~stalledPollingInterval: int=?,
