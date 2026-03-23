@@ -81,48 +81,43 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
     }
 
     //Get the persisted state from the db.
-    //When restart is true, a read failure should not block the restart path,
-    //so map errors to Corrupted instead of propagating them.
+    //Skip the read entirely when restarting — we don't use the result.
     let persisted_state_db = if restart {
-        PersistedStateExists::read_from_db()
-            .await
-            .unwrap_or(PersistedStateExists::Corrupted)
+        None
     } else {
-        PersistedStateExists::read_from_db()
-            .await
-            .context("Failed to read persisted state from the DB")?
+        Some(
+            PersistedStateExists::read_from_db()
+                .await
+                .context("Failed to read persisted state from the DB")?,
+        )
     };
 
-    let (should_run_db_migrations, changes_detected) = if restart {
-        (true, vec![])
-    } else {
-        match &persisted_state_db {
-            PersistedStateExists::Exists(persisted_state) =>
-            //In the case where the persisted state exists, compare it to current state
-            //determine whether to run migrations and which changes have occured to
-            //cause that.
-            {
-                let (should_run_db_migrations, changes_detected) =
-                    current_state.should_run_db_migrations(persisted_state);
+    let (should_run_db_migrations, changes_detected) = match &persisted_state_db {
+        None => (true, vec![]),
+        Some(PersistedStateExists::Exists(persisted_state)) =>
+        //In the case where the persisted state exists, compare it to current state
+        //determine whether to run migrations and which changes have occured to
+        //cause that.
+        {
+            let (should_run_db_migrations, changes_detected) =
+                current_state.should_run_db_migrations(persisted_state);
 
-                (should_run_db_migrations, changes_detected)
-            }
-            //Otherwise we should run db migrations
-            PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
+            (should_run_db_migrations, changes_detected)
+        }
+        //Otherwise we should run db migrations
+        Some(PersistedStateExists::NotExists) | Some(PersistedStateExists::Corrupted) => {
+            (true, vec![])
         }
     };
 
     if should_run_db_migrations {
-        if restart {
-            println!("Restarting indexing from scratch");
-        } else {
-            match persisted_state_db {
-                PersistedStateExists::NotExists => {
-                    println!("Db Migrations have not been run")
-                }
-                PersistedStateExists::Corrupted => println!("Invalid DB persisted state"),
-                PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
+        match persisted_state_db {
+            None => println!("Restarting indexing from scratch"),
+            Some(PersistedStateExists::NotExists) => {
+                println!("Db Migrations have not been run")
             }
+            Some(PersistedStateExists::Corrupted) => println!("Invalid DB persisted state"),
+            Some(PersistedStateExists::Exists(_)) => print_changes_detected(changes_detected),
         }
         println!("Running db migrations");
 
