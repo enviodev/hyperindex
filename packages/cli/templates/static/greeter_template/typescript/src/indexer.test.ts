@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createTestIndexer, TestHelpers, type User } from "generated";
+import { createTestIndexer, type User } from "generated";
+import { TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {
