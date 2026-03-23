@@ -319,65 +319,71 @@ let writeBatch = (
     )
   }
 
+type rollbackEntityDiff = {
+  entityConfig: Internal.entityConfig,
+  removedIds: array<string>,
+  restoredEntities: array<Internal.entity>,
+}
+
+type rollbackDiff = {
+  rollbackTargetCheckpointId: Internal.checkpointId,
+  rollbackDiffCheckpointId: Internal.checkpointId,
+  entityDiffs: array<rollbackEntityDiff>,
+}
+
 let prepareRollbackDiff = async (
   persistence: t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ) => {
-  let inMemStore = InMemoryStore.make(
-    ~entities=persistence.allEntities,
-    ~rollbackTargetCheckpointId,
-  )
-
-  let deletedEntities = Js.Dict.empty()
-  let setEntities = Js.Dict.empty()
-
-  let _ =
+  let entityDiffs =
     await persistence.allEntities
     ->Belt.Array.map(async entityConfig => {
-      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
-
       let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
         ~entityConfig,
         ~rollbackTargetCheckpointId,
       )
 
-      // Process removed IDs
-      removedIdsResult->Js.Array2.forEach(data => {
-        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-        entityTable->InMemoryTable.Entity.set(
-          Delete({
-            entityId: data["id"],
-            checkpointId: rollbackDiffCheckpointId,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
-
+      let removedIds = removedIdsResult->Js.Array2.map(data => data["id"])
       let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
 
-      // Process restored entities
-      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-        entityTable->InMemoryTable.Entity.set(
-          Set({
-            entityId: entity.id,
-            checkpointId: rollbackDiffCheckpointId,
-            entity,
-          }),
-          ~shouldSaveHistory=false,
-          ~containsRollbackDiffChange=true,
-        )
-      })
+      {entityConfig, removedIds, restoredEntities}
     })
     ->Promise.all
 
-  {
-    "inMemStore": inMemStore,
-    "deletedEntities": deletedEntities,
-    "setEntities": setEntities,
-  }
+  {rollbackTargetCheckpointId, rollbackDiffCheckpointId, entityDiffs}
+}
+
+// Apply rollback diff changes to the in-memory store
+let applyRollbackDiff = (inMemoryStore: InMemoryStore.t, ~rollbackDiff: rollbackDiff) => {
+  inMemoryStore.rollbackTargetCheckpointId = Some(rollbackDiff.rollbackTargetCheckpointId)
+
+  rollbackDiff.entityDiffs->Belt.Array.forEach(({entityConfig, removedIds, restoredEntities}) => {
+    removedIds->Js.Array2.forEach(entityId => {
+      inMemoryStore->InMemoryStore.entitySet(
+        ~entityConfig,
+        ~change=Delete({
+          entityId,
+          checkpointId: rollbackDiff.rollbackDiffCheckpointId,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+
+    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+      inMemoryStore->InMemoryStore.entitySet(
+        ~entityConfig,
+        ~change=Set({
+          entityId: entity.id,
+          checkpointId: rollbackDiff.rollbackDiffCheckpointId,
+          entity,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+  })
 }
 
 let isWriting = persistence => persistence.writePromise !== None
@@ -474,4 +480,32 @@ let forceWrite = async (persistence, ~writeArgs) => {
   }
   executeWrite(persistence)
   await awaitCurrentWrite(persistence)
+}
+
+// Trigger a background write and manage in-memory capacity.
+// If more than half capacity is used, prune written entities.
+// If still over half after prune, await the current write to finish, then prune again.
+let writeAndManageCapacity = async (
+  persistence,
+  ~inMemoryStore: InMemoryStore.t,
+  ~writeArgs,
+) => {
+  persistence->startWrite(~writeArgs)
+
+  let halfCapacity = Env.maxInMemoryEntities / 2
+  if inMemoryStore->InMemoryStore.totalChangeCount > halfCapacity {
+    // Try pruning entities already written to DB
+    inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
+
+    if inMemoryStore->InMemoryStore.totalChangeCount > halfCapacity {
+      // Still over half - must wait for current write to finish, then prune again
+      if isWriting(persistence) {
+        switch await awaitCurrentWrite(persistence) {
+        | Error(errHandler) => errHandler->ErrorHandling.log
+        | Ok() =>
+          inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
+        }
+      }
+    }
+  }
 }

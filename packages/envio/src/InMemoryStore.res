@@ -51,14 +51,14 @@ type t = {
   rawEvents: InMemoryTable.t<rawEventsKey, InternalTable.RawEvents.t>,
   entities: dict<InMemoryTable.Entity.t<Internal.entity>>,
   effects: dict<effectCacheInMemTable>,
-  rollbackTargetCheckpointId: option<Internal.checkpointId>,
+  mutable rollbackTargetCheckpointId: option<Internal.checkpointId>,
 }
 
-let make = (~entities: array<Internal.entityConfig>, ~rollbackTargetCheckpointId=?): t => {
+let make = (~entities: array<Internal.entityConfig>): t => {
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
-  rollbackTargetCheckpointId,
+  rollbackTargetCheckpointId: None,
 }
 
 let clone = (self: t) => {
@@ -96,7 +96,17 @@ let getInMemTable = (
   inMemoryStore.entities->EntityTables.get(~entityName=entityConfig.name)
 }
 
-let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
+let entitySet = (
+  inMemoryStore: t,
+  ~entityConfig: Internal.entityConfig,
+  ~change: Change.t<Internal.entity>,
+  ~shouldSaveHistory,
+  ~containsRollbackDiffChange=false,
+) => {
+  inMemoryStore
+  ->getInMemTable(~entityConfig)
+  ->InMemoryTable.Entity.set(change, ~shouldSaveHistory, ~containsRollbackDiffChange)
+}
 
 let totalChangeCount = (inMemoryStore: t) => {
   let count = ref(0)
@@ -134,8 +144,7 @@ let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
 }
 
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
-  let inMemTable =
-    inMemoryStore->getInMemTable(~entityConfig=InternalTable.DynamicContractRegistry.entityConfig)
+  let entityConfig = InternalTable.DynamicContractRegistry.entityConfig
 
   let itemIdx = ref(0)
 
@@ -167,8 +176,9 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
             registeringEventSrcAddress: eventItem.event.srcAddress,
           }
 
-          inMemTable->InMemoryTable.Entity.set(
-            Set({
+          inMemoryStore->entitySet(
+            ~entityConfig,
+            ~change=Set({
               entityId: entity.id,
               checkpointId,
               entity: entity->InternalTable.DynamicContractRegistry.castToInternal,

@@ -6,7 +6,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({diffInMemoryStore: InMemoryStore.t, eventsProcessedDiffByChain: dict<float>})
+  | RollbackReady({rollbackDiff: Persistence.rollbackDiff, eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
   type t = {
@@ -133,7 +133,7 @@ type action =
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
   | SetRollbackState({
-      diffInMemoryStore: InMemoryStore.t,
+      rollbackDiff: Persistence.rollbackDiff,
       rollbackedChainManager: ChainManager.t,
       eventsProcessedDiffByChain: dict<float>,
     })
@@ -661,7 +661,7 @@ let actionReducer = (state: t, action: action) => {
         : []
 
     // After a rollback batch, reset the in-memory store since the rollback
-    // used a separate diff store and invalidated the cached state
+    // applied diff changes that invalidated the cached state
     let wasRollback = switch state.rollbackState {
     | RollbackReady(_) => true
     | _ => false
@@ -744,11 +744,11 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SetRollbackState({diffInMemoryStore, rollbackedChainManager, eventsProcessedDiffByChain}) => (
+  | SetRollbackState({rollbackDiff, rollbackedChainManager, eventsProcessedDiffByChain}) => (
       {
         ...state,
         rollbackState: RollbackReady({
-          diffInMemoryStore,
+          rollbackDiff,
           eventsProcessedDiffByChain,
         }),
         chainManager: rollbackedChainManager,
@@ -982,11 +982,8 @@ let injectedTaskReducer = (
           }
         }
       } else {
-        // If rollback is pending or in-memory store is too big, wait for background write
-        let shouldWaitForWrite =
-          isRollback ||
-          state.inMemoryStore->InMemoryStore.totalChangeCount > Env.maxInMemoryEntities
-        if shouldWaitForWrite && state.ctx.persistence->Persistence.isWriting {
+        // For rollback, must wait for any in-flight write to ensure consistency
+        if isRollback && state.ctx.persistence->Persistence.isWriting {
           switch await state.ctx.persistence->Persistence.awaitCurrentWrite {
           | Error(errHandler) =>
             dispatchAction(ErrorExit(errHandler))
@@ -997,10 +994,12 @@ let injectedTaskReducer = (
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
         dispatchAction(StartProcessingBatch)
 
-        // For rollback, use the diff in-memory store. Otherwise reuse the persistent one.
-        let inMemoryStore = switch state.rollbackState {
-        | RollbackReady({diffInMemoryStore}) => diffInMemoryStore
-        | _ => state.inMemoryStore
+        // For rollback, apply the diff changes to the main in-memory store
+        let inMemoryStore = state.inMemoryStore
+        switch state.rollbackState {
+        | RollbackReady({rollbackDiff}) =>
+          Persistence.applyRollbackDiff(inMemoryStore, ~rollbackDiff)
+        | _ => ()
         }
 
         inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
@@ -1023,17 +1022,16 @@ let injectedTaskReducer = (
           switch res {
           | Ok({loaderDuration, handlerDuration}) =>
             let logger = Logging.getLogger()
+            let writeArgs: Persistence.writeArgs = {
+              batch,
+              config: state.ctx.config,
+              inMemoryStore,
+              isInReorgThreshold,
+            }
 
             if isRollback {
               // Rollback writes must be synchronous to ensure consistency
-              switch await state.ctx.persistence->Persistence.forceWrite(
-                ~writeArgs={
-                  batch,
-                  config: state.ctx.config,
-                  inMemoryStore,
-                  isInReorgThreshold,
-                },
-              ) {
+              switch await state.ctx.persistence->Persistence.forceWrite(~writeArgs) {
               | Ok() =>
                 let dbWriteDuration = 0. // Already measured inside forceWrite
                 EventProcessing.registerProcessEventBatchMetrics(
@@ -1046,14 +1044,10 @@ let injectedTaskReducer = (
               | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
               }
             } else {
-              // Queue background write - don't block next batch
-              state.ctx.persistence->Persistence.startWrite(
-                ~writeArgs={
-                  batch,
-                  config: state.ctx.config,
-                  inMemoryStore,
-                  isInReorgThreshold,
-                },
+              // Queue background write and manage in-memory capacity
+              await state.ctx.persistence->Persistence.writeAndManageCapacity(
+                ~inMemoryStore,
+                ~writeArgs,
               )
               EventProcessing.registerProcessEventBatchMetrics(
                 ~logger,
@@ -1228,8 +1222,8 @@ let injectedTaskReducer = (
         }
       })
 
-      // Construct in Memory store with rollback diff
-      let diff =
+      // Prepare rollback diff data (raw, not yet applied to in-memory store)
+      let rollbackDiff =
         await state.ctx.persistence->Persistence.prepareRollbackDiff(
           ~rollbackTargetCheckpointId,
           ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
@@ -1242,10 +1236,7 @@ let injectedTaskReducer = (
 
       logger->Logging.childTrace({
         "msg": "Finished rollback on reorg",
-        "entityChanges": {
-          "deleted": diff["deletedEntities"],
-          "upserted": diff["setEntities"],
-        },
+        "entityDiffs": rollbackDiff.entityDiffs->Belt.Array.length,
         "rollbackedEvents": rollbackedProcessedEvents.contents,
         "beforeCheckpointId": state.chainManager.committedCheckpointId,
         "targetCheckpointId": rollbackTargetCheckpointId,
@@ -1257,7 +1248,7 @@ let injectedTaskReducer = (
 
       dispatchAction(
         SetRollbackState({
-          diffInMemoryStore: diff["inMemStore"],
+          rollbackDiff,
           rollbackedChainManager: chainManager,
           eventsProcessedDiffByChain,
         }),
