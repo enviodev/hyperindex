@@ -238,7 +238,11 @@ Initialize Fuel indexer from an example template
 
 Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
 
-**Usage:** `envio dev`
+**Usage:** `envio dev [OPTIONS]`
+
+###### **Options:**
+
+* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Dev mode restarts automatically on config/schema changes, use this flag when you need a restart without making changes
 
 
 
