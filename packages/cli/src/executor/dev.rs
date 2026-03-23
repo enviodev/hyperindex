@@ -80,10 +80,18 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
         }
     }
 
-    //Get the persisted state from the db
-    let persisted_state_db = PersistedStateExists::read_from_db()
-        .await
-        .context("Failed to read persisted state from the DB")?;
+    //Get the persisted state from the db.
+    //When restart is true, a read failure should not block the restart path,
+    //so map errors to Corrupted instead of propagating them.
+    let persisted_state_db = if restart {
+        PersistedStateExists::read_from_db()
+            .await
+            .unwrap_or(PersistedStateExists::Corrupted)
+    } else {
+        PersistedStateExists::read_from_db()
+            .await
+            .context("Failed to read persisted state from the DB")?
+    };
 
     let (should_run_db_migrations, changes_detected) = if restart {
         (true, vec![])
