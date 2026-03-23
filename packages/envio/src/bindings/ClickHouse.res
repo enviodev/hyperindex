@@ -158,7 +158,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     for idx in 0 to checkpointsCount - 1 {
       checkpointRows
       ->Js.Array2.push((
-        batch.checkpointIds->Belt.Array.getUnsafe(idx),
+        batch.checkpointIds->Belt.Array.getUnsafe(idx)->BigInt.toString,
         batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx),
