@@ -47,7 +47,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       latestFetchedBlockNumber,
       latestFetchedBlockTimestamp: 0,
       stats: {
-        totalTimeElapsed: 0,
+        totalTimeElapsed: 0.,
       },
     })
   },
