@@ -32,6 +32,7 @@ type t = {
   // After fallbackRecoveryTimeout ms, we attempt to switch back to a primary source.
   mutable fallbackSwitchTimestamp: option<float>,
   fallbackRecoveryTimeout: int,
+  mutable hasLive: bool,
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
@@ -67,13 +68,9 @@ let makeGetHeightRetryInterval = (
   }
 }
 
-let hasLiveSource = (sourceManager: t) =>
-  sourceManager.sourcesState->Js.Array2.some(s => !s.disabled && s.source.sourceFor === Live)
-
 let make = (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency,
-  ~isLive=false,
   ~newBlockFallbackStallTimeout=60_000,
   ~newBlockFallbackStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
@@ -87,7 +84,7 @@ let make = (
   let hasLive = sources->Js.Array2.some(s => s.sourceFor === Live)
   let initialActiveSource =
     switch sources->Js.Array2.find(source =>
-      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
+      getSourceRole(~sourceFor=source.sourceFor, ~isLive=false, ~hasLive) === Some(Primary)
     ) {
     | Some(source) => source
     | None =>
@@ -121,6 +118,7 @@ let make = (
     statusStart: Hrtime.makeTimer(),
     status: Idle,
     fallbackSwitchTimestamp: None,
+    hasLive,
   }
 }
 
@@ -207,12 +205,15 @@ let fetchNext = async (
 
 type status = Active | Stalled | Done
 
-let disableSource = (sourceState: sourceState) => {
+let disableSourceState = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true
     switch sourceState.unsubscribe {
     | Some(unsubscribe) => unsubscribe()
     | None => ()
+    }
+    if sourceState.source.sourceFor === Live {
+      sourceManager.hasLive = false
     }
     true
   } else {
@@ -313,7 +314,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  let hasLive = sourceManager->hasLiveSource
+  let hasLive = sourceManager.hasLive
   let primarySources = []
   let fallbackSources = []
   sourcesState->Array.forEach(sourceState => {
@@ -393,7 +394,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   if (
     status.contents === Stalled &&
       sourceManager.fallbackSwitchTimestamp === None &&
-      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager->hasLiveSource) ===
+      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) ===
         Some(Secondary)
   ) {
     sourceManager.fallbackSwitchTimestamp = Some(Js.Date.now())
@@ -427,7 +428,7 @@ let getNextSyncSourceState = (
   let after = []
 
   let hasActive = ref(false)
-  let hasLive = sourceManager->hasLiveSource
+  let hasLive = sourceManager.hasLive
 
   sourceManager.sourcesState->Array.forEach(sourceState => {
     let source = sourceState.source
@@ -460,7 +461,7 @@ let getNextSyncSourceState = (
 }
 
 let getFirstPrimarySourceState = (sourceManager: t, ~isLive) => {
-  let hasLive = sourceManager->hasLiveSource
+  let hasLive = sourceManager.hasLive
   sourceManager.sourcesState->Js.Array2.find(s =>
     !s.disabled &&
       getSourceRole(~sourceFor=s.source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
@@ -471,7 +472,7 @@ let getFirstPrimarySourceState = (sourceManager: t, ~isLive) => {
 // Sets fallbackSwitchTimestamp when switching to a secondary source,
 // clears it when switching back to a primary source.
 let onActiveSourceChanged = (sourceManager: t, ~isLive) => {
-  let hasLive = sourceManager->hasLiveSource
+  let hasLive = sourceManager.hasLive
   if (
     getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive) ===
       Some(Primary)
@@ -545,7 +546,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
           // These errors are impossible to recover, so we disable the source
           // so it's not attempted anymore
-          let notAlreadyDisabled = disableSource(sourceState)
+          let notAlreadyDisabled = sourceManager->disableSourceState(sourceState)
 
           // In case there are multiple partitions
           // failing at the same time. Log only once

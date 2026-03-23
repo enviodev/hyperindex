@@ -91,17 +91,6 @@ describe("SourceManager creation", () => {
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync0)
   })
 
-  it("Uses live source as initial active source in live mode", t => {
-    let fallback = Mock.Source.make([], ~sourceFor=Fallback).source
-    let live = Mock.Source.make([], ~sourceFor=Live).source
-    let sourceManager = SourceManager.make(
-      ~sources=[fallback, live],
-      ~maxPartitionConcurrency=10,
-      ~isLive=true,
-    )
-    t.expect(sourceManager->SourceManager.getActiveSource).toBe(live)
-  })
-
   it("Prefers sync source over live source as initial active source", t => {
     let live = Mock.Source.make([], ~sourceFor=Live).source
     let sync = Mock.Source.make([]).source
@@ -176,22 +165,6 @@ describe("SourceManager.getSourceRole", () => {
       ).toEqual(Some(Secondary))
     },
   )
-})
-
-describe("SourceManager.hasLiveSource", () => {
-  it("Returns false when no live sources exist", t => {
-    let sync = Mock.Source.make([]).source
-    let fallback = Mock.Source.make([], ~sourceFor=Fallback).source
-    let sm = SourceManager.make(~sources=[sync, fallback], ~maxPartitionConcurrency=10)
-    t.expect(sm->SourceManager.hasLiveSource).toEqual(false)
-  })
-
-  it("Returns true when a live source exists", t => {
-    let sync = Mock.Source.make([]).source
-    let live = Mock.Source.make([], ~sourceFor=Live).source
-    let sm = SourceManager.make(~sources=[sync, live], ~maxPartitionConcurrency=10)
-    t.expect(sm->SourceManager.hasLiveSource).toEqual(true)
-  })
 })
 
 describe("SourceManager source priority with Live sources", () => {
