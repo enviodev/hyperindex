@@ -111,6 +111,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       sourceManager: SourceManager.make(
         ~sources,
         ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+        ~isLive=false,
       ),
       chainConfig,
       // This is quite a hack - but it works!

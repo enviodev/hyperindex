@@ -245,6 +245,7 @@ let make = (
     sourceManager: SourceManager.make(
       ~sources,
       ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
+      ~isLive=false,
     ),
     reorgDetection: ReorgDetection.make(
       ~chainReorgCheckpoints,

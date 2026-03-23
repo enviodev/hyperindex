@@ -11,6 +11,7 @@ let getSourceRole: (
 let make: (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency: int,
+  ~isLive: bool,
   ~newBlockFallbackStallTimeout: int=?,
   ~newBlockFallbackStallTimeoutLive: int=?,
   ~stalledPollingInterval: int=?,

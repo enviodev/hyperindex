@@ -71,6 +71,7 @@ let makeGetHeightRetryInterval = (
 let make = (
   ~sources: array<Source.t>,
   ~maxPartitionConcurrency,
+  ~isLive,
   ~newBlockFallbackStallTimeout=60_000,
   ~newBlockFallbackStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
@@ -84,7 +85,7 @@ let make = (
   let hasLive = sources->Js.Array2.some(s => s.sourceFor === Live)
   let initialActiveSource =
     switch sources->Js.Array2.find(source =>
-      getSourceRole(~sourceFor=source.sourceFor, ~isLive=false, ~hasLive) === Some(Primary)
+      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
     ) {
     | Some(source) => source
     | None =>
