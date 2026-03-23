@@ -10,7 +10,6 @@ import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 export * from "./src/Envio.res.mjs";
 
 import * as TestHelpers_MockAddresses from "./src/TestHelpers_MockAddresses.res.mjs";
-export const Addresses = TestHelpers_MockAddresses;
 export const TestHelpers = { Addresses: TestHelpers_MockAddresses };
 
 // Important! Should match the index.d.ts file
