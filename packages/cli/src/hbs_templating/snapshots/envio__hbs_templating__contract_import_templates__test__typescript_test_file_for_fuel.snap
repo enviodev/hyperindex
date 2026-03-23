@@ -1,0 +1,43 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+import { describe, it, expect } from "vitest";
+import { createTestIndexer, type Greeter_NewGreeting } from "generated";
+
+describe("Greeter contract NewGreeting event tests", () => {
+  it("Greeter_NewGreeting is created correctly", async () => {
+    const indexer = createTestIndexer();
+
+    // Creating mock for Greeter contract NewGreeting event
+    const event = {
+      contract: "Greeter" as const,
+      event: "NewGreeting" as const,
+      params: {
+      },
+    };
+
+    // TODO: Configure chain ID and start/end blocks for your contract
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 100,
+          simulate: [event],
+        },
+      },
+    });
+
+    // Getting the actual entity from the test indexer
+    let actualGreeterNewGreeting = await indexer.Greeter_NewGreeting.get(
+      `${event.chainId}_${event.block.height}_${event.logIndex}`
+    );
+
+    // Creating the expected entity
+    const expectedGreeterNewGreeting: Greeter_NewGreeting = {
+      id: `${event.chainId}_${event.block.height}_${event.logIndex}`,
+    };
+    // Asserting that the entity in the mock database is the same as the expected entity
+    expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);
+  });
+});

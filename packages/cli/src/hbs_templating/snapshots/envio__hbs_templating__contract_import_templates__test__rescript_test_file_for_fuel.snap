@@ -1,0 +1,30 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+open Vitest
+
+describe("Greeter contract NewGreeting event tests", () => {
+  Async.it("Greeter_NewGreeting is created correctly", async _t => {
+    let indexer = Indexer.createTestIndexer()
+
+    // Creating mock for Greeter contract NewGreeting event
+    let event: TestIndexer.simulateItem = %raw(`{
+      contract: "Greeter",
+      event: "NewGreeting",
+      params: {
+      },
+    }`)
+
+    // TODO: Configure chain ID and start/end blocks for your contract
+    let _ = await indexer.process({
+      chains: {
+        chain1: {
+          startBlock: 0,
+          endBlock: 100,
+          simulate: [event],
+        },
+      },
+    })
+  })
+})

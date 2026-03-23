@@ -9,9 +9,6 @@ import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 // Re-export everything from envioGen
 export * from "./src/Envio.res.mjs";
 
-import * as TestHelpers_MockAddresses from "./src/TestHelpers_MockAddresses.res.mjs";
-export const TestHelpers = { Addresses: TestHelpers_MockAddresses };
-
 // Important! Should match the index.d.ts file
 export const S = {
   string: Sury.string,

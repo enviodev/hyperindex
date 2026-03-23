@@ -23,12 +23,16 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
     ~retry as _,
     ~logger as _,
   ) => {
-    let filteredItems = []
+    // Validate that all items have block numbers within the configured range
     for i in 0 to items->Array.length - 1 {
       let item = items->Js.Array2.unsafe_get(i)
       let blockNumber = item->Internal.getItemBlockNumber
-      if blockNumber >= fromBlock && blockNumber <= endBlock {
-        filteredItems->Array.push(item)->ignore
+      if blockNumber < fromBlock || blockNumber > endBlock {
+        Js.Exn.raiseError(
+          `simulate: Item at index ${i->Int.toString} has block number ${blockNumber->Int.toString}, ` ++
+          `which is outside the configured range [${fromBlock->Int.toString}, ${endBlock->Int.toString}]. ` ++
+          `Please set the block number within the startBlock..endBlock range, or adjust startBlock/endBlock.`,
+        )
       }
     }
 
@@ -42,7 +46,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
         },
         prevRangeLastBlock: None,
       },
-      parsedQueueItems: filteredItems,
+      parsedQueueItems: items,
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber,
       latestFetchedBlockTimestamp: 0,

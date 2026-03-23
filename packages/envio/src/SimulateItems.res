@@ -1,6 +1,6 @@
 open Belt
 
-type simulateEventItem = {
+type evmSimulateEventItem = {
   contract: string,
   event: string,
   params: option<Js.Json.t>,
@@ -11,9 +11,25 @@ type simulateEventItem = {
   transaction: option<Js.Json.t>,
 }
 
-type simulateBlockItem = {
+type fuelSimulateEventItem = {
+  contract: string,
+  event: string,
+  params: option<Js.Json.t>,
+  srcAddress: option<Address.t>,
+  logIndex: option<int>,
+  height: option<int>,
+  block: option<Js.Json.t>,
+  transaction: option<Js.Json.t>,
+}
+
+type evmSimulateBlockItem = {
   block: string,
   number: option<int>,
+}
+
+type fuelSimulateBlockItem = {
+  block: string,
+  height: option<int>,
 }
 
 // Raw JSON item from user - discriminated by presence of "contract"+"event" vs "block" keys
@@ -52,6 +68,7 @@ let parse = (
   let startBlock = chainConfig.startBlock
   let currentBlock = ref(startBlock)
   let currentLogIndex = ref(0)
+  let isFuel = config.ecosystem.name === Fuel
 
   let items = []
 
@@ -70,20 +87,27 @@ let parse = (
         )
       }
 
-      let item = rawJson->(Utils.magic: Js.Json.t => simulateEventItem)
+      // Parse event item fields based on ecosystem
+      let (params, blockNumberOverride, logIndex, srcAddress, blockOverride, transactionOverride) = if isFuel {
+        let item = rawJson->(Utils.magic: Js.Json.t => fuelSimulateEventItem)
+        (item.params, item.height, item.logIndex, item.srcAddress, item.block, item.transaction)
+      } else {
+        let item = rawJson->(Utils.magic: Js.Json.t => evmSimulateEventItem)
+        (item.params, item.number, item.logIndex, item.srcAddress, item.block, item.transaction)
+      }
 
       // Parse params using the event's schema
       // Use undefined for events with no params (e.g. EmptyEvent()) to match codegen behavior
-      let params = switch item.params {
+      let params = switch params {
       | Some(paramsJson) => paramsJson->S.parseOrThrow(eventConfig.paramsRawEventSchema)
       | None => %raw(`undefined`)->(Utils.magic: 'a => Internal.eventParams)
       }
 
-      let blockNumber = switch item.number {
+      let blockNumber = switch blockNumberOverride {
       | Some(n) => n
       | None => currentBlock.contents
       }
-      let logIndex = switch item.logIndex {
+      let logIndex = switch logIndex {
       | Some(li) => li
       | None =>
         let li = currentLogIndex.contents
@@ -91,7 +115,7 @@ let parse = (
         li
       }
 
-      let srcAddress = switch item.srcAddress {
+      let srcAddress = switch srcAddress {
       | Some(addr) => addr
       | None =>
         // Use first address from contract config
@@ -108,15 +132,16 @@ let parse = (
       }
 
       // Build block and transaction as empty objects with optional overrides
-      let block = switch item.block {
+      let block = switch blockOverride {
       | Some(b) => b->(Utils.magic: Js.Json.t => Internal.eventBlock)
       | None =>
-        {"number": blockNumber, "timestamp": 0}->(
-          Utils.magic: {"number": int, "timestamp": int} => Internal.eventBlock
-        )
+        let blockDict = Js.Dict.empty()
+        blockDict->Js.Dict.set(config.ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
+        blockDict->Js.Dict.set(config.ecosystem.blockTimestampName, 0->(Utils.magic: int => unknown))
+        blockDict->(Utils.magic: Js.Dict.t<unknown> => Internal.eventBlock)
       }
 
-      let transaction = switch item.transaction {
+      let transaction = switch transactionOverride {
       | Some(t) => t->(Utils.magic: Js.Json.t => Internal.eventTransaction)
       | None => Js.Dict.empty()->(Utils.magic: dict<unit> => Internal.eventTransaction)
       }
@@ -142,8 +167,14 @@ let parse = (
       ->ignore
 
     | (_, _, Some(blockHandlerName)) =>
-      // Block simulate item
-      let item = rawJson->(Utils.magic: Js.Json.t => simulateBlockItem)
+      // Block simulate item - read block number using ecosystem-specific field
+      let blockNumberOverride = if isFuel {
+        let item = rawJson->(Utils.magic: Js.Json.t => fuelSimulateBlockItem)
+        item.height
+      } else {
+        let item = rawJson->(Utils.magic: Js.Json.t => evmSimulateBlockItem)
+        item.number
+      }
 
       let chainIdStr = chainId->Int.toString
       let onBlockConfigs =
@@ -162,7 +193,7 @@ let parse = (
         )
       }
 
-      let blockNumber = switch item.number {
+      let blockNumber = switch blockNumberOverride {
       | Some(n) => n
       | None => currentBlock.contents
       }

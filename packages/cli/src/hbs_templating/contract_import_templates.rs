@@ -380,6 +380,177 @@ impl Contract {
 
         content
     }
+    /// Generates TypeScript test file content for this contract
+    pub fn generate_typescript_test_content(&self, _is_fuel: bool) -> String {
+        let first_event = match self.imported_events.first() {
+            Some(event) => event,
+            None => return String::new(),
+        };
+
+        let contract_name = &self.name.capitalized;
+        let event_name = &first_event.name;
+
+        let mut content = String::new();
+
+        // Imports
+        content.push_str("import { describe, it, expect } from \"vitest\";\n");
+        content.push_str(&format!(
+            "import {{ createTestIndexer, type {}_{} }} from \"generated\";\n",
+            contract_name, event_name
+        ));
+
+        content.push_str(&format!(
+            "\ndescribe(\"{} contract {} event tests\", () => {{\n",
+            contract_name, event_name
+        ));
+        content.push_str(&format!(
+            "  it(\"{}_{} is created correctly\", async () => {{\n",
+            contract_name, event_name
+        ));
+        content.push_str("    const indexer = createTestIndexer();\n");
+
+        // Mock event
+        content.push_str(&format!(
+            "\n    // Creating mock for {} contract {} event\n",
+            contract_name, event_name
+        ));
+        content.push_str("    const event = {\n");
+        content.push_str(&format!(
+            "      contract: \"{}\" as const,\n",
+            contract_name
+        ));
+        content.push_str(&format!("      event: \"{}\" as const,\n", event_name));
+        content.push_str("      params: {\n");
+        for param in &first_event.params {
+            content.push_str(&format!("        // {}: ...,\n", param.js_name));
+        }
+        content.push_str("      },\n");
+        content.push_str("    };\n");
+
+        // Process
+        content.push_str(
+            "\n    // TODO: Configure chain ID and start/end blocks for your contract\n",
+        );
+        content.push_str("    await indexer.process({\n");
+        content.push_str("      chains: {\n");
+        content.push_str("        1: {\n");
+        content.push_str("          startBlock: 0,\n");
+        content.push_str("          endBlock: 100,\n");
+        content.push_str("          simulate: [event],\n");
+        content.push_str("        },\n");
+        content.push_str("      },\n");
+        content.push_str("    });\n");
+
+        // Get actual entity
+        content.push_str(
+            "\n    // Getting the actual entity from the test indexer\n",
+        );
+        content.push_str(&format!(
+            "    let actual{}{} = await indexer.{}_{}.get(\n",
+            contract_name, event_name, contract_name, event_name
+        ));
+        content.push_str(&format!(
+            "      {}\n",
+            first_event.entity_id_from_event_code
+        ));
+        content.push_str("    );\n");
+
+        // Expected entity
+        content.push_str("\n    // Creating the expected entity\n");
+        content.push_str(&format!(
+            "    const expected{}{}: {}_{} = {{\n",
+            contract_name, event_name, contract_name, event_name
+        ));
+        content.push_str(&format!(
+            "      id: {},\n",
+            first_event.entity_id_from_event_code
+        ));
+        for param in &first_event.params {
+            content.push_str(&format!(
+                "      {}: event.params.{},\n",
+                param.js_name, param.js_name
+            ));
+        }
+        content.push_str("    };\n");
+
+        // Assert
+        content.push_str(
+            "    // Asserting that the entity in the mock database is the same as the expected entity\n",
+        );
+        content.push_str(&format!(
+            "    expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
+            contract_name, event_name,
+            contract_name, event_name,
+            contract_name, event_name,
+            contract_name, event_name,
+        ));
+
+        content.push_str("  });\n");
+        content.push_str("});\n");
+
+        content
+    }
+
+    /// Generates ReScript test file content for this contract
+    pub fn generate_rescript_test_content(&self, _is_fuel: bool) -> String {
+        let first_event = match self.imported_events.first() {
+            Some(event) => event,
+            None => return String::new(),
+        };
+
+        let contract_name = &self.name.capitalized;
+        let event_name = &first_event.name;
+
+        let mut content = String::new();
+
+        content.push_str("open Vitest\n");
+        content.push_str(&format!(
+            "\ndescribe(\"{} contract {} event tests\", () => {{\n",
+            contract_name, event_name
+        ));
+        content.push_str(&format!(
+            "  Async.it(\"{}_{} is created correctly\", async _t => {{\n",
+            contract_name, event_name
+        ));
+        content.push_str("    let indexer = Indexer.createTestIndexer()\n");
+
+        // Mock event using %raw
+        content.push_str(&format!(
+            "\n    // Creating mock for {} contract {} event\n",
+            contract_name, event_name
+        ));
+        content.push_str("    let event: TestIndexer.simulateItem = %raw(`{\n");
+        content.push_str(&format!(
+            "      contract: \"{}\",\n",
+            contract_name
+        ));
+        content.push_str(&format!("      event: \"{}\",\n", event_name));
+        content.push_str("      params: {\n");
+        for param in &first_event.params {
+            content.push_str(&format!("        // {}: ...,\n", param.res_name));
+        }
+        content.push_str("      },\n");
+        content.push_str("    }`)\n");
+
+        // Process
+        content.push_str(
+            "\n    // TODO: Configure chain ID and start/end blocks for your contract\n",
+        );
+        content.push_str("    let _ = await indexer.process({\n");
+        content.push_str("      chains: {\n");
+        content.push_str("        chain1: {\n");
+        content.push_str("          startBlock: 0,\n");
+        content.push_str("          endBlock: 100,\n");
+        content.push_str("          simulate: [event],\n");
+        content.push_str("        },\n");
+        content.push_str("      },\n");
+        content.push_str("    })\n");
+
+        content.push_str("  })\n");
+        content.push_str("})\n");
+
+        content
+    }
 }
 
 #[derive(Serialize)]
@@ -592,6 +763,42 @@ impl AutoSchemaHandlerTemplate {
         Ok(())
     }
 
+    /// Generates test files for the first contract in src/
+    fn generate_test_files(
+        &self,
+        lang: &Language,
+        project_root: &Path,
+        is_fuel: bool,
+    ) -> Result<()> {
+        use std::fs;
+
+        let first_contract = match self.imported_contracts.first() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+
+        let src_dir = project_root.join("src");
+        fs::create_dir_all(&src_dir)
+            .context(format!("Failed to create src directory at {:?}", src_dir))?;
+
+        let (file_name, content) = match lang {
+            Language::TypeScript => (
+                "indexer.test.ts",
+                first_contract.generate_typescript_test_content(is_fuel),
+            ),
+            Language::ReScript => (
+                "Indexer_test.res",
+                first_contract.generate_rescript_test_content(is_fuel),
+            ),
+        };
+
+        let file_path = src_dir.join(file_name);
+        fs::write(&file_path, content)
+            .context(format!("Failed to write test file at {:?}", file_path))?;
+
+        Ok(())
+    }
+
     pub fn generate_contract_import_templates(
         &self,
         lang: &Language,
@@ -604,10 +811,6 @@ impl AutoSchemaHandlerTemplate {
             .get_contract_import_shared_dir()
             .context("Failed getting shared contract import templates")?;
 
-        let lang_dir = template_dirs
-            .get_contract_import_lang_dir(lang)
-            .context(format!("Failed getting {} contract import templates", lang))?;
-
         // Copy shared static content into the project root (not the generated folder)
         template_dirs
             .get_shared_static_dir()?
@@ -618,13 +821,12 @@ impl AutoSchemaHandlerTemplate {
         self.generate_handler_files(lang, project_root, is_fuel)
             .context("Failed generating handler files")?;
 
-        // Generate test files using Handlebars (still needed)
-        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, project_root);
+        // Generate test file for the first contract
+        self.generate_test_files(lang, project_root, is_fuel)
+            .context("Failed generating test files")?;
+
+        // Generate shared templates (schema.graphql, .env)
         let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, project_root);
-        hbs.generate_hbs_templates().context(format!(
-            "Failed generating {} contract import templates",
-            lang
-        ))?;
         hbs_shared
             .generate_hbs_templates()
             .context("Failed generating shared contract import templates")?;
@@ -767,6 +969,55 @@ mod test {
             .collect();
 
         assert_eq!(expected_event_keys, actual_event_keys);
+    }
+
+    fn get_test_template_helper(
+        configs_file_name: &str,
+        language: &Language,
+    ) -> AutoSchemaHandlerTemplate {
+        use crate::{
+            config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths,
+        };
+
+        let project_root = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let config = format!("configs/{}", configs_file_name);
+        let generated = "generated/";
+        let project_paths =
+            ParsedProjectPaths::new(&project_root, generated, &config).expect("Parsed paths");
+
+        let config = SystemConfig::parse_from_project_files(&project_paths)
+            .expect("Deserialized yml config should be parseable");
+
+        AutoSchemaHandlerTemplate::try_from(config, language, None)
+            .expect("should be able to create template")
+    }
+
+    #[test]
+    fn typescript_test_file_for_evm() {
+        let template = get_test_template_helper("config1.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0].generate_typescript_test_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_test_file_for_evm() {
+        let template = get_test_template_helper("config1.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0].generate_rescript_test_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn typescript_test_file_for_fuel() {
+        let template = get_test_template_helper("fuel-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0].generate_typescript_test_content(true);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_test_file_for_fuel() {
+        let template = get_test_template_helper("fuel-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0].generate_rescript_test_content(true);
+        insta::assert_snapshot!(content);
     }
 
     #[test]

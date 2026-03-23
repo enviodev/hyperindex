@@ -543,17 +543,15 @@ type SimulateContractEvent<Contracts extends Record<string, { events: string }>>
   };
 }[keyof Contracts];
 
-/** Base fields shared by all simulate event items. */
-type SimulateEventItemBase = {
+/** Shared fields for all simulate event items. */
+type SimulateEventItemShared = {
   /** Event parameters. Keys match the event's parameter names. */
   params?: Record<string, unknown>;
   /** Override the source address. Defaults to the first contract address. */
   srcAddress?: Address;
   /** Override the log index. Auto-increments by default. */
   logIndex?: number;
-  /** Override the block number. Defaults to startBlock. */
-  number?: number;
-  /** Override block fields (number, timestamp, hash, etc). */
+  /** Override block fields. */
   block?: Record<string, unknown>;
   /** Override transaction fields. */
   transaction?: Record<string, unknown>;
@@ -561,38 +559,52 @@ type SimulateEventItemBase = {
 
 /** A typesafe simulate event item for EVM. */
 type EvmSimulateEventItem<Contracts extends Record<string, { events: string }>> =
-  SimulateContractEvent<Contracts> & SimulateEventItemBase;
+  SimulateContractEvent<Contracts> & SimulateEventItemShared & {
+    /** Override the block number. Defaults to startBlock. */
+    number?: number;
+  };
 
 /** A typesafe simulate event item for Fuel. */
 type FuelSimulateEventItem<Contracts extends Record<string, { events: string }>> =
-  SimulateContractEvent<Contracts> & SimulateEventItemBase;
+  SimulateContractEvent<Contracts> & SimulateEventItemShared & {
+    /** Override the block height. Defaults to startBlock. */
+    height?: number;
+  };
 
-/** A simulate block item specifying a block handler to invoke. */
-type SimulateBlockItem = {
+/** A simulate block item for EVM specifying a block handler to invoke. */
+type EvmSimulateBlockItem = {
   /** The onBlock handler name as defined in the handler registration. */
   block: string;
   /** Override the block number. Defaults to startBlock. */
   number?: number;
 };
 
+/** A simulate block item for Fuel specifying a block handler to invoke. */
+type FuelSimulateBlockItem = {
+  /** The onBlock handler name as defined in the handler registration. */
+  block: string;
+  /** Override the block height. Defaults to startBlock. */
+  height?: number;
+};
+
 /** Simulate item type for EVM ecosystem. */
 type EvmSimulateItem<Config extends IndexerConfigTypes> =
   Config["evm"] extends { contracts?: Record<string, { events: string }> }
     ? Config["evm"]["contracts"] extends Record<string, { events: string }>
-      ? EvmSimulateEventItem<Config["evm"]["contracts"]> | SimulateBlockItem
-      : SimulateBlockItem
-    : SimulateBlockItem;
+      ? EvmSimulateEventItem<Config["evm"]["contracts"]> | EvmSimulateBlockItem
+      : EvmSimulateBlockItem
+    : EvmSimulateBlockItem;
 
 /** Simulate item type for Fuel ecosystem. */
 type FuelSimulateItem<Config extends IndexerConfigTypes> =
   Config["fuel"] extends { contracts?: Record<string, { events: string }> }
     ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
-      ? FuelSimulateEventItem<Config["fuel"]["contracts"]> | SimulateBlockItem
-      : SimulateBlockItem
-    : SimulateBlockItem;
+      ? FuelSimulateEventItem<Config["fuel"]["contracts"]> | FuelSimulateBlockItem
+      : FuelSimulateBlockItem
+    : FuelSimulateBlockItem;
 
 /** Simulate item type for SVM ecosystem. */
-type SvmSimulateItem = SimulateBlockItem;
+type SvmSimulateItem = EvmSimulateBlockItem;
 
 /** Configuration for a single chain in the test indexer. */
 type TestIndexerChainConfig<SimulateItem> = {

@@ -83,17 +83,21 @@ describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", async () => {
     const indexer = createTestIndexer();
 
+    // Get mock addresses from helpers
     const userAddress1 = Addresses.mockAddresses[0]!;
     const userAddress2 = Addresses.mockAddresses[1]!;
 
+    // Make a mock entity to set the initial state of the mock db
     const mockAccountEntity: Account = {
       id: userAddress1,
       balance: 5n,
     };
 
-    // Pre-set initial entity state
+    // Set an initial state for the user
     indexer.Account.set(mockAccountEntity);
 
+    // Create a mock Transfer event from userAddress1 to userAddress2
+    // and process it
     await indexer.process({
       chains: {
         1: {
@@ -114,13 +118,17 @@ describe("Transfers", () => {
       },
     });
 
+    // Get the balance of userAddress1 after the transfer
     const account1Balance = (await indexer.Account.get(userAddress1))?.balance;
+    // Assert the expected balance
     expect(
       account1Balance,
       "Should have subtracted transfer amount 3 from userAddress1 balance 5"
     ).toBe(2n);
 
+    // Get the balance of userAddress2 after the transfer
     const account2Balance = (await indexer.Account.get(userAddress2))?.balance;
+    // Assert the expected balance
     expect(
       account2Balance,
       "Should have added transfer amount 3 to userAddress2 balance 0"
