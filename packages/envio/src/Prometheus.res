@@ -58,21 +58,11 @@ module MakeSafePromMetric = (
         Js.Exn.raiseError("Duplicate prometheus metric name: " ++ name)
       } else {
         metricNames->Utils.Set.add(name)->ignore
-        // Try to create the metric. If prom-client already has it registered
-        // (e.g. module loaded from two different paths in pnpm), reuse it.
-        let metric = try {
-          M.make({
-            "name": name,
-            "help": help,
-            "labelNames": labelNames,
-          })
-        } catch {
-        | _ =>
-          switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
-          | Some(existing) => existing->(Utils.magic: PromClient.metricInstance => M.t)
-          | None => Js.Exn.raiseError("Failed to create or find prometheus metric: " ++ name)
-          }
-        }
+        let metric = M.make({
+          "name": name,
+          "help": help,
+          "labelNames": labelNames,
+        })
 
         {metric, labelSchema}
       }

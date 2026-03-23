@@ -83,17 +83,13 @@ let make = (
     ~maxRetryInterval=60_000,
   ),
 ) => {
-  // Always start with Sync as initial active source (backfill mode).
-  // Fall back to Live if no Sync source exists.
-  let initialActiveSource = switch sources->Js.Array2.find(source => source.sourceFor === Sync) {
-  | Some(source) => source
-  | None =>
-    switch sources->Js.Array2.find(source => source.sourceFor === Live) {
+  let initialActiveSource =
+    switch sources->Js.Array2.find(source =>
+      getSourceRole(~sourceFor=source.sourceFor, ~isLive=false, ~hasLive=false) === Some(Primary)
+    ) {
     | Some(source) => source
-    | None =>
-      Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
+    | None => sources->Js.Array2.unsafe_get(0)
     }
-  }
   Prometheus.IndexingMaxConcurrency.set(
     ~maxConcurrency=maxPartitionConcurrency,
     ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
