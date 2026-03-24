@@ -677,7 +677,38 @@ type eventFilter = {event_filter_type}
 {event_filters_type_code}
 {non_event_mod_code}
 
-{simulate_fn_code}"#
+{simulate_fn_code}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {{
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
+}}"#
         )
     }
 }
@@ -1761,13 +1792,50 @@ type handlerContext = {{
             handler_context_entity_fields
         );
 
+        // Generate contract modules with event sub-modules
+        let contract_modules_code = codegen_contracts
+            .iter()
+            .map(|contract| {
+                let events_code = contract
+                    .codegen_events
+                    .iter()
+                    .map(|event| {
+                        let indented = event
+                            .module_code
+                            .lines()
+                            .map(|l| {
+                                if l.is_empty() {
+                                    l.to_string()
+                                } else {
+                                    format!("    {l}")
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        format!("  module {} = {{\n{}\n  }}", event.name, indented)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                format!(
+                    "@genType\nmodule {} = {{\n{}\nlet contractName = \"{}\"\n\n{}\n}}",
+                    contract.name.capitalized,
+                    contract.module_code,
+                    contract.name.capitalized,
+                    events_code,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
         // Combine all parts into indexer_code
         let indexer_code = format!(
-            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             enums_module_code,
             entities_module_code,
             handler_context_code,
             chain_id_type,
+            contract_modules_code,
             indexer_contract_type,
             indexer_chain_type,
             indexer_chains_type,
@@ -2685,6 +2753,37 @@ let makeSimulateItem = (
     "imageUrl": imageUrl
   }}
   {{"contract": contractName, "event": name, "params": params}}->(Utils.magic: {{..}} => TestIndexer.simulateItem)
+}}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {{
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
 }}"#
             ),
         }
@@ -2775,6 +2874,37 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
 /** Create a simulate item for this event. */
 let makeSimulateItem = (): TestIndexer.simulateItem => {
   {"contract": contractName, "event": name}->(Utils.magic: {..} => TestIndexer.simulateItem)
+}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
 }"#.to_string(),
           }
       );
@@ -2871,6 +3001,37 @@ paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<
 /** Create a simulate item for this event. */
 let makeSimulateItem = (): TestIndexer.simulateItem => {
   {"contract": contractName, "event": name}->(Utils.magic: {..} => TestIndexer.simulateItem)
+}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
 }"#.to_string(),
           }
       );
