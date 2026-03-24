@@ -882,15 +882,11 @@ let injectedTaskReducer = (
       dispatchAction(SuccessExit)
     | NoExit =>
       // Check for background write errors
-      switch state.ctx.persistence.writePromise {
-      | None => ()
-      | Some(promise) =>
-        promise->Promise.thenResolve(result => {
-          switch result {
-          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-          | Ok() => ()
-          }
-        })->Promise.done
+      if state.ctx.persistence->Persistence.isWriting {
+        switch await state.ctx.persistence->Persistence.awaitCurrentWrite {
+        | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+        | Ok() => ()
+        }
       }
       updateChainMetadataTable(
         chainManager,
