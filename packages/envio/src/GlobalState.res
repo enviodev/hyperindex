@@ -6,7 +6,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({rollbackDiff: Persistence.rollbackDiff, eventsProcessedDiffByChain: dict<float>})
+  | RollbackReady({rollbackDiff: InMemoryStore.rollbackDiff, eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
   type t = {
@@ -131,7 +131,7 @@ type action =
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
   | SetRollbackState({
-      rollbackDiff: Persistence.rollbackDiff,
+      rollbackDiff: InMemoryStore.rollbackDiff,
       rollbackedChainManager: ChainManager.t,
       eventsProcessedDiffByChain: dict<float>,
     })
@@ -970,25 +970,16 @@ let injectedTaskReducer = (
           }
         }
       } else {
-        // For rollback, must wait for any in-flight write to ensure consistency
-        if isRollback && state.ctx.persistence->Persistence.isWriting {
-          switch await state.ctx.persistence->Persistence.awaitCurrentWrite {
-          | Error(errHandler) =>
-            dispatchAction(ErrorExit(errHandler))
-          | Ok() => ()
-          }
-        }
-
+        // Dispatch before any await to prevent triggering processing twice
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
         dispatchAction(StartProcessingBatch)
 
-        // For rollback, reset the in-memory store (cached data is stale
-        // after DB rollback) and apply the rollback diff
+        // For rollback, apply the diff to overwrite stale cached entities.
+        // Entities not in the diff are unchanged and remain valid.
         let inMemoryStore = state.ctx.inMemoryStore
         switch state.rollbackState {
         | RollbackReady({rollbackDiff}) =>
-          inMemoryStore->InMemoryStore.reset
-          Persistence.applyRollbackDiff(inMemoryStore, ~rollbackDiff)
+          inMemoryStore->InMemoryStore.applyRollbackDiff(~rollbackDiff)
         | _ => ()
         }
 
@@ -1018,20 +1009,12 @@ let injectedTaskReducer = (
               isInReorgThreshold,
             }
 
-            if isRollback {
-              // Rollback writes must be synchronous to ensure consistency
-              switch await state.ctx.persistence->Persistence.forceWrite(~writeArgs) {
-              | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
-              | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-              }
-            } else {
-              // Queue background write and manage in-memory capacity
-              await state.ctx.persistence->Persistence.writeAndManageCapacity(
-                ~inMemoryStore,
-                ~writeArgs,
-              )
-              dispatchAction(EventBatchProcessed({batch: batch}))
-            }
+            // Queue background write and manage in-memory capacity
+            await state.ctx.persistence->Persistence.writeAndManageCapacity(
+              ~inMemoryStore,
+              ~writeArgs,
+            )
+            dispatchAction(EventBatchProcessed({batch: batch}))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         }

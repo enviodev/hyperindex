@@ -319,23 +319,11 @@ let writeBatch = (
     )
   }
 
-type rollbackEntityDiff = {
-  entityConfig: Internal.entityConfig,
-  removedIds: array<string>,
-  restoredEntities: array<Internal.entity>,
-}
-
-type rollbackDiff = {
-  rollbackTargetCheckpointId: Internal.checkpointId,
-  rollbackDiffCheckpointId: Internal.checkpointId,
-  entityDiffs: array<rollbackEntityDiff>,
-}
-
 let prepareRollbackDiff = async (
   persistence: t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
-) => {
+): InMemoryStore.rollbackDiff => {
   let entityDiffs =
     await persistence.allEntities
     ->Belt.Array.map(async entityConfig => {
@@ -347,43 +335,11 @@ let prepareRollbackDiff = async (
       let removedIds = removedIdsResult->Js.Array2.map(data => data["id"])
       let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
 
-      {entityConfig, removedIds, restoredEntities}
+      ({entityConfig, removedIds, restoredEntities}: InMemoryStore.rollbackEntityDiff)
     })
     ->Promise.all
 
   {rollbackTargetCheckpointId, rollbackDiffCheckpointId, entityDiffs}
-}
-
-// Apply rollback diff changes to the in-memory store
-let applyRollbackDiff = (inMemoryStore: InMemoryStore.t, ~rollbackDiff: rollbackDiff) => {
-  inMemoryStore.rollbackTargetCheckpointId = Some(rollbackDiff.rollbackTargetCheckpointId)
-
-  rollbackDiff.entityDiffs->Belt.Array.forEach(({entityConfig, removedIds, restoredEntities}) => {
-    removedIds->Js.Array2.forEach(entityId => {
-      inMemoryStore->InMemoryStore.entitySet(
-        ~entityConfig,
-        ~change=Delete({
-          entityId,
-          checkpointId: rollbackDiff.rollbackDiffCheckpointId,
-        }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
-      )
-    })
-
-    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-      inMemoryStore->InMemoryStore.entitySet(
-        ~entityConfig,
-        ~change=Set({
-          entityId: entity.id,
-          checkpointId: rollbackDiff.rollbackDiffCheckpointId,
-          entity,
-        }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
-      )
-    })
-  })
 }
 
 let isWriting = persistence => persistence.writePromise !== None

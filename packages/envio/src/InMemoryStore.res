@@ -139,26 +139,49 @@ let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
   })
 }
 
-// Clear all cached data. Used before rollback since
-// DB was rolled back and cached entities are stale.
-let reset = (inMemoryStore: t) => {
-  inMemoryStore.entities
-  ->Js.Dict.entries
-  ->Belt.Array.forEach(((name, _)) => {
-    inMemoryStore.entities->Js.Dict.set(name, InMemoryTable.Entity.make())
-  })
-  inMemoryStore.totalChangeCount = 0.
-  inMemoryStore.rollbackTargetCheckpointId = None
+type rollbackEntityDiff = {
+  entityConfig: Internal.entityConfig,
+  removedIds: array<string>,
+  restoredEntities: array<Internal.entity>,
+}
 
-  inMemoryStore.rawEvents.dict
-  ->Js.Dict.keys
-  ->Belt.Array.forEach(key => {
-    inMemoryStore.rawEvents.dict->Utils.Dict.deleteInPlace(key)
-  })
-  inMemoryStore.effects
-  ->Js.Dict.keys
-  ->Belt.Array.forEach(key => {
-    inMemoryStore.effects->Utils.Dict.deleteInPlace(key)
+type rollbackDiff = {
+  rollbackTargetCheckpointId: Internal.checkpointId,
+  rollbackDiffCheckpointId: Internal.checkpointId,
+  entityDiffs: array<rollbackEntityDiff>,
+}
+
+// Apply rollback diff changes to the in-memory store.
+// Only overwrites entities that actually changed — entities not in the diff
+// remain cached and valid since they're unchanged by the rollback.
+let applyRollbackDiff = (inMemoryStore: t, ~rollbackDiff: rollbackDiff) => {
+  inMemoryStore.rollbackTargetCheckpointId = Some(rollbackDiff.rollbackTargetCheckpointId)
+
+  rollbackDiff.entityDiffs->Belt.Array.forEach(({entityConfig, removedIds, restoredEntities}) => {
+    removedIds->Js.Array2.forEach(entityId => {
+      inMemoryStore->entitySet(
+        ~entityConfig,
+        ~change=Delete({
+          entityId,
+          checkpointId: rollbackDiff.rollbackDiffCheckpointId,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
+
+    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+      inMemoryStore->entitySet(
+        ~entityConfig,
+        ~change=Set({
+          entityId: entity.id,
+          checkpointId: rollbackDiff.rollbackDiffCheckpointId,
+          entity,
+        }),
+        ~shouldSaveHistory=false,
+        ~containsRollbackDiffChange=true,
+      )
+    })
   })
 }
 
