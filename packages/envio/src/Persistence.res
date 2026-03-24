@@ -422,6 +422,7 @@ let rec executeWrite = persistence => {
           "msg": "Background write completed",
           "write_time_elapsed": dbWriteDuration,
         })
+        Prometheus.ProcessingBatch.setDbWriteDuration(~dbWriteDuration)
 
         // After write completes, clean up the in-memory store
         inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
@@ -492,12 +493,12 @@ let writeAndManageCapacity = async (
 ) => {
   persistence->startWrite(~writeArgs)
 
-  let halfCapacity = Env.targetInMemoryStoreSize / 2
-  if inMemoryStore->InMemoryStore.totalChangeCount > halfCapacity {
+  let halfCapacity = (Env.targetInMemoryStoreSize :> float) /. 2.
+  if inMemoryStore.totalChangeCount > halfCapacity {
     // Try pruning entities already written to DB
     inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
 
-    if inMemoryStore->InMemoryStore.totalChangeCount > halfCapacity {
+    if inMemoryStore.totalChangeCount > halfCapacity {
       // Still over half - must wait for current write to finish, then prune again
       if isWriting(persistence) {
         switch await awaitCurrentWrite(persistence) {

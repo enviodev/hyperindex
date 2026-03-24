@@ -52,7 +52,6 @@ type t = {
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
-  inMemoryStore: InMemoryStore.t,
 }
 
 let make = (
@@ -72,7 +71,6 @@ let make = (
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     id: 0,
-    inMemoryStore: InMemoryStore.make(~entities=ctx.persistence.allEntities),
   }
 }
 
@@ -660,13 +658,6 @@ let actionReducer = (state: t, action: action) => {
         ? [PruneStaleEntityHistory]
         : []
 
-    // After a rollback batch, reset the in-memory store since the rollback
-    // applied diff changes that invalidated the cached state
-    let wasRollback = switch state.rollbackState {
-    | RollbackReady(_) => true
-    | _ => false
-    }
-
     let state = {
       ...state,
       // Can safely reset rollback state, since overwrite is not possible.
@@ -675,9 +666,6 @@ let actionReducer = (state: t, action: action) => {
       chainManager: state.chainManager->updateProgressedChains(~batch, ~ctx=state.ctx),
       currentlyProcessingBatch: false,
       processedBatches: state.processedBatches + 1,
-      inMemoryStore: wasRollback
-        ? InMemoryStore.make(~entities=state.ctx.persistence.allEntities)
-        : state.inMemoryStore,
     }
 
     let shouldExit = EventProcessing.allChainsEventsProcessedToEndblock(
@@ -994,10 +982,12 @@ let injectedTaskReducer = (
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
         dispatchAction(StartProcessingBatch)
 
-        // For rollback, apply the diff changes to the main in-memory store
-        let inMemoryStore = state.inMemoryStore
+        // For rollback, reset the in-memory store (cached data is stale
+        // after DB rollback) and apply the rollback diff
+        let inMemoryStore = state.ctx.inMemoryStore
         switch state.rollbackState {
         | RollbackReady({rollbackDiff}) =>
+          inMemoryStore->InMemoryStore.reset
           Persistence.applyRollbackDiff(inMemoryStore, ~rollbackDiff)
         | _ => ()
         }
@@ -1020,8 +1010,7 @@ let injectedTaskReducer = (
           dispatchAction(ErrorExit(errHandler))
         | res =>
           switch res {
-          | Ok({loaderDuration, handlerDuration}) =>
-            let logger = Logging.getLogger()
+          | Ok() =>
             let writeArgs: Persistence.writeArgs = {
               batch,
               config: state.ctx.config,
@@ -1032,15 +1021,7 @@ let injectedTaskReducer = (
             if isRollback {
               // Rollback writes must be synchronous to ensure consistency
               switch await state.ctx.persistence->Persistence.forceWrite(~writeArgs) {
-              | Ok() =>
-                let dbWriteDuration = 0. // Already measured inside forceWrite
-                EventProcessing.registerProcessEventBatchMetrics(
-                  ~logger,
-                  ~loadDuration=loaderDuration,
-                  ~handlerDuration,
-                  ~dbWriteDuration,
-                )
-                dispatchAction(EventBatchProcessed({batch: batch}))
+              | Ok() => dispatchAction(EventBatchProcessed({batch: batch}))
               | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
               }
             } else {
@@ -1048,12 +1029,6 @@ let injectedTaskReducer = (
               await state.ctx.persistence->Persistence.writeAndManageCapacity(
                 ~inMemoryStore,
                 ~writeArgs,
-              )
-              EventProcessing.registerProcessEventBatchMetrics(
-                ~logger,
-                ~loadDuration=loaderDuration,
-                ~handlerDuration,
-                ~dbWriteDuration=0.,
               )
               dispatchAction(EventBatchProcessed({batch: batch}))
             }

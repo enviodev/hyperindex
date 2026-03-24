@@ -362,22 +362,6 @@ let runBatchHandlersOrThrow = async (
   }
 }
 
-let registerProcessEventBatchMetrics = (
-  ~logger,
-  ~loadDuration,
-  ~handlerDuration,
-  ~dbWriteDuration,
-) => {
-  logger->Logging.childTrace({
-    "msg": "Finished processing batch",
-    "loader_time_elapsed": loadDuration,
-    "handlers_time_elapsed": handlerDuration,
-    "write_time_elapsed": dbWriteDuration,
-  })
-
-  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration, ~dbWriteDuration)
-}
-
 type logPartitionInfo = {
   batchSize: int,
   firstItemTimestamp: option<int>,
@@ -385,10 +369,6 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
-type processResult = {
-  loaderDuration: float,
-  handlerDuration: float,
-}
 
 let processEventBatch = async (
   ~batch: Batch.t,
@@ -444,7 +424,14 @@ let processEventBatch = async (
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
 
-    Ok({loaderDuration, handlerDuration})
+    logger->Logging.childTrace({
+      "msg": "Finished processing batch",
+      "loader_time_elapsed": loaderDuration,
+      "handlers_time_elapsed": handlerDuration,
+    })
+    Prometheus.ProcessingBatch.setLoaderAndHandlerDurations(~loaderDuration, ~handlerDuration)
+
+    Ok()
   } catch {
   | ProcessingError({message, exn, item}) =>
     exn

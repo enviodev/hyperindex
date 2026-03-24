@@ -42,12 +42,14 @@ module Entity = {
     latest: option<'entity>,
     status: Internal.inMemoryStoreEntityStatus<'entity>,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
+    // Tracks the last checkpoint that accessed this entity via index lookup,
+    // so we don't evict entities that are still needed by an index
     mutable lastReferencedCheckpointId: bigint,
   }
   type t<'entity> = {
     table: t<string, entityWithIndices<'entity>>,
     fieldNameIndices: indexFieldNameToIndices,
-    mutable changeCount: int,
+    mutable changeCount: float,
   }
 
   // Helper to extract entity ID from any entity
@@ -73,7 +75,7 @@ module Entity = {
   let make = (): t<'entity> => {
     table: make(~hash=str => str),
     fieldNameIndices: make(~hash=TableIndices.Index.getFieldName),
-    changeCount: 0,
+    changeCount: 0.,
   }
 
   exception UndefinedKey(string)
@@ -192,7 +194,7 @@ module Entity = {
     | Delete(_) => None
     }
 
-    inMemTable.changeCount = inMemTable.changeCount + 1
+    inMemTable.changeCount = inMemTable.changeCount +. 1.
 
     let updatedEntityRecord = switch inMemTable.table->get(change->Change.getEntityId) {
     | None => {latest, status: newStatus(), entityIndices: Utils.Set.make(), lastReferencedCheckpointId: checkpointId}
@@ -366,13 +368,11 @@ module Entity = {
     ->Array.keepMap(rowToEntity)
   }
 
-  let getChangeCount = (inMemTable: t<'entity>) => inMemTable.changeCount
-
   // After a background write completes, reset Updated entities to Loaded
   // if they haven't been modified since the written checkpoint.
   // Evict stale Loaded entities not referenced after the written checkpoint.
   let cleanupAfterWrite = (inMemTable: t<'entity>, ~writtenCheckpointId: bigint) => {
-    let remainingChangeCount = ref(0)
+    let remainingChangeCount = ref(0.)
     let keys = inMemTable.table.dict->Js.Dict.keys
     for idx in 0 to keys->Array.length - 1 {
       let key = keys->Js.Array2.unsafe_get(idx)
@@ -402,7 +402,7 @@ module Entity = {
           // Entity was referenced after the written checkpoint
           switch row.status {
           | Updated(update) =>
-            remainingChangeCount := remainingChangeCount.contents + 1
+            remainingChangeCount := remainingChangeCount.contents +. 1.
             // Clear already-written history but keep the update status
             // since it has changes newer than what was written
             inMemTable.table.dict->Js.Dict.set(

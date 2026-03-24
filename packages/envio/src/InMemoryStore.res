@@ -52,6 +52,7 @@ type t = {
   entities: dict<InMemoryTable.Entity.t<Internal.entity>>,
   effects: dict<effectCacheInMemTable>,
   mutable rollbackTargetCheckpointId: option<Internal.checkpointId>,
+  mutable totalChangeCount: float,
 }
 
 let make = (~entities: array<Internal.entityConfig>): t => {
@@ -59,6 +60,7 @@ let make = (~entities: array<Internal.entityConfig>): t => {
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
   rollbackTargetCheckpointId: None,
+  totalChangeCount: 0.,
 }
 
 let clone = (self: t) => {
@@ -71,6 +73,7 @@ let clone = (self: t) => {
     effect: table.effect,
   }, self.effects),
   rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
+  totalChangeCount: self.totalChangeCount,
 }
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
@@ -106,25 +109,18 @@ let entitySet = (
   inMemoryStore
   ->getInMemTable(~entityConfig)
   ->InMemoryTable.Entity.set(change, ~shouldSaveHistory, ~containsRollbackDiffChange)
-}
-
-let totalChangeCount = (inMemoryStore: t) => {
-  let count = ref(0)
-  inMemoryStore.entities
-  ->Js.Dict.values
-  ->Belt.Array.forEach(table => {
-    count := count.contents + table->InMemoryTable.Entity.getChangeCount
-  })
-  count.contents
+  inMemoryStore.totalChangeCount = inMemoryStore.totalChangeCount +. 1.
 }
 
 // After a background write completes, clean up entities that were written
 // and evict stale loaded entities. Also clear rawEvents and effect caches.
 let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
+  inMemoryStore.totalChangeCount = 0.
   inMemoryStore.entities
   ->Js.Dict.values
   ->Belt.Array.forEach(table => {
     table->InMemoryTable.Entity.cleanupAfterWrite(~writtenCheckpointId)
+    inMemoryStore.totalChangeCount = inMemoryStore.totalChangeCount +. table.changeCount
   })
 
   // Clear raw events - they've been written
@@ -140,6 +136,29 @@ let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
   ->Belt.Array.forEach(table => {
     Js.Array2.removeCountInPlace(table.idsToStore, ~pos=0, ~count=table.idsToStore->Array.length)->ignore
     table.invalidationsCount = 0
+  })
+}
+
+// Clear all cached data. Used before rollback since
+// DB was rolled back and cached entities are stale.
+let reset = (inMemoryStore: t) => {
+  inMemoryStore.entities
+  ->Js.Dict.entries
+  ->Belt.Array.forEach(((name, _)) => {
+    inMemoryStore.entities->Js.Dict.set(name, InMemoryTable.Entity.make())
+  })
+  inMemoryStore.totalChangeCount = 0.
+  inMemoryStore.rollbackTargetCheckpointId = None
+
+  inMemoryStore.rawEvents.dict
+  ->Js.Dict.keys
+  ->Belt.Array.forEach(key => {
+    inMemoryStore.rawEvents.dict->Utils.Dict.deleteInPlace(key)
+  })
+  inMemoryStore.effects
+  ->Js.Dict.keys
+  ->Belt.Array.forEach(key => {
+    inMemoryStore.effects->Utils.Dict.deleteInPlace(key)
   })
 }
 

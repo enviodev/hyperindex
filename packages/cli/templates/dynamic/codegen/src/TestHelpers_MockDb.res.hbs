@@ -325,10 +325,12 @@ and makeProcessEvents = (mockDb: t, ~chainId=?) => async (
     }
 
     let config = Indexer.Generated.makeGeneratedConfig()
+    let persistence = Indexer.Generated.codegenPersistence
     let ctx: Ctx.t = {
       registrations,
       config,
-      persistence: Indexer.Generated.codegenPersistence,
+      persistence,
+      inMemoryStore: InMemoryStore.make(~entities=persistence.allEntities),
     }
 
     let processingChainId = ref(chainId)
