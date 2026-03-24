@@ -1664,7 +1664,7 @@ type indexerChain = {{
             .iter()
             .map(|chain| {
                 let id = chain.network_config.id;
-                let id_field = format!("  @as(\"{}\") chain{}: indexerChain,", id, id);
+                let id_field = format!("  \\\"{}\": indexerChain,", id);
                 // Add name-based field only for known networks
                 if let Ok(network) = Network::from_network_id(id) {
                     let name = network.to_string().to_case(Case::Camel);
@@ -1727,9 +1727,8 @@ switch chainId {{
             .iter()
             .map(|entity| {
                 format!(
-                    "  @as(\"{}\") {}: entityHandlerContext<Entities.{}.t, Entities.{}.getWhereFilter>,",
+                    "  \\\"{}\": entityHandlerContext<Entities.{}.t, Entities.{}.getWhereFilter>,",
                     entity.name.original,
-                    entity.name.uncapitalized,
                     entity.name.capitalized,
                     entity.name.capitalized,
                 )
@@ -1797,9 +1796,8 @@ type testIndexerEntityOps<'entity> = {
             .iter()
             .map(|entity| {
                 format!(
-                    "  @as(\"{}\") {}: testIndexerEntityOps<Entities.{}.t>,",
+                    "  \\\"{}\": testIndexerEntityOps<Entities.{}.t>,",
                     entity.name.original,
-                    entity.name.uncapitalized,
                     entity.name.capitalized,
                 )
             })
