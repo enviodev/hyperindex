@@ -31,7 +31,7 @@ type t = {
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
-  secondaryRecoveryTimeout: float,
+  recoveryTimeout: float,
   mutable hasLive: bool,
 }
 
@@ -75,7 +75,7 @@ let make = (
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
-  ~secondaryRecoveryTimeout=60_000.0,
+  ~recoveryTimeout=60_000.0,
   ~getHeightRetryInterval=makeGetHeightRetryInterval(
     ~initialRetryInterval=1000,
     ~backoffMultiplicative=2,
@@ -116,7 +116,7 @@ let make = (
     newBlockStallTimeoutLive,
     stalledPollingInterval,
     getHeightRetryInterval,
-    secondaryRecoveryTimeout,
+    recoveryTimeout,
     statusStart: Hrtime.makeTimer(),
     status: Idle,
     hasLive,
@@ -307,6 +307,40 @@ let getSourceNewHeight = async (
   newHeight.contents
 }
 
+// Priority: working primaries > working secondaries > all primaries.
+let getNextSources = (sourceManager, ~isLive) => {
+  let now = Js.Date.now()
+  let workingPrimarySources = []
+  let allPrimarySources = []
+  let workingSecondarySources = []
+  for i in 0 to sourceManager.sourcesState->Array.length - 1 {
+    let sourceState = sourceManager.sourcesState->Array.getUnsafe(i)
+    if !sourceState.disabled {
+      let isRecovered = switch sourceState.lastFailedAt {
+      | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
+      | None => true
+      }
+      switch getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
+      | Some(Primary) =>
+        allPrimarySources->Array.push(sourceState)
+        if isRecovered {
+          workingPrimarySources->Array.push(sourceState)
+        }
+      | Some(Secondary) if isRecovered =>
+        workingSecondarySources->Array.push(sourceState)
+      | _ => ()
+      }
+    }
+  }
+  if workingPrimarySources->Array.length > 0 {
+    workingPrimarySources
+  } else if workingSecondarySources->Array.length > 0 {
+    workingSecondarySources
+  } else {
+    allPrimarySources
+  }
+}
+
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
 let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   let {sourcesState} = sourceManager
@@ -319,26 +353,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  let now = Js.Date.now()
-
-  let primarySources = []
-  let secondarySources = []
-  sourcesState->Array.forEach(sourceState => {
-    let source = sourceState.source
-    if sourceState.disabled {
-      ()
-    } else {
-      switch getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
-      | Some(Primary) => primarySources->Array.push(sourceState)
-      | Some(Secondary) =>
-        switch sourceState.lastFailedAt {
-        | Some(failedAt) if now -. failedAt < sourceManager.secondaryRecoveryTimeout => ()
-        | _ => secondarySources->Array.push(sourceState)
-        }
-      | _ => ()
-      }
-    }
-  })
+  let mainSources = sourceManager->getNextSources(~isLive)
 
   let status = ref(Active)
 
@@ -349,7 +364,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   }
 
   let (source, newBlockHeight) = await Promise.race(
-    primarySources
+    mainSources
     ->Array.map(async sourceState => {
       (
         sourceState.source,
@@ -358,10 +373,18 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
     })
     ->Array.concat([
       Utils.delay(stallTimeout)->Promise.then(() => {
+        // Build fallback: all non-disabled sources not in mainSources, even with recent lastFailedAt
+        let fallbackSources = []
+        sourcesState->Array.forEach(sourceState => {
+          if !sourceState.disabled && !(mainSources->Js.Array2.includes(sourceState)) {
+            fallbackSources->Array.push(sourceState)
+          }
+        })
+
         if status.contents !== Done {
           status := Stalled
 
-          switch secondarySources {
+          switch fallbackSources {
           | [] =>
             logger->Logging.childWarn(
               `No new blocks detected within ${(stallTimeout / 1000)
@@ -374,10 +397,10 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
             )
           }
         }
-        // Promise.race will be forever pending if secondarySources is empty
+        // Promise.race will be forever pending if fallbackSources is empty
         // which is good for this use case
         Promise.race(
-          secondarySources->Array.map(async sourceState => {
+          fallbackSources->Array.map(async sourceState => {
             (
               sourceState.source,
               await sourceManager->getSourceNewHeight(~sourceState, ~knownHeight, ~status, ~logger),
@@ -403,60 +426,10 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   newBlockHeight
 }
 
-// Picks the best available source based on recovery state.
-// Priority: recovered primaries > recovered secondaries > source with oldest lastFailedAt.
-let getNextSyncSourceState = (sourceManager, ~isLive) => {
-  let now = Js.Date.now()
-  let hasRecovered = sourceState =>
-    switch sourceState.lastFailedAt {
-    | Some(failedAt) => now -. failedAt >= sourceManager.secondaryRecoveryTimeout
-    | None => true
-    }
-
-  let primaries = []
-  let secondaries = []
-
-  sourceManager.sourcesState->Array.forEach(sourceState => {
-    if !sourceState.disabled {
-      switch getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
-      | Some(Primary) => primaries->Array.push(sourceState)
-      | Some(Secondary) => secondaries->Array.push(sourceState)
-      | None => ()
-      }
-    }
-  })
-
-  // Try recovered primary first
-  switch primaries->Js.Array2.find(hasRecovered) {
-  | Some(_) as result => result
-  | None =>
-    // Try recovered secondary
-    switch secondaries->Js.Array2.find(hasRecovered) {
-    | Some(_) as result => result
-    | None =>
-      // All in timeout — pick source with oldest lastFailedAt (closest to recovery)
-      primaries
-      ->Array.concat(secondaries)
-      ->Js.Array2.reduce((best, sourceState) => {
-        switch best {
-        | None => Some(sourceState)
-        | Some(bestState) =>
-          switch (bestState.lastFailedAt, sourceState.lastFailedAt) {
-          | (Some(bestFailedAt), Some(failedAt)) if failedAt < bestFailedAt => Some(sourceState)
-          | (_, None) => Some(sourceState)
-          | _ => best
-          }
-        }
-      }, None)
-    }
-  }
-}
-
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
-  // Dynamically pick the best source to start with
-  let initialSourceState = switch sourceManager->getNextSyncSourceState(~isLive) {
+  let initialSourceState = switch sourceManager->getNextSources(~isLive)->Array.get(0) {
   | Some(s) => s
   | None =>
     let logger = Logging.createChild(
@@ -470,7 +443,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
       ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
     )
     logger->Logging.childInfo({
-      "msg": "Attempting to switch back to source after recovery period",
+      "msg": "Switching to a recovered source",
       "source": initialSourceState.source.name,
       "previousSource": sourceManager.activeSource.name,
     })
@@ -546,7 +519,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             }
           }
 
-          switch sourceManager->getNextSyncSourceState(~isLive) {
+          switch sourceManager->getNextSources(~isLive)->Array.get(0) {
           | None =>
             %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
           | Some(nextSourceState) =>
@@ -569,7 +542,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         sourceState.lastFailedAt = Some(Js.Date.now())
 
-        switch sourceManager->getNextSyncSourceState(~isLive) {
+        switch sourceManager->getNextSources(~isLive)->Array.get(0) {
         | None =>
           logger->Logging.childWarn({
             "msg": message,
@@ -604,7 +577,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
 
         let nextSourceState = if shouldSwitch {
           sourceState.lastFailedAt = Some(Js.Date.now())
-          sourceManager->getNextSyncSourceState(~isLive)
+          sourceManager->getNextSources(~isLive)->Array.get(0)
         } else {
           None
         }
