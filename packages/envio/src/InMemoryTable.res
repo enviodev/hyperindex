@@ -34,7 +34,11 @@ let clone = (self: t<'key, 'val>) => {
 
 module Entity = {
   type relatedEntityId = string
-  type indexWithRelatedIds = (TableIndices.Index.t, Utils.Set.t<relatedEntityId>)
+  type indexWithRelatedIds = {
+    index: TableIndices.Index.t,
+    relatedEntityIds: Utils.Set.t<relatedEntityId>,
+    mutable lastReferencedCheckpointId: bigint,
+  }
   type indicesSerializedToValue = t<TableIndices.Index.t, indexWithRelatedIds>
   type indexFieldNameToIndices = t<TableIndices.Index.t, indicesSerializedToValue>
 
@@ -68,7 +72,7 @@ module Entity = {
     ~relatedEntityIds=Utils.Set.make(),
   ): indicesSerializedToValue => {
     let empty = make(~hash=TableIndices.Index.toString)
-    empty->set(index, (index, relatedEntityIds))
+    empty->set(index, {index, relatedEntityIds, lastReferencedCheckpointId: 0n})
     empty
   }
 
@@ -109,7 +113,7 @@ module Entity = {
       | (Some(fieldValue), Some(indices)) =>
         indices
         ->values
-        ->Array.forEach(((index, relatedEntityIds)) => {
+        ->Array.forEach(({index, relatedEntityIds}) => {
           if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
             //Add entity id to indices and add index to entity indicies
             relatedEntityIds->Utils.Set.add(getEntityIdUnsafe(entity))->ignore
@@ -131,7 +135,7 @@ module Entity = {
       switch self.fieldNameIndices
       ->get(index)
       ->Option.flatMap(get(_, index)) {
-      | Some((_index, relatedEntityIds)) =>
+      | Some({relatedEntityIds}) =>
         let _wasRemoved = relatedEntityIds->Utils.Set.delete(entityId)
       | None => () //Unexpected index should exist if it is entityIndices
       }
@@ -268,6 +272,7 @@ module Entity = {
     inMemTable: t<'entity>,
     ~fieldName,
     ~operator: TableIndices.Operator.t,
+    ~checkpointId: bigint,
   ) => {
     let getEntity = inMemTable->getUnsafe
     fieldValueHash => {
@@ -281,9 +286,11 @@ module Entity = {
             Js.Exn.raiseError(
               `Unexpected error. Must have an index for the value ${fieldValueHash} on field ${fieldName}`,
             )
-          | Some((_index, relatedEntityIds)) => {
+          | Some(indexEntry) => {
+              // Stamp index as referenced at this checkpoint
+              indexEntry.lastReferencedCheckpointId = checkpointId
               let res =
-                relatedEntityIds
+                indexEntry.relatedEntityIds
                 ->Utils.Set.toArray
                 ->Array.keepMap(entityId => {
                   switch hasByHash(inMemTable.table, entityId) {
@@ -327,7 +334,11 @@ module Entity = {
       )
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
-      | None => indicesSerializedToValue->setRow(index, (index, relatedEntityIds))
+      | None =>
+        indicesSerializedToValue->setRow(
+          index,
+          {index, relatedEntityIds, lastReferencedCheckpointId: 0n},
+        )
       | Some(_) => () //Should not happen, this means the index already exists
       }
     }
@@ -346,8 +357,11 @@ module Entity = {
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
       | None =>
-        indicesSerializedToValue->setRow(index, (index, Utils.Set.make()->Utils.Set.add(entityId)))
-      | Some((_index, relatedEntityIds)) => relatedEntityIds->Utils.Set.add(entityId)->ignore
+        indicesSerializedToValue->setRow(
+          index,
+          {index, relatedEntityIds: Utils.Set.make()->Utils.Set.add(entityId), lastReferencedCheckpointId: 0n},
+        )
+      | Some({relatedEntityIds}) => relatedEntityIds->Utils.Set.add(entityId)->ignore
       }
     }
 
@@ -368,10 +382,43 @@ module Entity = {
     ->Array.keepMap(rowToEntity)
   }
 
-  // After a background write completes, reset Updated entities to Loaded
-  // if they haven't been modified since the written checkpoint.
-  // Evict stale Loaded entities not referenced after the written checkpoint.
+  // After a background write completes:
+  // 1. Remove stale indices not referenced after the written checkpoint
+  // 2. Evict entities that lost all indices, or reset Updated→Loaded if indices remain
   let cleanupAfterWrite = (inMemTable: t<'entity>, ~writtenCheckpointId: bigint) => {
+    // Phase 1: Remove stale indices from fieldNameIndices
+    let fieldNameKeys = inMemTable.fieldNameIndices.dict->Js.Dict.keys
+    for i in 0 to fieldNameKeys->Array.length - 1 {
+      let fieldNameKey = fieldNameKeys->Js.Array2.unsafe_get(i)
+      switch inMemTable.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldNameKey) {
+      | None => ()
+      | Some(indicesSerializedToValue) =>
+        let indexKeys = indicesSerializedToValue.dict->Js.Dict.keys
+        for j in 0 to indexKeys->Array.length - 1 {
+          let indexKey = indexKeys->Js.Array2.unsafe_get(j)
+          switch indicesSerializedToValue.dict->Utils.Dict.dangerouslyGetNonOption(indexKey) {
+          | None => ()
+          | Some(indexEntry) =>
+            if indexEntry.lastReferencedCheckpointId <= writtenCheckpointId {
+              // Remove this index from all entities' entityIndices sets
+              indexEntry.relatedEntityIds->Utils.Set.forEach(entityId => {
+                switch inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(entityId) {
+                | Some(row) => row.entityIndices->Utils.Set.delete(indexEntry.index)->ignore
+                | None => ()
+                }
+              })
+              indicesSerializedToValue.dict->Utils.Dict.deleteInPlace(indexKey)
+            }
+          }
+        }
+        // If no indices left for this field, remove the field entry
+        if indicesSerializedToValue.dict->Js.Dict.keys->Array.length === 0 {
+          inMemTable.fieldNameIndices.dict->Utils.Dict.deleteInPlace(fieldNameKey)
+        }
+      }
+    }
+
+    // Phase 2: Clean up entities
     let remainingChangeCount = ref(0.)
     let keys = inMemTable.table.dict->Js.Dict.keys
     for idx in 0 to keys->Array.length - 1 {
@@ -380,22 +427,18 @@ module Entity = {
       | None => ()
       | Some(row) =>
         if row.lastReferencedCheckpointId <= writtenCheckpointId {
+          let hasActiveIndices = row.entityIndices->Utils.Set.size > 0
           switch row.status {
+          | Updated(_) if !hasActiveIndices =>
+            // Written to DB, no active index — evict entirely
+            inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
+            inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
           | Updated(_) =>
-            // Entity was written to DB and not modified since - reset to Loaded
-            inMemTable.table.dict->Js.Dict.set(
-              key,
-              {
-                ...row,
-                status: Loaded,
-              },
-            )
+            // Written to DB, still has active index — reset to Loaded
+            inMemTable.table.dict->Js.Dict.set(key, {...row, status: Loaded})
           | Loaded =>
-            // Stale loaded entity - evict from memory
-            inMemTable->deleteEntityFromIndices(
-              ~entityId=key,
-              ~entityIndices=row.entityIndices,
-            )
+            // Stale loaded entity — evict from memory
+            inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
             inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
           }
         } else {

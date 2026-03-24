@@ -391,7 +391,7 @@ let isWriting = persistence => persistence.writePromise !== None
 let getLastCheckpointId = (batch: Batch.t) =>
   switch batch.checkpointIds->Utils.Array.last {
   | Some(id) => id
-  | None => 0n
+  | None => Js.Exn.raiseError("Unexpected empty batch: no checkpoint IDs")
   }
 
 let rec executeWrite = persistence => {
@@ -412,10 +412,7 @@ let rec executeWrite = persistence => {
           ~isInReorgThreshold,
         )
 
-        let batchCheckpointId = batch->getLastCheckpointId
-        if batchCheckpointId > 0n {
-          persistence.writtenCheckpointId = batchCheckpointId
-        }
+        persistence.writtenCheckpointId = batch->getLastCheckpointId
 
         let dbWriteDuration = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
         logger->Logging.childTrace({

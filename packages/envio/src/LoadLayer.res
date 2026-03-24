@@ -350,6 +350,7 @@ let loadByField = (
   ~shouldGroup,
   ~item,
   ~fieldValue,
+  ~checkpointId: bigint,
 ) => {
   let operatorCallName = switch operator {
   | Eq => "eq"
@@ -438,7 +439,7 @@ let loadByField = (
     ~shouldGroup,
     ~hasher=fieldValue =>
       fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator),
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator, ~checkpointId),
     ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
   )
 }

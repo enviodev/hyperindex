@@ -145,6 +145,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
         ~shouldGroup=params.isPreload,
         ~item=params.item,
         ~fieldValue,
+        ~checkpointId=params.checkpointId,
       )
     )
     ->Promise.all
@@ -166,6 +167,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
         ~shouldGroup=params.isPreload,
         ~item=params.item,
         ~fieldValue,
+        ~checkpointId=params.checkpointId,
       )
 
     [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
@@ -195,6 +197,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
       ~shouldGroup=params.isPreload,
       ~item=params.item,
       ~fieldValue,
+      ~checkpointId=params.checkpointId,
     )
   }
 }
