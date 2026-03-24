@@ -58,8 +58,6 @@ type chainId = [#1]
 
 @genType
 module Contract1 = {
-let abi = (%raw(`[{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}]`): EvmTypes.Abi.t)
-let eventSignatures = ["NewGravatar(uint256 id, address owner, string displayName, string imageUrl)", "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)"]
 @genType type chainId = [#1]
 let contractName = "Contract1"
 

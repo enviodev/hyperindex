@@ -1110,21 +1110,9 @@ impl ContractTemplate {
         };
 
         let module_code = match &contract.abi {
-            Abi::Evm(abi) => {
-                let signatures = abi.get_event_signatures();
-
-                format!(
-                    r#"let abi = (%raw(`{}`): EvmTypes.Abi.t)
-let eventSignatures = [{}]
-{chain_id_type_code}"#,
-                    abi.raw,
-                    signatures
-                        .iter()
-                        .map(|w| format!("\"{}\"", w))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
+            // EVM: abi and eventSignatures are already in internal.config.json,
+            // only per-contract chainId type is needed in codegen
+            Abi::Evm(_) => chain_id_type_code.clone(),
             Abi::Fuel(abi) => {
                 let all_abi_type_declarations = abi.to_type_decl_multi().context(format!(
                     "Failed getting types from the '{}' contract ABI",
