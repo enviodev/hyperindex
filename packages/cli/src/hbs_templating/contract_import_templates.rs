@@ -696,7 +696,7 @@ impl Param {
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
         let js_name = flattened_event_param.event_param.name.to_string();
         let res_name = RecordField::to_valid_rescript_name(&js_name);
-        let eth_param: crate::config_parsing::event_parsing::EthereumEventParam =
+        let eth_param: crate::config_parsing::event_parsing::EvmEventParam =
             (&flattened_event_param.event_param).into();
         let default_value_rescript = abi_to_rescript_type(&eth_param).get_default_value_rescript();
         Ok(Param {

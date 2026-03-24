@@ -10,7 +10,7 @@ use crate::{
     config_parsing::{
         chain_helpers::Network,
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField, IndexFieldDirection},
-        event_parsing::{abi_to_rescript_type, EthereumEventParam},
+        event_parsing::{abi_to_rescript_type, EvmEventParam},
         field_types,
         human_config::{evm::For, HumanConfig},
         system_config::{
@@ -772,7 +772,7 @@ let makeSimulateItem = (
             indexed_params
                 .enumerate()
                 .fold(String::new(), |mut output, (i, param)| {
-                    let param = EthereumEventParam::from(param);
+                    let param = EvmEventParam::from(param);
                     let topic_number = i + 1;
                     let param_name = RecordField::to_valid_rescript_name(param.name);
                     let topic_encoder = param.get_topic_encoder();
