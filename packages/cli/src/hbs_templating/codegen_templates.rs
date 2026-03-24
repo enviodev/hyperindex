@@ -1409,6 +1409,7 @@ impl ProjectTemplate {
             }
 
             let contract_name = &contract.name.capitalized;
+            let contract_type_name = &contract.name.uncapitalized;
 
             // GADT constructors: one per event
             let gadt_constructors = contract
@@ -1417,7 +1418,7 @@ impl ProjectTemplate {
                 .map(|event| {
                     format!(
                         "  | {}: {}_simulateEvent<{}.{}.paramsConstructor>",
-                        event.name, contract_name, contract_name, event.name,
+                        event.name, contract_type_name, contract_name, event.name,
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1426,7 +1427,7 @@ impl ProjectTemplate {
             code.push_str(&format!(
                 "/** Event identifier for {} contract. Type parameter tracks the params type. */\n\
                  type rec {}_simulateEvent<'paramsConstructor> =\n{}\n\n",
-                contract_name, contract_name, gadt_constructors,
+                contract_name, contract_type_name, gadt_constructors,
             ));
         }
 
@@ -1434,11 +1435,12 @@ impl ProjectTemplate {
         if contract_templates.len() == 1 {
             // Single contract: unboxed wrapper for zero overhead
             let contract_name = &contract_templates[0].name.capitalized;
+            let contract_type_name = &contract_templates[0].name.uncapitalized;
             code.push_str(&format!(
                 "/** Top-level event identifier for simulate items. */\n\
                  @unboxed type simulateContractEvent<'paramsConstructor> =\n\
                  | {}({}_simulateEvent<'paramsConstructor>)\n\n",
-                contract_name, contract_name,
+                contract_name, contract_type_name,
             ));
         } else {
             // Multiple contracts: one constructor per contract
@@ -1447,7 +1449,8 @@ impl ProjectTemplate {
                 .filter(|c| !c.codegen_events.is_empty())
                 .map(|c| {
                     let name = &c.name.capitalized;
-                    format!("  | {}({}_simulateEvent<'paramsConstructor>)", name, name)
+                    let type_name = &c.name.uncapitalized;
+                    format!("  | {}({}_simulateEvent<'paramsConstructor>)", name, type_name)
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -1461,7 +1464,7 @@ impl ProjectTemplate {
         // Generate simulateBlock function
         code.push_str(
             r#"/** Create a simulate item for a block handler. */
-let simulateBlock = (~name: string, ~number: int=?, ()): TestIndexer.simulateItem => {
+let simulateBlock = (~name: string, ~number: option<int>=?, ()): TestIndexer.simulateItem => {
   {"block": name, "number": number}->(Utils.magic: {..} => TestIndexer.simulateItem)
 }
 "#,
@@ -1701,7 +1704,7 @@ type indexer = {
             .iter()
             .map(|chain| {
                 format!(
-                    "  | #{} => indexer.chains.chain{}",
+                    "  | #{} => indexer.chains.\\\"{}\"",
                     chain.network_config.id, chain.network_config.id
                 )
             })
@@ -1727,7 +1730,7 @@ switch chainId {{
             .iter()
             .map(|entity| {
                 format!(
-                    "  \\\"{}\": entityHandlerContext<Entities.{}.t, Entities.{}.getWhereFilter>,",
+                    "  \\\"{}\": handlerEntityOperations<Entities.{}.t, Entities.{}.getWhereFilter>,",
                     entity.name.original,
                     entity.name.capitalized,
                     entity.name.capitalized,
@@ -1738,7 +1741,7 @@ switch chainId {{
 
         let handler_context_code = format!(
             r#"@genType
-type entityHandlerContext<'entity, 'getWhereFilter> = {{
+type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -1778,14 +1781,14 @@ type handlerContext = {{
             .iter()
             .map(|chain| {
                 let id = chain.network_config.id;
-                format!("  @as(\"{}\") chain{}?: TestIndexer.chainConfig,", id, id)
+                format!("  \\\"{}\"?: TestIndexer.chainConfig,", id)
             })
             .collect::<Vec<_>>()
             .join("\n");
 
         // Generate entity ops fields for the testIndexer type
         let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
-type testIndexerEntityOps<'entity> = {
+type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Set (create or update) an entity. */
@@ -1796,7 +1799,7 @@ type testIndexerEntityOps<'entity> = {
             .iter()
             .map(|entity| {
                 format!(
-                    "  \\\"{}\": testIndexerEntityOps<Entities.{}.t>,",
+                    "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
                     entity.name.original,
                     entity.name.capitalized,
                 )

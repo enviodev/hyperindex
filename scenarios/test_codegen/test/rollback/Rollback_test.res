@@ -32,16 +32,16 @@ describe("E2E rollback tests", () => {
           handler: async ({context}) => {
             // This shouldn't be written to the db at all
             // and deduped on the in-memory store level
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "1",
               value: "value-1",
             })
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "1",
               value: "value-2",
             })
 
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "2",
               value: "value-1",
             })
@@ -54,12 +54,12 @@ describe("E2E rollback tests", () => {
             // This should overwrite the previous value
             // set on log index 0. No history rows should be created
             // since they are per batch now.
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "2",
               value: "value-2",
             })
 
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "4",
               value: "value-1",
             })
@@ -70,13 +70,13 @@ describe("E2E rollback tests", () => {
           logIndex: 0,
           handler: async ({context}) => {
             // This should create a new history row
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "3",
               value: "value-1",
             })
 
             // Test rollback of creating + deleting an entity
-            context.simpleEntity.deleteUnsafe("4")
+            context.\"SimpleEntity".deleteUnsafe("4")
           },
         },
         {
@@ -85,7 +85,7 @@ describe("E2E rollback tests", () => {
           handler: async ({context}) => {
             // This should be ignored, since it's after the latest fetch block
             // The case is invalid, but this is good
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "3",
               value: "value-2",
             })
@@ -197,7 +197,7 @@ describe("E2E rollback tests", () => {
           handler: async ({context}) => {
             // The value is not used, since we reset fetch state
             // for rollback
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "3",
               value: "value-1",
             })
@@ -243,12 +243,12 @@ describe("E2E rollback tests", () => {
         logIndex: 1,
         handler: async ({context}) => {
           // From value-2 to value-1
-          context.simpleEntity.set({
+          context.\"SimpleEntity".set({
             id: "1",
             value: "value-1",
           })
           // The same value as before rollback
-          context.simpleEntity.set({
+          context.\"SimpleEntity".set({
             id: "2",
             value: "value-2",
           })
@@ -908,7 +908,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     let handler = async (
       {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
-      context.simpleEntity.set({
+      context.\"SimpleEntity".set({
         id: "1",
         value: `call-${getCallCount()->Int.toString}`,
       })
@@ -1226,7 +1226,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           blockNumber: 106,
           logIndex: 0,
           handler: async ({context}) => {
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "1",
               value: `should-be-ignored-by-filter`,
             })
@@ -1237,7 +1237,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           logIndex: 2,
           handler: async ({context}) => {
             // Set the same value as before rollback
-            context.simpleEntity.set({
+            context.\"SimpleEntity".set({
               id: "1",
               value: `call-4`,
             })
@@ -1369,7 +1369,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       let handler = async (
         {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
       ) => {
-        context.simpleEntity.set({
+        context.\"SimpleEntity".set({
           id: "1",
           value: `call-${getCallCount()->Int.toString}`,
         })
@@ -1426,7 +1426,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             blockNumber: 106,
             logIndex: 3,
             handler: async ({context}) => {
-              context.entityWithBigDecimal.set({
+              context.\"EntityWithBigDecimal".set({
                 id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               })
@@ -1644,7 +1644,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             blockNumber: 106,
             logIndex: 2,
             handler: async ({context}) => {
-              context.simpleEntity.set({
+              context.\"SimpleEntity".set({
                 id: "1",
                 value: `call-4`,
               })
@@ -1654,7 +1654,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             blockNumber: 106,
             logIndex: 3,
             handler: async ({context}) => {
-              context.entityWithBigDecimal.set({
+              context.\"EntityWithBigDecimal".set({
                 id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               })
@@ -1813,7 +1813,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       let handler = async (
         {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
       ) => {
-        context.simpleEntity.set({
+        context.\"SimpleEntity".set({
           id: "1",
           value: `call-${getCallCount()->Int.toString}`,
         })
@@ -1849,7 +1849,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             blockNumber: 103,
             logIndex: 2,
             handler: async ({context}) => {
-              context.entityWithBigDecimal.set({
+              context.\"EntityWithBigDecimal".set({
                 id: "foo",
                 bigDecimal: BigDecimal.fromFloat(0.),
               })
@@ -2084,7 +2084,7 @@ Sorted by timestamp and chain id`,
             blockNumber: 103,
             logIndex: 2,
             handler: async ({context}) => {
-              context.entityWithBigDecimal.set({
+              context.\"EntityWithBigDecimal".set({
                 id: "foo",
                 // Another value now
                 bigDecimal: BigDecimal.fromFloat(0.),
@@ -2232,7 +2232,7 @@ Sorted by timestamp and chain id`,
         blockNumber: 102,
         logIndex: 0,
         handler: async ({context}) => {
-          context.simpleEntity.set({
+          context.\"SimpleEntity".set({
             id: "1",
             value: "value-1",
           })
@@ -2407,14 +2407,14 @@ Sorted by timestamp and chain id`,
             blockNumber: 102,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "1", value: "value-1"})
+              context.\"SimpleEntity".set({id: "1", value: "value-1"})
             },
           },
           {
             blockNumber: 103,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "2", value: "value-2"})
+              context.\"SimpleEntity".set({id: "2", value: "value-2"})
             },
           },
         ],
@@ -2427,7 +2427,7 @@ Sorted by timestamp and chain id`,
             blockNumber: 102,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "3", value: "value-3"})
+              context.\"SimpleEntity".set({id: "3", value: "value-3"})
             },
           },
         ],
@@ -2589,14 +2589,14 @@ Sorted by timestamp and chain id`,
             blockNumber: 102,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "1", value: "value-1"})
+              context.\"SimpleEntity".set({id: "1", value: "value-1"})
             },
           },
           {
             blockNumber: 103,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "2", value: "value-2"})
+              context.\"SimpleEntity".set({id: "2", value: "value-2"})
             },
           },
         ],
@@ -2609,14 +2609,14 @@ Sorted by timestamp and chain id`,
             blockNumber: 102,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "4", value: "value-4"})
+              context.\"SimpleEntity".set({id: "4", value: "value-4"})
             },
           },
           {
             blockNumber: 103,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "5", value: "value-5"})
+              context.\"SimpleEntity".set({id: "5", value: "value-5"})
             },
           },
         ],
@@ -2629,7 +2629,7 @@ Sorted by timestamp and chain id`,
             blockNumber: 102,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({id: "3", value: "value-3"})
+              context.\"SimpleEntity".set({id: "3", value: "value-3"})
             },
           },
         ],
@@ -3079,7 +3079,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
             blockNumber: 101,
             logIndex: 0,
             handler: async ({context}) => {
-              context.simpleEntity.set({
+              context.\"SimpleEntity".set({
                 id: "1",
                 value: "from-chain-100",
               })

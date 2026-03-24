@@ -12,7 +12,7 @@ describe("Contract1 contract NewGravatar event tests", () => {
     // TODO: Configure chain ID and start/end blocks for your contract
     let result = await indexer.process({
       chains: {
-        chain1: {
+        \"1": {
           startBlock: 0,
           endBlock: 100,
           simulate: [

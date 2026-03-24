@@ -34,7 +34,7 @@ module Entities = {
 }
 
 @genType
-type entityHandlerContext<'entity, 'getWhereFilter> = {
+type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -49,8 +49,8 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-  \"EmptyEntity": entityHandlerContext<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
-  \"RelatedEntity": entityHandlerContext<Entities.RelatedEntity.t, Entities.RelatedEntity.getWhereFilter>,
+  \"EmptyEntity": handlerEntityOperations<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
+  \"RelatedEntity": handlerEntityOperations<Entities.RelatedEntity.t, Entities.RelatedEntity.getWhereFilter>,
 }
 
 @genType.import(("./Types.ts", "EvmChainId"))
@@ -102,7 +102,7 @@ type indexer = {
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
 switch chainId {
-  | #1 => indexer.chains.chain1
+  | #1 => indexer.chains.\"1"
 }
 }
 
@@ -115,7 +115,7 @@ HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => uni
 )->Utils.magic
 
 type testIndexerProcessConfigChains = {
-  @as("1") chain1?: TestIndexer.chainConfig,
+  \"1"?: TestIndexer.chainConfig,
 }
 
 type testIndexerProcessConfig = {
@@ -123,7 +123,7 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOps<'entity> = {
+type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Set (create or update) an entity. */
@@ -138,6 +138,6 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"EmptyEntity": testIndexerEntityOps<Entities.EmptyEntity.t>,
-  \"RelatedEntity": testIndexerEntityOps<Entities.RelatedEntity.t>,
+  \"EmptyEntity": testIndexerEntityOperations<Entities.EmptyEntity.t>,
+  \"RelatedEntity": testIndexerEntityOperations<Entities.RelatedEntity.t>,
 }

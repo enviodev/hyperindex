@@ -21,7 +21,7 @@ module Entities = {
 }
 
 @genType
-type entityHandlerContext<'entity, 'getWhereFilter> = {
+type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -36,7 +36,7 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-  @as("EmptyEntity") emptyEntity: entityHandlerContext<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
+  \"EmptyEntity": handlerEntityOperations<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
 }
 
 @genType.import(("./Types.ts", "EvmChainId"))
@@ -70,9 +70,9 @@ type indexerChain = {
 
 /** Strongly-typed record of chain configurations keyed by chain ID. */
 type indexerChains = {
-  @as("1") chain1: indexerChain,
+  \"1": indexerChain,
   ethereumMainnet: indexerChain,
-  @as("2") chain2: indexerChain,
+  \"2": indexerChain,
 }
 
 /** Metadata and configuration for the indexer. */
@@ -90,8 +90,8 @@ type indexer = {
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
 switch chainId {
-  | #1 => indexer.chains.chain1
-  | #2 => indexer.chains.chain2
+  | #1 => indexer.chains.\"1"
+  | #2 => indexer.chains.\"2"
 }
 }
 
@@ -104,8 +104,8 @@ HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => uni
 )->Utils.magic
 
 type testIndexerProcessConfigChains = {
-  @as("1") chain1?: TestIndexer.chainConfig,
-  @as("2") chain2?: TestIndexer.chainConfig,
+  \"1"?: TestIndexer.chainConfig,
+  \"2"?: TestIndexer.chainConfig,
 }
 
 type testIndexerProcessConfig = {
@@ -113,7 +113,7 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOps<'entity> = {
+type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Set (create or update) an entity. */
@@ -128,5 +128,5 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  @as("EmptyEntity") emptyEntity: testIndexerEntityOps<Entities.EmptyEntity.t>,
+  \"EmptyEntity": testIndexerEntityOperations<Entities.EmptyEntity.t>,
 }

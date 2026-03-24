@@ -522,7 +522,7 @@ impl Contract {
         );
         content.push_str("    let result = await indexer.process({\n");
         content.push_str("      chains: {\n");
-        content.push_str("        chain1: {\n");
+        content.push_str("        \\\"1\": {\n");
         content.push_str("          startBlock: 0,\n");
         content.push_str("          endBlock: 100,\n");
 

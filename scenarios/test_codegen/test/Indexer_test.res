@@ -9,7 +9,7 @@ describe("Indexer.indexer", () => {
 
   it("has correct chain configurations", t => {
     t.expect(
-      Indexer.indexer.chains.chain1337,
+      Indexer.indexer.chains.\"1337",
     ).toEqual(
       {
         id: #1337,
@@ -52,12 +52,12 @@ describe("Indexer.indexer", () => {
   })
 
   it("chains by name are not enumerable, but should be accessible by name", t => {
-    t.expect(Indexer.indexer.chains.chain1).toBe(Indexer.indexer.chains.ethereumMainnet)
-    t.expect(Indexer.indexer.chains.chain100).toBe(Indexer.indexer.chains.gnosis)
-    t.expect(Indexer.indexer.chains.chain137).toBe(Indexer.indexer.chains.polygon)
+    t.expect(Indexer.indexer.chains.\"1").toBe(Indexer.indexer.chains.ethereumMainnet)
+    t.expect(Indexer.indexer.chains.\"100").toBe(Indexer.indexer.chains.gnosis)
+    t.expect(Indexer.indexer.chains.\"137").toBe(Indexer.indexer.chains.polygon)
   })
 
   it("getChainById returns correct chain", t => {
-    t.expect(Indexer.getChainById(Indexer.indexer, #1337)).toBe(Indexer.indexer.chains.chain1337)
+    t.expect(Indexer.getChainById(Indexer.indexer, #1337)).toBe(Indexer.indexer.chains.\"1337")
   })
 })
