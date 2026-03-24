@@ -1675,152 +1675,109 @@ describe("SourceManager.executeQuery", () => {
   })
 
   Async.it(
-    "When there are multiple sync sources, it retries 2 times and then immediately switches to another source without waiting for backoff. After that it switches every second retry",
+    "Retries on same source twice before switching, then alternates every second retry",
     async t => {
-      let sourceMock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
-      let sourceMock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
-      let newBlockStallTimeout = 0
+      let syncMock = Mock.Source.make([#getItemsOrThrow])
+      let fallbackMock = Mock.Source.make([#getItemsOrThrow], ~sourceFor=Fallback)
       let sourceManager = SourceManager.make(~isLive=false,
-        ~newBlockStallTimeout,
-        ~sources=[
-          sourceMock0.source,
-          // Should be skipped until the 10th retry,
-          // but we won't test it here
-          Mock.Source.make([], ~sourceFor=Fallback).source,
-          sourceMock1.source,
-        ],
+        ~sources=[syncMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
 
-      {
-        // Switch the initial active source to fallback,
-        // to test that it's included to the rotation
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
-        await Utils.delay(newBlockStallTimeout)
-        sourceMock1.resolveGetHeightOrThrow(101)
-        t.expect(await p).toBe(101)
-        t.expect(
-          sourceManager->SourceManager.getActiveSource,
-          ~message="Should switch to the fallback source",
-        ).toBe(
-          sourceMock1.source,
-        )
-      }
-
+      // getNextSyncSourceState picks sync (primary, recovered) at the start
       let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
 
       let handledGetItemsOrThrowCalls = []
+      let withBackoff = Source.GetItemsError(
+        FailedGettingItems({
+          exn: %raw(`null`),
+          attemptedToBlock: 100,
+          retry: WithBackoff({message: "test", backoffMillis: 0}),
+        }),
+      )
 
+      // Retries 0, 1, 2 on sync (primary)
       for idx in 0 to 2 {
-        switch sourceMock1.getItemsOrThrowCalls {
+        switch syncMock.getItemsOrThrowCalls {
         | [call] => {
             handledGetItemsOrThrowCalls->Array.push({
               "fromBlock": call.payload["fromBlock"],
               "toBlock": call.payload["toBlock"],
               "retry": call.payload["retry"],
-              "source": 1,
+              "source": "sync",
             })
-            call.reject(
-              Source.GetItemsError(
-                FailedGettingItems({
-                  exn: %raw(`null`),
-                  attemptedToBlock: 100,
-                  retry: WithBackoff({message: "test", backoffMillis: 0}),
-                }),
-              ),
-            )
+            call.reject(withBackoff)
           }
-        | _ => Js.Exn.raiseError("Should have one pending call to sourceMock1")
+        | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
         }
-
-        // Wait for microtask, so the rejection is caught
         await Promise.resolve()
         if idx !== 2 {
-          // Don't need to wait for backoff on switch
           await Utils.delay(0)
         }
       }
 
-      switch sourceMock0.getItemsOrThrowCalls {
+      // Retry 3 on fallback (sync failed, fallback is recovered secondary)
+      switch fallbackMock.getItemsOrThrowCalls {
       | [call] => {
           handledGetItemsOrThrowCalls->Array.push({
             "fromBlock": call.payload["fromBlock"],
             "toBlock": call.payload["toBlock"],
             "retry": call.payload["retry"],
-            "source": 0,
+            "source": "fallback",
           })
-          call.reject(
-            Source.GetItemsError(
-              FailedGettingItems({
-                exn: %raw(`null`),
-                attemptedToBlock: 100,
-                retry: WithBackoff({message: "test", backoffMillis: 0}),
-              }),
-            ),
-          )
+          call.reject(withBackoff)
         }
-      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock0")
-      }
-
-      await Promise.resolve() // Wait for microtask, so the rejection is caught
-      await Utils.delay(0)
-
-      switch sourceMock0.getItemsOrThrowCalls {
-      | [call] => {
-          handledGetItemsOrThrowCalls->Array.push({
-            "fromBlock": call.payload["fromBlock"],
-            "toBlock": call.payload["toBlock"],
-            "retry": call.payload["retry"],
-            "source": 0,
-          })
-          call.reject(
-            Source.GetItemsError(
-              FailedGettingItems({
-                exn: %raw(`null`),
-                attemptedToBlock: 100,
-                retry: WithBackoff({message: "test", backoffMillis: 0}),
-              }),
-            ),
-          )
-        }
-      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock0")
+      | _ => Js.Exn.raiseError("Should have one pending call to fallbackMock")
       }
 
       await Promise.resolve()
-      // Doesn't wait for backoff on switch
+      await Utils.delay(0)
 
-      switch sourceMock1.getItemsOrThrowCalls {
+      // Retry 4 on fallback (odd retry, no switch)
+      switch fallbackMock.getItemsOrThrowCalls {
       | [call] => {
           handledGetItemsOrThrowCalls->Array.push({
             "fromBlock": call.payload["fromBlock"],
             "toBlock": call.payload["toBlock"],
             "retry": call.payload["retry"],
-            "source": 1,
+            "source": "fallback",
+          })
+          call.reject(withBackoff)
+        }
+      | _ => Js.Exn.raiseError("Should have one pending call to fallbackMock")
+      }
+
+      await Promise.resolve()
+
+      // Retry 5 on sync (fallback failed, sync has oldest lastFailedAt)
+      switch syncMock.getItemsOrThrowCalls {
+      | [call] => {
+          handledGetItemsOrThrowCalls->Array.push({
+            "fromBlock": call.payload["fromBlock"],
+            "toBlock": call.payload["toBlock"],
+            "retry": call.payload["retry"],
+            "source": "sync",
           })
           t.expect(
             handledGetItemsOrThrowCalls,
-            ~message=`Should start with the initial active source and perform 3 tries.
-After that it switches to another sync source.
-The fallback source is skipped.
-Then sources start switching every second retry.
-The fallback sources not included in the rotation until the 10th retry,
-but we still attempt the fallback source if it was the initial active source.
+            ~message=`Starts on primary (sync), retries 3 times, switches to secondary (fallback).
+Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         `,
           ).toEqual(
             [
-              {"fromBlock": 0, "toBlock": None, "retry": 0, "source": 1},
-              {"fromBlock": 0, "toBlock": None, "retry": 1, "source": 1},
-              {"fromBlock": 0, "toBlock": None, "retry": 2, "source": 1},
-              {"fromBlock": 0, "toBlock": None, "retry": 3, "source": 0},
-              {"fromBlock": 0, "toBlock": None, "retry": 4, "source": 0},
-              {"fromBlock": 0, "toBlock": None, "retry": 5, "source": 1},
+              {"fromBlock": 0, "toBlock": None, "retry": 0, "source": "sync"},
+              {"fromBlock": 0, "toBlock": None, "retry": 1, "source": "sync"},
+              {"fromBlock": 0, "toBlock": None, "retry": 2, "source": "sync"},
+              {"fromBlock": 0, "toBlock": None, "retry": 3, "source": "fallback"},
+              {"fromBlock": 0, "toBlock": None, "retry": 4, "source": "fallback"},
+              {"fromBlock": 0, "toBlock": None, "retry": 5, "source": "sync"},
             ],
           )
 
           call.resolve([])
           t.expect((await p).parsedQueueItems).toEqual([])
         }
-      | _ => Js.Exn.raiseError("Should have one pending call to sourceMock1")
+      | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
       }
     },
   )
@@ -1986,20 +1943,20 @@ but we still attempt the fallback source if it was the initial active source.
   )
 
   Async.it(
-    "Does not attempt recovery when active source is a live source",
+    "Does not attempt recovery when active source is already primary (live source)",
     async t => {
       let liveMock = Mock.Source.make([#getItemsOrThrow], ~sourceFor=Live)
       let secondaryRecoveryTimeout = 0
-      let sourceManager = SourceManager.make(~isLive=false,
+      let sourceManager = SourceManager.make(~isLive=true,
         ~sources=[liveMock.source],
         ~maxPartitionConcurrency=10,
         ~secondaryRecoveryTimeout,
       )
 
-      // Run several queries on live source — even with zero timeout, no recovery should happen
+      // Run several queries on live source — even with zero timeout, no switch should happen
       for _ in 0 to 5 {
         let p =
-          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+          sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=true, ~knownHeight=100)
         switch liveMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
         | _ => Js.Exn.raiseError("Expected one pending call to liveMock")
@@ -2017,6 +1974,7 @@ but we still attempt the fallback source if it was the initial active source.
   Async.it(
     "When switching to secondary via waitForNewBlock in live mode, immediately recovers to live primary",
     async t => {
+      let syncMock = Mock.Source.make([#getHeightOrThrow])
       let liveMock = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Live)
       let fallbackMock = Mock.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow],
@@ -2025,10 +1983,10 @@ but we still attempt the fallback source if it was the initial active source.
       let newBlockStallTimeoutLive = 0
       let sourceManager = SourceManager.make(~isLive=false,
         ~newBlockStallTimeoutLive,
-        ~sources=[liveMock.source, fallbackMock.source],
+        ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
-      // Switch active source to fallback via waitForNewBlock
+      // Switch lastUsedSource to fallback via waitForNewBlock
       {
         let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
         await Utils.delay(newBlockStallTimeoutLive)
@@ -2040,11 +1998,11 @@ but we still attempt the fallback source if it was the initial active source.
         ).toBe(fallbackMock.source)
       }
 
-      // Live never failed in executeQuery, so recovery is immediate
+      // Live never failed in executeQuery, so getNextSyncSourceState picks it immediately
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=true, ~knownHeight=100)
-        // Query goes to live (recovered primary), not fallback
+        // Query goes to live (primary when isLive=true), not fallback
         switch liveMock.getItemsOrThrowCalls {
         | [call] => call.resolve([])
         | _ => Js.Exn.raiseError("Expected one pending call to liveMock")
@@ -2173,35 +2131,16 @@ but we still attempt the fallback source if it was the initial active source.
     "Disabling one of two Live sources keeps hasLive true, disabling both clears it",
     async t => {
       let syncMock = Mock.Source.make([#getItemsOrThrow])
-      let liveMock0 = Mock.Source.make([#getItemsOrThrow, #getHeightOrThrow], ~sourceFor=Live)
-      let liveMock1 = Mock.Source.make([#getItemsOrThrow, #getHeightOrThrow], ~sourceFor=Live)
+      let liveMock0 = Mock.Source.make([#getItemsOrThrow], ~sourceFor=Live)
+      let liveMock1 = Mock.Source.make([#getItemsOrThrow], ~sourceFor=Live)
       let sourceManager = SourceManager.make(~isLive=false,
         ~sources=[syncMock.source, liveMock0.source, liveMock1.source],
         ~maxPartitionConcurrency=10,
-        ~newBlockStallTimeout=0,
       )
 
       // In isLive=true mode with hasLive=true, Live sources are Primary.
-      // Trigger UnsupportedSelection on liveMock0 to disable it.
-      let p0 = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=true, ~knownHeight=100)
-      // The active source is Sync (backfill mode initial), so it gets the query first.
-      // Reject it with UnsupportedSelection to disable it and switch.
-      syncMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
-        call.resolve([])
-      )
-      let _ = await p0
-
-      // Now set active to liveMock0 by doing a waitForNewBlock in live mode
-      let waitP = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0)
-      // liveMock0 responds first
-      liveMock0.resolveGetHeightOrThrow(1)
-      let _ = await waitP
-      t.expect(
-        sourceManager->SourceManager.getActiveSource,
-        ~message="Active source should be liveMock0",
-      ).toBe(liveMock0.source)
-
-      // Now disable liveMock0 via UnsupportedSelection
+      // getNextSyncSourceState picks liveMock0 (first primary).
+      // Disable liveMock0 via UnsupportedSelection.
       let p1 = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=true, ~knownHeight=100)
       liveMock0.getItemsOrThrowCalls->Js.Array2.forEach(call =>
         call.reject(
