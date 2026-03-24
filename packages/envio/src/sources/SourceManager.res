@@ -9,7 +9,7 @@ type sourceState = {
   mutable pendingHeightResolvers: array<int => unit>,
   mutable disabled: bool,
   // Timestamp (ms) when this source last failed during executeQuery.
-  // Used to decide when to attempt recovery to this source if it's a primary.
+  // Used to decide when to attempt recovery to this source.
   mutable lastFailedAt: option<float>,
 }
 
@@ -452,52 +452,66 @@ let getNextSyncSourceState = (
   }
 }
 
-// Before executing a query, attempt recovery from secondary to primary sources.
-// Each primary source tracks its own lastFailedAt; if enough time has passed,
-// we try switching back to it.
-let attemptRecoveryToPrimary = (sourceManager: t, ~isLive) => {
-  // Skip if active source is already primary
-  if (
-    getSourceRole(~sourceFor=sourceManager.activeSource.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) !==
-      Some(Primary)
-  ) {
-    sourceManager.sourcesState->Js.Array2.find(sourceState => {
-      if sourceState.disabled {
-        false
-      } else {
-        switch getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
-        | Some(Primary) =>
-          switch sourceState.lastFailedAt {
-          | Some(failedAt)
-            if Js.Date.now() -. failedAt >=
-              sourceManager.secondaryRecoveryTimeout->Int.toFloat => true
-          | None => true
-          | _ => false
-          }
-        | _ => false
-        }
+// Before executing a query, attempt recovery to a higher-priority source.
+// Each source tracks its own lastFailedAt; if enough time has passed,
+// we try switching back to it. Priority: Primary > Secondary.
+let attemptRecovery = (sourceManager: t, ~isLive) => {
+  let activeRole = getSourceRole(
+    ~sourceFor=sourceManager.activeSource.sourceFor,
+    ~isLive,
+    ~hasLive=sourceManager.hasLive,
+  )
+  let hasRecovered = sourceState =>
+    switch sourceState.lastFailedAt {
+    | Some(failedAt) =>
+      Js.Date.now() -. failedAt >= sourceManager.secondaryRecoveryTimeout->Int.toFloat
+    | None => true
+    }
+  let isCandidate = sourceState =>
+    !sourceState.disabled &&
+    sourceState.source !== sourceManager.activeSource &&
+    hasRecovered(sourceState)
+
+  // Try to find a recovered primary source first
+  switch activeRole {
+  | Some(Primary) => None
+  | _ =>
+    switch sourceManager.sourcesState->Js.Array2.find(sourceState => {
+      isCandidate(sourceState) &&
+      getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) ===
+        Some(Primary)
+    }) {
+    | Some(_) as result => result
+    | None =>
+      // If active source has no role, also try recovering to a secondary source
+      switch activeRole {
+      | None =>
+        sourceManager.sourcesState->Js.Array2.find(sourceState => {
+          isCandidate(sourceState) &&
+          getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) ===
+            Some(Secondary)
+        })
+      | _ => None
       }
-    })
-  } else {
-    None
+    }
   }
 }
 
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
-  // Attempt recovery to a primary source before starting the query
-  switch sourceManager->attemptRecoveryToPrimary(~isLive) {
-  | Some(primarySourceState) =>
+  // Attempt recovery to a higher-priority source before starting the query
+  switch sourceManager->attemptRecovery(~isLive) {
+  | Some(recoveredSourceState) =>
     let logger = Logging.createChild(
       ~params={
         "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       },
     )
     logger->Logging.childInfo({
-      "msg": "Attempting to switch back to primary source after secondary recovery period",
-      "source": primarySourceState.source.name,
+      "msg": "Attempting to switch back to source after recovery period",
+      "source": recoveredSourceState.source.name,
       "previousSource": sourceManager.activeSource.name,
     })
-    sourceManager.activeSource = primarySourceState.source
+    sourceManager.activeSource = recoveredSourceState.source
   | None => ()
   }
 
