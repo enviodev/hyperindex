@@ -1,5 +1,5 @@
 ---
-source: cli/src/hbs_templating/codegen_templates.rs
+source: packages/cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
 module Enums = {
@@ -122,7 +122,15 @@ type testIndexerProcessConfig = {
   chains: testIndexerProcessConfigChains,
 }
 
-/** Test indexer type with process method and chain info. */
+/** Entity operations for direct access outside handlers. */
+type testIndexerEntityOps<'entity> = {
+  /** Get an entity by ID. */
+  get: string => promise<option<'entity>>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}
+
+/** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {
   /** Process blocks for the specified chains and return progress with changes. */
   process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
@@ -130,4 +138,6 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+  @as("EmptyEntity") emptyEntity: testIndexerEntityOps<Entities.EmptyEntity.t>,
+  @as("RelatedEntity") relatedEntity: testIndexerEntityOps<Entities.RelatedEntity.t>,
 }

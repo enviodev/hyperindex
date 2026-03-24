@@ -194,6 +194,7 @@ use crate::{
     cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Field, FieldType},
+        event_parsing::abi_to_rescript_type,
         system_config::{self, Ecosystem, EventKind, SystemConfig},
     },
     type_schema::RecordField,
@@ -504,47 +505,61 @@ impl Contract {
         let mut content = String::new();
 
         content.push_str("open Vitest\n");
+        content.push_str("open Indexer\n");
         content.push_str(&format!(
             "\ndescribe(\"{} contract {} event tests\", () => {{\n",
             contract_name, event_name
         ));
         content.push_str(&format!(
-            "  Async.it(\"{}_{} is created correctly\", async _t => {{\n",
-            contract_name, event_name
+            "  Async.it(\"{} handler creates {}_{} entity\", async _t => {{\n",
+            event_name, contract_name, event_name
         ));
         content.push_str("    let indexer = Indexer.createTestIndexer()\n");
 
-        // Mock event using %raw
-        content.push_str(&format!(
-            "\n    // Creating mock for {} contract {} event\n",
-            contract_name, event_name
-        ));
-        content.push_str("    let event: TestIndexer.simulateItem = %raw(`{\n");
-        content.push_str(&format!(
-            "      contract: \"{}\",\n",
-            contract_name
-        ));
-        content.push_str(&format!("      event: \"{}\",\n", event_name));
-        content.push_str("      params: {\n");
-        for param in &first_event.params {
-            content.push_str(&format!("        // {}: ...,\n", param.res_name));
-        }
-        content.push_str("      },\n");
-        content.push_str("    }`)\n");
-
-        // Process
+        // Process with simulate item using makeSimulateItem
         content.push_str(
             "\n    // TODO: Configure chain ID and start/end blocks for your contract\n",
         );
-        content.push_str("    let _ = await indexer.process({\n");
+        content.push_str("    let result = await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str("        chain1: {\n");
         content.push_str("          startBlock: 0,\n");
         content.push_str("          endBlock: 100,\n");
-        content.push_str("          simulate: [event],\n");
+
+        // Generate makeSimulateItem call
+        if first_event.params.is_empty() {
+            content.push_str(&format!(
+                "          simulate: [{}.{}.makeSimulateItem()],\n",
+                contract_name, event_name
+            ));
+        } else {
+            content.push_str(&format!(
+                "          simulate: [\n            {}.{}.makeSimulateItem(\n",
+                contract_name, event_name
+            ));
+            for param in &first_event.params {
+                content.push_str(&format!(
+                    "              ~{}={},\n",
+                    param.res_name,
+                    param.default_value_rescript
+                ));
+            }
+            content.push_str("              (),\n");
+            content.push_str("            ),\n");
+            content.push_str("          ],\n");
+        }
+
         content.push_str("        },\n");
         content.push_str("      },\n");
         content.push_str("    })\n");
+
+        // Assert that processing produced changes
+        content.push_str(
+            "\n    // Asserting that the handler produced entity changes\n",
+        );
+        content.push_str(
+            "    Assert.isTrue(result.changes->Array.length > 0, ~message=\"Expected at least one change\")\n",
+        );
 
         content.push_str("  })\n");
         content.push_str("})\n");
@@ -674,12 +689,16 @@ pub struct Param {
     tuple_param_accessor_indexes: Option<Vec<ParamIndex>>,
     graphql_type: FieldType,
     is_eth_address: bool,
+    default_value_rescript: String,
 }
 
 impl Param {
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
         let js_name = flattened_event_param.event_param.name.to_string();
         let res_name = RecordField::to_valid_rescript_name(&js_name);
+        let eth_param: crate::config_parsing::event_parsing::EthereumEventParam =
+            (&flattened_event_param.event_param).into();
+        let default_value_rescript = abi_to_rescript_type(&eth_param).get_default_value_rescript();
         Ok(Param {
             res_name,
             js_name,
@@ -692,6 +711,7 @@ impl Param {
                     flattened_event_param.event_param.name
                 ))?,
             is_eth_address: matches!(flattened_event_param.event_param.kind, DynSolType::Address),
+            default_value_rescript,
         })
     }
 }

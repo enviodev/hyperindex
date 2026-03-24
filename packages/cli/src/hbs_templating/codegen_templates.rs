@@ -514,6 +514,8 @@ pub struct EventMod {
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub global_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
+    pub params_constructor_type: String,
+    pub simulate_fn_code: String,
 }
 
 impl Display for EventMod {
@@ -630,6 +632,9 @@ type handler = Internal.genericHandler<handlerArgs>
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string();
 
+        let params_constructor_type = &self.params_constructor_type;
+        let simulate_fn_code = &self.simulate_fn_code;
+
         format!(
             r#"
 let id = "{event_id}"
@@ -639,6 +644,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = {data_type}
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = {params_constructor_type}
 @genType
 type block = {block_type}
 @genType
@@ -668,7 +675,9 @@ let paramsRawEventSchema = {params_raw_event_schema}
 type eventFilter = {event_filter_type}
 
 {event_filters_type_code}
-{non_event_mod_code}"#
+{non_event_mod_code}
+
+{simulate_fn_code}"#
         )
     }
 }
@@ -703,6 +712,53 @@ impl EventTemplate {
             .join(", ");
 
         format!("{{{field_rows}}}")
+    }
+
+    /// Generate the makeSimulateItem function code for an event module.
+    /// For events with params, generates labeled args with default values.
+    /// For paramless events, generates a simple no-arg function.
+    pub fn generate_simulate_fn_code(params: &[EventParam]) -> String {
+        if params.is_empty() {
+            return r#"/** Create a simulate item for this event. */
+let makeSimulateItem = (): TestIndexer.simulateItem => {
+  {"contract": contractName, "event": name}->(Utils.magic: {..} => TestIndexer.simulateItem)
+}"#
+            .to_string();
+        }
+
+        let labeled_params = params
+            .iter()
+            .map(|p| {
+                let field =
+                    RecordField::new(p.name.to_string(), abi_to_rescript_type(&p.into()));
+                let default_val = abi_to_rescript_type(&p.into()).get_default_value_rescript();
+                format!("  ~{}: {}={},", field.name, field.type_ident, default_val)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let params_obj_fields = params
+            .iter()
+            .map(|p| {
+                let field =
+                    RecordField::new(p.name.to_string(), abi_to_rescript_type(&p.into()));
+                format!("    \"{}\": {}", p.name, field.name)
+            })
+            .collect::<Vec<_>>()
+            .join(",\n");
+
+        format!(
+            r#"/** Create a simulate item for this event. Params have default values and can be overridden. */
+let makeSimulateItem = (
+{labeled_params}
+  (),
+): TestIndexer.simulateItem => {{
+  let params = {{
+{params_obj_fields}
+  }}
+  {{"contract": contractName, "event": name, "params": params}}->(Utils.magic: {{..}} => TestIndexer.simulateItem)
+}}"#
+        )
     }
 
     pub fn generate_parse_event_filters_code(params: &[EventParam]) -> String {
@@ -809,6 +865,8 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
+            params_constructor_type: "Internal.fuelSupplyParams".to_string(),
+            simulate_fn_code: Self::generate_simulate_fn_code(&[]),
         };
         EventTemplate {
             name: event_name,
@@ -836,6 +894,8 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
+            params_constructor_type: "Internal.fuelTransferParams".to_string(),
+            simulate_fn_code: Self::generate_simulate_fn_code(&[]),
         };
         EventTemplate {
             name: event_name,
@@ -883,6 +943,31 @@ impl EventTemplate {
                     )
                 };
 
+                // Generate params_constructor_type (all fields optional)
+                let params_constructor_type = if params.is_empty() {
+                    "unit".to_string()
+                } else {
+                    let fields = params
+                        .iter()
+                        .map(|p| {
+                            let field = RecordField::new(
+                                p.name.to_string(),
+                                abi_to_rescript_type(&p.into()),
+                            );
+                            let as_prefix = field.as_name.as_ref().map_or(
+                                "".to_string(),
+                                |s| format!("@as(\"{s}\") "),
+                            );
+                            format!("{}{}?: {}", as_prefix, field.name, field.type_ident)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{{{}}}", fields)
+                };
+
+                // Generate simulate function code
+                let simulate_fn_code = Self::generate_simulate_fn_code(params);
+
                 let event_mod = EventMod {
                     sighash: config_event.sighash.to_string(),
                     topic_count: params
@@ -899,6 +984,8 @@ impl EventTemplate {
                     custom_field_selection: config_event.field_selection.clone(),
                     global_field_selection: Some(global_field_selection.clone()),
                     fuel_event_kind: None,
+                    params_constructor_type,
+                    simulate_fn_code,
                 };
 
                 Ok(EventTemplate {
@@ -911,22 +998,26 @@ impl EventTemplate {
                 let fuel_event_kind = fuel_event_kind.clone();
                 match &fuel_event_kind {
                     FuelEventKind::LogData(type_indent) => {
+                        let data_type_str = type_indent.to_string();
+                        let params_raw_event_schema_str = format!(
+                            "{}->Utils.Schema.coerceToJsonPgType",
+                            type_indent.to_rescript_schema(&SchemaMode::ForDb)
+                        );
                         let event_mod = EventMod {
                             sighash: config_event.sighash.to_string(),
                             topic_count: 0, //Default to 0 for fuel,
                             event_name: event_name.clone(),
                             parse_event_filters_code: "".to_string(),
-                            data_type: type_indent.to_string(),
-                            params_raw_event_schema: format!(
-                                "{}->Utils.Schema.coerceToJsonPgType",
-                                type_indent.to_rescript_schema(&SchemaMode::ForDb)
-                            ),
+                            data_type: data_type_str.clone(),
+                            params_raw_event_schema: params_raw_event_schema_str,
                             convert_hyper_sync_event_args_code:
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
                             global_field_selection: None,
                             fuel_event_kind: Some(fuel_event_kind),
+                            params_constructor_type: data_type_str,
+                            simulate_fn_code: Self::generate_simulate_fn_code(&[]),
                         };
 
                         Ok(EventTemplate {
@@ -1302,6 +1393,83 @@ pub struct ProjectTemplate {
 }
 
 impl ProjectTemplate {
+    /// Generate GADT event identifier types for type-safe simulate items in tests.
+    /// These are placed after contract modules so they can reference event types.
+    fn generate_simulate_types(contract_templates: &[ContractTemplate]) -> String {
+        if contract_templates.is_empty() {
+            return String::new();
+        }
+
+        let mut code = String::new();
+
+        // Generate per-contract event identifier GADTs
+        for contract in contract_templates {
+            if contract.codegen_events.is_empty() {
+                continue;
+            }
+
+            let contract_name = &contract.name.capitalized;
+
+            // GADT constructors: one per event
+            let gadt_constructors = contract
+                .codegen_events
+                .iter()
+                .map(|event| {
+                    format!(
+                        "  | {}: {}_simulateEvent<{}.{}.paramsConstructor>",
+                        event.name, contract_name, contract_name, event.name,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            code.push_str(&format!(
+                "/** Event identifier for {} contract. Type parameter tracks the params type. */\n\
+                 type rec {}_simulateEvent<'paramsConstructor> =\n{}\n\n",
+                contract_name, contract_name, gadt_constructors,
+            ));
+        }
+
+        // Generate top-level event identifier wrapping all contracts
+        if contract_templates.len() == 1 {
+            // Single contract: unboxed wrapper for zero overhead
+            let contract_name = &contract_templates[0].name.capitalized;
+            code.push_str(&format!(
+                "/** Top-level event identifier for simulate items. */\n\
+                 @unboxed type simulateContractEvent<'paramsConstructor> =\n\
+                 | {}({}_simulateEvent<'paramsConstructor>)\n\n",
+                contract_name, contract_name,
+            ));
+        } else {
+            // Multiple contracts: one constructor per contract
+            let constructors = contract_templates
+                .iter()
+                .filter(|c| !c.codegen_events.is_empty())
+                .map(|c| {
+                    let name = &c.name.capitalized;
+                    format!("  | {}({}_simulateEvent<'paramsConstructor>)", name, name)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            code.push_str(&format!(
+                "/** Top-level event identifier for simulate items. */\n\
+                 type simulateContractEvent<'paramsConstructor> =\n{}\n\n",
+                constructors,
+            ));
+        }
+
+        // Generate simulateBlock function
+        code.push_str(
+            r#"/** Create a simulate item for a block handler. */
+let simulateBlock = (~name: string, ~number: int=?, ()): TestIndexer.simulateItem => {
+  {"block": name, "number": number}->(Utils.magic: {..} => TestIndexer.simulateItem)
+}
+"#,
+        );
+
+        code
+    }
+
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         let template_dirs = TemplateDirs::new();
         let dynamic_codegen_dir = template_dirs
@@ -1616,6 +1784,28 @@ type handlerContext = {{
             .collect::<Vec<_>>()
             .join("\n");
 
+        // Generate entity ops fields for the testIndexer type
+        let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
+type testIndexerEntityOps<'entity> = {
+  /** Get an entity by ID. */
+  get: string => promise<option<'entity>>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}"#;
+
+        let test_indexer_entity_fields = entities
+            .iter()
+            .map(|entity| {
+                format!(
+                    "  @as(\"{}\") {}: testIndexerEntityOps<Entities.{}.t>,",
+                    entity.name.original,
+                    entity.name.uncapitalized,
+                    entity.name.capitalized,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let test_indexer_types = format!(
             r#"type testIndexerProcessConfigChains = {{
 {}
@@ -1625,7 +1815,9 @@ type testIndexerProcessConfig = {{
   chains: testIndexerProcessConfigChains,
 }}
 
-/** Test indexer type with process method and chain info. */
+{test_indexer_entity_ops_type}
+
+/** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {{
   /** Process blocks for the specified chains and return progress with changes. */
   process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
@@ -1633,16 +1825,22 @@ type testIndexer = {{
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+{}
 }}"#,
-            test_indexer_chains_fields
+            test_indexer_chains_fields,
+            test_indexer_entity_fields,
         );
 
         let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
 
+        // Generate GADT event identifier types for type-safe simulate items
+        let simulate_types = Self::generate_simulate_types(&codegen_contracts);
+
         let generated_top_level_bindings = format!(
-            "{}\n\n{}",
+            "{}\n\n{}\n\n{}",
             r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
             r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
+            simulate_types,
         );
 
         // Helper function to convert kebab-case to camelCase
@@ -2415,6 +2613,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = {{id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}}
 @genType
 type block = Block.t
 @genType
@@ -2467,6 +2667,23 @@ handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
 contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }}
+}}
+
+/** Create a simulate item for this event. Params have default values and can be overridden. */
+let makeSimulateItem = (
+  ~id: bigint=0n,
+  ~owner: Address.t=TestHelpers_MockAddresses.defaultAddress,
+  ~displayName: string="foo",
+  ~imageUrl: string="foo",
+  (),
+): TestIndexer.simulateItem => {{
+  let params = {{
+    "id": id,
+    "owner": owner,
+    "displayName": displayName,
+    "imageUrl": imageUrl
+  }}
+  {{"contract": contractName, "event": name, "params": params}}->(Utils.magic: {{..}} => TestIndexer.simulateItem)
 }}"#
             ),
         }
@@ -2498,6 +2715,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = unit
 @genType
 type block = Block.t
 @genType
@@ -2550,6 +2769,11 @@ handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
 contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
+}
+
+/** Create a simulate item for this event. */
+let makeSimulateItem = (): TestIndexer.simulateItem => {
+  {"contract": contractName, "event": name}->(Utils.magic: {..} => TestIndexer.simulateItem)
 }"#.to_string(),
           }
       );
@@ -2587,6 +2811,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = unit
 @genType
 type block = {number: int, timestamp: int, hash: string}
 @genType
@@ -2639,6 +2865,11 @@ handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
 contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
+}
+
+/** Create a simulate item for this event. */
+let makeSimulateItem = (): TestIndexer.simulateItem => {
+  {"contract": contractName, "event": name}->(Utils.magic: {..} => TestIndexer.simulateItem)
 }"#.to_string(),
           }
       );
