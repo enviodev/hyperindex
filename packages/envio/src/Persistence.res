@@ -324,7 +324,7 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
 ): InMemoryStore.rollbackDiff => {
-  let entityDiffs =
+  let entityChanges =
     await persistence.allEntities
     ->Belt.Array.map(async entityConfig => {
       let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
@@ -339,7 +339,7 @@ let prepareRollbackDiff = async (
     })
     ->Promise.all
 
-  {rollbackTargetCheckpointId, rollbackDiffCheckpointId, entityDiffs}
+  {rollbackTargetCheckpointId, rollbackDiffCheckpointId, entityChanges}
 }
 
 let isWriting = persistence => persistence.writePromise !== None
@@ -424,6 +424,18 @@ let awaitCurrentWrite = async persistence => {
   lastResult.contents
 }
 
+// Flush all pending and in-progress writes. Returns the writtenCheckpointId.
+let flushWrites = async persistence => {
+  // Start any pending write that hasn't begun yet
+  if !isWriting(persistence) {
+    executeWrite(persistence)
+  }
+  switch await awaitCurrentWrite(persistence) {
+  | Error(e) => Error(e)
+  | Ok() => Ok(persistence.writtenCheckpointId)
+  }
+}
+
 // Force a synchronous write: queue it, await everything.
 let forceWrite = async (persistence, ~writeArgs) => {
   persistence.pendingWrite = Some(writeArgs)
@@ -436,30 +448,3 @@ let forceWrite = async (persistence, ~writeArgs) => {
   await awaitCurrentWrite(persistence)
 }
 
-// Trigger a background write and manage in-memory capacity.
-// If more than half capacity is used, prune written entities.
-// If still over half after prune, await the current write to finish, then prune again.
-let writeAndManageCapacity = async (
-  persistence,
-  ~inMemoryStore: InMemoryStore.t,
-  ~writeArgs,
-) => {
-  persistence->startWrite(~writeArgs)
-
-  let halfCapacity = (Env.targetInMemoryStoreSize :> float) /. 2.
-  if inMemoryStore.totalChangeCount > halfCapacity {
-    // Try pruning entities already written to DB
-    inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
-
-    if inMemoryStore.totalChangeCount > halfCapacity {
-      // Still over half - must wait for current write to finish, then prune again
-      if isWriting(persistence) {
-        switch await awaitCurrentWrite(persistence) {
-        | Error(errHandler) => errHandler->ErrorHandling.log
-        | Ok() =>
-          inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
-        }
-      }
-    }
-  }
-}

@@ -46,9 +46,6 @@ module Entity = {
     latest: option<'entity>,
     status: Internal.inMemoryStoreEntityStatus<'entity>,
     entityIndices: Utils.Set.t<TableIndices.Index.t>,
-    // Tracks the last checkpoint that accessed this entity via index lookup,
-    // so we don't evict entities that are still needed by an index
-    mutable lastReferencedCheckpointId: bigint,
   }
   type t<'entity> = {
     table: t<string, entityWithIndices<'entity>>,
@@ -170,7 +167,6 @@ module Entity = {
           latest: entity,
           status: Loaded,
           entityIndices,
-          lastReferencedCheckpointId: 0n,
         },
       )
     }
@@ -183,7 +179,6 @@ module Entity = {
     ~shouldSaveHistory,
     ~containsRollbackDiffChange=false,
   ) => {
-    let checkpointId = change->Change.getCheckpointId
     //New entity row with only the latest update
     @inline
     let newStatus = () => Internal.Updated({
@@ -201,12 +196,11 @@ module Entity = {
     inMemTable.changeCount = inMemTable.changeCount +. 1.
 
     let updatedEntityRecord = switch inMemTable.table->get(change->Change.getEntityId) {
-    | None => {latest, status: newStatus(), entityIndices: Utils.Set.make(), lastReferencedCheckpointId: checkpointId}
+    | None => {latest, status: newStatus(), entityIndices: Utils.Set.make()}
     | Some({status: Loaded, entityIndices}) => {
         latest,
         status: newStatus(),
         entityIndices,
-        lastReferencedCheckpointId: checkpointId,
       }
     | Some({status: Updated(previous_values), entityIndices}) =>
       let newStatus = Internal.Updated({
@@ -225,7 +219,7 @@ module Entity = {
         },
         containsRollbackDiffChange: previous_values.containsRollbackDiffChange,
       })
-      {latest, status: newStatus, entityIndices, lastReferencedCheckpointId: checkpointId}
+      {latest, status: newStatus, entityIndices}
     }
 
     switch change {
@@ -426,41 +420,37 @@ module Entity = {
       switch inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(key) {
       | None => ()
       | Some(row) =>
-        if row.lastReferencedCheckpointId <= writtenCheckpointId {
+        switch row.status {
+        | Loaded =>
+          // Loaded entities are just cache — evict from memory
+          inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
+          inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
+        | Updated(update)
+          if update.latestChange->Change.getCheckpointId <= writtenCheckpointId =>
           let hasActiveIndices = row.entityIndices->Utils.Set.size > 0
-          switch row.status {
-          | Updated(_) if !hasActiveIndices =>
+          if !hasActiveIndices {
             // Written to DB, no active index — evict entirely
             inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
             inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
-          | Updated(_) =>
+          } else {
             // Written to DB, still has active index — reset to Loaded
             inMemTable.table.dict->Js.Dict.set(key, {...row, status: Loaded})
-          | Loaded =>
-            // Stale loaded entity — evict from memory
-            inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
-            inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
           }
-        } else {
-          // Entity was referenced after the written checkpoint
-          switch row.status {
-          | Updated(update) =>
-            remainingChangeCount := remainingChangeCount.contents +. 1.
-            // Clear already-written history but keep the update status
-            // since it has changes newer than what was written
-            inMemTable.table.dict->Js.Dict.set(
-              key,
-              {
-                ...row,
-                status: Updated({
-                  ...update,
-                  history: [update.latestChange],
-                  containsRollbackDiffChange: false,
-                }),
-              },
-            )
-          | Loaded => ()
-          }
+        | Updated(update) =>
+          remainingChangeCount := remainingChangeCount.contents +. 1.
+          // Clear already-written history but keep the update status
+          // since it has changes newer than what was written
+          inMemTable.table.dict->Js.Dict.set(
+            key,
+            {
+              ...row,
+              status: Updated({
+                ...update,
+                history: [update.latestChange],
+                containsRollbackDiffChange: false,
+              }),
+            },
+          )
         }
       }
     }

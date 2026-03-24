@@ -1006,9 +1006,10 @@ let injectedTaskReducer = (
             }
 
             // Queue background write and manage in-memory capacity
-            await state.ctx.persistence->Persistence.writeAndManageCapacity(
-              ~inMemoryStore,
-              ~writeArgs,
+            state.ctx.persistence->Persistence.startWrite(~writeArgs)
+            await inMemoryStore->InMemoryStore.prepareForNextBatch(
+              ~writtenCheckpointId=state.ctx.persistence.writtenCheckpointId,
+              ~flushWrites=() => state.ctx.persistence->Persistence.flushWrites,
             )
             dispatchAction(EventBatchProcessed({batch: batch}))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
@@ -1037,14 +1038,12 @@ let injectedTaskReducer = (
     | {rollbackState: FoundReorgDepth(_), currentlyProcessingBatch: true} =>
       Logging.info("Waiting for batch to finish processing before executing rollback")
     | {rollbackState: FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber})} =>
-      // Ensure all background writes complete before rollback
+      // Flush all pending and in-progress writes before rollback
       // so that DB state is consistent for rollback queries
-      if state.ctx.persistence->Persistence.isWriting {
-        switch await state.ctx.persistence->Persistence.awaitCurrentWrite {
-        | Error(errHandler) =>
-          dispatchAction(ErrorExit(errHandler))
-        | Ok() => ()
-        }
+      switch await state.ctx.persistence->Persistence.flushWrites {
+      | Error(errHandler) =>
+        dispatchAction(ErrorExit(errHandler))
+      | Ok(_) => ()
       }
 
       let startTime = Hrtime.makeTimer()
@@ -1190,7 +1189,7 @@ let injectedTaskReducer = (
 
       logger->Logging.childTrace({
         "msg": "Finished rollback on reorg",
-        "entityDiffs": rollbackDiff.entityDiffs->Belt.Array.length,
+        "entityChanges": rollbackDiff.entityChanges->Belt.Array.length,
         "rollbackedEvents": rollbackedProcessedEvents.contents,
         "beforeCheckpointId": state.chainManager.committedCheckpointId,
         "targetCheckpointId": rollbackTargetCheckpointId,

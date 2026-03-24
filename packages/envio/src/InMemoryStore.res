@@ -139,6 +139,27 @@ let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
   })
 }
 
+// Manage in-memory capacity after queueing a background write.
+// If more than half capacity is used, prune written entities.
+// If still over half after prune, flush writes and prune again.
+let prepareForNextBatch = async (
+  inMemoryStore: t,
+  ~writtenCheckpointId: bigint,
+  ~flushWrites: unit => promise<result<bigint, ErrorHandling.t>>,
+) => {
+  let halfCapacity = (Env.targetInMemoryStoreSize :> float) /. 2.
+  if inMemoryStore.totalChangeCount > halfCapacity {
+    inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)
+    if inMemoryStore.totalChangeCount > halfCapacity {
+      switch await flushWrites() {
+      | Error(errHandler) => errHandler->ErrorHandling.log
+      | Ok(writtenCheckpointId) =>
+        inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)
+      }
+    }
+  }
+}
+
 type rollbackEntityDiff = {
   entityConfig: Internal.entityConfig,
   removedIds: array<string>,
@@ -148,7 +169,7 @@ type rollbackEntityDiff = {
 type rollbackDiff = {
   rollbackTargetCheckpointId: Internal.checkpointId,
   rollbackDiffCheckpointId: Internal.checkpointId,
-  entityDiffs: array<rollbackEntityDiff>,
+  entityChanges: array<rollbackEntityDiff>,
 }
 
 // Apply rollback diff changes to the in-memory store.
@@ -157,7 +178,7 @@ type rollbackDiff = {
 let applyRollbackDiff = (inMemoryStore: t, ~rollbackDiff: rollbackDiff) => {
   inMemoryStore.rollbackTargetCheckpointId = Some(rollbackDiff.rollbackTargetCheckpointId)
 
-  rollbackDiff.entityDiffs->Belt.Array.forEach(({entityConfig, removedIds, restoredEntities}) => {
+  rollbackDiff.entityChanges->Belt.Array.forEach(({entityConfig, removedIds, restoredEntities}) => {
     removedIds->Js.Array2.forEach(entityId => {
       inMemoryStore->entitySet(
         ~entityConfig,
