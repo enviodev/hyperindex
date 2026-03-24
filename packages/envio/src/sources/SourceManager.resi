@@ -15,7 +15,7 @@ let make: (
   ~newBlockStallTimeout: int=?,
   ~newBlockStallTimeoutLive: int=?,
   ~stalledPollingInterval: int=?,
-  ~secondaryRecoveryTimeout: int=?,
+  ~secondaryRecoveryTimeout: float=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
 ) => t
 

@@ -1837,7 +1837,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         [#getHeightOrThrow, #getItemsOrThrow],
         ~sourceFor=Fallback,
       )
-      let secondaryRecoveryTimeout = 5
+      let secondaryRecoveryTimeout = 5.0
       let sourceManager = SourceManager.make(~isLive=false,
         ~secondaryRecoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
@@ -1892,7 +1892,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       ).toBe(fallbackMock.source)
 
       // Wait for recovery timeout to elapse
-      await Utils.delay(secondaryRecoveryTimeout)
+      await Utils.delay(secondaryRecoveryTimeout->Float.toInt)
 
       // Query after timeout — recovery switches to sync before querying
       {
@@ -1917,7 +1917,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     "Does not attempt recovery when active source is already a sync source",
     async t => {
       let syncMock = Mock.Source.make([#getItemsOrThrow])
-      let secondaryRecoveryTimeout = 0
+      let secondaryRecoveryTimeout = 0.0
       let sourceManager = SourceManager.make(~isLive=false,
         ~sources=[syncMock.source],
         ~maxPartitionConcurrency=10,
@@ -1946,7 +1946,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     "Does not attempt recovery when active source is already primary (live source)",
     async t => {
       let liveMock = Mock.Source.make([#getItemsOrThrow], ~sourceFor=Live)
-      let secondaryRecoveryTimeout = 0
+      let secondaryRecoveryTimeout = 0.0
       let sourceManager = SourceManager.make(~isLive=true,
         ~sources=[liveMock.source],
         ~maxPartitionConcurrency=10,
@@ -1986,7 +1986,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~sources=[syncMock.source, liveMock.source, fallbackMock.source],
         ~maxPartitionConcurrency=10,
       )
-      // Switch lastUsedSource to fallback via waitForNewBlock
+      // Switch activeSource to fallback via waitForNewBlock
       {
         let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
         await Utils.delay(newBlockStallTimeoutLive)
@@ -2025,7 +2025,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         [#getItemsOrThrow],
         ~sourceFor=Fallback,
       )
-      let secondaryRecoveryTimeout = 5
+      let secondaryRecoveryTimeout = 5.0
       let sourceManager = SourceManager.make(~isLive=false,
         ~secondaryRecoveryTimeout,
         ~sources=[syncMock.source, fallbackMock.source],
@@ -2062,7 +2062,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       }
 
       // Wait for recovery timeout, then recover to sync
-      await Utils.delay(secondaryRecoveryTimeout)
+      await Utils.delay(secondaryRecoveryTimeout->Float.toInt)
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
@@ -2109,7 +2109,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       }
 
       // Wait for recovery timeout again and recover
-      await Utils.delay(secondaryRecoveryTimeout)
+      await Utils.delay(secondaryRecoveryTimeout->Float.toInt)
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=102)

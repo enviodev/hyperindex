@@ -27,15 +27,15 @@ type t = {
   newBlockStallTimeoutLive: int,
   stalledPollingInterval: int,
   getHeightRetryInterval: (~retry: int) => int,
-  mutable lastUsedSource: Source.t,
+  mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
-  secondaryRecoveryTimeout: int,
+  secondaryRecoveryTimeout: float,
   mutable hasLive: bool,
 }
 
-let getActiveSource = sourceManager => sourceManager.lastUsedSource
+let getActiveSource = sourceManager => sourceManager.activeSource
 
 type sourceRole = Primary | Secondary
 
@@ -75,7 +75,7 @@ let make = (
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutLive=20_000,
   ~stalledPollingInterval=5_000,
-  ~secondaryRecoveryTimeout=60_000,
+  ~secondaryRecoveryTimeout=60_000.0,
   ~getHeightRetryInterval=makeGetHeightRetryInterval(
     ~initialRetryInterval=1000,
     ~backoffMultiplicative=2,
@@ -109,7 +109,7 @@ let make = (
       disabled: false,
       lastFailedAt: None,
     }),
-    lastUsedSource: initialActiveSource,
+    activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
     fetchingPartitionsCount: 0,
     newBlockStallTimeout,
@@ -130,7 +130,7 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   | Querieng => Prometheus.IndexingQueryTime.counter
   }
   promCounter->Prometheus.SafeCounter.handleFloat(
-    ~labels=sourceManager.lastUsedSource.chain->ChainMap.Chain.toChainId,
+    ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
     ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toSecondsFloat,
   )
   sourceManager.statusStart = Hrtime.makeTimer()
@@ -180,7 +180,7 @@ let fetchNext = async (
         sourceManager.fetchingPartitionsCount + queries->Array.length
       Prometheus.IndexingConcurrency.set(
         ~concurrency=sourceManager.fetchingPartitionsCount,
-        ~chainId=sourceManager.lastUsedSource.chain->ChainMap.Chain.toChainId,
+        ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
       sourceManager->trackNewStatus(~newStatus=Querieng)
       let _ =
@@ -191,7 +191,7 @@ let fetchNext = async (
             sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
             Prometheus.IndexingConcurrency.set(
               ~concurrency=sourceManager.fetchingPartitionsCount,
-              ~chainId=sourceManager.lastUsedSource.chain->ChainMap.Chain.toChainId,
+              ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
             )
             if sourceManager.fetchingPartitionsCount === 0 {
               sourceManager->trackNewStatus(~newStatus=Idle)
@@ -313,19 +313,13 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
 
   let logger = Logging.createChild(
     ~params={
-      "chainId": sourceManager.lastUsedSource.chain->ChainMap.Chain.toChainId,
+      "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       "knownHeight": knownHeight,
     },
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  let recoveryTimeout = sourceManager.secondaryRecoveryTimeout->Int.toFloat
   let now = Js.Date.now()
-  let hasRecovered = sourceState =>
-    switch sourceState.lastFailedAt {
-    | Some(failedAt) => now -. failedAt >= recoveryTimeout
-    | None => true
-    }
 
   let primarySources = []
   let secondarySources = []
@@ -336,8 +330,11 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
     } else {
       switch getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
       | Some(Primary) => primarySources->Array.push(sourceState)
-      | Some(Secondary) if hasRecovered(sourceState) =>
-        secondarySources->Array.push(sourceState)
+      | Some(Secondary) =>
+        switch sourceState.lastFailedAt {
+        | Some(failedAt) if now -. failedAt < sourceManager.secondaryRecoveryTimeout => ()
+        | _ => secondarySources->Array.push(sourceState)
+        }
       | _ => ()
       }
     }
@@ -391,7 +388,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
     ]),
   )
 
-  sourceManager.lastUsedSource = source
+  sourceManager.activeSource = source
 
   // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
   let log = status.contents === Stalled ? Logging.childInfo : Logging.childTrace
@@ -409,11 +406,10 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
 // Picks the best available source based on recovery state.
 // Priority: recovered primaries > recovered secondaries > source with oldest lastFailedAt.
 let getNextSyncSourceState = (sourceManager, ~isLive) => {
-  let recoveryTimeout = sourceManager.secondaryRecoveryTimeout->Int.toFloat
   let now = Js.Date.now()
   let hasRecovered = sourceState =>
     switch sourceState.lastFailedAt {
-    | Some(failedAt) => now -. failedAt >= recoveryTimeout
+    | Some(failedAt) => now -. failedAt >= sourceManager.secondaryRecoveryTimeout
     | None => true
     }
 
@@ -464,19 +460,19 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
   | Some(s) => s
   | None =>
     let logger = Logging.createChild(
-      ~params={"chainId": sourceManager.lastUsedSource.chain->ChainMap.Chain.toChainId},
+      ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
     )
     %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
   }
 
-  if initialSourceState.source !== sourceManager.lastUsedSource {
+  if initialSourceState.source !== sourceManager.activeSource {
     let logger = Logging.createChild(
-      ~params={"chainId": sourceManager.lastUsedSource.chain->ChainMap.Chain.toChainId},
+      ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
     )
     logger->Logging.childInfo({
       "msg": "Attempting to switch back to source after recovery period",
       "source": initialSourceState.source.name,
-      "previousSource": sourceManager.lastUsedSource.name,
+      "previousSource": sourceManager.activeSource.name,
     })
   }
 
@@ -523,7 +519,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         "stats": response.stats,
       })
       sourceState.lastFailedAt = None
-      sourceManager.lastUsedSource = source
+      sourceManager.activeSource = source
       responseRef := Some(response)
     } catch {
     | Source.GetItemsError(error) =>
