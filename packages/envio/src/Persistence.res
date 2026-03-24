@@ -492,7 +492,7 @@ let writeAndManageCapacity = async (
 ) => {
   persistence->startWrite(~writeArgs)
 
-  let halfCapacity = Env.maxInMemoryEntities / 2
+  let halfCapacity = Env.targetInMemoryStoreSize / 2
   if inMemoryStore->InMemoryStore.totalChangeCount > halfCapacity {
     // Try pruning entities already written to DB
     inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)

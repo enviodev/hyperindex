@@ -185,8 +185,8 @@ module Configurable = {
   }
 }
 
-let maxInMemoryEntities =
-  envSafe->EnvSafe.get("ENVIO_MAX_IN_MEMORY_ENTITIES", S.int, ~fallback=100_000)
+let targetInMemoryStoreSize =
+  envSafe->EnvSafe.get("ENVIO_TARGET_IN_MEMORY_STORE_SIZE", S.int, ~fallback=100_000)
 
 module ThrottleWrites = {
   let chainMetadataIntervalMillis =
