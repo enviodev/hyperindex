@@ -264,6 +264,21 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     })
   })
 
+  // Create a _historical function for the first user entity
+  switch entities->Belt.Array.get(0) {
+  | Some(firstEntity) =>
+    let tableName = firstEntity.table.tableName
+    let fnName = tableName ++ "_historical"
+    query :=
+      query.contents ++
+      "\n" ++
+      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("block_number" integer)
+RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
+  SELECT * FROM "${pgSchema}"."${tableName}"
+$$ LANGUAGE sql STABLE;`
+  | None => ()
+  }
+
   // Create views for Hasura integration
   query := query.contents ++ "\n" ++ InternalTable.Views.makeMetaViewQuery(~pgSchema)
   query := query.contents ++ "\n" ++ InternalTable.Views.makeChainMetadataViewQuery(~pgSchema)

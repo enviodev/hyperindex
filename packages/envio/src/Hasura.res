@@ -215,6 +215,21 @@ let createEntityRelationship = async (
   )
 }
 
+let trackFunction = async (~endpoint, ~auth, ~pgSchema, ~functionName: string) => {
+  await sendOperation(
+    ~endpoint,
+    ~auth,
+    ~operation={
+      "type": "pg_track_function",
+      "args": {
+        "source": "default",
+        "schema": pgSchema,
+        "name": functionName,
+      },
+    }->(Utils.magic: 'a => Js.Json.t),
+  )
+}
+
 let trackDatabase = async (
   ~endpoint,
   ~auth,
@@ -284,6 +299,22 @@ let trackDatabase = async (
         ~mappedEntity=linkedEntityName,
       )
     }
+  }
+
+  // Track _historical function for the first user entity
+  switch userEntities->Belt.Array.get(0) {
+  | Some(firstEntity) =>
+    let functionName = firstEntity.table.tableName ++ "_historical"
+    await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName)
+    await createSelectPermission(
+      ~endpoint,
+      ~auth,
+      ~tableName=functionName,
+      ~pgSchema,
+      ~responseLimit,
+      ~aggregateEntities,
+    )
+  | None => ()
   }
 
   Logging.info("Hasura configuration completed")
