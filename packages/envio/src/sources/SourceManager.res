@@ -1,12 +1,5 @@
 open Belt
 
-module JsSet = {
-  type t<'a>
-  @new external make: unit => t<'a> = "Set"
-  @send external add: (t<'a>, 'a) => unit = "add"
-  @send external has: (t<'a>, 'a) => bool = "has"
-}
-
 type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
 
 type sourceState = {
@@ -331,7 +324,7 @@ let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
   for i in 0 to sourceManager.sourcesState->Array.length - 1 {
     let sourceState = sourceManager.sourcesState->Array.getUnsafe(i)
     let isExcluded = switch excludedSources {
-    | Some(set) => set->JsSet.has(sourceState)
+    | Some(set) => set->Utils.Set.has(sourceState)
     | None => false
     }
     if !sourceState.disabled && !isExcluded {
@@ -472,7 +465,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
   // Sources where the query is impossible — excluded for the duration of this query
-  let excludedSources = JsSet.make()
+  let excludedSources = Utils.Set.make()
 
   let initialSourceState = switch sourceManager->getNextSource(~isLive) {
   | Some(s) =>
@@ -586,7 +579,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         // Don't set lastFailedAt — the source isn't broken, the query just can't work on it
-        excludedSources->JsSet.add(sourceState)
+        excludedSources->Utils.Set.add(sourceState)->ignore
 
         switch sourceManager->getNextSource(~isLive, ~excludedSources) {
         | None =>
