@@ -160,22 +160,10 @@ let prepareForNextBatch = async (
   }
 }
 
-type rollbackEntityDiff = {
-  entityConfig: Internal.entityConfig,
-  removedIds: array<string>,
-  restoredEntities: array<Internal.entity>,
-}
-
-type rollbackDiff = {
-  rollbackTargetCheckpointId: Internal.checkpointId,
-  rollbackDiffCheckpointId: Internal.checkpointId,
-  entityChanges: array<rollbackEntityDiff>,
-}
-
 // Apply rollback diff changes to the in-memory store.
 // Only overwrites entities that actually changed — entities not in the diff
 // remain cached and valid since they're unchanged by the rollback.
-let applyRollbackDiff = (inMemoryStore: t, ~rollbackDiff: rollbackDiff) => {
+let applyRollbackDiff = (inMemoryStore: t, ~rollbackDiff: Persistence.rollbackDiff) => {
   inMemoryStore.rollbackTargetCheckpointId = Some(rollbackDiff.rollbackTargetCheckpointId)
 
   rollbackDiff.entityChanges->Belt.Array.forEach(({entityConfig, removedIds, restoredEntities}) => {

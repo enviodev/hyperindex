@@ -6,7 +6,7 @@ type rollbackState =
   | ReorgDetected({chain: chain, blockNumber: int})
   | FindingReorgDepth
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
-  | RollbackReady({rollbackDiff: InMemoryStore.rollbackDiff, eventsProcessedDiffByChain: dict<float>})
+  | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
 module WriteThrottlers = {
   type t = {
@@ -131,7 +131,7 @@ type action =
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
   | SetRollbackState({
-      rollbackDiff: InMemoryStore.rollbackDiff,
+      rollbackDiff: Persistence.rollbackDiff,
       rollbackedChainManager: ChainManager.t,
       eventsProcessedDiffByChain: dict<float>,
     })
@@ -732,17 +732,18 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SetRollbackState({rollbackDiff, rollbackedChainManager, eventsProcessedDiffByChain}) => (
-      {
-        ...state,
-        rollbackState: RollbackReady({
-          rollbackDiff,
-          eventsProcessedDiffByChain,
-        }),
-        chainManager: rollbackedChainManager,
-      },
-      [NextQuery(CheckAllChains), ProcessEventBatch],
-    )
+  | SetRollbackState({rollbackDiff, rollbackedChainManager, eventsProcessedDiffByChain}) =>
+      state.ctx.inMemoryStore->InMemoryStore.applyRollbackDiff(~rollbackDiff)
+      (
+        {
+          ...state,
+          rollbackState: RollbackReady({
+            eventsProcessedDiffByChain: eventsProcessedDiffByChain,
+          }),
+          chainManager: rollbackedChainManager,
+        },
+        [NextQuery(CheckAllChains), ProcessEventBatch],
+      )
   | SuccessExit => {
       Logging.info("Exiting with success")
       NodeJs.process->NodeJs.exitWithCode(Success)
@@ -881,12 +882,17 @@ let injectedTaskReducer = (
       )
       dispatchAction(SuccessExit)
     | NoExit =>
-      // Check for background write errors
+      // Check for background write errors (non-blocking)
       if state.ctx.persistence->Persistence.isWriting {
-        switch await state.ctx.persistence->Persistence.awaitCurrentWrite {
-        | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
-        | Ok() => ()
-        }
+        state.ctx.persistence
+        ->Persistence.awaitCurrentWrite
+        ->Promise.thenResolve(result => {
+          switch result {
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+          | Ok() => ()
+          }
+        })
+        ->Promise.done
       }
       updateChainMetadataTable(
         chainManager,
@@ -970,14 +976,7 @@ let injectedTaskReducer = (
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
         dispatchAction(StartProcessingBatch)
 
-        // For rollback, apply the diff to overwrite stale cached entities.
-        // Entities not in the diff are unchanged and remain valid.
         let inMemoryStore = state.ctx.inMemoryStore
-        switch state.rollbackState {
-        | RollbackReady({rollbackDiff}) =>
-          inMemoryStore->InMemoryStore.applyRollbackDiff(~rollbackDiff)
-        | _ => ()
-        }
 
         inMemoryStore->InMemoryStore.setBatchDcs(~batch, ~shouldSaveHistory)
 
@@ -998,11 +997,48 @@ let injectedTaskReducer = (
         | res =>
           switch res {
           | Ok() =>
+            let updatedEntities =
+              state.ctx.persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
+                let updates =
+                  inMemoryStore
+                  ->InMemoryStore.getInMemTable(~entityConfig)
+                  ->InMemoryTable.Entity.updates
+                if updates->Utils.Array.isEmpty {
+                  None
+                } else {
+                  Some({Persistence.entityConfig, updates})
+                }
+              })
+
+            let effectCacheWriteData =
+              inMemoryStore.effects
+              ->Js.Dict.values
+              ->Belt.Array.keepMapU(({idsToStore, dict, effect, invalidationsCount}) => {
+                switch idsToStore {
+                | [] => None
+                | ids =>
+                  let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+                  ids->Belt.Array.forEachWithIndex((index, id) => {
+                    items->Js.Array2.unsafe_set(
+                      index,
+                      ({id, output: dict->Js.Dict.unsafeGet(id)}: Internal.effectCacheItem),
+                    )
+                  })
+                  Some({Persistence.effect, items, invalidationsCount})
+                }
+              })
+
             let writeArgs: Persistence.writeArgs = {
               batch,
               config: state.ctx.config,
-              inMemoryStore,
               isInReorgThreshold,
+              updatedEntities,
+              rawEvents: inMemoryStore.rawEvents->InMemoryTable.values,
+              effectCacheWriteData,
+              rollbackTargetCheckpointId: inMemoryStore.rollbackTargetCheckpointId,
+              onWriteComplete: writtenCheckpointId => {
+                inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId)
+              },
             }
 
             // Queue background write and manage in-memory capacity
