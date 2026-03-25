@@ -1,17 +1,19 @@
 <div align="center">
-
-# HyperIndex: Ultra-Fast Multichain Indexer
-
-**The fastest independently benchmarked multichain blockchain indexer.**
-
-[![GitHub release](https://img.shields.io/github/release/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/releases)
-[![GitHub issues](https://img.shields.io/github/issues/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/issues)
-[![GitHub contributors](https://img.shields.io/github/contributors/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/graphs/contributors)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-7289da?logo=discord&logoColor=white)](https://discord.gg/DhfFhzuJQh)
-[![GitHub stars](https://img.shields.io/github/stars/enviodev/hyperindex.svg)](https://github.com/enviodev/hyperindex/stargazers)
-
-[Documentation](https://docs.envio.dev) · [Hosted Service](https://envio.dev) · [Discord](https://discord.gg/DhfFhzuJQh) · [Benchmarks](https://docs.envio.dev/blog/best-blockchain-indexers-2026)
-
+  <h1>HyperIndex: Ultra-Fast Multichain Indexer</h1>
+  <p><strong>The fastest independently benchmarked multichain blockchain indexer.</strong></p>
+  <p>
+    <a href="https://github.com/enviodev/hyperindex/releases"><img src="https://img.shields.io/github/release/enviodev/hyperindex.svg" alt="GitHub release" /></a>
+    <a href="https://github.com/enviodev/hyperindex/issues"><img src="https://img.shields.io/github/issues/enviodev/hyperindex.svg" alt="GitHub issues" /></a>
+    <a href="https://github.com/enviodev/hyperindex/graphs/contributors"><img src="https://img.shields.io/github/contributors/enviodev/hyperindex.svg" alt="GitHub contributors" /></a>
+    <a href="https://discord.gg/DhfFhzuJQh"><img src="https://img.shields.io/badge/Discord-Join%20Chat-7289da?logo=discord&logoColor=white" alt="Discord" /></a>
+    <a href="https://github.com/enviodev/hyperindex/stargazers"><img src="https://img.shields.io/github/stars/enviodev/hyperindex.svg" alt="GitHub stars" /></a>
+  </p>
+  <p>
+    <a href="https://docs.envio.dev">Documentation</a> ·
+    <a href="https://envio.dev">Hosted Service</a> ·
+    <a href="https://discord.gg/DhfFhzuJQh">Discord</a> ·
+    <a href="https://docs.envio.dev/blog/best-blockchain-indexers-2026">Benchmarks</a>
+  </p>
 </div>
 
 ---
