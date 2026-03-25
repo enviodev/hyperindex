@@ -1091,28 +1091,9 @@ impl ContractTemplate {
             .map(|event| EventTemplate::from_config_event(event, global_field_selection))
             .collect::<Result<_>>()?;
 
-        let chain_ids = contract.get_chain_ids(config);
-
-        let chain_id_type_code = {
-            let chain_id_type = if chain_ids.is_empty() {
-                "int".to_string()
-            } else {
-                format!(
-                    "[{}]",
-                    chain_ids
-                        .iter()
-                        .map(|chain_id| format!("#{chain_id}"))
-                        .collect::<Vec<_>>()
-                        .join(" | ")
-                )
-            };
-            format!("@genType type chainId = {chain_id_type}")
-        };
-
         let module_code = match &contract.abi {
-            // EVM: abi and eventSignatures are already in internal.config.json,
-            // only per-contract chainId type is needed in codegen
-            Abi::Evm(_) => chain_id_type_code.clone(),
+            // EVM: abi and eventSignatures are already in internal.config.json
+            Abi::Evm(_) => String::new(),
             Abi::Fuel(abi) => {
                 let all_abi_type_declarations = abi.to_type_decl_multi().context(format!(
                     "Failed getting types from the '{}' contract ABI",
@@ -1121,7 +1102,7 @@ impl ContractTemplate {
 
                 format!(
                   "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
-                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}\n{chain_id_type_code}",
+                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
                   // If we decide to inline the abi, instead of using require
                   // we need to remember that abi might contain ` and we should escape it
                   abi.path_buf.to_string_lossy(),
@@ -1805,11 +1786,15 @@ type handlerContext = {{
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
+                let module_header = if contract.module_code.is_empty() {
+                    format!("let contractName = \"{}\"", contract.name.capitalized)
+                } else {
+                    format!("{}\nlet contractName = \"{}\"", contract.module_code, contract.name.capitalized)
+                };
                 format!(
-                    "@genType\nmodule {} = {{\n{}\nlet contractName = \"{}\"\n\n{}\n}}",
+                    "@genType\nmodule {} = {{\n{}\n\n{}\n}}",
                     contract.name.capitalized,
-                    contract.module_code,
-                    contract.name.capitalized,
+                    module_header,
                     events_code,
                 )
             })

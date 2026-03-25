@@ -58,7 +58,6 @@ type chainId = [#1]
 
 @genType
 module Contract1 = {
-@genType type chainId = [#1]
 let contractName = "Contract1"
 
   module NewGravatar = {
