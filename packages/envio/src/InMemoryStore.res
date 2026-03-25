@@ -139,19 +139,65 @@ let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
   })
 }
 
-// Manage in-memory capacity after queueing a background write.
-// If more than half capacity is used, prune written entities.
-// If still over half after prune, flush writes and prune again.
+// Extract write data from in-memory store, queue background write,
+// and manage in-memory capacity.
 let prepareForNextBatch = async (
   inMemoryStore: t,
-  ~writtenCheckpointId: bigint,
-  ~flushWrites: unit => promise<result<bigint, ErrorHandling.t>>,
+  ~batch: Batch.t,
+  ~config: Config.t,
+  ~isInReorgThreshold: bool,
+  ~persistence: Persistence.t,
 ) => {
+  let updatedEntities = persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
+    let updates =
+      inMemoryStore
+      ->getInMemTable(~entityConfig)
+      ->InMemoryTable.Entity.updates
+    if updates->Utils.Array.isEmpty {
+      None
+    } else {
+      Some({Persistence.entityConfig, updates})
+    }
+  })
+
+  let effectCacheWriteData =
+    inMemoryStore.effects
+    ->Js.Dict.values
+    ->Belt.Array.keepMapU(({idsToStore, dict, effect, invalidationsCount}) => {
+      switch idsToStore {
+      | [] => None
+      | ids =>
+        let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
+        ids->Belt.Array.forEachWithIndex((index, id) => {
+          items->Js.Array2.unsafe_set(
+            index,
+            ({id, output: dict->Js.Dict.unsafeGet(id)}: Internal.effectCacheItem),
+          )
+        })
+        Some({Persistence.effect, items, invalidationsCount})
+      }
+    })
+
+  let writeArgs: Persistence.writeArgs = {
+    batch,
+    config,
+    isInReorgThreshold,
+    updatedEntities,
+    rawEvents: inMemoryStore.rawEvents->InMemoryTable.values,
+    effectCacheWriteData,
+    rollbackTargetCheckpointId: inMemoryStore.rollbackTargetCheckpointId,
+    onWriteComplete: writtenCheckpointId => {
+      inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)
+    },
+  }
+
+  persistence->Persistence.startWrite(~writeArgs)
+
   let halfCapacity = (Env.targetInMemoryStoreSize :> float) /. 2.
   if inMemoryStore.totalChangeCount > halfCapacity {
-    inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)
+    inMemoryStore->cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
     if inMemoryStore.totalChangeCount > halfCapacity {
-      switch await flushWrites() {
+      switch await persistence->Persistence.flushWrites {
       | Error(errHandler) => errHandler->ErrorHandling.log
       | Ok(writtenCheckpointId) =>
         inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)

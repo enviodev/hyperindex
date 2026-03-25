@@ -997,55 +997,12 @@ let injectedTaskReducer = (
         | res =>
           switch res {
           | Ok() =>
-            let updatedEntities =
-              state.ctx.persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
-                let updates =
-                  inMemoryStore
-                  ->InMemoryStore.getInMemTable(~entityConfig)
-                  ->InMemoryTable.Entity.updates
-                if updates->Utils.Array.isEmpty {
-                  None
-                } else {
-                  Some({Persistence.entityConfig, updates})
-                }
-              })
-
-            let effectCacheWriteData =
-              inMemoryStore.effects
-              ->Js.Dict.values
-              ->Belt.Array.keepMapU(({idsToStore, dict, effect, invalidationsCount}) => {
-                switch idsToStore {
-                | [] => None
-                | ids =>
-                  let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-                  ids->Belt.Array.forEachWithIndex((index, id) => {
-                    items->Js.Array2.unsafe_set(
-                      index,
-                      ({id, output: dict->Js.Dict.unsafeGet(id)}: Internal.effectCacheItem),
-                    )
-                  })
-                  Some({Persistence.effect, items, invalidationsCount})
-                }
-              })
-
-            let writeArgs: Persistence.writeArgs = {
-              batch,
-              config: state.ctx.config,
-              isInReorgThreshold,
-              updatedEntities,
-              rawEvents: inMemoryStore.rawEvents->InMemoryTable.values,
-              effectCacheWriteData,
-              rollbackTargetCheckpointId: inMemoryStore.rollbackTargetCheckpointId,
-              onWriteComplete: writtenCheckpointId => {
-                inMemoryStore->InMemoryStore.cleanupAfterWrite(~writtenCheckpointId)
-              },
-            }
-
             // Queue background write and manage in-memory capacity
-            state.ctx.persistence->Persistence.startWrite(~writeArgs)
             await inMemoryStore->InMemoryStore.prepareForNextBatch(
-              ~writtenCheckpointId=state.ctx.persistence.writtenCheckpointId,
-              ~flushWrites=() => state.ctx.persistence->Persistence.flushWrites,
+              ~batch,
+              ~config=state.ctx.config,
+              ~isInReorgThreshold,
+              ~persistence=state.ctx.persistence,
             )
             dispatchAction(EventBatchProcessed({batch: batch}))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
