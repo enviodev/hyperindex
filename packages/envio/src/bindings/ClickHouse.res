@@ -148,6 +148,50 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   })
 }
 
+let logger = Logging.createChild(~params={"context": "ClickHouse"})
+
+// On transient failure, split values in half and retry each half.
+// If only 1 row remains, retry with delay.
+// Delay scales from 100ms to 1000ms as retries decrease.
+let rec insertWithRetry = async (
+  client,
+  ~table: string,
+  ~values: array<'a>,
+  ~format: string,
+  ~retries=8,
+) => {
+  try {
+    await client->insert({table, values, format})
+  } catch {
+  | exn if retries > 0 =>
+    let delayMs = Js.Math.min_int(1000, 100 + 900 * (8 - retries) / 7)
+    if Array.length(values) > 1 {
+      logger->Logging.childWarn({
+        "msg": "ClickHouse insert failed, splitting batch in half and retrying",
+        "table": table,
+        "batchSize": Array.length(values),
+        "retriesLeft": retries,
+        "err": exn->Utils.prettifyExn,
+      })
+      await Utils.delay(delayMs)
+      let mid = Array.length(values) / 2
+      let first = values->Js.Array2.slice(~start=0, ~end_=mid)
+      let second = values->Js.Array2.sliceFrom(mid)
+      await insertWithRetry(client, ~table, ~values=first, ~format, ~retries=retries - 1)
+      await insertWithRetry(client, ~table, ~values=second, ~format, ~retries=retries - 1)
+    } else {
+      logger->Logging.childWarn({
+        "msg": "ClickHouse insert failed, retrying after delay",
+        "table": table,
+        "retriesLeft": retries,
+        "err": exn->Utils.prettifyExn,
+      })
+      await Utils.delay(delayMs)
+      await insertWithRetry(client, ~table, ~values, ~format, ~retries=retries - 1)
+    }
+  }
+}
+
 let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) => {
   let checkpointsCount = batch.checkpointIds->Array.length
   if checkpointsCount === 0 {
@@ -168,11 +212,12 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     }
 
     try {
-      await client->insert({
-        table: `${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
-        values: checkpointRows,
-        format: "JSONCompactEachRow",
-      })
+      await insertWithRetry(
+        client,
+        ~table=`${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
+        ~values=checkpointRows,
+        ~format="JSONCompactEachRow",
+      )
     } catch {
     | exn =>
       raise(
@@ -239,11 +284,7 @@ let setUpdatesOrThrow = async (
         update.latestChange->convertOrThrow
       })
 
-      await client->insert({
-        table: tableName,
-        values,
-        format: "JSONEachRow",
-      })
+      await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
     } catch {
     | exn =>
       raise(
