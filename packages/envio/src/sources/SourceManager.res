@@ -337,7 +337,16 @@ let getNextSources = (sourceManager, ~isLive) => {
   } else if workingSecondarySources->Array.length > 0 {
     workingSecondarySources
   } else {
+    // All primaries in recovery — sort by oldest lastFailedAt (closest to recovery first)
     allPrimarySources
+    ->Js.Array2.sortInPlaceWith((a, b) =>
+      switch (a.lastFailedAt, b.lastFailedAt) {
+      | (None, Some(_)) => -1
+      | (Some(_), None) => 1
+      | (Some(a), Some(b)) => a < b ? -1 : a > b ? 1 : 0
+      | (None, None) => 0
+      }
+    )
   }
 }
 
@@ -373,10 +382,18 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
     })
     ->Array.concat([
       Utils.delay(stallTimeout)->Promise.then(() => {
-        // Build fallback: all non-disabled sources not in mainSources, even with recent lastFailedAt
+        // Build fallback: all non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
         let fallbackSources = []
         sourcesState->Array.forEach(sourceState => {
-          if !sourceState.disabled && !(mainSources->Js.Array2.includes(sourceState)) {
+          if (
+            !sourceState.disabled &&
+            !(mainSources->Js.Array2.includes(sourceState)) &&
+            getSourceRole(
+              ~sourceFor=sourceState.source.sourceFor,
+              ~isLive,
+              ~hasLive=sourceManager.hasLive,
+            )->Option.isSome
+          ) {
             fallbackSources->Array.push(sourceState)
           }
         })
@@ -429,30 +446,37 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
-  let initialSourceState = switch sourceManager->getNextSources(~isLive)->Array.get(0) {
+  let nextSources = sourceManager->getNextSources(~isLive)
+  let initialSourceState = switch nextSources->Js.Array2.find(s =>
+    s.source === sourceManager.activeSource
+  ) {
   | Some(s) => s
   | None =>
-    let logger = Logging.createChild(
-      ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
-    )
-    %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
-  }
-
-  if initialSourceState.source !== sourceManager.activeSource {
-    let logger = Logging.createChild(
-      ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
-    )
-    logger->Logging.childInfo({
-      "msg": "Switching to a recovered source",
-      "source": initialSourceState.source.name,
-      "previousSource": sourceManager.activeSource.name,
-    })
+    switch nextSources->Array.get(0) {
+    | Some(s) =>
+      let logger = Logging.createChild(
+        ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
+      )
+      logger->Logging.childInfo({
+        "msg": "Switching to a recovered source",
+        "source": s.source.name,
+        "previousSource": sourceManager.activeSource.name,
+      })
+      s
+    | None =>
+      let logger = Logging.createChild(
+        ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
+      )
+      %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
+    }
   }
 
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
   let sourceStateRef = ref(initialSourceState)
+  // Sources where the query is impossible — excluded for the duration of this query
+  let excludedSources = ref([])
 
   while responseRef.contents->Option.isNone {
     let sourceState = sourceStateRef.contents
@@ -540,17 +564,13 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         toBlockRef := Some(toBlock)
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
-        sourceState.lastFailedAt = Some(Js.Date.now())
+        // Don't set lastFailedAt — the source isn't broken, the query just can't work on it
+        excludedSources.contents->Array.push(sourceState)
 
-        switch sourceManager->getNextSources(~isLive)->Array.get(0) {
+        switch sourceManager
+          ->getNextSources(~isLive)
+          ->Js.Array2.find(s => !(excludedSources.contents->Js.Array2.includes(s))) {
         | None =>
-          logger->Logging.childWarn({
-            "msg": message,
-            "toBlock": attemptedToBlock,
-            "err": exn->Utils.prettifyExn,
-          })
-          %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
-        | Some(nextSourceState) if nextSourceState === sourceState =>
           logger->Logging.childWarn({
             "msg": message,
             "toBlock": attemptedToBlock,

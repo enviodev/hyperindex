@@ -1472,12 +1472,9 @@ describe("SourceManager wait for new blocks", () => {
       )
       t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        ~message=`Even if the source is a fallback - it's currently active.
-        Since we don't wait for a timeout again in case
-        all main sync sources are still not valid,
-        we immediately call the active source on the next waitForNewBlock.`,
+        ~message="Fallback is secondary, not polled immediately on next waitForNewBlock",
       ).toEqual(
-        3,
+        2,
       )
 
       sync.resolveGetHeightOrThrow(102)
@@ -1505,7 +1502,7 @@ describe("SourceManager wait for new blocks", () => {
         fallback.getHeightOrThrowCalls->Array.length,
         ~message="Polling for fallback source should stop after successful response",
       ).toEqual(
-        3,
+        2,
       )
     },
   )
@@ -1849,9 +1846,9 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
         // Fail sync twice (retries 0, 1 don't switch), then on retry 2 it switches
-        for _ in 0 to 2 {
-          await Utils.delay(0)
-          syncMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+        for idx in 0 to 2 {
+          switch syncMock.getItemsOrThrowCalls {
+          | [call] =>
             call.reject(
               Source.GetItemsError(
                 FailedGettingItems({
@@ -1861,13 +1858,19 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
                 }),
               ),
             )
-          )
+          | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
+          }
+          await Promise.resolve()
+          if idx !== 2 {
+            await Utils.delay(0)
+          }
         }
         // Now it should have switched to fallback
         await Utils.delay(0)
-        fallbackMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
-          call.resolve([])
-        )
+        switch fallbackMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Should have one pending call to fallbackMock")
+        }
         let _ = await p
         t.expect(
           sourceManager->SourceManager.getActiveSource,
@@ -2036,9 +2039,9 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
-        for _ in 0 to 2 {
-          await Utils.delay(0)
-          syncMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+        for idx in 0 to 2 {
+          switch syncMock.getItemsOrThrowCalls {
+          | [call] =>
             call.reject(
               Source.GetItemsError(
                 FailedGettingItems({
@@ -2048,12 +2051,18 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
                 }),
               ),
             )
-          )
+          | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
+          }
+          await Promise.resolve()
+          if idx !== 2 {
+            await Utils.delay(0)
+          }
         }
         await Utils.delay(0)
-        fallbackMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
-          call.resolve([])
-        )
+        switch fallbackMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Should have one pending call to fallbackMock")
+        }
         let _ = await p
         t.expect(
           sourceManager->SourceManager.getActiveSource,
@@ -2083,9 +2092,9 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       {
         let p =
           sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=101)
-        for _ in 0 to 2 {
-          await Utils.delay(0)
-          syncMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
+        for idx in 0 to 2 {
+          switch syncMock.getItemsOrThrowCalls {
+          | [call] =>
             call.reject(
               Source.GetItemsError(
                 FailedGettingItems({
@@ -2095,12 +2104,18 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
                 }),
               ),
             )
-          )
+          | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
+          }
+          await Promise.resolve()
+          if idx !== 2 {
+            await Utils.delay(0)
+          }
         }
         await Utils.delay(0)
-        fallbackMock.getItemsOrThrowCalls->Js.Array2.forEach(call =>
-          call.resolve([])
-        )
+        switch fallbackMock.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Should have one pending call to fallbackMock")
+        }
         let _ = await p
         t.expect(
           sourceManager->SourceManager.getActiveSource,
@@ -2176,6 +2191,103 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         sourceManager->SourceManager.getActiveSource,
         ~message="Should fall back to sync after all Live sources are disabled",
       ).toBe(syncMock.source)
+    },
+  )
+
+  Async.it(
+    "Prefers activeSource when it's valid but not first in getNextSources",
+    async t => {
+      let syncMock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let syncMock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let newBlockStallTimeout = 0
+      let sourceManager = SourceManager.make(~isLive=false,
+        ~newBlockStallTimeout,
+        ~sources=[syncMock0.source, syncMock1.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      // Switch activeSource to syncMock1 via waitForNewBlock
+      {
+        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+        await Utils.delay(newBlockStallTimeout)
+        syncMock1.resolveGetHeightOrThrow(101)
+        t.expect(await p).toBe(101)
+        t.expect(
+          sourceManager->SourceManager.getActiveSource,
+          ~message="activeSource should be syncMock1",
+        ).toBe(syncMock1.source)
+      }
+
+      // executeQuery: syncMock1 is activeSource AND in getNextSources (both are working primaries).
+      // Should prefer syncMock1, not switch to syncMock0.
+      {
+        let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+        switch syncMock1.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected query to go to syncMock1 (activeSource)")
+        }
+        let _ = await p
+      }
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Should stay on syncMock1",
+      ).toBe(syncMock1.source)
+    },
+  )
+
+  Async.it(
+    "ImpossibleForTheQuery switches to another source without setting lastFailedAt",
+    async t => {
+      let syncMock0 = Mock.Source.make([#getItemsOrThrow])
+      let syncMock1 = Mock.Source.make([#getItemsOrThrow])
+      let sourceManager = SourceManager.make(~isLive=false,
+        ~sources=[syncMock0.source, syncMock1.source],
+        ~maxPartitionConcurrency=10,
+      )
+
+      let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+
+      // syncMock0 gets the query first (activeSource). Fail with ImpossibleForTheQuery.
+      switch syncMock0.getItemsOrThrowCalls {
+      | [call] =>
+        call.reject(
+          Source.GetItemsError(
+            FailedGettingItems({
+              exn: %raw(`null`),
+              attemptedToBlock: 100,
+              retry: ImpossibleForTheQuery({message: "test impossible"}),
+            }),
+          ),
+        )
+      | _ => Js.Exn.raiseError("Expected one pending call to syncMock0")
+      }
+
+      await Promise.resolve()
+
+      // Should switch to syncMock1
+      switch syncMock1.getItemsOrThrowCalls {
+      | [call] => call.resolve([])
+      | _ => Js.Exn.raiseError("Expected one pending call to syncMock1")
+      }
+
+      let _ = await p
+
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="Should switch to syncMock1 after ImpossibleForTheQuery on syncMock0",
+      ).toBe(syncMock1.source)
+
+      // Verify syncMock0 is still usable for next query (lastFailedAt was not set)
+      // Since syncMock1 is now activeSource, it should be preferred
+      {
+        let p2 = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+        switch syncMock1.getItemsOrThrowCalls {
+        | [call] => call.resolve([])
+        | _ => Js.Exn.raiseError("Expected syncMock1 to be used for next query")
+        }
+        let _ = await p2
+      }
     },
   )
 })
