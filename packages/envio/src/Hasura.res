@@ -223,8 +223,10 @@ let trackFunction = async (~endpoint, ~auth, ~pgSchema, ~functionName: string) =
       "type": "pg_track_function",
       "args": {
         "source": "default",
-        "schema": pgSchema,
-        "name": functionName,
+        "function": {
+          "schema": pgSchema,
+          "name": functionName,
+        },
       },
     }->(Utils.magic: 'a => Js.Json.t),
   )
