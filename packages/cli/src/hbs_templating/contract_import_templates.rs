@@ -526,26 +526,33 @@ impl Contract {
         content.push_str("          startBlock: 0,\n");
         content.push_str("          endBlock: 100,\n");
 
-        // Generate makeSimulateItem call
+        // Generate makeSimulateItem call using GADT-based eventIdentity
         if first_event.params.is_empty() {
             content.push_str(&format!(
-                "          simulate: [{}.{}.makeSimulateItem()],\n",
+                "          simulate: [Indexer.makeSimulateItem(OnEvent({{event: {}({})}}))],"
+                ,
                 contract_name, event_name
             ));
+            content.push('\n');
         } else {
             content.push_str(&format!(
-                "          simulate: [\n            {}.{}.makeSimulateItem(\n",
+                "          simulate: [\n\
+                 \x20           Indexer.makeSimulateItem(\n\
+                 \x20             OnEvent({{\n\
+                 \x20               event: {}({}),\n\
+                 \x20               params: {{\n",
                 contract_name, event_name
             ));
             for param in &first_event.params {
                 content.push_str(&format!(
-                    "              ~{}={},\n",
+                    "                {}: {},\n",
                     param.res_name,
                     param.default_value_rescript
                 ));
             }
-            content.push_str("              (),\n");
-            content.push_str("            ),\n");
+            content.push_str("              },\n");
+            content.push_str("            }),\n");
+            content.push_str("          ),\n");
             content.push_str("          ],\n");
         }
 

@@ -16,13 +16,17 @@ describe("Contract1 contract NewGravatar event tests", () => {
           startBlock: 0,
           endBlock: 100,
           simulate: [
-            Contract1.NewGravatar.makeSimulateItem(
-              ~id=0n,
-              ~owner=TestHelpers_MockAddresses.defaultAddress,
-              ~displayName="foo",
-              ~imageUrl="foo",
-              (),
-            ),
+            Indexer.makeSimulateItem(
+              OnEvent({
+                event: Contract1(NewGravatar),
+                params: {
+                id: 0n,
+                owner: TestHelpers_MockAddresses.defaultAddress,
+                displayName: "foo",
+                imageUrl: "foo",
+              },
+            }),
+          ),
           ],
         },
       },

@@ -15,7 +15,7 @@ describe("Greeter contract NewGreeting event tests", () => {
         \"1": {
           startBlock: 0,
           endBlock: 100,
-          simulate: [Greeter.NewGreeting.makeSimulateItem()],
+          simulate: [Indexer.makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
         },
       },
     })

@@ -111,23 +111,6 @@ let contractName = "Contract1"
     }
     }
 
-    /** Create a simulate item for this event. Params have default values and can be overridden. */
-    let makeSimulateItem = (
-      ~id: bigint=0n,
-      ~owner: Address.t=TestHelpers_MockAddresses.defaultAddress,
-      ~displayName: string="foo",
-      ~imageUrl: string="foo",
-      (),
-    ): TestIndexer.simulateItem => {
-      let params = {
-        "id": id,
-        "owner": owner,
-        "displayName": displayName,
-        "imageUrl": imageUrl
-      }
-      {"contract": contractName, "event": name, "params": params}->(Utils.magic: {..} => TestIndexer.simulateItem)
-    }
-
     let contractRegister: fnWithEventConfig<
       Internal.genericContractRegister<
         Internal.genericContractRegisterArgs<event, contractRegistrations>,
@@ -223,23 +206,6 @@ let contractName = "Contract1"
     contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
     paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
     }
-    }
-
-    /** Create a simulate item for this event. Params have default values and can be overridden. */
-    let makeSimulateItem = (
-      ~id: bigint=0n,
-      ~owner: Address.t=TestHelpers_MockAddresses.defaultAddress,
-      ~displayName: string="foo",
-      ~imageUrl: string="foo",
-      (),
-    ): TestIndexer.simulateItem => {
-      let params = {
-        "id": id,
-        "owner": owner,
-        "displayName": displayName,
-        "imageUrl": imageUrl
-      }
-      {"contract": contractName, "event": name, "params": params}->(Utils.magic: {..} => TestIndexer.simulateItem)
     }
 
     let contractRegister: fnWithEventConfig<
@@ -344,23 +310,6 @@ let contractName = "Contract2"
     }
     }
 
-    /** Create a simulate item for this event. Params have default values and can be overridden. */
-    let makeSimulateItem = (
-      ~id: bigint=0n,
-      ~owner: Address.t=TestHelpers_MockAddresses.defaultAddress,
-      ~displayName: string="foo",
-      ~imageUrl: string="foo",
-      (),
-    ): TestIndexer.simulateItem => {
-      let params = {
-        "id": id,
-        "owner": owner,
-        "displayName": displayName,
-        "imageUrl": imageUrl
-      }
-      {"contract": contractName, "event": name, "params": params}->(Utils.magic: {..} => TestIndexer.simulateItem)
-    }
-
     let contractRegister: fnWithEventConfig<
       Internal.genericContractRegister<
         Internal.genericContractRegisterArgs<event, contractRegistrations>,
@@ -456,23 +405,6 @@ let contractName = "Contract2"
     contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
     paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
     }
-    }
-
-    /** Create a simulate item for this event. Params have default values and can be overridden. */
-    let makeSimulateItem = (
-      ~id: bigint=0n,
-      ~owner: Address.t=TestHelpers_MockAddresses.defaultAddress,
-      ~displayName: string="foo",
-      ~imageUrl: string="foo",
-      (),
-    ): TestIndexer.simulateItem => {
-      let params = {
-        "id": id,
-        "owner": owner,
-        "displayName": displayName,
-        "imageUrl": imageUrl
-      }
-      {"contract": contractName, "event": name, "params": params}->(Utils.magic: {..} => TestIndexer.simulateItem)
     }
 
     let contractRegister: fnWithEventConfig<

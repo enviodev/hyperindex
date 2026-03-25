@@ -32,6 +32,18 @@ type fuelSimulateBlockItem = {
   height: option<int>,
 }
 
+// Codegen-facing type for constructing simulate items (all fields optional)
+type simulateItem = {
+  event?: string,
+  contract?: string,
+  params?: Js.Json.t,
+  srcAddress?: Address.t,
+  logIndex?: int,
+  number?: int,
+  block?: Js.Json.t,
+  transaction?: Js.Json.t,
+}
+
 // Raw JSON item from user - discriminated by presence of "contract"+"event" vs "block" keys
 type rawSimulateItem
 
