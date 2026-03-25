@@ -40,7 +40,7 @@ Independent benchmarks run by Sentio confirm it:
 
 ## What you can build?
  
-HyperIndex and HyperSync are the data layer for DeFi dashboards, protocol analytics, block explorers, stablecoin monitors, liquidation trackers, oracle comparisons, NFT explorers, and any application that needs structured onchain data fast.
+HyperIndex and HyperSync are the data layer for DeFi dashboards, protocol analytics, block explorers, stablecoin monitors, liquidation trackers, oracle comparisons, NFT explorers, and any application that needs fast, structured onchain data.
  
 A few things already running in production:
  
