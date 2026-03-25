@@ -308,14 +308,6 @@ let trackDatabase = async (
   | Some(firstEntity) =>
     let functionName = firstEntity.table.tableName ++ "_historical"
     await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName)
-    await createSelectPermission(
-      ~endpoint,
-      ~auth,
-      ~tableName=functionName,
-      ~pgSchema,
-      ~responseLimit,
-      ~aggregateEntities,
-    )
   | None => ()
   }
 
