@@ -117,7 +117,8 @@ let trackTables = async (
         "args": {
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
-          "tables": tableNames->Js.Array2.map(tableName =>
+          "tables": tableNames->Js.Array2.map(tableName => {
+            let isTimeTravel = timeTravelTableNames->Belt.Set.String.has(tableName)
             {
               "table": {
                 "name": tableName,
@@ -125,19 +126,20 @@ let trackTables = async (
               },
               "configuration": {
                 // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
-                "custom_name": tableName,
-                // For @timeTravel entities, disable the select root field
-                // so only select_by_pk is available (the function serves as the list query)
-                "custom_root_fields": timeTravelTableNames->Belt.Set.String.has(tableName)
+                // For @timeTravel entities, use an internal name to avoid conflict with the function
+                "custom_name": isTimeTravel ? tableName ++ "_table" : tableName,
+                // For @timeTravel entities, disable all root fields except select_by_pk
+                "custom_root_fields": isTimeTravel
                   ? {
                       "select": Js.Null.empty,
                       "select_aggregate": Js.Null.empty,
                       "select_stream": Js.Null.empty,
+                      "select_by_pk": tableName ++ "_by_pk",
                     }
                   : Js.Obj.empty(),
               },
             }
-          ),
+          }),
         }->(Utils.magic: 'a => Js.Json.t),
       },
       ~client=Rest.client(endpoint),
