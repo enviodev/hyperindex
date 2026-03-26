@@ -323,24 +323,26 @@ let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
   let workingSecondarySources = []
   for i in 0 to sourceManager.sourcesState->Array.length - 1 {
     let sourceState = sourceManager.sourcesState->Array.getUnsafe(i)
-    let isExcluded = switch excludedSources {
-    | Some(set) => set->Utils.Set.has(sourceState)
-    | None => false
-    }
-    if !sourceState.disabled && !isExcluded {
-      let isWorking = switch sourceState.lastFailedAt {
-      | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
-      | None => true
+    if !sourceState.disabled {
+      let isExcluded = switch excludedSources {
+      | Some(set) => set->Utils.Set.has(sourceState)
+      | None => false
       }
-      switch getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
-      | Some(Primary) =>
-        allPrimarySources->Array.push(sourceState)
-        if isWorking {
-          workingPrimarySources->Array.push(sourceState)
+      if !isExcluded {
+        let isWorking = switch sourceState.lastFailedAt {
+        | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
+        | None => true
         }
-      | Some(Secondary) if isWorking =>
-        workingSecondarySources->Array.push(sourceState)
-      | _ => ()
+        switch getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
+        | Some(Primary) =>
+          allPrimarySources->Array.push(sourceState)
+          if isWorking {
+            workingPrimarySources->Array.push(sourceState)
+          }
+        | Some(Secondary) if isWorking =>
+          workingSecondarySources->Array.push(sourceState)
+        | _ => ()
+        }
       }
     }
   }
@@ -464,36 +466,34 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
 let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeight, ~isLive) => {
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
-  // Sources where the query is impossible — excluded for the duration of this query
-  let excludedSources = Utils.Set.make()
-
-  let initialSourceState = switch sourceManager->getNextSource(~isLive) {
-  | Some(s) =>
-    if s.source !== sourceManager.activeSource {
-      let logger = Logging.createChild(
-        ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
-      )
-      logger->Logging.childInfo({
-        "msg": "Switching to a recovered source",
-        "source": s.source.name,
-        "previousSource": sourceManager.activeSource.name,
-      })
-    }
-    s
-  | None =>
-    let logger = Logging.createChild(
-      ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
-    )
-    %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
-  }
+  // Sources where the query is impossible — lazily allocated, excluded for the duration of this query
+  let excludedSourcesRef = ref(None)
 
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
-  let sourceStateRef = ref(initialSourceState)
 
   while responseRef.contents->Option.isNone {
-    let sourceState = sourceStateRef.contents
+    // Select the best source at the start of every iteration
+    let sourceState = switch sourceManager->getNextSource(~isLive, ~excludedSources=?excludedSourcesRef.contents) {
+    | Some(s) =>
+      if s.source !== sourceManager.activeSource {
+        let logger = Logging.createChild(
+          ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
+        )
+        logger->Logging.childInfo({
+          "msg": "Switching data-source",
+          "source": s.source.name,
+          "previousSource": sourceManager.activeSource.name,
+        })
+      }
+      s
+    | None =>
+      let logger = Logging.createChild(
+        ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
+      )
+      %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
+    }
     let source = sourceState.source
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
@@ -557,17 +557,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
             }
           }
 
-          switch sourceManager->getNextSource(~isLive) {
-          | None =>
-            %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
-          | Some(nextSourceState) =>
-            logger->Logging.childInfo({
-              "msg": "Switching to another data-source",
-              "source": nextSourceState.source.name,
-            })
-            sourceStateRef := nextSourceState
-            retryRef := 0
-          }
+          retryRef := 0
         }
       | FailedGettingItems({attemptedToBlock, retry: WithSuggestedToBlock({toBlock})}) =>
         logger->Logging.childTrace({
@@ -579,25 +569,21 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         // Don't set lastFailedAt — the source isn't broken, the query just can't work on it
+        let excludedSources = switch excludedSourcesRef.contents {
+        | Some(s) => s
+        | None =>
+          let s = Utils.Set.make()
+          excludedSourcesRef := Some(s)
+          s
+        }
         excludedSources->Utils.Set.add(sourceState)->ignore
 
-        switch sourceManager->getNextSource(~isLive, ~excludedSources) {
-        | None =>
-          logger->Logging.childWarn({
-            "msg": message,
-            "toBlock": attemptedToBlock,
-            "err": exn->Utils.prettifyExn,
-          })
-          %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
-        | Some(nextSourceState) =>
-          logger->Logging.childWarn({
-            "msg": message ++ " - Attempting to another source",
-            "toBlock": attemptedToBlock,
-            "err": exn->Utils.prettifyExn,
-          })
-          sourceStateRef := nextSourceState
-          retryRef := 0
-        }
+        logger->Logging.childWarn({
+          "msg": message,
+          "toBlock": attemptedToBlock,
+          "err": exn->Utils.prettifyExn,
+        })
+        retryRef := 0
 
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
         let shouldSwitch = switch retry {
@@ -605,13 +591,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         | 0 | 1 => false
         // Then try to switch every second failure
         | _ => retry->mod(2) === 0
-        }
-
-        let nextSourceState = if shouldSwitch {
-          sourceState.lastFailedAt = Some(Js.Date.now())
-          sourceManager->getNextSource(~isLive)
-        } else {
-          None
         }
 
         // Start displaying warnings after 4 failures
@@ -624,14 +603,9 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           "err": exn->Utils.prettifyExn,
         })
 
-        switch nextSourceState {
-        | Some(next) if next !== sourceState =>
-          logger->Logging.childInfo({
-            "msg": "Switching to another data-source",
-            "source": next.source.name,
-          })
-          sourceStateRef := next
-        | _ =>
+        if shouldSwitch {
+          sourceState.lastFailedAt = Some(Js.Date.now())
+        } else {
           await Utils.delay(Pervasives.min(backoffMillis, 60_000))
         }
         retryRef := retryRef.contents + 1
