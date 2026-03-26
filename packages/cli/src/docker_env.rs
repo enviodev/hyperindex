@@ -74,14 +74,28 @@ fn socket_path_from_uri(uri: &str) -> &str {
     uri.strip_prefix("unix://").unwrap_or(uri)
 }
 
+/// Try connecting to a Docker-compatible socket, returning the client and a
+/// human-readable label describing how the connection was made.
+async fn try_socket(path: &str) -> Option<Docker> {
+    let docker = Docker::connect_with_socket(path, SOCKET_TIMEOUT, API_DEFAULT_VERSION).ok()?;
+    docker.ping().await.ok()?;
+    Some(docker)
+}
+
 /// Connect to Docker or Podman, trying multiple strategies:
 /// 1. `DOCKER_HOST` / default Docker socket
-/// 2. `CONTAINER_HOST` (Podman convention)
-/// 3. Common Podman socket paths
+/// 2. Well-known Docker Desktop socket paths
+/// 3. `CONTAINER_HOST` (Podman convention)
+/// 4. Common Podman socket paths
 async fn connect_docker() -> anyhow::Result<Docker> {
     // Try Docker defaults (respects DOCKER_HOST env var)
     if let Ok(docker) = Docker::connect_with_local_defaults() {
         if docker.ping().await.is_ok() {
+            if let Ok(host) = std::env::var("DOCKER_HOST") {
+                println!("Connected to Docker via DOCKER_HOST ({host})");
+            } else {
+                println!("Connected to Docker via default socket");
+            }
             return Ok(docker);
         }
     }
@@ -90,12 +104,9 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     for path in docker_socket_candidates() {
         if path.exists() {
             if let Some(path_str) = path.to_str() {
-                if let Ok(docker) =
-                    Docker::connect_with_socket(path_str, SOCKET_TIMEOUT, API_DEFAULT_VERSION)
-                {
-                    if docker.ping().await.is_ok() {
-                        return Ok(docker);
-                    }
+                if let Some(docker) = try_socket(path_str).await {
+                    println!("Connected to Docker via {path_str}");
+                    return Ok(docker);
                 }
             }
         }
@@ -104,12 +115,9 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     // Try CONTAINER_HOST (Podman's equivalent of DOCKER_HOST)
     if let Ok(host) = std::env::var("CONTAINER_HOST") {
         let path = socket_path_from_uri(&host);
-        if let Ok(docker) =
-            Docker::connect_with_socket(path, SOCKET_TIMEOUT, API_DEFAULT_VERSION)
-        {
-            if docker.ping().await.is_ok() {
-                return Ok(docker);
-            }
+        if let Some(docker) = try_socket(path).await {
+            println!("Connected to Podman via CONTAINER_HOST ({host})");
+            return Ok(docker);
         }
     }
 
@@ -117,21 +125,28 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     for path in podman_socket_candidates() {
         if path.exists() {
             if let Some(path_str) = path.to_str() {
-                if let Ok(docker) =
-                    Docker::connect_with_socket(path_str, SOCKET_TIMEOUT, API_DEFAULT_VERSION)
-                {
-                    if docker.ping().await.is_ok() {
-                        return Ok(docker);
-                    }
+                if let Some(docker) = try_socket(path_str).await {
+                    println!("Connected to Podman via {path_str}");
+                    return Ok(docker);
                 }
             }
         }
     }
 
+    // Build an actionable error with platform-specific hints.
+    let hint = if cfg!(target_os = "macos") {
+        "Hint: Open Docker Desktop, or run:\n  \
+         export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock"
+    } else {
+        "Hint: Start the Docker daemon:\n  \
+         sudo systemctl start docker"
+    };
+
     anyhow::bail!(
         "Failed connecting to Docker or Podman. Is the daemon running?\n\
          Checked: DOCKER_HOST, default Docker socket, ~/.docker/run/docker.sock, \
-         CONTAINER_HOST, common Podman sockets."
+         CONTAINER_HOST, common Podman sockets.\n\n\
+         {hint}"
     )
 }
 
@@ -192,13 +207,19 @@ impl EnvConfig {
 
 /// Maximum time allowed for pulling a single image before we give up.
 const IMAGE_PULL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// How many times to retry a failed image pull before giving up.
+const IMAGE_PULL_RETRIES: u32 = 3;
 
-async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
-    if docker.inspect_image(image).await.is_ok() {
-        return Ok(());
+fn format_bytes(bytes: i64) -> String {
+    const MB: i64 = 1_000_000;
+    if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else {
+        format!("{} kB", bytes / 1_000)
     }
+}
 
-    println!("Pulling image {image}...");
+async fn pull_image_once(docker: &Docker, image: &str) -> anyhow::Result<()> {
     let (repo, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
 
     let options = CreateImageOptionsBuilder::new()
@@ -206,34 +227,78 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
         .tag(tag)
         .build();
 
-    let pull_future = async {
-        let mut stream = docker.create_image(Some(options), None, None);
-        while let Some(result) = stream.next().await {
-            let info = result.with_context(|| format!("Failed pulling image {image}"))?;
-            if let (Some(status), id) = (info.status, &info.id) {
-                match id {
-                    Some(id) => eprint!("\r  {id}: {status}  "),
-                    None => eprint!("\r  {status}  "),
+    let mut stream = docker.create_image(Some(options), None, None);
+    while let Some(result) = stream.next().await {
+        let info = result.with_context(|| format!("Failed pulling image {image}"))?;
+        if let Some(status) = &info.status {
+            let progress = info
+                .progress_detail
+                .as_ref()
+                .and_then(|d| match (d.current, d.total) {
+                    (Some(cur), Some(tot)) if tot > 0 => {
+                        Some(format!(" {}/{}", format_bytes(cur), format_bytes(tot)))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            match &info.id {
+                Some(id) => eprint!("\r  {id}: {status}{progress}  "),
+                None => eprint!("\r  {status}{progress}  "),
+            }
+        }
+    }
+    eprintln!();
+    Ok(())
+}
+
+async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
+    if docker.inspect_image(image).await.is_ok() {
+        return Ok(());
+    }
+
+    println!("Pulling image {image}...");
+
+    let mut last_err = None;
+    for attempt in 1..=IMAGE_PULL_RETRIES {
+        let result = tokio::time::timeout(IMAGE_PULL_TIMEOUT, pull_image_once(docker, image)).await;
+        match result {
+            Ok(Ok(())) => {
+                println!("Pulled {image}");
+                return Ok(());
+            }
+            Ok(Err(e)) => {
+                last_err = Some(format!("{e:#}"));
+                if attempt < IMAGE_PULL_RETRIES {
+                    let delay = Duration::from_secs(2u64.pow(attempt));
+                    eprintln!(
+                        "\nPull attempt {attempt}/{IMAGE_PULL_RETRIES} failed: {e:#}\n\
+                         Retrying in {}s...",
+                        delay.as_secs()
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+            }
+            Err(_) => {
+                last_err = Some(format!(
+                    "Timed out after {}s",
+                    IMAGE_PULL_TIMEOUT.as_secs()
+                ));
+                if attempt < IMAGE_PULL_RETRIES {
+                    eprintln!(
+                        "\nPull attempt {attempt}/{IMAGE_PULL_RETRIES} timed out.\n\
+                         Retrying..."
+                    );
                 }
             }
         }
-        Ok::<(), anyhow::Error>(())
-    };
+    }
 
-    tokio::time::timeout(IMAGE_PULL_TIMEOUT, pull_future)
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "Timed out pulling image {image} after {}s. \
-                 Check your network connection and Docker daemon status.",
-                IMAGE_PULL_TIMEOUT.as_secs()
-            )
-        })??;
-
-    eprintln!();
-    println!("Pulled {image}");
-
-    Ok(())
+    anyhow::bail!(
+        "Failed to pull image {image} after {IMAGE_PULL_RETRIES} attempts.\n\
+         Last error: {}\n\
+         Check your network connection and Docker Hub rate limits.",
+        last_err.unwrap_or_default()
+    )
 }
 
 async fn ensure_network(docker: &Docker, name: &str) -> anyhow::Result<()> {
@@ -660,6 +725,57 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
     let (pg_res, hasura_res) = tokio::join!(pg_pipeline, hasura_pipeline);
     pg_res?;
     hasura_res?;
+
+    // Wait for services to become healthy before handing control back.
+    let pg_host = &env.pg_host;
+    let wait_pg = async {
+        if !need_pg {
+            return Ok(());
+        }
+        eprint!("Waiting for Postgres...");
+        let start = std::time::Instant::now();
+        loop {
+            if is_service_reachable(pg_host, pg_host_port).await {
+                eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
+                return Ok(());
+            }
+            if start.elapsed() > Duration::from_secs(60) {
+                eprintln!();
+                anyhow::bail!(
+                    "Postgres did not become reachable on port {pg_host_port} within 60s"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            eprint!(".");
+        }
+    };
+
+    let wait_hasura = async {
+        if !need_hasura {
+            return Ok(());
+        }
+        eprint!("Waiting for Hasura...");
+        let start = std::time::Instant::now();
+        loop {
+            if is_hasura_healthy(pg_host, hasura_host_port).await {
+                eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
+                return Ok(());
+            }
+            if start.elapsed() > Duration::from_secs(120) {
+                eprintln!();
+                anyhow::bail!(
+                    "Hasura did not become healthy on port {hasura_host_port} within 120s.\n\
+                     Check container logs: docker logs {HASURA_CONTAINER}"
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            eprint!(".");
+        }
+    };
+
+    let (pg_wait_res, hasura_wait_res) = tokio::join!(wait_pg, wait_hasura);
+    pg_wait_res?;
+    hasura_wait_res?;
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
