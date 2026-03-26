@@ -38,17 +38,16 @@ describe("Contract1 contract NewGravatar event tests", () => {
     // Creating the expected entity
     let expectedContract1NewGravatar: contract1_NewGravatar = {
       id: "1_0_0",
-      id: 0n,
+      event_id: 0n,
       owner: TestHelpers_MockAddresses.defaultAddress->Address.toString,
       displayName: "foo",
       imageUrl: "foo",
     }
 
     //Assert the expected Contract1 NewGravatar entity
-    Assert.deepEqual(
+    expect(
       actualContract1NewGravatar,
-      expectedContract1NewGravatar,
       ~message="Actual contract1_NewGravatar should be the same as the expected contract1_NewGravatar",
-    )
+    ).toEqual(expectedContract1NewGravatar)
   })
 })

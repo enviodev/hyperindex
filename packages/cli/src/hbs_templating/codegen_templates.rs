@@ -929,10 +929,10 @@ impl EventTemplate {
                                 p.name.to_string(),
                                 abi_to_rescript_type(&p.into()),
                             );
-                            let as_prefix = field.as_name.as_ref().map_or(
-                                "".to_string(),
-                                |s| format!("@as(\"{s}\") "),
-                            );
+                            let as_prefix = field
+                                .as_name
+                                .as_ref()
+                                .map_or("".to_string(), |s| format!("@as(\"{s}\") "));
                             format!("{}{}?: {}", as_prefix, field.name, field.type_ident)
                         })
                         .collect::<Vec<_>>()
@@ -1040,11 +1040,11 @@ impl ContractTemplate {
                 ))?;
 
                 format!(
-                  "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
+                    "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
                    relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
-                  // If we decide to inline the abi, instead of using require
-                  // we need to remember that abi might contain ` and we should escape it
-                  abi.path_buf.to_string_lossy(),
+                    // If we decide to inline the abi, instead of using require
+                    // we need to remember that abi might contain ` and we should escape it
+                    abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
                 )
@@ -1329,7 +1329,6 @@ pub struct ProjectTemplate {
 }
 
 impl ProjectTemplate {
-
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         let template_dirs = TemplateDirs::new();
         let dynamic_codegen_dir = template_dirs
@@ -1669,14 +1668,14 @@ type handlerContext = {{
                 let module_header = if contract.module_code.is_empty() {
                     format!("let contractName = \"{}\"", contract.name.capitalized)
                 } else {
-                    format!("{}\nlet contractName = \"{}\"", contract.module_code, contract.name.capitalized)
+                    format!(
+                        "{}\nlet contractName = \"{}\"",
+                        contract.module_code, contract.name.capitalized
+                    )
                 };
                 format!(
                     "@genType\nmodule {} = {{\n{}\n\n{}{}\n}}",
-                    contract.name.capitalized,
-                    module_header,
-                    events_code,
-                    event_identity,
+                    contract.name.capitalized, module_header, events_code, event_identity,
                 )
             })
             .collect::<Vec<_>>()
@@ -1765,8 +1764,7 @@ type testIndexerEntityOperations<'entity> = {
             .map(|entity| {
                 format!(
                     "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
-                    entity.name.original,
-                    entity.name.capitalized,
+                    entity.name.original, entity.name.capitalized,
                 )
             })
             .collect::<Vec<_>>()
@@ -1793,8 +1791,7 @@ type testIndexer = {{
   chains: indexerChains,
 {}
 }}"#,
-            test_indexer_chains_fields,
-            test_indexer_entity_fields,
+            test_indexer_chains_fields, test_indexer_entity_fields,
         );
 
         let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);

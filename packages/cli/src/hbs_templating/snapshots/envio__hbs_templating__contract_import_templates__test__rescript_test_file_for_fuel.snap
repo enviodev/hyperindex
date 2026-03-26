@@ -29,10 +29,9 @@ describe("Greeter contract NewGreeting event tests", () => {
     }
 
     //Assert the expected Greeter NewGreeting entity
-    Assert.deepEqual(
+    expect(
       actualGreeterNewGreeting,
-      expectedGreeterNewGreeting,
       ~message="Actual greeter_NewGreeting should be the same as the expected greeter_NewGreeting",
-    )
+    ).toEqual(expectedGreeterNewGreeting)
   })
 })

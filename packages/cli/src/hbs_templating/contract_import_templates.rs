@@ -430,9 +430,8 @@ impl Contract {
         content.push_str("    };\n");
 
         // Process
-        content.push_str(
-            "\n    // TODO: Configure chain ID and start/end blocks for your contract\n",
-        );
+        content
+            .push_str("\n    // TODO: Configure chain ID and start/end blocks for your contract\n");
         content.push_str("    await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str("        1: {\n");
@@ -444,9 +443,7 @@ impl Contract {
         content.push_str("    });\n");
 
         // Get actual entity
-        content.push_str(
-            "\n    // Getting the actual entity from the test indexer\n",
-        );
+        content.push_str("\n    // Getting the actual entity from the test indexer\n");
         content.push_str(&format!(
             "    let actual{}{} = await indexer.{}_{}.get(\n",
             contract_name, event_name, contract_name, event_name
@@ -520,9 +517,8 @@ impl Contract {
         content.push_str("    let indexer = createTestIndexer()\n");
 
         // Process with simulate item using makeSimulateItem
-        content.push_str(
-            "\n    // TODO: Configure chain ID and start/end blocks for your contract\n",
-        );
+        content
+            .push_str("\n    // TODO: Configure chain ID and start/end blocks for your contract\n");
         content.push_str("    let _ = await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str("        \\\"1\": {\n");
@@ -532,8 +528,7 @@ impl Contract {
         // Generate makeSimulateItem call using GADT-based eventIdentity
         if first_event.params.is_empty() {
             content.push_str(&format!(
-                "          simulate: [makeSimulateItem(OnEvent({{event: {}({})}}))],"
-                ,
+                "          simulate: [makeSimulateItem(OnEvent({{event: {}({})}}))],",
                 contract_name, event_name
             ));
             content.push('\n');
@@ -549,8 +544,7 @@ impl Contract {
             for param in &first_event.params {
                 content.push_str(&format!(
                     "                {}: {},\n",
-                    param.res_name,
-                    param.default_value_rescript
+                    param.res_name, param.default_value_rescript
                 ));
             }
             content.push_str("              },\n");
@@ -582,7 +576,7 @@ impl Contract {
             };
             content.push_str(&format!(
                 "      {}: {},\n",
-                param.res_name, value
+                param.entity_key.uncapitalized, value
             ));
         }
         content.push_str("    }\n");
@@ -590,11 +584,10 @@ impl Contract {
         // Assert
         content.push_str(&format!(
             "\n    //Assert the expected {contract_name} {event_name} entity\n\
-             \x20   Assert.deepEqual(\n\
+             \x20   expect(\n\
              \x20     actual{contract_name}{event_name},\n\
-             \x20     expected{contract_name}{event_name},\n\
              \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
-             \x20   )\n",
+             \x20   ).toEqual(expected{contract_name}{event_name})\n",
         ));
 
         content.push_str("  })\n");
