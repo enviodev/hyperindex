@@ -342,7 +342,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
           inMemoryStore: params.inMemoryStore,
           loadManager: params.loadManager,
           persistence: params.persistence,
-          shouldSaveHistory: params.shouldSaveHistory,
+          shouldSaveHistory: params.shouldSaveHistory || entityConfig.timeTravel,
           checkpointId: params.checkpointId,
           chains: params.chains,
           isResolved: params.isResolved,

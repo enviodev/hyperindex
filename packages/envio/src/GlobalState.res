@@ -829,7 +829,10 @@ let injectedTaskReducer = (
       switch state.chainManager->ChainManager.getSafeCheckpointId {
       | None => ()
       | Some(safeCheckpointId) =>
-        await state.ctx.persistence.storage.pruneStaleCheckpoints(~safeCheckpointId)
+        // Keep all checkpoints when any entity uses time travel
+        if !(state.ctx.persistence.allEntities->Js.Array2.some(e => e.timeTravel)) {
+          await state.ctx.persistence.storage.pruneStaleCheckpoints(~safeCheckpointId)
+        }
 
         for idx in 0 to state.ctx.persistence.allEntities->Array.length - 1 {
           if idx !== 0 {

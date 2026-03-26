@@ -264,6 +264,18 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     })
   })
 
+  // Create checkpoint index once if any entity uses time travel
+  if entities->Js.Array2.some((e: Internal.entityConfig) => e.timeTravel) {
+    query :=
+      query.contents ++
+      "\n" ++
+      makeCreateIndexQuery(
+        ~tableName=InternalTable.Checkpoints.table.tableName,
+        ~indexFields=["chain_id", "block_number"],
+        ~pgSchema,
+      )
+  }
+
   // Create time travel functions for entities with @timeTravel directive
   entities->Js.Array2.forEach((entityConfig: Internal.entityConfig) => {
     if entityConfig.timeTravel {
@@ -283,16 +295,6 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
         )
         ->Belt.Array.map(name => `"${name}"`)
         ->Js.Array2.joinWith(", ")
-
-      // Index on checkpoints for efficient block_number -> checkpoint_id lookup
-      query :=
-        query.contents ++
-        "\n" ++
-        makeCreateIndexQuery(
-          ~tableName=InternalTable.Checkpoints.table.tableName,
-          ~indexFields=["chain_id", "block_number"],
-          ~pgSchema,
-        )
 
       query :=
         query.contents ++
