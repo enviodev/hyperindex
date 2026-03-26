@@ -287,18 +287,21 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       query :=
         query.contents ++
         "\n" ++
-        `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("blockNumber" integer DEFAULT -1)
+        `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("blockNumber" integer DEFAULT -1, "chainId" integer DEFAULT -1)
 RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
 BEGIN
-  IF "blockNumber" = -1 THEN
+  IF "blockNumber" = -1 AND "chainId" = -1 THEN
     RETURN QUERY SELECT * FROM "${pgSchema}"."${tableName}";
+  ELSIF "blockNumber" = -1 OR "chainId" = -1 THEN
+    -- Both blockNumber and chainId must be provided together, return empty result
+    RETURN;
   ELSE
     RETURN QUERY
       SELECT DISTINCT ON ("id") ${dataFieldNames}
       FROM "${pgSchema}"."${historyTableName}"
       WHERE "${EntityHistory.checkpointIdFieldName}" <= (
         SELECT MAX("id") FROM "${pgSchema}"."${InternalTable.Checkpoints.table.tableName}"
-        WHERE "block_number" <= "blockNumber"
+        WHERE "chain_id" = "chainId" AND "block_number" <= "blockNumber"
       )
       AND "${EntityHistory.changeFieldName}" = 'SET'
       ORDER BY "id", "${EntityHistory.checkpointIdFieldName}" DESC;
