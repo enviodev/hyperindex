@@ -265,10 +265,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   })
 
   // Create time travel functions for entities with @timeTravel directive
-  // The table itself is exposed as {Entity}_by_pk in Hasura
   entities->Js.Array2.forEach((entityConfig: Internal.entityConfig) => {
     if entityConfig.timeTravel {
       let tableName = entityConfig.table.tableName
+      let fnName = tableName ++ "_historical"
       let historyTableName = EntityHistory.historyTableName(
         ~entityName=tableName,
         ~entityIndex=entityConfig.index,
@@ -287,7 +287,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       query :=
         query.contents ++
         "\n" ++
-        `CREATE OR REPLACE FUNCTION "${pgSchema}"."${tableName}"("blockNumber" integer DEFAULT -1)
+        `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("blockNumber" integer DEFAULT -1)
 RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
 BEGIN
   IF "blockNumber" = -1 THEN

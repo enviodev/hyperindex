@@ -226,7 +226,7 @@ let createEntityRelationship = async (
   )
 }
 
-let trackFunction = async (~endpoint, ~auth, ~pgSchema, ~functionName: string) => {
+let trackFunction = async (~endpoint, ~auth, ~pgSchema, ~functionName: string, ~customName: string) => {
   await sendOperation(
     ~endpoint,
     ~auth,
@@ -237,6 +237,11 @@ let trackFunction = async (~endpoint, ~auth, ~pgSchema, ~functionName: string) =
         "function": {
           "schema": pgSchema,
           "name": functionName,
+        },
+        "configuration": {
+          "custom_root_fields": {
+            "function": customName,
+          },
         },
       },
     }->(Utils.magic: 'a => Js.Json.t),
@@ -325,7 +330,14 @@ let trackDatabase = async (
   for i in 0 to userEntities->Js.Array2.length - 1 {
     let entityConfig = userEntities->Js.Array2.unsafe_get(i)
     if entityConfig.timeTravel {
-      await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName=entityConfig.table.tableName)
+      let tableName = entityConfig.table.tableName
+      await trackFunction(
+        ~endpoint,
+        ~auth,
+        ~pgSchema,
+        ~functionName=tableName ++ "_historical",
+        ~customName=tableName,
+      )
     }
   }
 
