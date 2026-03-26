@@ -342,6 +342,30 @@ let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
   }
 }
 
+let makeEntityGetOrThrow = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
+  (string, ~message: string=?) => promise<Internal.entity>
+) => {
+  (entityId, ~message=?) => {
+    if state.processInProgress {
+      Js.Exn.raiseError(
+        `Cannot call ${entityConfig.name}.getOrThrow() while indexer.process() is running. ` ++
+        "Wait for process() to complete before accessing entities directly.",
+      )
+    }
+    let entityDict =
+      state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
+    switch entityDict->Js.Dict.get(entityId) {
+    | Some(entity) => Promise.resolve(entity)
+    | None =>
+      let msg = switch message {
+      | Some(m) => m
+      | None => `Entity ${entityConfig.name} with id ${entityId} not found`
+      }
+      Js.Exn.raiseError(msg)
+    }
+  }
+}
+
 let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   Internal.entity => unit
 ) => {
@@ -364,6 +388,7 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
 
 type entityOps = {
   get: string => promise<option<Internal.entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<Internal.entity>,
   set: Internal.entity => unit,
 }
 
@@ -396,6 +421,7 @@ let makeCreateTestIndexer = (
           entityConfig.name,
           {
             get: makeEntityGet(~state, ~entityConfig),
+            getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
             set: makeEntitySet(~state, ~entityConfig),
           },
         )

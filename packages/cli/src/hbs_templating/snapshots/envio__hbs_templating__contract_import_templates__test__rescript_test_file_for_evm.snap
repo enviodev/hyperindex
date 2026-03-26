@@ -6,17 +6,17 @@ open Vitest
 open Indexer
 
 describe("Contract1 contract NewGravatar event tests", () => {
-  Async.it("NewGravatar handler creates Contract1_NewGravatar entity", async _t => {
-    let indexer = Indexer.createTestIndexer()
+  Async.it("NewGravatar handler creates contract1_NewGravatar entity", async _t => {
+    let indexer = createTestIndexer()
 
     // TODO: Configure chain ID and start/end blocks for your contract
-    let result = await indexer.process({
+    let _ = await indexer.process({
       chains: {
         \"1": {
           startBlock: 0,
           endBlock: 100,
           simulate: [
-            Indexer.makeSimulateItem(
+            makeSimulateItem(
               OnEvent({
                 event: Contract1(NewGravatar),
                 params: {
@@ -32,7 +32,23 @@ describe("Contract1 contract NewGravatar event tests", () => {
       },
     })
 
-    // Asserting that the handler produced entity changes
-    Assert.isTrue(result.changes->Array.length > 0, ~message="Expected at least one change")
+    // Getting the actual entity from the test indexer
+    let actualContract1NewGravatar = await indexer.contract1_NewGravatar.getOrThrow("1_0_0")
+
+    // Creating the expected entity
+    let expectedContract1NewGravatar: contract1_NewGravatar = {
+      id: "1_0_0",
+      id: 0n,
+      owner: TestHelpers_MockAddresses.defaultAddress->Address.toString,
+      displayName: "foo",
+      imageUrl: "foo",
+    }
+
+    //Assert the expected Contract1 NewGravatar entity
+    Assert.deepEqual(
+      actualContract1NewGravatar,
+      expectedContract1NewGravatar,
+      ~message="Actual contract1_NewGravatar should be the same as the expected contract1_NewGravatar",
+    )
   })
 })

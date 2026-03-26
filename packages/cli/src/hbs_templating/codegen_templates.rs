@@ -1760,6 +1760,8 @@ type handlerContext = {{
 type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
 }"#;

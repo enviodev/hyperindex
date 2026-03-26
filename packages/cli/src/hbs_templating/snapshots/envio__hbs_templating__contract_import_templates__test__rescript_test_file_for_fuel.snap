@@ -6,21 +6,33 @@ open Vitest
 open Indexer
 
 describe("Greeter contract NewGreeting event tests", () => {
-  Async.it("NewGreeting handler creates Greeter_NewGreeting entity", async _t => {
-    let indexer = Indexer.createTestIndexer()
+  Async.it("NewGreeting handler creates greeter_NewGreeting entity", async _t => {
+    let indexer = createTestIndexer()
 
     // TODO: Configure chain ID and start/end blocks for your contract
-    let result = await indexer.process({
+    let _ = await indexer.process({
       chains: {
         \"1": {
           startBlock: 0,
           endBlock: 100,
-          simulate: [Indexer.makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
+          simulate: [makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
         },
       },
     })
 
-    // Asserting that the handler produced entity changes
-    Assert.isTrue(result.changes->Array.length > 0, ~message="Expected at least one change")
+    // Getting the actual entity from the test indexer
+    let actualGreeterNewGreeting = await indexer.greeter_NewGreeting.getOrThrow("1_0_0")
+
+    // Creating the expected entity
+    let expectedGreeterNewGreeting: greeter_NewGreeting = {
+      id: "1_0_0",
+    }
+
+    //Assert the expected Greeter NewGreeting entity
+    Assert.deepEqual(
+      actualGreeterNewGreeting,
+      expectedGreeterNewGreeting,
+      ~message="Actual greeter_NewGreeting should be the same as the expected greeter_NewGreeting",
+    )
   })
 })

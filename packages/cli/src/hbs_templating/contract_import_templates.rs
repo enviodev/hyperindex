@@ -500,7 +500,9 @@ impl Contract {
         };
 
         let contract_name = &self.name.capitalized;
+        let contract_uncap = &self.name.uncapitalized;
         let event_name = &first_event.name;
+        let entity_name = format!("{}_{}", contract_uncap, event_name);
 
         let mut content = String::new();
 
@@ -511,16 +513,16 @@ impl Contract {
             contract_name, event_name
         ));
         content.push_str(&format!(
-            "  Async.it(\"{} handler creates {}_{} entity\", async _t => {{\n",
-            event_name, contract_name, event_name
+            "  Async.it(\"{} handler creates {} entity\", async _t => {{\n",
+            event_name, entity_name
         ));
-        content.push_str("    let indexer = Indexer.createTestIndexer()\n");
+        content.push_str("    let indexer = createTestIndexer()\n");
 
         // Process with simulate item using makeSimulateItem
         content.push_str(
             "\n    // TODO: Configure chain ID and start/end blocks for your contract\n",
         );
-        content.push_str("    let result = await indexer.process({\n");
+        content.push_str("    let _ = await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str("        \\\"1\": {\n");
         content.push_str("          startBlock: 0,\n");
@@ -529,7 +531,7 @@ impl Contract {
         // Generate makeSimulateItem call using GADT-based eventIdentity
         if first_event.params.is_empty() {
             content.push_str(&format!(
-                "          simulate: [Indexer.makeSimulateItem(OnEvent({{event: {}({})}}))],"
+                "          simulate: [makeSimulateItem(OnEvent({{event: {}({})}}))],"
                 ,
                 contract_name, event_name
             ));
@@ -537,7 +539,7 @@ impl Contract {
         } else {
             content.push_str(&format!(
                 "          simulate: [\n\
-                 \x20           Indexer.makeSimulateItem(\n\
+                 \x20           makeSimulateItem(\n\
                  \x20             OnEvent({{\n\
                  \x20               event: {}({}),\n\
                  \x20               params: {{\n",
@@ -560,13 +562,39 @@ impl Contract {
         content.push_str("      },\n");
         content.push_str("    })\n");
 
-        // Assert that processing produced changes
-        content.push_str(
-            "\n    // Asserting that the handler produced entity changes\n",
-        );
-        content.push_str(
-            "    Assert.isTrue(result.changes->Array.length > 0, ~message=\"Expected at least one change\")\n",
-        );
+        // Get actual entity and assert against expected
+        content.push_str(&format!(
+            "\n    // Getting the actual entity from the test indexer\n\
+             \x20   let actual{contract_name}{event_name} = await indexer.{entity_name}.getOrThrow(\"1_0_0\")\n",
+        ));
+
+        content.push_str(&format!(
+            "\n    // Creating the expected entity\n\
+             \x20   let expected{contract_name}{event_name}: {entity_name} = {{\n\
+             \x20     id: \"1_0_0\",\n",
+        ));
+        for param in &first_event.params {
+            let value = if param.is_eth_address {
+                format!("{}->Address.toString", param.default_value_rescript)
+            } else {
+                param.default_value_rescript.clone()
+            };
+            content.push_str(&format!(
+                "      {}: {},\n",
+                param.res_name, value
+            ));
+        }
+        content.push_str("    }\n");
+
+        // Assert
+        content.push_str(&format!(
+            "\n    //Assert the expected {contract_name} {event_name} entity\n\
+             \x20   Assert.deepEqual(\n\
+             \x20     actual{contract_name}{event_name},\n\
+             \x20     expected{contract_name}{event_name},\n\
+             \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
+             \x20   )\n",
+        ));
 
         content.push_str("  })\n");
         content.push_str("})\n");
