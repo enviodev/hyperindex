@@ -2,6 +2,18 @@ import { mockRawEventRow } from "./helpers/Mock.gen";
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
+function insertRawEvent(sql: any, row: any) {
+  const columns = Object.keys(row);
+  const values = Object.values(row);
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
+  const columnNames = columns.map((c) => `"${c}"`).join(", ");
+  return sql.query({
+    name: "insert_raw_events",
+    text: `INSERT INTO raw_events (${columnNames}) VALUES (${placeholders})`,
+    values,
+  });
+}
+
 describe("Raw Events Table Migrations", () => {
   const sql = createSql();
 
@@ -13,11 +25,11 @@ describe("Raw Events Table Migrations", () => {
   });
 
   it("Raw events table should migrate successfully", async () => {
-    let rawEventsColumnsRes = await sql`
+    let { rows: rawEventsColumnsRes } = await sql.query(`
       SELECT COLUMN_NAME, DATA_TYPE
       FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_NAME = 'raw_events';
-    `;
+    `);
 
     let expectedColumns = [
       { column_name: "chain_id", data_type: "integer" },
@@ -45,15 +57,11 @@ describe("Raw Events Table Migrations", () => {
   //in the future, raw events can be converted into an entity (with managed history) like dynamic
   //contracts.
   it("Inserting 2 rows with the the same pk should pass", async () => {
-    let first_valid_row_query = sql`INSERT INTO raw_events ${sql(
-      mockRawEventRow as any
-    )}`;
+    let first_valid_row_query = insertRawEvent(sql, mockRawEventRow);
 
     await expect(first_valid_row_query).resolves.toBeDefined();
 
-    let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
-      mockRawEventRow as any
-    )}`;
+    let second_valid_row_query = insertRawEvent(sql, mockRawEventRow);
 
     await expect(second_valid_row_query).resolves.toBeDefined();
   });

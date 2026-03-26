@@ -2,4 +2,4 @@
 // when importing code from .res.mjs files in genType .ts files
 // After we upgrade GenType and it starts to include ts-ignore,
 // the line can be removed.
-export type sql = any;
+export type pool = any;

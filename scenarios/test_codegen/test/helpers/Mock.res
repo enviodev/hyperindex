@@ -300,9 +300,10 @@ module Indexer = {
       }
     }
 
-    let sql = PgStorage.makeClient()
+    let pool = PgStorage.makeClient()
+    let sql = pool->(Utils.magic: Pg.pool => Pg.sql)
     let pgSchema = Env.Db.publicSchema
-    let storage = Indexer.Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let storage = Indexer.Generated.makeStorage(~pool, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
       ...Indexer.Generated.codegenPersistence,
       storageStatus: Persistence.Unknown,
@@ -375,26 +376,20 @@ module Indexer = {
       },
       query: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
-        )
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(ec.rowsSchema)
+        sql.query({text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName)})
+        ->Promise.thenResolve(({rows}) => {
+          rows->S.parseOrThrow(ec.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
-          ),
-        )
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(
+        let historyTableName = PgStorage.getEntityHistory(~entityConfig=ec).table.tableName
+        sql.query({
+          text: `SELECT * FROM "${pgSchema}"."${historyTableName}" ORDER BY "id", "${EntityHistory.checkpointIdFieldName}";`,
+        })
+        ->Promise.thenResolve(({rows}) => {
+          rows->S.parseOrThrow(
             S.array(
               S.union([
                 PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
@@ -417,35 +412,29 @@ module Indexer = {
         )
       },
       queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-        )
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.rowsSchema)
+        sql.query({text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName)})
+        ->Promise.thenResolve(({rows}) => {
+          rows->S.parseOrThrow(entityConfig.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryCheckpoints: () => {
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
+        sql.query({
+          text: PgStorage.makeLoadAllQuery(
             ~pgSchema,
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
-        )
-        ->Promise.thenResolve(rows =>
-          rows
-          ->(Utils.magic: unknown => array<unknown>)
-          ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        })
+        ->Promise.thenResolve(({rows}) =>
+          rows->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
       queryEffectCache: (effectName: string) => {
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
-        )
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": Js.Json.t}>>)
+        sql.query({
+          text: PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
+        })
+        ->Promise.thenResolve(({rows}) => rows)
+        ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": Js.Json.t}>>)
       },
       metric: async name => {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {

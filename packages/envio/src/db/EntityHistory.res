@@ -104,16 +104,18 @@ WHERE d.id = a.id
 }
 
 let pruneStaleEntityHistory = (
-  sql,
+  sql: Pg.sql,
   ~entityName,
   ~entityIndex,
   ~pgSchema,
   ~safeCheckpointId,
 ): promise<unit> => {
-  sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
-  )
+  sql.query({
+    name: `eh_prune_${entityIndex->Belt.Int.toString}`,
+    text: makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    values: [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
+  })
+  ->Promise.ignoreValue
 }
 
 // If an entity doesn't have a history before the update
@@ -121,7 +123,7 @@ let pruneStaleEntityHistory = (
 let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (
-  SELECT UNNEST($1::${(Text: Postgres.columnType :> string)}[]) AS id
+  SELECT UNNEST($1::${(Text: Pg.columnType :> string)}[]) AS id
 ),
 missing_history AS (
   SELECT e.*
@@ -135,23 +137,21 @@ SELECT *, 0 AS ${checkpointIdFieldName}, '${(RowAction.SET :> string)}' as ${cha
 FROM missing_history;`
 }
 
-let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
-  sql
-  ->Postgres.preparedUnsafe(
-    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [ids]->Obj.magic,
-  )
+let backfillHistory = (sql: Pg.sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
+  sql.query({
+    name: `eh_backfill_${entityIndex->Belt.Int.toString}`,
+    text: makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    values: [ids]->Obj.magic,
+  })
   ->Promise.ignoreValue
 }
 
-let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
-  sql
-  ->Postgres.preparedUnsafe(
-    `DELETE FROM "${pgSchema}"."${historyTableName(
-        ~entityName,
-        ~entityIndex,
-      )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
-  )
+let rollback = (sql: Pg.sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+  let tableName = historyTableName(~entityName, ~entityIndex)
+  sql.query({
+    name: `eh_rollback_${entityIndex->Belt.Int.toString}`,
+    text: `DELETE FROM "${pgSchema}"."${tableName}" WHERE "${checkpointIdFieldName}" > $1;`,
+    values: [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => array<unknown>),
+  })
   ->Promise.ignoreValue
 }
