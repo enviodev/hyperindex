@@ -83,14 +83,12 @@ let make = (
   ),
 ) => {
   let hasLive = sources->Js.Array2.some(s => s.sourceFor === Live)
-  let initialActiveSource =
-    switch sources->Js.Array2.find(source =>
-      getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
-    ) {
-    | Some(source) => source
-    | None =>
-      Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
-    }
+  let initialActiveSource = switch sources->Js.Array2.find(source =>
+    getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
+  ) {
+  | Some(source) => source
+  | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
+  }
   Prometheus.IndexingMaxConcurrency.set(
     ~maxConcurrency=maxPartitionConcurrency,
     ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
@@ -215,9 +213,10 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
     }
     if sourceState.source.sourceFor === Live {
       // Only clear hasLive if no other non-disabled Live sources remain
-      let hasOtherLive = sourceManager.sourcesState->Js.Array2.some(s =>
-        s !== sourceState && !s.disabled && s.source.sourceFor === Live
-      )
+      let hasOtherLive =
+        sourceManager.sourcesState->Js.Array2.some(s =>
+          s !== sourceState && !s.disabled && s.source.sourceFor === Live
+        )
       sourceManager.hasLive = hasOtherLive
     }
     true
@@ -333,14 +332,17 @@ let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
         | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
         | None => true
         }
-        switch getSourceRole(~sourceFor=sourceState.source.sourceFor, ~isLive, ~hasLive=sourceManager.hasLive) {
+        switch getSourceRole(
+          ~sourceFor=sourceState.source.sourceFor,
+          ~isLive,
+          ~hasLive=sourceManager.hasLive,
+        ) {
         | Some(Primary) =>
           allPrimarySources->Array.push(sourceState)
           if isWorking {
             workingPrimarySources->Array.push(sourceState)
           }
-        | Some(Secondary) if isWorking =>
-          workingSecondarySources->Array.push(sourceState)
+        | Some(Secondary) if isWorking => workingSecondarySources->Array.push(sourceState)
         | _ => ()
         }
       }
@@ -383,7 +385,19 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  let mainSources = sourceManager->getNextSources(~isLive)
+  // For height racing: Sync sources always race, Live sources join after the initial fetch
+  // (knownHeight > 0), even before the chain is formally marked as "ready" (isLive).
+  // This matches the old behavior and allows Live RPC to race against HyperSync once
+  // we've started syncing, while still letting HyperSync handle smart block detection first.
+  let mainSources = []
+  sourcesState->Array.forEach(sourceState => {
+    if !sourceState.disabled {
+      let sf = sourceState.source.sourceFor
+      if sf === Sync || (sf === Live && (isLive || knownHeight > 0)) {
+        mainSources->Array.push(sourceState)
+      }
+    }
+  })
 
   let status = ref(Active)
 
@@ -472,10 +486,18 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
+  // ImpossibleForTheQuery switches are query-specific — restore activeSource after.
+  // WithBackoff and UnsupportedSelection switches are persistent.
+  let savedActiveSource = sourceManager.activeSource
+  let hadImpossibleForTheQuery = ref(false)
+  let hadPersistentSwitch = ref(false)
 
   while responseRef.contents->Option.isNone {
     // Select the best source at the start of every iteration
-    let sourceState = switch sourceManager->getNextSource(~isLive, ~excludedSources=?excludedSourcesRef.contents) {
+    let sourceState = switch sourceManager->getNextSource(
+      ~isLive,
+      ~excludedSources=?excludedSourcesRef.contents,
+    ) {
     | Some(s) =>
       if s.source !== sourceManager.activeSource {
         let logger = Logging.createChild(
@@ -540,6 +562,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
       | FailedGettingFieldSelection(_) => {
           // These errors are impossible to recover, so we disable the source
           // so it's not attempted anymore
+          hadPersistentSwitch := true
           let notAlreadyDisabled = sourceManager->disableSource(sourceState)
 
           // In case there are multiple partitions
@@ -570,6 +593,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         // Don't set lastFailedAt — the source isn't broken, the query just can't work on it
+        hadImpossibleForTheQuery := true
         let excludedSources = switch excludedSourcesRef.contents {
         | Some(s) => s
         | None =>
@@ -605,10 +629,12 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         }
 
         if shouldSwitch {
+          hadPersistentSwitch := true
           let now = Js.Date.now()
           sourceState.lastFailedAt = Some(now)
           // Check if there's a working (recovered) source to switch to immediately
-          let nextSource = sourceManager->getNextSource(~isLive, ~excludedSources=?excludedSourcesRef.contents)
+          let nextSource =
+            sourceManager->getNextSource(~isLive, ~excludedSources=?excludedSourcesRef.contents)
           let hasWorkingAlternative = switch nextSource {
           | Some(s) =>
             switch s.lastFailedAt {
@@ -629,6 +655,12 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
     // TODO: Handle more error cases and hang/retry instead of throwing
     | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
     }
+  }
+
+  // Restore activeSource when ImpossibleForTheQuery caused the switch,
+  // unless a persistent switch (WithBackoff/UnsupportedSelection) also happened.
+  if hadImpossibleForTheQuery.contents && !hadPersistentSwitch.contents {
+    sourceManager.activeSource = savedActiveSource
   }
 
   responseRef.contents->Option.getUnsafe
