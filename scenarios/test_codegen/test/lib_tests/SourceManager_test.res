@@ -102,6 +102,16 @@ describe("SourceManager creation", () => {
     t.expect(sourceManager->SourceManager.getActiveSource).toBe(sync)
   })
 
+  it("Prefers live source over sync source as initial active source in live mode", t => {
+    let sync = Mock.Source.make([]).source
+    let live = Mock.Source.make([], ~sourceFor=Live).source
+    let sourceManager = SourceManager.make(~isLive=true,
+      ~sources=[sync, live],
+      ~maxPartitionConcurrency=10,
+    )
+    t.expect(sourceManager->SourceManager.getActiveSource).toBe(live)
+  })
+
   it("Fails to create without primary sources", t => {
     t.expect(
       () => {
