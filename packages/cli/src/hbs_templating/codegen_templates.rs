@@ -1344,34 +1344,14 @@ impl ProjectTemplate {
 
         let mut code = String::new();
 
-        // Generate per-contract modules with per-event type aliases and eventIdentity GADT
+        // Generate per-contract eventIdentity GADTs referencing existing contract event types
         for contract in contract_templates {
             if contract.codegen_events.is_empty() {
                 continue;
             }
 
             let contract_name = &contract.name.capitalized;
-
-            // Per-event modules with type aliases
-            let event_modules = contract
-                .codegen_events
-                .iter()
-                .map(|event| {
-                    format!(
-                        "  module __{event_name}__ = {{\n\
-                         \x20   type params = {contract_name}.{event_name}.eventArgs\n\
-                         \x20   type paramsConstructor = {contract_name}.{event_name}.paramsConstructor\n\
-                         \x20   type block = Block.t\n\
-                         \x20   type transaction = Transaction.t\n\
-                         \x20   type filters = {contract_name}.{event_name}.eventFilter\n\
-                         \x20   type event = {contract_name}.{event_name}.event\n\
-                         \x20 }}",
-                        event_name = event.name,
-                        contract_name = contract_name,
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let contract_type_name = &contract.name.uncapitalized;
 
             // Per-contract eventIdentity GADT with @as for string representation
             let gadt_constructors = contract
@@ -1379,8 +1359,9 @@ impl ProjectTemplate {
                 .iter()
                 .map(|event| {
                     format!(
-                        "    | @as(\"{event_name}\") {event_name}: eventIdentity<\
-                         __{event_name}__.event, __{event_name}__.paramsConstructor, __{event_name}__.filters>",
+                        "  | @as(\"{event_name}\") {event_name}: {contract_type_name}_eventIdentity<\
+                         {contract_name}.{event_name}.event, {contract_name}.{event_name}.paramsConstructor, \
+                         {contract_name}.{event_name}.eventFilter>",
                         event_name = event.name,
                     )
                 })
@@ -1388,11 +1369,8 @@ impl ProjectTemplate {
                 .join("\n");
 
             code.push_str(&format!(
-                "module __{contract_name}__ = {{\n\
-                 {event_modules}\n\
-                 \x20 type rec eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
-                 {gadt_constructors}\n\
-                 }}\n\n",
+                "type rec {contract_type_name}_eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
+                 {gadt_constructors}\n\n",
             ));
         }
 
@@ -1406,8 +1384,9 @@ impl ProjectTemplate {
             .iter()
             .map(|c| {
                 let name = &c.name.capitalized;
+                let type_name = &c.name.uncapitalized;
                 format!(
-                    "  | {name}(__{name}__.eventIdentity<'event, 'paramsConstructor, 'filters>)"
+                    "  | {name}({type_name}_eventIdentity<'event, 'paramsConstructor, 'filters>)"
                 )
             })
             .collect::<Vec<_>>()
