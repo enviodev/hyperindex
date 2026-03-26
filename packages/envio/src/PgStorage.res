@@ -284,6 +284,16 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
         ->Belt.Array.map(name => `"${name}"`)
         ->Js.Array2.joinWith(", ")
 
+      // Index on checkpoints for efficient block_number -> checkpoint_id lookup
+      query :=
+        query.contents ++
+        "\n" ++
+        makeCreateIndexQuery(
+          ~tableName=InternalTable.Checkpoints.table.tableName,
+          ~indexFields=["chain_id", "block_number"],
+          ~pgSchema,
+        )
+
       query :=
         query.contents ++
         "\n" ++
@@ -297,14 +307,16 @@ BEGIN
     RETURN;
   ELSE
     RETURN QUERY
-      SELECT DISTINCT ON ("id") ${dataFieldNames}
-      FROM "${pgSchema}"."${historyTableName}"
-      WHERE "${EntityHistory.checkpointIdFieldName}" <= (
-        SELECT MAX("id") FROM "${pgSchema}"."${InternalTable.Checkpoints.table.tableName}"
-        WHERE "chain_id" = "chainId" AND "block_number" <= "blockNumber"
-      )
-      AND "${EntityHistory.changeFieldName}" = 'SET'
-      ORDER BY "id", "${EntityHistory.checkpointIdFieldName}" DESC;
+      SELECT ${dataFieldNames} FROM (
+        SELECT DISTINCT ON ("id") ${dataFieldNames}, "${EntityHistory.changeFieldName}"
+        FROM "${pgSchema}"."${historyTableName}"
+        WHERE "${EntityHistory.checkpointIdFieldName}" <= (
+          SELECT MAX("id") FROM "${pgSchema}"."${InternalTable.Checkpoints.table.tableName}"
+          WHERE "chain_id" = "chainId" AND "block_number" <= "blockNumber"
+        )
+        ORDER BY "id", "${EntityHistory.checkpointIdFieldName}" DESC
+      ) sub
+      WHERE "${EntityHistory.changeFieldName}" = 'SET';
   END IF;
 END;
 $$ LANGUAGE plpgsql STABLE;`
