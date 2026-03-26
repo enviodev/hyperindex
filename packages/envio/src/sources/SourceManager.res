@@ -485,6 +485,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           "msg": "Switching data-source",
           "source": s.source.name,
           "previousSource": sourceManager.activeSource.name,
+          "fromBlock": query.fromBlock,
         })
       }
       s
