@@ -323,6 +323,7 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
+    pub enable_time_travel: bool,
 }
 
 impl Entity {
@@ -330,6 +331,7 @@ impl Entity {
         name: &str,
         fields: Vec<Field>,
         multi_field_indexes: Vec<MultiFieldIndex>,
+        enable_time_travel: bool,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -381,6 +383,7 @@ impl Entity {
             name: name.to_string(),
             fields,
             multi_field_indexes,
+            enable_time_travel,
         })
     }
 
@@ -464,6 +467,11 @@ impl Entity {
                 "Failed parsing multi field indexes on entity {name}"
             ))?;
 
+        let enable_time_travel = obj
+            .directives
+            .iter()
+            .any(|directive| directive.name == "timeTravel");
+
         // Map each field in the ObjectType to a Field, passing the indexed status
         let fields = obj
             .fields
@@ -474,7 +482,7 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let entity = Self::new(name, fields, multi_field_indexes)
+        let entity = Self::new(name, fields, multi_field_indexes, enable_time_travel)
             .context(format!("Failed constructing entity {name}",))?;
 
         // Here, store indexed information somewhere within your entity structure or handle them accordingly
@@ -1819,7 +1827,7 @@ type TestEntity {
     #[test]
     fn gql_type_to_rescript_type_entity() {
         let test_entity_string = String::from("TestEntity");
-        let test_entity = Entity::new(&test_entity_string, vec![], vec![]).unwrap();
+        let test_entity = Entity::new(&test_entity_string, vec![], vec![], false).unwrap();
         let schema = Schema::new(vec![test_entity], vec![]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
             .to_rescript_type(&schema)

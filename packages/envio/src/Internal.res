@@ -474,6 +474,7 @@ type genericEntityConfig<'entity> = {
   schema: S.t<'entity>,
   rowsSchema: S.t<array<'entity>>,
   table: Table.table,
+  enableTimeTravel: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"

@@ -277,24 +277,6 @@ CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("id" TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT, "optString" TEXT, "arrayOfStrings" TEXT[], "int_" INTEGER, "optInt" INTEGER, "arrayOfInts" INTEGER[], "float_" DOUBLE PRECISION, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[], "bool" BOOLEAN, "optBool" BOOLEAN, "bigInt" NUMERIC, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[], "bigDecimal" NUMERIC, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "arrayOfBigDecimals" TEXT[], "timestamp" TIMESTAMP WITH TIME ZONE NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB, "enumField" "test_schema".AccountType, "optEnumField" "test_schema".AccountType, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
-CREATE OR REPLACE FUNCTION "test_schema"."A"("blockNumber" integer DEFAULT -1)
-RETURNS SETOF "test_schema"."A" AS $$
-BEGIN
-  IF "blockNumber" = -1 THEN
-    RETURN QUERY SELECT * FROM "test_schema"."A";
-  ELSE
-    RETURN QUERY
-      SELECT DISTINCT ON ("id") "id", "b_id", "optionalStringToTestLinkedEntities"
-      FROM "test_schema"."envio_history_A"
-      WHERE "envio_checkpoint_id" <= (
-        SELECT MAX("id") FROM "test_schema"."envio_checkpoints"
-        WHERE "block_number" <= "blockNumber"
-      )
-      AND "envio_change" = 'SET'
-      ORDER BY "id", "envio_checkpoint_id" DESC;
-  END IF;
-END;
-$$ LANGUAGE plpgsql STABLE;
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -442,24 +424,6 @@ CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "e
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
-CREATE OR REPLACE FUNCTION "public"."A"("blockNumber" integer DEFAULT -1)
-RETURNS SETOF "public"."A" AS $$
-BEGIN
-  IF "blockNumber" = -1 THEN
-    RETURN QUERY SELECT * FROM "public"."A";
-  ELSE
-    RETURN QUERY
-      SELECT DISTINCT ON ("id") "id", "b_id", "optionalStringToTestLinkedEntities"
-      FROM "public"."envio_history_A"
-      WHERE "envio_checkpoint_id" <= (
-        SELECT MAX("id") FROM "public"."envio_checkpoints"
-        WHERE "block_number" <= "blockNumber"
-      )
-      AND "envio_change" = 'SET'
-      ORDER BY "id", "envio_checkpoint_id" DESC;
-  END IF;
-END;
-$$ LANGUAGE plpgsql STABLE;
 CREATE VIEW "public"."_meta" AS 
 SELECT 
   "id" AS "chainId",

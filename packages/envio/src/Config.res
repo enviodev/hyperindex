@@ -161,6 +161,7 @@ module DynamicContractRegistry = {
     schema,
     rowsSchema,
     table,
+    enableTimeTravel: false,
   }->Internal.fromGenericEntityConfig
 }
 
@@ -275,6 +276,7 @@ let entityJsonSchema = S.schema(s =>
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
+    "enableTimeTravel": s.matches(S.option(S.bool)),
   }
 )
 
@@ -415,6 +417,7 @@ let parseEntitiesFromJson = (
         Utils.magic: S.t<array<dict<unknown>>> => S.t<array<Internal.entity>>
       ),
       table,
+      enableTimeTravel: entityJson["enableTimeTravel"]->Option.getWithDefault(false),
     }->Internal.fromGenericEntityConfig
   })
 }

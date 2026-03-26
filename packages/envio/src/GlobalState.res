@@ -838,6 +838,13 @@ let injectedTaskReducer = (
             await Utils.delay(1000)
           }
           let entityConfig = state.ctx.persistence.allEntities->Array.getUnsafe(idx)
+          // Skip pruning for entities with time travel enabled
+          if entityConfig.enableTimeTravel {
+            Logging.trace({
+              "msg": "Skipping history pruning for time travel entity",
+              "entityName": entityConfig.name,
+            })
+          } else {
           let timeRef = Hrtime.makeTimer()
           try {
             let () = await state.ctx.persistence.storage.pruneStaleEntityHistory(
@@ -861,6 +868,7 @@ let injectedTaskReducer = (
             ~timeSeconds=Hrtime.timeSince(timeRef)->Hrtime.toSecondsFloat,
             ~entityName=entityConfig.name,
           )
+          }
         }
       }
     }

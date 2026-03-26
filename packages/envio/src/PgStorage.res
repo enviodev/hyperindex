@@ -264,30 +264,30 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     })
   })
 
-  // Create a function with the entity name for the first user entity
+  // Create time travel functions for entities with @timeTravel directive
   // The table itself is exposed as {Entity}_by_pk in Hasura
-  switch entities->Belt.Array.get(0) {
-  | Some(firstEntity) =>
-    let tableName = firstEntity.table.tableName
-    let historyTableName = EntityHistory.historyTableName(
-      ~entityName=tableName,
-      ~entityIndex=firstEntity.index,
-    )
-    let dataFieldNames =
-      firstEntity.table.fields
-      ->Belt.Array.keepMap(fieldOrDerived =>
-        switch fieldOrDerived {
-        | Field(field) => field->Table.getDbFieldName->Some
-        | DerivedFrom(_) => None
-        }
+  entities->Js.Array2.forEach((entityConfig: Internal.entityConfig) => {
+    if entityConfig.enableTimeTravel {
+      let tableName = entityConfig.table.tableName
+      let historyTableName = EntityHistory.historyTableName(
+        ~entityName=tableName,
+        ~entityIndex=entityConfig.index,
       )
-      ->Belt.Array.map(name => `"${name}"`)
-      ->Js.Array2.joinWith(", ")
+      let dataFieldNames =
+        entityConfig.table.fields
+        ->Belt.Array.keepMap(fieldOrDerived =>
+          switch fieldOrDerived {
+          | Field(field) => field->Table.getDbFieldName->Some
+          | DerivedFrom(_) => None
+          }
+        )
+        ->Belt.Array.map(name => `"${name}"`)
+        ->Js.Array2.joinWith(", ")
 
-    query :=
-      query.contents ++
-      "\n" ++
-      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${tableName}"("blockNumber" integer DEFAULT -1)
+      query :=
+        query.contents ++
+        "\n" ++
+        `CREATE OR REPLACE FUNCTION "${pgSchema}"."${tableName}"("blockNumber" integer DEFAULT -1)
 RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
 BEGIN
   IF "blockNumber" = -1 THEN
@@ -305,8 +305,8 @@ BEGIN
   END IF;
 END;
 $$ LANGUAGE plpgsql STABLE;`
-  | None => ()
-  }
+    }
+  })
 
   // Create views for Hasura integration
   query := query.contents ++ "\n" ++ InternalTable.Views.makeMetaViewQuery(~pgSchema)

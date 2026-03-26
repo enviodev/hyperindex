@@ -264,13 +264,18 @@ let trackDatabase = async (
 
   Logging.info("Tracking tables in Hasura")
 
-  // For the first user entity, track the table as {Entity}_by_pk
+  // For entities with @timeTravel, track the table as {Entity}_by_pk
   // so the function can take the {Entity} name
-  let customNames = switch userEntities->Belt.Array.get(0) {
-  | Some(firstEntity) =>
-    let tableName = firstEntity.table.tableName
-    Some(Belt.Map.String.fromArray([(tableName, tableName ++ "_by_pk")]))
-  | None => None
+  let timeTravelEntries =
+    userEntities
+    ->Js.Array2.filter(entity => entity.enableTimeTravel)
+    ->Js.Array2.map(entity => {
+      let tableName = entity.table.tableName
+      (tableName, tableName ++ "_by_pk")
+    })
+  let customNames = switch timeTravelEntries->Array.length > 0 {
+  | true => Some(Belt.Map.String.fromArray(timeTravelEntries))
+  | false => None
   }
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
@@ -325,11 +330,12 @@ let trackDatabase = async (
     }
   }
 
-  // Track function for the first user entity (uses the entity name directly)
-  switch userEntities->Belt.Array.get(0) {
-  | Some(firstEntity) =>
-    await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName=firstEntity.table.tableName)
-  | None => ()
+  // Track time travel functions for entities with @timeTravel
+  for i in 0 to userEntities->Js.Array2.length - 1 {
+    let entityConfig = userEntities->Js.Array2.unsafe_get(i)
+    if entityConfig.enableTimeTravel {
+      await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName=entityConfig.table.tableName)
+    }
   }
 
   Logging.info("Hasura configuration completed")
