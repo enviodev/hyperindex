@@ -287,10 +287,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     query :=
       query.contents ++
       "\n" ++
-      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${tableName}"("blockNumber" integer DEFAULT 0)
+      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${tableName}"("blockNumber" integer DEFAULT -1)
 RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
 BEGIN
-  IF "blockNumber" = 0 THEN
+  IF "blockNumber" = -1 THEN
     RETURN QUERY SELECT * FROM "${pgSchema}"."${tableName}";
   ELSE
     RETURN QUERY
