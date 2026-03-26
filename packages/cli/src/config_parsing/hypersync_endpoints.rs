@@ -77,7 +77,10 @@ mod integration_tests {
                 }
             }
             if let Some(e) = last_err {
-                panic!("Failed to fetch health for {} after {} retries: {:?}", url, MAX_RETRIES, e);
+                panic!(
+                    "Failed to fetch health for {} after {} retries: {:?}",
+                    url, MAX_RETRIES, e
+                );
             }
         }
     }
