@@ -27,6 +27,23 @@ const HASURA_CONTAINER: &str = "envio-hasura";
 const VOLUME: &str = "envio-postgres-data";
 const NETWORK: &str = "envio-network";
 
+/// Extra Docker socket locations that `connect_with_local_defaults()` may miss.
+/// Notably, macOS Docker Desktop 4.x+ puts the socket under `~/.docker/run/`
+/// and `/var/run/docker.sock` only exists if the user explicitly enables
+/// "Allow the default Docker socket to be used" in Docker Desktop settings.
+fn docker_socket_candidates() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Ok(home) = std::env::var("HOME") {
+        // Docker Desktop 4.x+ (macOS / Linux Desktop)
+        paths.push(PathBuf::from(&home).join(".docker/run/docker.sock"));
+        // Older Docker Desktop (macOS)
+        paths.push(PathBuf::from(&home).join(".docker/desktop/docker.sock"));
+    }
+
+    paths
+}
+
 fn podman_socket_candidates() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
@@ -69,6 +86,21 @@ async fn connect_docker() -> anyhow::Result<Docker> {
         }
     }
 
+    // Try well-known Docker Desktop socket paths (macOS, Linux Desktop)
+    for path in docker_socket_candidates() {
+        if path.exists() {
+            if let Some(path_str) = path.to_str() {
+                if let Ok(docker) =
+                    Docker::connect_with_socket(path_str, SOCKET_TIMEOUT, API_DEFAULT_VERSION)
+                {
+                    if docker.ping().await.is_ok() {
+                        return Ok(docker);
+                    }
+                }
+            }
+        }
+    }
+
     // Try CONTAINER_HOST (Podman's equivalent of DOCKER_HOST)
     if let Ok(host) = std::env::var("CONTAINER_HOST") {
         let path = socket_path_from_uri(&host);
@@ -98,7 +130,8 @@ async fn connect_docker() -> anyhow::Result<Docker> {
 
     anyhow::bail!(
         "Failed connecting to Docker or Podman. Is the daemon running?\n\
-         Checked: DOCKER_HOST, default Docker socket, CONTAINER_HOST, common Podman sockets."
+         Checked: DOCKER_HOST, default Docker socket, ~/.docker/run/docker.sock, \
+         CONTAINER_HOST, common Podman sockets."
     )
 }
 
@@ -157,6 +190,9 @@ impl EnvConfig {
     }
 }
 
+/// Maximum time allowed for pulling a single image before we give up.
+const IMAGE_PULL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
     if docker.inspect_image(image).await.is_ok() {
         return Ok(());
@@ -170,16 +206,30 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
         .tag(tag)
         .build();
 
-    let mut stream = docker.create_image(Some(options), None, None);
-    while let Some(result) = stream.next().await {
-        let info = result.with_context(|| format!("Failed pulling image {image}"))?;
-        if let (Some(status), id) = (info.status, &info.id) {
-            match id {
-                Some(id) => eprint!("\r  {id}: {status}  "),
-                None => eprint!("\r  {status}  "),
+    let pull_future = async {
+        let mut stream = docker.create_image(Some(options), None, None);
+        while let Some(result) = stream.next().await {
+            let info = result.with_context(|| format!("Failed pulling image {image}"))?;
+            if let (Some(status), id) = (info.status, &info.id) {
+                match id {
+                    Some(id) => eprint!("\r  {id}: {status}  "),
+                    None => eprint!("\r  {status}  "),
+                }
             }
         }
-    }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::time::timeout(IMAGE_PULL_TIMEOUT, pull_future)
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Timed out pulling image {image} after {}s. \
+                 Check your network connection and Docker daemon status.",
+                IMAGE_PULL_TIMEOUT.as_secs()
+            )
+        })??;
+
     eprintln!();
     println!("Pulled {image}");
 
