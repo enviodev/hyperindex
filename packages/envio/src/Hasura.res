@@ -108,7 +108,7 @@ let trackTables = async (
   ~auth,
   ~pgSchema,
   ~tableNames: array<string>,
-  ~customNames: option<Belt.Map.String.t<string>>=?,
+  ~timeTravelTableNames: Belt.Set.String.t=Belt.Set.String.empty,
 ) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
@@ -125,14 +125,12 @@ let trackTables = async (
               },
               "configuration": {
                 // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
-                "custom_name": switch customNames {
-                | Some(map) =>
-                  switch map->Belt.Map.String.get(tableName) {
-                  | Some(name) => name
-                  | None => tableName
-                  }
-                | None => tableName
-                },
+                "custom_name": tableName,
+                // For @timeTravel entities, disable the select root field
+                // so only select_by_pk is available (the function serves as the list query)
+                "custom_root_fields": timeTravelTableNames->Belt.Set.String.has(tableName)
+                  ? {"select": Js.Null.empty, "select_aggregate": Js.Null.empty}
+                  : Js.Obj.empty(),
               },
             }
           ),
@@ -264,23 +262,16 @@ let trackDatabase = async (
 
   Logging.info("Tracking tables in Hasura")
 
-  // For entities with @timeTravel, track the table as {Entity}_by_pk
-  // so the function can take the {Entity} name
-  let timeTravelEntries =
+  // For @timeTravel entities, only expose select_by_pk (the function serves as the list query)
+  let timeTravelTableNames =
     userEntities
     ->Js.Array2.filter(entity => entity.enableTimeTravel)
-    ->Js.Array2.map(entity => {
-      let tableName = entity.table.tableName
-      (tableName, tableName ++ "_by_pk")
-    })
-  let customNames = switch timeTravelEntries->Array.length > 0 {
-  | true => Some(Belt.Map.String.fromArray(timeTravelEntries))
-  | false => None
-  }
+    ->Js.Array2.map(entity => entity.table.tableName)
+    ->Belt.Set.String.fromArray
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames, ~customNames?)
+  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames, ~timeTravelTableNames)
 
   for i in 0 to tableNames->Js.Array2.length - 1 {
     let tableName = tableNames->Js.Array2.unsafe_get(i)
