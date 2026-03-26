@@ -495,6 +495,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
       )
       %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
     }
+    sourceManager.activeSource = sourceState.source
     let source = sourceState.source
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
@@ -531,7 +532,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         "stats": response.stats,
       })
       sourceState.lastFailedAt = None
-      sourceManager.activeSource = source
       responseRef := Some(response)
     } catch {
     | Source.GetItemsError(error) =>
