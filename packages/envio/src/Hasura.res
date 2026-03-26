@@ -129,7 +129,11 @@ let trackTables = async (
                 // For @timeTravel entities, disable the select root field
                 // so only select_by_pk is available (the function serves as the list query)
                 "custom_root_fields": timeTravelTableNames->Belt.Set.String.has(tableName)
-                  ? {"select": Js.Null.empty, "select_aggregate": Js.Null.empty}
+                  ? {
+                      "select": Js.Null.empty,
+                      "select_aggregate": Js.Null.empty,
+                      "select_stream": Js.Null.empty,
+                    }
                   : Js.Obj.empty(),
               },
             }
