@@ -10,6 +10,19 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in */packages/cli/*) cd \"${f%%/packages/cli/*}/packages/cli\" && cargo fmt && cargo clippy --quiet 2>&1 || true ;; esac; }",
+            "timeout": 120,
+            "statusMessage": "Running cargo fmt + clippy..."
+          }
+        ]
+      }
     ]
   }
 }

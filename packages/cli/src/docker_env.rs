@@ -54,12 +54,9 @@ fn podman_socket_candidates() -> Vec<PathBuf> {
 
     // macOS Podman machine
     if let Ok(home) = std::env::var("HOME") {
+        paths.push(PathBuf::from(&home).join(".local/share/containers/podman/machine/podman.sock"));
         paths.push(
-            PathBuf::from(&home).join(".local/share/containers/podman/machine/podman.sock"),
-        );
-        paths.push(
-            PathBuf::from(&home)
-                .join(".local/share/containers/podman/machine/qemu/podman.sock"),
+            PathBuf::from(&home).join(".local/share/containers/podman/machine/qemu/podman.sock"),
         );
     }
 
@@ -279,10 +276,7 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
                 }
             }
             Err(_) => {
-                last_err = Some(format!(
-                    "Timed out after {}s",
-                    IMAGE_PULL_TIMEOUT.as_secs()
-                ));
+                last_err = Some(format!("Timed out after {}s", IMAGE_PULL_TIMEOUT.as_secs()));
                 if attempt < IMAGE_PULL_RETRIES {
                     eprintln!(
                         "\nPull attempt {attempt}/{IMAGE_PULL_RETRIES} timed out.\n\
@@ -304,7 +298,10 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
 async fn ensure_network(docker: &Docker, name: &str) -> anyhow::Result<()> {
     // Fast path: if the network already exists, skip creation entirely.
     if docker
-        .inspect_network(name, None::<bollard::query_parameters::InspectNetworkOptions>)
+        .inspect_network(
+            name,
+            None::<bollard::query_parameters::InspectNetworkOptions>,
+        )
         .await
         .is_ok()
     {
@@ -384,7 +381,12 @@ async fn is_hasura_healthy(host: &str, port: u16) -> bool {
         .timeout(Duration::from_secs(2))
         .build();
     match client {
-        Ok(c) => c.get(&url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
+        Ok(c) => c
+            .get(&url)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false),
         Err(_) => false,
     }
 }
@@ -475,11 +477,7 @@ async fn port_conflict_error(
 }
 
 /// Start a container, translating port conflicts into actionable errors.
-async fn start_container(
-    docker: &Docker,
-    name: &str,
-    host_port: u16,
-) -> anyhow::Result<()> {
+async fn start_container(docker: &Docker, name: &str, host_port: u16) -> anyhow::Result<()> {
     if let Err(e) = docker.start_container(name, None).await {
         if let Some(port_err) = port_conflict_error(docker, name, host_port, &e).await {
             return Err(port_err);
@@ -537,7 +535,10 @@ pub struct UpResult {
 
 pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
     let env = EnvConfig::from_project(project_root);
-    let pg_host_port: u16 = env.pg_port.parse().context("ENVIO_PG_PORT is not a valid port")?;
+    let pg_host_port: u16 = env
+        .pg_port
+        .parse()
+        .context("ENVIO_PG_PORT is not a valid port")?;
     let hasura_host_port: u16 = env
         .hasura_port
         .parse()
@@ -545,15 +546,13 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
 
     // Probe Postgres and Hasura in parallel to see if they are already running.
     let pg_host = env.pg_host.clone();
-    let (pg_alive, hasura_alive) = tokio::join!(
-        is_service_reachable(&pg_host, pg_host_port),
-        async {
+    let (pg_alive, hasura_alive) =
+        tokio::join!(is_service_reachable(&pg_host, pg_host_port), async {
             if !env.hasura_enabled {
                 return false;
             }
             is_hasura_healthy(&pg_host, hasura_host_port).await
-        }
-    );
+        });
 
     let need_pg = !pg_alive;
     let need_hasura = env.hasura_enabled && !hasura_alive;
@@ -793,7 +792,10 @@ pub async fn down() -> anyhow::Result<()> {
     );
 
     let (vol_res, net_res) = tokio::join!(
-        docker.remove_volume(VOLUME, None::<bollard::query_parameters::RemoveVolumeOptions>),
+        docker.remove_volume(
+            VOLUME,
+            None::<bollard::query_parameters::RemoveVolumeOptions>
+        ),
         docker.remove_network(NETWORK),
     );
 
