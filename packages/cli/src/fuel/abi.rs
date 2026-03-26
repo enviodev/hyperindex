@@ -177,9 +177,7 @@ impl FuelAbi {
                                         ),
                                         //if the type_id is in the generic_param_name_map
                                         //it is a generic param
-                                        |generic_name| {
-                                            TypeIdent::GenericParam(generic_name)
-                                        },
+                                        |generic_name| TypeIdent::GenericParam(generic_name),
                                     )
                                 })
                                 .collect();
@@ -247,9 +245,7 @@ impl FuelAbi {
                                      {type_field}",
                                 ))?
                                 .into_iter()
-                                .map(|(name, type_ident)| {
-                                    RecordField::new(name, type_ident)
-                                })
+                                .map(|(name, type_ident)| RecordField::new(name, type_ident))
                                 .collect();
                             Ok(TypeExpr::Record(record_fields))
                         }
@@ -260,9 +256,7 @@ impl FuelAbi {
                                      {type_field}",
                                 ))?
                                 .into_iter()
-                                .map(|(name, type_ident)| {
-                                    VariantConstr::new(name, type_ident)
-                                })
+                                .map(|(name, type_ident)| VariantConstr::new(name, type_ident))
                                 .collect();
                             Ok(TypeExpr::Variant(constructors))
                         }

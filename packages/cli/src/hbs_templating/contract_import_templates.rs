@@ -2,8 +2,8 @@
 ///tuples in event params
 mod nested_params {
     use super::*;
-    use alloy_dyn_abi::DynSolType;
     use crate::config_parsing::abi_compat::EventParam;
+    use alloy_dyn_abi::DynSolType;
     pub type ParamIndex = usize;
 
     ///Recursive Representation of param token. With reference to it's own index
@@ -33,7 +33,10 @@ mod nested_params {
                                 indexed: false,
                             };
                             //Recursively get the inner NestedEventParam type
-                            Self::TupleParam(i, Box::new(Self::from(inner_event_input, param_index)))
+                            Self::TupleParam(
+                                i,
+                                Box::new(Self::from(inner_event_input, param_index)),
+                            )
                         })
                         .collect(),
                 )
@@ -176,9 +179,7 @@ mod nested_params {
     ///MyEvent(address myAddress, (uint256, bool) myTupleParam) ->
     ///MyEvent(address myAddress, uint256 myTupleParam_1, uint256 myTupleParam_2)
     ///This representation makes it easy to have single field conversions
-    pub fn flatten_event_inputs(
-        event_inputs: Vec<EventParam>,
-    ) -> Vec<FlattenedEventParam> {
+    pub fn flatten_event_inputs(event_inputs: Vec<EventParam>) -> Vec<FlattenedEventParam> {
         event_inputs
             .into_iter()
             .enumerate()
@@ -196,8 +197,8 @@ use crate::{
         entity_parsing::{Field, FieldType},
         system_config::{self, Ecosystem, EventKind, SystemConfig},
     },
-    type_schema::RecordField,
     template_dirs::TemplateDirs,
+    type_schema::RecordField,
     utils::text::{Capitalize, CapitalizedOptions},
 };
 use alloy_dyn_abi::DynSolType;
