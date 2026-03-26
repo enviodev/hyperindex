@@ -544,14 +544,16 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         .parse()
         .context("HASURA_EXTERNAL_PORT is not a valid port")?;
 
-    // Probe Postgres and Hasura in parallel to see if they are already running.
-    let pg_host = env.pg_host.clone();
+    // Probe locally-published ports to see if containers are already running.
+    // Always check localhost since Docker publishes on 0.0.0.0, regardless of
+    // what ENVIO_PG_HOST is set to (that controls where the runtime connects).
+    let probe_host = "localhost";
     let (pg_alive, hasura_alive) =
-        tokio::join!(is_service_reachable(&pg_host, pg_host_port), async {
+        tokio::join!(is_service_reachable(probe_host, pg_host_port), async {
             if !env.hasura_enabled {
                 return false;
             }
-            is_hasura_healthy(&pg_host, hasura_host_port).await
+            is_hasura_healthy(probe_host, hasura_host_port).await
         });
 
     let need_pg = !pg_alive;
@@ -726,15 +728,14 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
     hasura_res?;
 
     // Wait for services to become healthy before handing control back.
-    let pg_host = &env.pg_host;
     let wait_pg = async {
         if !need_pg {
-            return Ok(());
+            return Ok::<(), anyhow::Error>(());
         }
         eprint!("Waiting for Postgres...");
         let start = std::time::Instant::now();
         loop {
-            if is_service_reachable(pg_host, pg_host_port).await {
+            if is_service_reachable(probe_host, pg_host_port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
@@ -751,12 +752,12 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
 
     let wait_hasura = async {
         if !need_hasura {
-            return Ok(());
+            return Ok::<(), anyhow::Error>(());
         }
         eprint!("Waiting for Hasura...");
         let start = std::time::Instant::now();
         loop {
-            if is_hasura_healthy(pg_host, hasura_host_port).await {
+            if is_hasura_healthy(probe_host, hasura_host_port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
@@ -772,9 +773,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         }
     };
 
-    let (pg_wait_res, hasura_wait_res) = tokio::join!(wait_pg, wait_hasura);
-    pg_wait_res?;
-    hasura_wait_res?;
+    tokio::try_join!(wait_pg, wait_hasura)?;
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
