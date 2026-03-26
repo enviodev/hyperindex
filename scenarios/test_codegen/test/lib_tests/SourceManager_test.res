@@ -2285,24 +2285,37 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
 
       let _ = await p
 
-      // ImpossibleForTheQuery doesn't persist activeSource change
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="activeSource should be restored after ImpossibleForTheQuery",
-      ).toBe(syncMock0.source)
+        ~message="Should switch to syncMock1 after ImpossibleForTheQuery on syncMock0",
+      ).toBe(syncMock1.source)
 
       // Verify syncMock0 is still usable for next query (lastFailedAt was not set).
-      // syncMock0 should be selected because it's still activeSource.
+      // Fail syncMock1 with ImpossibleForTheQuery so the system must fall back to syncMock0.
       {
         let p2 = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+        switch syncMock1.getItemsOrThrowCalls {
+        | [call] =>
+          call.reject(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn: %raw(`null`),
+                attemptedToBlock: 100,
+                retry: ImpossibleForTheQuery({message: "test impossible on mock1"}),
+              }),
+            ),
+          )
+        | _ => Js.Exn.raiseError("Expected one pending call to syncMock1")
+        }
+        await Promise.resolve()
         switch syncMock0.getItemsOrThrowCalls {
         | [call] => call.resolve([])
-        | _ => Js.Exn.raiseError("Expected syncMock0 to be usable (activeSource restored, lastFailedAt not set)")
+        | _ => Js.Exn.raiseError("Expected syncMock0 to be usable (lastFailedAt not set)")
         }
         let _ = await p2
         t.expect(
           sourceManager->SourceManager.getActiveSource,
-          ~message="syncMock0 should still be activeSource",
+          ~message="syncMock0 should be usable since ImpossibleForTheQuery doesn't set lastFailedAt",
         ).toBe(syncMock0.source)
       }
     },
@@ -2360,11 +2373,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       }
       let _ = await p
 
-      // ImpossibleForTheQuery doesn't persist activeSource change
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="activeSource should be restored after ImpossibleForTheQuery",
-      ).toBe(syncMock0.source)
+        ~message="Should end up on syncMock2 after excluding mock0 and mock1",
+      ).toBe(syncMock2.source)
     },
   )
 
@@ -2496,11 +2508,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       }
       let _ = await p
 
-      // ImpossibleForTheQuery doesn't persist activeSource change
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="activeSource should be restored after ImpossibleForTheQuery",
-      ).toBe(syncMock0.source)
+        ~message="Should fall back to secondary when all primaries are excluded",
+      ).toBe(fallbackMock.source)
     },
   )
 
@@ -2549,27 +2560,43 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
   Async.it(
     "ActiveSource excluded via ImpossibleForTheQuery falls back to next candidate",
     async t => {
-      let syncMock0 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
-      let syncMock1 = Mock.Source.make([#getHeightOrThrow, #getItemsOrThrow])
+      let syncMock0 = Mock.Source.make([#getItemsOrThrow])
+      let syncMock1 = Mock.Source.make([#getItemsOrThrow])
       let sourceManager = SourceManager.make(~isLive=false,
         ~sources=[syncMock0.source, syncMock1.source],
         ~maxPartitionConcurrency=10,
-        ~newBlockStallTimeout=0,
       )
 
-      // Switch activeSource to syncMock1 via waitForNewBlock (permanent change)
-      {
-        let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
-        await Utils.delay(0)
-        syncMock1.resolveGetHeightOrThrow(101)
-        t.expect(await p).toBe(101)
-        t.expect(
-          sourceManager->SourceManager.getActiveSource,
-          ~message="Should have switched to syncMock1 via waitForNewBlock",
-        ).toBe(syncMock1.source)
+      // First query: succeed on syncMock0 (activeSource), then fail with ImpossibleForTheQuery on next query
+      // to switch activeSource to syncMock1
+      let p0 = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
+      switch syncMock0.getItemsOrThrowCalls {
+      | [call] =>
+        call.reject(
+          Source.GetItemsError(
+            FailedGettingItems({
+              exn: %raw(`null`),
+              attemptedToBlock: 100,
+              retry: ImpossibleForTheQuery({message: "impossible on mock0"}),
+            }),
+          ),
+        )
+      | _ => Js.Exn.raiseError("Expected one pending call to syncMock0")
       }
+      await Promise.resolve()
+      switch syncMock1.getItemsOrThrowCalls {
+      | [call] => call.resolve([])
+      | _ => Js.Exn.raiseError("Expected syncMock1 to get the query")
+      }
+      let _ = await p0
 
-      // Now syncMock1 is activeSource. Fail with ImpossibleForTheQuery — should fall back to syncMock0.
+      t.expect(
+        sourceManager->SourceManager.getActiveSource,
+        ~message="activeSource should be syncMock1",
+      ).toBe(syncMock1.source)
+
+      // Now in next query, syncMock1 (activeSource) gets the query first.
+      // Fail with ImpossibleForTheQuery — it should fall back to syncMock0.
       let p = sourceManager->SourceManager.executeQuery(~query=mockQuery(), ~isLive=false, ~knownHeight=100)
       switch syncMock1.getItemsOrThrowCalls {
       | [call] =>
@@ -2592,11 +2619,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       }
       let _ = await p
 
-      // activeSource restored to syncMock1 (ImpossibleForTheQuery doesn't persist switch)
       t.expect(
         sourceManager->SourceManager.getActiveSource,
-        ~message="activeSource should be restored to syncMock1 after ImpossibleForTheQuery",
-      ).toBe(syncMock1.source)
+        ~message="Should fall back to syncMock0 when activeSource is excluded",
+      ).toBe(syncMock0.source)
     },
   )
 

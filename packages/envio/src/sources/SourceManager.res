@@ -385,15 +385,14 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  // For height racing: Sync sources always race, Live sources join after the initial fetch
-  // (knownHeight > 0), even before the chain is formally marked as "ready" (isLive).
-  // This matches the old behavior and allows Live RPC to race against HyperSync once
-  // we've started syncing, while still letting HyperSync handle smart block detection first.
+  // For height racing: Sync sources always race, Live sources join once isLive.
+  // This allows Live RPC to race against HyperSync once we're at the head,
+  // while still letting HyperSync handle smart block detection during backfill.
   let mainSources = []
   sourcesState->Array.forEach(sourceState => {
     if !sourceState.disabled {
       let sf = sourceState.source.sourceFor
-      if sf === Sync || (sf === Live && (isLive || knownHeight > 0)) {
+      if sf === Sync || (sf === Live && isLive) {
         mainSources->Array.push(sourceState)
       }
     }
@@ -486,11 +485,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
-  // ImpossibleForTheQuery switches are query-specific — restore activeSource after.
-  // WithBackoff and UnsupportedSelection switches are persistent.
-  let savedActiveSource = sourceManager.activeSource
-  let hadImpossibleForTheQuery = ref(false)
-  let hadPersistentSwitch = ref(false)
 
   while responseRef.contents->Option.isNone {
     // Select the best source at the start of every iteration
@@ -562,7 +556,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
       | FailedGettingFieldSelection(_) => {
           // These errors are impossible to recover, so we disable the source
           // so it's not attempted anymore
-          hadPersistentSwitch := true
           let notAlreadyDisabled = sourceManager->disableSource(sourceState)
 
           // In case there are multiple partitions
@@ -593,7 +586,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         // Don't set lastFailedAt — the source isn't broken, the query just can't work on it
-        hadImpossibleForTheQuery := true
         let excludedSources = switch excludedSourcesRef.contents {
         | Some(s) => s
         | None =>
@@ -629,7 +621,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         }
 
         if shouldSwitch {
-          hadPersistentSwitch := true
           let now = Js.Date.now()
           sourceState.lastFailedAt = Some(now)
           // Check if there's a working (recovered) source to switch to immediately
@@ -655,12 +646,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
     // TODO: Handle more error cases and hang/retry instead of throwing
     | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
     }
-  }
-
-  // Restore activeSource when ImpossibleForTheQuery caused the switch,
-  // unless a persistent switch (WithBackoff/UnsupportedSelection) also happened.
-  if hadImpossibleForTheQuery.contents && !hadPersistentSwitch.contents {
-    sourceManager.activeSource = savedActiveSource
   }
 
   responseRef.contents->Option.getUnsafe

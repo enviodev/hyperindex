@@ -694,8 +694,8 @@ describe("E2E tests", () => {
           sourceMockPrimary.getItemsOrThrowCalls->Array.length,
           sourceMockFallback.getItemsOrThrowCalls->Array.length,
         ),
-        ~message="Shouldn't switch to fallback source for the next query",
-      ).toEqual((1, 0))
+        ~message="Should keep using fallback source for the next query after ImpossibleForTheQuery",
+      ).toEqual((0, 1))
     },
   )
 
