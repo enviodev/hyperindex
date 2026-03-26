@@ -1344,36 +1344,6 @@ impl ProjectTemplate {
 
         let mut code = String::new();
 
-        // Generate per-contract eventIdentity GADTs referencing existing contract event types
-        for contract in contract_templates {
-            if contract.codegen_events.is_empty() {
-                continue;
-            }
-
-            let contract_name = &contract.name.capitalized;
-            let contract_type_name = &contract.name.uncapitalized;
-
-            // Per-contract eventIdentity GADT with @as for string representation
-            let gadt_constructors = contract
-                .codegen_events
-                .iter()
-                .map(|event| {
-                    format!(
-                        "  | @as(\"{event_name}\") {event_name}: {contract_type_name}_eventIdentity<\
-                         {contract_name}.{event_name}.event, {contract_name}.{event_name}.paramsConstructor, \
-                         {contract_name}.{event_name}.eventFilter>",
-                        event_name = event.name,
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            code.push_str(&format!(
-                "type rec {contract_type_name}_eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
-                 {gadt_constructors}\n\n",
-            ));
-        }
-
         // Top-level @tag("contract") eventIdentity wrapping all contracts
         let contracts_with_events: Vec<_> = contract_templates
             .iter()
@@ -1384,9 +1354,8 @@ impl ProjectTemplate {
             .iter()
             .map(|c| {
                 let name = &c.name.capitalized;
-                let type_name = &c.name.uncapitalized;
                 format!(
-                    "  | {name}({type_name}_eventIdentity<'event, 'paramsConstructor, 'filters>)"
+                    "  | {name}({name}.eventIdentity<'event, 'paramsConstructor, 'filters>)"
                 )
             })
             .collect::<Vec<_>>()
@@ -1749,16 +1718,40 @@ type handlerContext = {{
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
+                // Generate per-contract eventIdentity GADT inside the contract module
+                let event_identity = if contract.codegen_events.is_empty() {
+                    String::new()
+                } else {
+                    let gadt_constructors = contract
+                        .codegen_events
+                        .iter()
+                        .map(|event| {
+                            format!(
+                                "    | @as(\"{event_name}\") {event_name}: eventIdentity<\
+                                 {event_name}.event, {event_name}.paramsConstructor, \
+                                 {event_name}.eventFilter>",
+                                event_name = event.name,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!(
+                        "\n\n  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =\n{}",
+                        gadt_constructors,
+                    )
+                };
+
                 let module_header = if contract.module_code.is_empty() {
                     format!("let contractName = \"{}\"", contract.name.capitalized)
                 } else {
                     format!("{}\nlet contractName = \"{}\"", contract.module_code, contract.name.capitalized)
                 };
                 format!(
-                    "@genType\nmodule {} = {{\n{}\n\n{}\n}}",
+                    "@genType\nmodule {} = {{\n{}\n\n{}{}\n}}",
                     contract.name.capitalized,
                     module_header,
                     events_code,
+                    event_identity,
                 )
             })
             .collect::<Vec<_>>()

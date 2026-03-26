@@ -239,6 +239,10 @@ let contractName = "Contract1"
       )
     }
   }
+
+  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =
+    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.eventFilter>
+    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.eventFilter>
 }
 
 @genType
@@ -438,6 +442,10 @@ let contractName = "Contract2"
       )
     }
   }
+
+  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =
+    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.eventFilter>
+    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.eventFilter>
 }
 
 /** Contract configuration with name and ABI. */
