@@ -587,13 +587,6 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         retryRef := 0
 
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
-        let shouldSwitch = switch retry {
-        // Don't attempt a switch on first two failures
-        | 0 | 1 => false
-        // Then try to switch every second failure
-        | _ => retry->mod(2) === 0
-        }
-
         // Start displaying warnings after 4 failures
         let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
         logger->log({
@@ -604,8 +597,29 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
           "err": exn->Utils.prettifyExn,
         })
 
+        let shouldSwitch = switch retry {
+        // Don't attempt a switch on first two failures
+        | 0 | 1 => false
+        // Then try to switch every second failure
+        | _ => retry->mod(2) === 0
+        }
+
         if shouldSwitch {
-          sourceState.lastFailedAt = Some(Js.Date.now())
+          let now = Js.Date.now()
+          sourceState.lastFailedAt = Some(now)
+          // Check if there's a working (recovered) source to switch to immediately
+          let nextSource = sourceManager->getNextSource(~isLive, ~excludedSources=?excludedSourcesRef.contents)
+          let hasWorkingAlternative = switch nextSource {
+          | Some(s) =>
+            switch s.lastFailedAt {
+            | None => true
+            | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
+            }
+          | None => false
+          }
+          if !hasWorkingAlternative {
+            await Utils.delay(Pervasives.min(backoffMillis, 60_000))
+          }
         } else {
           await Utils.delay(Pervasives.min(backoffMillis, 60_000))
         }

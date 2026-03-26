@@ -1745,6 +1745,7 @@ describe("SourceManager.executeQuery", () => {
       }
 
       await Promise.resolve()
+      await Utils.delay(0)
 
       // Retry 5 on sync (fallback failed, sync has oldest lastFailedAt)
       switch syncMock.getItemsOrThrowCalls {
