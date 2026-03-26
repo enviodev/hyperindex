@@ -580,7 +580,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         excludedSources->Utils.Set.add(sourceState)->ignore
 
         logger->Logging.childWarn({
-          "msg": message,
+          "msg": message ++ " - Attempting another source",
           "toBlock": attemptedToBlock,
           "err": exn->Utils.prettifyExn,
         })
