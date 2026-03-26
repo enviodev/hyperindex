@@ -438,15 +438,3 @@ let flushWrites = async persistence => {
   }
 }
 
-// Force a synchronous write: queue it, await everything.
-let forceWrite = async (persistence, ~writeArgs) => {
-  persistence.pendingWrite = Some(writeArgs)
-  switch persistence.writePromise {
-  | Some(promise) =>
-    let _ = await promise
-  | None => ()
-  }
-  executeWrite(persistence)
-  await awaitCurrentWrite(persistence)
-}
-

@@ -973,8 +973,8 @@ let injectedTaskReducer = (
         }
       } else {
         // Dispatch before any await to prevent triggering processing twice
-        dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
         dispatchAction(StartProcessingBatch)
+        dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
         let inMemoryStore = state.ctx.inMemoryStore
 
@@ -1031,8 +1031,9 @@ let injectedTaskReducer = (
     | {rollbackState: FoundReorgDepth(_), currentlyProcessingBatch: true} =>
       Logging.info("Waiting for batch to finish processing before executing rollback")
     | {rollbackState: FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber})} =>
-      // Flush all pending and in-progress writes before rollback
-      // so that DB state is consistent for rollback queries
+      // Rollback only runs after batch processing completes (currentlyProcessingBatch: false),
+      // so prepareForNextBatch has already queued the write. We just await its completion
+      // to ensure DB state is consistent for rollback queries.
       switch await state.ctx.persistence->Persistence.flushWrites {
       | Error(errHandler) =>
         dispatchAction(ErrorExit(errHandler))

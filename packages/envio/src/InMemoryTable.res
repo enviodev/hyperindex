@@ -27,10 +27,6 @@ let get = (self: t<'key, 'val>, key: 'key) =>
 
 let values = (self: t<'key, 'val>) => self.dict->Js.Dict.values
 
-let clone = (self: t<'key, 'val>) => {
-  ...self,
-  dict: self.dict->Lodash.cloneDeep,
-}
 
 module Entity = {
   type relatedEntityId = string
@@ -457,15 +453,4 @@ module Entity = {
     inMemTable.changeCount = remainingChangeCount.contents
   }
 
-  let clone = ({table, fieldNameIndices, changeCount}: t<'entity>) => {
-    table: table->clone,
-    fieldNameIndices: {
-      ...fieldNameIndices,
-      dict: fieldNameIndices.dict
-      ->Js.Dict.entries
-      ->Array.map(((k, v)) => (k, v->clone))
-      ->Js.Dict.fromArray,
-    },
-    changeCount,
-  }
 }
