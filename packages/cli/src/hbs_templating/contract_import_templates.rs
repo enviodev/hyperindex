@@ -340,8 +340,8 @@ impl Contract {
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
-                "  let entity: Types.{}_{} = {{\n",
-                self.name.uncapitalized, event.name
+                "  let entity: Entities.{}_{}.t = {{\n",
+                self.name.capitalized, event.name
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
