@@ -272,7 +272,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     query :=
       query.contents ++
       "\n" ++
-      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("block_number" integer DEFAULT 0)
+      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("blockNumber" integer DEFAULT 0)
 RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
   SELECT * FROM "${pgSchema}"."${tableName}"
 $$ LANGUAGE sql STABLE;`
