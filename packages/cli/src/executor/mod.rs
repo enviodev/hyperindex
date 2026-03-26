@@ -42,13 +42,16 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         CommandType::Start(start_args) => {
             //Add warnings to start command
             match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
-                PersistedStateExists::Exists(ps) if ps.envio_version != persisted_state::current_version() => {
+                PersistedStateExists::Exists(ps)
+                    if ps.envio_version != persisted_state::current_version() =>
+                {
                     println!(
                         "WARNING: Envio version '{}' is currently being used. It does not match \
                          the version '{}' that was used to create generated directory previously. \
                          Please consider rerunning envio codegen, or running the same version of \
                          envio. ",
-                        persisted_state::current_version(), &ps.envio_version
+                        persisted_state::current_version(),
+                        &ps.envio_version
                     )
                 }
                 PersistedStateExists::NotExists => println!(

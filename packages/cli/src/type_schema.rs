@@ -538,10 +538,7 @@ impl TypeIdent {
                 if params.is_empty() {
                     name.clone()
                 } else {
-                    let params_joined = params
-                        .iter()
-                        .map(|p| p.to_ts_type_string())
-                        .join(", ");
+                    let params_joined = params.iter().map(|p| p.to_ts_type_string()).join(", ");
                     format!("{name}<{params_joined}>")
                 }
             }
@@ -838,10 +835,8 @@ mod tests {
             "BigInt.schema".to_string()
         );
         assert_eq!(
-            TypeExpr::Identifier(TypeIdent::BigInt).to_rescript_schema(
-                &"eventArgs".to_string(),
-                &SchemaMode::ForFieldSelection
-            ),
+            TypeExpr::Identifier(TypeIdent::BigInt)
+                .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
             "BigInt.nativeSchema".to_string()
         );
         assert_eq!(
@@ -960,10 +955,7 @@ mod tests {
                         type_params: vec![],
                     },
                 },
-                RecordField::new(
-                    "myOptBool".to_string(),
-                    TypeIdent::option(TypeIdent::Bool),
-                ),
+                RecordField::new("myOptBool".to_string(), TypeIdent::option(TypeIdent::Bool)),
             ]),
             vec![],
         );
@@ -1125,8 +1117,7 @@ mod tests {
             vec![],
         );
 
-        let type_decl_multi =
-            TypeDeclMulti::new(vec![type_decl_1, type_decl_2, type_decl_3]);
+        let type_decl_multi = TypeDeclMulti::new(vec![type_decl_1, type_decl_2, type_decl_3]);
 
         let expected = "/*Silence warning of label defined in multiple \
                         types*/\n@@warning(\"-30\")\n@tag(\"case\") type rec myVariant<'a> = | \

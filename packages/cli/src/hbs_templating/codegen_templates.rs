@@ -278,7 +278,12 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
         writeln!(code, "  @genType").unwrap();
         writeln!(code, "  type t =").unwrap();
         for param in &gql_enum.params {
-            writeln!(code, "    | @as(\"{}\") {}", param.original, param.capitalized).unwrap();
+            writeln!(
+                code,
+                "    | @as(\"{}\") {}",
+                param.original, param.capitalized
+            )
+            .unwrap();
         }
         writeln!(code, "}}").unwrap();
     }
@@ -473,8 +478,7 @@ impl EntityRecordTypeTemplate {
             .iter()
             .filter(|p| !p.is_derived_field)
             .map(|p| {
-                let field_name =
-                    RecordField::to_valid_rescript_name(&p.field_name.uncapitalized);
+                let field_name = RecordField::to_valid_rescript_name(&p.field_name.uncapitalized);
                 let as_name = if p.is_entity_field {
                     format!("{}_id", p.field_name.original)
                 } else {
@@ -570,23 +574,16 @@ decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),
             Some(FuelEventKind::LogData(_)) => sighash.to_string(),
         };
 
-        let (block_type, transaction_type) =
-            match self.custom_field_selection {
-                Some(ref field_selection) => {
-                    let field_selection = FieldSelection::new(FieldSelectionOptions {
-                        transaction_fields: field_selection.transaction_fields.clone(),
-                        block_fields: field_selection.block_fields.clone(),
-                    });
-                    (
-                        field_selection.block_type,
-                        field_selection.transaction_type,
-                    )
-                }
-                None => (
-                    "Block.t".to_string(),
-                    "Transaction.t".to_string(),
-                ),
-            };
+        let (block_type, transaction_type) = match self.custom_field_selection {
+            Some(ref field_selection) => {
+                let field_selection = FieldSelection::new(FieldSelectionOptions {
+                    transaction_fields: field_selection.transaction_fields.clone(),
+                    block_fields: field_selection.block_fields.clone(),
+                });
+                (field_selection.block_type, field_selection.transaction_type)
+            }
+            None => ("Block.t".to_string(), "Transaction.t".to_string()),
+        };
 
         let base_event_config_code = r#"id,
 name,
@@ -1138,10 +1135,7 @@ pub struct NetworkConfigTemplate {
 }
 
 impl NetworkConfigTemplate {
-    fn from_config_network(
-        network: &system_config::Chain,
-        config: &SystemConfig,
-    ) -> Result<Self> {
+    fn from_config_network(network: &system_config::Chain, config: &SystemConfig) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
         let codegen_contracts: Vec<PerNetworkContractTemplate> = config
             .get_contracts()
@@ -1910,18 +1904,23 @@ type testIndexer = {{
                     let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
                     // Extract event details for EVM contracts, with per-event field selection
                     let events = match &contract.abi {
-                        Abi::Evm(_) => {
-                            contract.events.iter()
-                                .map(|e| InternalContractEventItem {
-                                    event: e.event_signature.clone(),
-                                    name: e.name.clone(),
-                                    block_fields: e.field_selection.as_ref().map(|fs| fs.block_fields.iter()
-                                        .map(|f| f.name.clone()).collect()),
-                                    transaction_fields: e.field_selection.as_ref().map(|fs| fs.transaction_fields.iter()
-                                        .map(|f| f.name.clone()).collect()),
-                                })
-                                .collect()
-                        }
+                        Abi::Evm(_) => contract
+                            .events
+                            .iter()
+                            .map(|e| InternalContractEventItem {
+                                event: e.event_signature.clone(),
+                                name: e.name.clone(),
+                                block_fields: e.field_selection.as_ref().map(|fs| {
+                                    fs.block_fields.iter().map(|f| f.name.clone()).collect()
+                                }),
+                                transaction_fields: e.field_selection.as_ref().map(|fs| {
+                                    fs.transaction_fields
+                                        .iter()
+                                        .map(|f| f.name.clone())
+                                        .collect()
+                                }),
+                            })
+                            .collect(),
                         Abi::Fuel(_) => vec![],
                     };
                     Ok((
@@ -1946,9 +1945,18 @@ type testIndexer = {{
                         } else {
                             "checksum"
                         },
-                        global_block_fields: cfg.field_selection.block_fields.iter()
-                            .map(|f| f.name.clone()).collect(),
-                        global_transaction_fields: cfg.field_selection.transaction_fields.iter().map(|f| f.name.clone()).collect(),
+                        global_block_fields: cfg
+                            .field_selection
+                            .block_fields
+                            .iter()
+                            .map(|f| f.name.clone())
+                            .collect(),
+                        global_transaction_fields: cfg
+                            .field_selection
+                            .transaction_fields
+                            .iter()
+                            .map(|f| f.name.clone())
+                            .collect(),
                     }),
                     None,
                     None,
@@ -1981,34 +1989,33 @@ type testIndexer = {{
                         .iter()
                         .map(|f| {
                             use field_types::Primitive;
-                            let (field_type, enum_name, entity_name, precision, scale) =
-                                match &f.field_type {
-                                    Primitive::Boolean => {
-                                        ("boolean".into(), None, None, None, None)
-                                    }
-                                    Primitive::String => ("string".into(), None, None, None, None),
-                                    Primitive::Int32 => ("int".into(), None, None, None, None),
-                                    Primitive::BigInt { precision } => {
-                                        ("bigint".into(), None, None, *precision, None)
-                                    }
-                                    Primitive::BigDecimal(config) => {
-                                        let (p, s) = match config {
-                                            Some((p, s)) => (Some(*p), Some(*s)),
-                                            None => (None, None),
-                                        };
-                                        ("bigdecimal".into(), None, None, p, s)
-                                    }
-                                    Primitive::Number => ("float".into(), None, None, None, None),
-                                    Primitive::Serial => ("serial".into(), None, None, None, None),
-                                    Primitive::Json => ("json".into(), None, None, None, None),
-                                    Primitive::Date => ("date".into(), None, None, None, None),
-                                    Primitive::Enum(name) => {
-                                        ("enum".into(), Some(name.clone()), None, None, None)
-                                    }
-                                    Primitive::Entity(name) => {
-                                        ("entity".into(), None, Some(name.clone()), None, None)
-                                    }
-                                };
+                            let (field_type, enum_name, entity_name, precision, scale) = match &f
+                                .field_type
+                            {
+                                Primitive::Boolean => ("boolean".into(), None, None, None, None),
+                                Primitive::String => ("string".into(), None, None, None, None),
+                                Primitive::Int32 => ("int".into(), None, None, None, None),
+                                Primitive::BigInt { precision } => {
+                                    ("bigint".into(), None, None, *precision, None)
+                                }
+                                Primitive::BigDecimal(config) => {
+                                    let (p, s) = match config {
+                                        Some((p, s)) => (Some(*p), Some(*s)),
+                                        None => (None, None),
+                                    };
+                                    ("bigdecimal".into(), None, None, p, s)
+                                }
+                                Primitive::Number => ("float".into(), None, None, None, None),
+                                Primitive::Serial => ("serial".into(), None, None, None, None),
+                                Primitive::Json => ("json".into(), None, None, None, None),
+                                Primitive::Date => ("date".into(), None, None, None, None),
+                                Primitive::Enum(name) => {
+                                    ("enum".into(), Some(name.clone()), None, None, None)
+                                }
+                                Primitive::Entity(name) => {
+                                    ("entity".into(), None, Some(name.clone()), None, None)
+                                }
+                            };
                             InternalPropertyJson {
                                 name: f.field_name.clone(),
                                 field_type,
@@ -2674,14 +2681,17 @@ let handler: fnWithEventConfig<
     #[test]
     fn event_template_with_empty_params() {
         let global_field_selection = FieldSelection::empty();
-        let event_template = EventTemplate::from_config_event(&system_config::Event {
-            name: "NewGravatar".to_string(),
-            kind: system_config::EventKind::Params(vec![]),
-            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                .to_string(),
-            event_signature: String::new(),
-            field_selection: None,
-        }, &global_field_selection)
+        let event_template = EventTemplate::from_config_event(
+            &system_config::Event {
+                name: "NewGravatar".to_string(),
+                kind: system_config::EventKind::Params(vec![]),
+                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                    .to_string(),
+                event_signature: String::new(),
+                field_selection: None,
+            },
+            &global_field_selection,
+        )
         .unwrap();
 
         assert_eq!(
@@ -2790,20 +2800,23 @@ let handler: fnWithEventConfig<
     #[test]
     fn event_template_with_custom_field_selection() {
         let global_field_selection = FieldSelection::empty();
-        let event_template = EventTemplate::from_config_event(&system_config::Event {
-            name: "NewGravatar".to_string(),
-            kind: system_config::EventKind::Params(vec![]),
-            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                .to_string(),
-            event_signature: String::new(),
-            field_selection: Some(FieldSelection {
-                block_fields: vec![],
-                transaction_fields: vec![SelectedField {
-                    name: "from".to_string(),
-                    data_type: TypeIdent::option(TypeIdent::Address),
-                }],
-            }),
-        }, &global_field_selection)
+        let event_template = EventTemplate::from_config_event(
+            &system_config::Event {
+                name: "NewGravatar".to_string(),
+                kind: system_config::EventKind::Params(vec![]),
+                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                    .to_string(),
+                event_signature: String::new(),
+                field_selection: Some(FieldSelection {
+                    block_fields: vec![],
+                    transaction_fields: vec![SelectedField {
+                        name: "from".to_string(),
+                        data_type: TypeIdent::option(TypeIdent::Address),
+                    }],
+                }),
+            },
+            &global_field_selection,
+        )
         .unwrap();
 
         assert_eq!(
@@ -3006,5 +3019,4 @@ let handler: fnWithEventConfig<
         let project_template = get_project_template_helper("lowercase-contract-name.yaml");
         insta::assert_snapshot!(project_template.internal_config_json_code);
     }
-
 }
