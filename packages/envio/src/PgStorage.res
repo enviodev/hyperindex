@@ -264,15 +264,15 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     })
   })
 
-  // Create a _historical function for the first user entity
+  // Create a function with the entity name for the first user entity
+  // The table itself is exposed as {Entity}_by_pk in Hasura
   switch entities->Belt.Array.get(0) {
   | Some(firstEntity) =>
     let tableName = firstEntity.table.tableName
-    let fnName = tableName ++ "_historical"
     query :=
       query.contents ++
       "\n" ++
-      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("blockNumber" integer DEFAULT 0)
+      `CREATE OR REPLACE FUNCTION "${pgSchema}"."${tableName}"("blockNumber" integer DEFAULT 0)
 RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
   SELECT * FROM "${pgSchema}"."${tableName}"
 $$ LANGUAGE sql STABLE;`

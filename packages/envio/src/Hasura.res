@@ -103,7 +103,13 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
   }
 }
 
-let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>) => {
+let trackTables = async (
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~tableNames: array<string>,
+  ~customNames: option<Belt.Map.String.t<string>>=?,
+) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
       {
@@ -119,7 +125,14 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
               },
               "configuration": {
                 // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
-                "custom_name": tableName,
+                "custom_name": switch customNames {
+                | Some(map) =>
+                  switch map->Belt.Map.String.get(tableName) {
+                  | Some(name) => name
+                  | None => tableName
+                  }
+                | None => tableName
+                },
               },
             }
           ),
@@ -251,9 +264,18 @@ let trackDatabase = async (
 
   Logging.info("Tracking tables in Hasura")
 
+  // For the first user entity, track the table as {Entity}_by_pk
+  // so the function can take the {Entity} name
+  let customNames = switch userEntities->Belt.Array.get(0) {
+  | Some(firstEntity) =>
+    let tableName = firstEntity.table.tableName
+    Some(Belt.Map.String.fromArray([(tableName, tableName ++ "_by_pk")]))
+  | None => None
+  }
+
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
+  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames, ~customNames?)
 
   for i in 0 to tableNames->Js.Array2.length - 1 {
     let tableName = tableNames->Js.Array2.unsafe_get(i)
@@ -303,11 +325,10 @@ let trackDatabase = async (
     }
   }
 
-  // Track _historical function for the first user entity
+  // Track function for the first user entity (uses the entity name directly)
   switch userEntities->Belt.Array.get(0) {
   | Some(firstEntity) =>
-    let functionName = firstEntity.table.tableName ++ "_historical"
-    await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName)
+    await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName=firstEntity.table.tableName)
   | None => ()
   }
 
