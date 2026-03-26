@@ -279,8 +279,22 @@ CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE OR REPLACE FUNCTION "test_schema"."A"("blockNumber" integer DEFAULT 0)
 RETURNS SETOF "test_schema"."A" AS $$
-  SELECT * FROM "test_schema"."A"
-$$ LANGUAGE sql STABLE;
+BEGIN
+  IF "blockNumber" = 0 THEN
+    RETURN QUERY SELECT * FROM "test_schema"."A";
+  ELSE
+    RETURN QUERY
+      SELECT DISTINCT ON ("id") "id", "b_id", "optionalStringToTestLinkedEntities"
+      FROM "test_schema"."envio_history_A"
+      WHERE "envio_checkpoint_id" <= (
+        SELECT MAX("id") FROM "test_schema"."envio_checkpoints"
+        WHERE "block_number" <= "blockNumber"
+      )
+      AND "envio_change" = 'SET'
+      ORDER BY "id", "envio_checkpoint_id" DESC;
+  END IF;
+END;
+$$ LANGUAGE plpgsql STABLE;
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -430,8 +444,22 @@ CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id"
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
 CREATE OR REPLACE FUNCTION "public"."A"("blockNumber" integer DEFAULT 0)
 RETURNS SETOF "public"."A" AS $$
-  SELECT * FROM "public"."A"
-$$ LANGUAGE sql STABLE;
+BEGIN
+  IF "blockNumber" = 0 THEN
+    RETURN QUERY SELECT * FROM "public"."A";
+  ELSE
+    RETURN QUERY
+      SELECT DISTINCT ON ("id") "id", "b_id", "optionalStringToTestLinkedEntities"
+      FROM "public"."envio_history_A"
+      WHERE "envio_checkpoint_id" <= (
+        SELECT MAX("id") FROM "public"."envio_checkpoints"
+        WHERE "block_number" <= "blockNumber"
+      )
+      AND "envio_change" = 'SET'
+      ORDER BY "id", "envio_checkpoint_id" DESC;
+  END IF;
+END;
+$$ LANGUAGE plpgsql STABLE;
 CREATE VIEW "public"."_meta" AS 
 SELECT 
   "id" AS "chainId",

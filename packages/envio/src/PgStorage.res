@@ -269,13 +269,42 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   switch entities->Belt.Array.get(0) {
   | Some(firstEntity) =>
     let tableName = firstEntity.table.tableName
+    let historyTableName = EntityHistory.historyTableName(
+      ~entityName=tableName,
+      ~entityIndex=firstEntity.index,
+    )
+    let dataFieldNames =
+      firstEntity.table.fields
+      ->Belt.Array.keepMap(fieldOrDerived =>
+        switch fieldOrDerived {
+        | Field(field) => field->Table.getDbFieldName->Some
+        | DerivedFrom(_) => None
+        }
+      )
+      ->Belt.Array.map(name => `"${name}"`)
+      ->Js.Array2.joinWith(", ")
+
     query :=
       query.contents ++
       "\n" ++
       `CREATE OR REPLACE FUNCTION "${pgSchema}"."${tableName}"("blockNumber" integer DEFAULT 0)
 RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
-  SELECT * FROM "${pgSchema}"."${tableName}"
-$$ LANGUAGE sql STABLE;`
+BEGIN
+  IF "blockNumber" = 0 THEN
+    RETURN QUERY SELECT * FROM "${pgSchema}"."${tableName}";
+  ELSE
+    RETURN QUERY
+      SELECT DISTINCT ON ("id") ${dataFieldNames}
+      FROM "${pgSchema}"."${historyTableName}"
+      WHERE "${EntityHistory.checkpointIdFieldName}" <= (
+        SELECT MAX("id") FROM "${pgSchema}"."${InternalTable.Checkpoints.table.tableName}"
+        WHERE "block_number" <= "blockNumber"
+      )
+      AND "${EntityHistory.changeFieldName}" = 'SET'
+      ORDER BY "id", "${EntityHistory.checkpointIdFieldName}" DESC;
+  END IF;
+END;
+$$ LANGUAGE plpgsql STABLE;`
   | None => ()
   }
 
