@@ -839,7 +839,7 @@ let injectedTaskReducer = (
           }
           let entityConfig = state.ctx.persistence.allEntities->Array.getUnsafe(idx)
           // Skip pruning for entities with time travel enabled
-          if entityConfig.enableTimeTravel {
+          if entityConfig.timeTravel {
             ()
           } else {
           let timeRef = Hrtime.makeTimer()

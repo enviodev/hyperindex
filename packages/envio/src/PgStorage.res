@@ -267,7 +267,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   // Create time travel functions for entities with @timeTravel directive
   // The table itself is exposed as {Entity}_by_pk in Hasura
   entities->Js.Array2.forEach((entityConfig: Internal.entityConfig) => {
-    if entityConfig.enableTimeTravel {
+    if entityConfig.timeTravel {
       let tableName = entityConfig.table.tableName
       let historyTableName = EntityHistory.historyTableName(
         ~entityName=tableName,

@@ -96,7 +96,7 @@ struct InternalEntityJson {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     composite_indices: Vec<Vec<InternalCompositeIndexJson>>,
     #[serde(skip_serializing_if = "is_false")]
-    enable_time_travel: bool,
+    time_travel: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -401,7 +401,7 @@ pub struct EntityRecordTypeTemplate {
     pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
-    pub enable_time_travel: bool,
+    pub time_travel: bool,
 }
 
 impl EntityRecordTypeTemplate {
@@ -500,7 +500,7 @@ impl EntityRecordTypeTemplate {
             derived_fields,
             composite_indices,
             params,
-            enable_time_travel: entity.enable_time_travel,
+            time_travel: entity.time_travel,
         })
     }
 }
@@ -1890,7 +1890,7 @@ type testIndexer = {{
                         properties,
                         derived_fields,
                         composite_indices,
-                        enable_time_travel: entity.enable_time_travel,
+                        time_travel: entity.time_travel,
                     }
                 })
                 .collect();

@@ -265,7 +265,7 @@ let trackDatabase = async (
   // For @timeTravel entities, only expose select_by_pk (the function serves as the list query)
   let timeTravelTableNames =
     userEntities
-    ->Js.Array2.filter(entity => entity.enableTimeTravel)
+    ->Js.Array2.filter(entity => entity.timeTravel)
     ->Js.Array2.map(entity => entity.table.tableName)
     ->Belt.Set.String.fromArray
 
@@ -324,7 +324,7 @@ let trackDatabase = async (
   // Track time travel functions for entities with @timeTravel
   for i in 0 to userEntities->Js.Array2.length - 1 {
     let entityConfig = userEntities->Js.Array2.unsafe_get(i)
-    if entityConfig.enableTimeTravel {
+    if entityConfig.timeTravel {
       await trackFunction(~endpoint, ~auth, ~pgSchema, ~functionName=entityConfig.table.tableName)
     }
   }

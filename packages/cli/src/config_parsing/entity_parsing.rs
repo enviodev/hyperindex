@@ -323,7 +323,7 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
-    pub enable_time_travel: bool,
+    pub time_travel: bool,
 }
 
 impl Entity {
@@ -331,7 +331,7 @@ impl Entity {
         name: &str,
         fields: Vec<Field>,
         multi_field_indexes: Vec<MultiFieldIndex>,
-        enable_time_travel: bool,
+        time_travel: bool,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -383,7 +383,7 @@ impl Entity {
             name: name.to_string(),
             fields,
             multi_field_indexes,
-            enable_time_travel,
+            time_travel,
         })
     }
 
@@ -467,7 +467,7 @@ impl Entity {
                 "Failed parsing multi field indexes on entity {name}"
             ))?;
 
-        let enable_time_travel = obj
+        let time_travel = obj
             .directives
             .iter()
             .any(|directive| directive.name == "timeTravel");
@@ -482,7 +482,7 @@ impl Entity {
             .collect::<anyhow::Result<Vec<Field>>>()
             .context(format!("Failed parsing fields on entity {name}"))?;
 
-        let entity = Self::new(name, fields, multi_field_indexes, enable_time_travel)
+        let entity = Self::new(name, fields, multi_field_indexes, time_travel)
             .context(format!("Failed constructing entity {name}",))?;
 
         // Here, store indexed information somewhere within your entity structure or handle them accordingly
