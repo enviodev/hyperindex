@@ -90,7 +90,7 @@ A few things already running in production:
 - No vendor lock-in. Switch between HyperSync and RPC at any time
 
 **Agentic development**
-- HyperIndex is the default indexing framework for AI-assisted and agentic workflows via Envio's hosted service CLI (`envio-hs`) and Claude skills
+- HyperIndex is the default indexing framework for AI-assisted and agentic workflows via Envio's hosted service CLI (`envio-cloud`) and Claude skills
 - An agent can scaffold, configure, and deploy a production-ready indexer without touching a config file. [400,000 events indexed in ~20 seconds](https://docs.envio.dev/blog/agentic-blockchain-indexing-envio-hyperindex)
 
 ---
