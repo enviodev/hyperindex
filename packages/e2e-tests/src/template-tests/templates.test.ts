@@ -19,7 +19,7 @@ interface TemplateConfig {
   hasTests?: boolean;
 }
 
-// All available templates to test (TypeScript only)
+// All available templates and contract imports to test
 const TEMPLATES: TemplateConfig[] = [
   // EVM Templates
   {
@@ -47,6 +47,39 @@ const TEMPLATES: TemplateConfig[] = [
   {
     name: "svm-block-handler",
     initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
+  },
+  // EVM Contract Import (explorer)
+  {
+    name: "evm-contract-import-ts",
+    initArgs: [
+      "contract-import",
+      "-c",
+      "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "explorer",
+      "-b",
+      "ethereum-mainnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "typescript",
+    ],
+    hasTests: true,
+  },
+  {
+    name: "evm-contract-import-rescript",
+    initArgs: [
+      "contract-import",
+      "-c",
+      "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "explorer",
+      "-b",
+      "ethereum-mainnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "rescript",
+    ],
+    hasTests: true,
   },
 ];
 
