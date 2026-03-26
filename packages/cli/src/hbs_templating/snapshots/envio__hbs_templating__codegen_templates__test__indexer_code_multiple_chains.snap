@@ -509,6 +509,26 @@ Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
 HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
 
+@tag("contract")
+type eventIdentity<'event, 'paramsConstructor, 'filters> =
+  | Contract1(Contract1.eventIdentity<'event, 'paramsConstructor, 'filters>)
+  | Contract2(Contract2.eventIdentity<'event, 'paramsConstructor, 'filters>)
+
+@tag("kind")
+type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
+  | OnEvent({
+      event: eventIdentity<'event, 'paramsConstructor, 'filters>,
+      params?: 'paramsConstructor,
+    })
+
+let makeSimulateItem = (
+  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,
+): SimulateItems.simulateItem => {
+  event: (constructor->Utils.magic)["event"]["_0"],
+  contract: (constructor->Utils.magic)["event"]["contract"],
+  params: (constructor->Utils.magic)["params"],
+}
+
 type testIndexerProcessConfigChains = {
   \"1"?: TestIndexer.chainConfig,
   \"2"?: TestIndexer.chainConfig,

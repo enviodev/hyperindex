@@ -1335,75 +1335,6 @@ pub struct ProjectTemplate {
 }
 
 impl ProjectTemplate {
-    /// Generate GADT-based simulate types with per-contract modules, eventIdentity,
-    /// simulateItemConstructor, and makeSimulateItem function.
-    fn generate_simulate_types(contract_templates: &[ContractTemplate]) -> String {
-        if contract_templates.is_empty() {
-            return String::new();
-        }
-
-        let mut code = String::new();
-
-        // Top-level @tag("contract") eventIdentity wrapping all contracts
-        let contracts_with_events: Vec<_> = contract_templates
-            .iter()
-            .filter(|c| !c.codegen_events.is_empty())
-            .collect();
-
-        let top_constructors = contracts_with_events
-            .iter()
-            .map(|c| {
-                let name = &c.name.capitalized;
-                format!(
-                    "  | {name}({name}.eventIdentity<'event, 'paramsConstructor, 'filters>)"
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        code.push_str(&format!(
-            "@tag(\"contract\")\n\
-             type eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
-             {top_constructors}\n\n",
-        ));
-
-        // simulateItemConstructor with @tag("kind")
-        code.push_str(
-            "@tag(\"kind\")\n\
-             type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =\n\
-             \x20 | OnEvent({\n\
-             \x20     event: eventIdentity<'event, 'paramsConstructor, 'filters>,\n\
-             \x20     params?: 'paramsConstructor,\n\
-             \x20   })\n\n",
-        );
-
-        // makeSimulateItem function
-        code.push_str(
-            "let makeSimulateItem = (\n\
-             \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,\n\
-             ): SimulateItems.simulateItem => {\n\
-             \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
-             \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
-             \x20 params: (constructor->Utils.magic)[\"params\"],\n\
-             }\n\n",
-        );
-
-        // simulateBlock function
-        code.push_str(
-            "let simulateBlock = (~name: string, ~number: option<int>=?, \
-             ()): SimulateItems.simulateItem => {\n\
-             \x20 {\"block\": name, \"number\": number}->\
-             (Utils.magic: {..} => SimulateItems.simulateItem)\n\
-             }\n\n",
-        );
-
-        // processConfig type
-        code.push_str(
-            "type processConfig = {simulateItems: array<SimulateItems.simulateItem>}\n",
-        );
-
-        code
-    }
 
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         let template_dirs = TemplateDirs::new();
@@ -1757,9 +1688,49 @@ type handlerContext = {{
             .collect::<Vec<_>>()
             .join("\n\n");
 
+        // Generate GADT event identifier types for type-safe simulate items
+        let simulate_types_code = if codegen_contracts.is_empty() {
+            String::new()
+        } else {
+            let contracts_with_events: Vec<_> = codegen_contracts
+                .iter()
+                .filter(|c| !c.codegen_events.is_empty())
+                .collect();
+
+            let top_constructors = contracts_with_events
+                .iter()
+                .map(|c| {
+                    let name = &c.name.capitalized;
+                    format!(
+                        "  | {name}({name}.eventIdentity<'event, 'paramsConstructor, 'filters>)"
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            format!(
+                "@tag(\"contract\")\n\
+                 type eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
+                 {top_constructors}\n\n\
+                 @tag(\"kind\")\n\
+                 type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =\n\
+                 \x20 | OnEvent({{\n\
+                 \x20     event: eventIdentity<'event, 'paramsConstructor, 'filters>,\n\
+                 \x20     params?: 'paramsConstructor,\n\
+                 \x20   }})\n\n\
+                 let makeSimulateItem = (\n\
+                 \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,\n\
+                 ): SimulateItems.simulateItem => {{\n\
+                 \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
+                 \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
+                 \x20 params: (constructor->Utils.magic)[\"params\"],\n\
+                 }}"
+            )
+        };
+
         // Combine all parts into indexer_code
         let indexer_code = format!(
-            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             enums_module_code,
             entities_module_code,
             handler_context_code,
@@ -1771,6 +1742,7 @@ type handlerContext = {{
             indexer_type,
             get_chain_by_id,
             on_block_code,
+            simulate_types_code,
         );
 
         // Generate testIndexer types and createTestIndexer
@@ -1831,14 +1803,10 @@ type testIndexer = {{
 
         let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
 
-        // Generate GADT event identifier types for type-safe simulate items
-        let simulate_types = Self::generate_simulate_types(&codegen_contracts);
-
         let generated_top_level_bindings = format!(
-            "{}\n\n{}\n\n{}",
+            "{}\n\n{}",
             r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
             r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
-            simulate_types,
         );
 
         // Helper function to convert kebab-case to camelCase
