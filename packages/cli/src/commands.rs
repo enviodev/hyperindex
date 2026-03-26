@@ -208,8 +208,7 @@ pub mod start {
         let args = vec!["--no-warnings", &index_path];
 
         // Run from project root to ensure proper cwd for handlers
-        let exit =
-            execute_command(cmd, args, &config.parsed_project_paths.project_root).await?;
+        let exit = execute_command(cmd, args, &config.parsed_project_paths.project_root).await?;
 
         if !exit.success() {
             return Err(anyhow!(

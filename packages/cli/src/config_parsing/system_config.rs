@@ -580,7 +580,9 @@ impl SystemConfig {
                     };
                     match &n.rpc {
                         Some(RpcSelection::Single(rpc)) => is_sync(&rpc.source_for),
-                        Some(RpcSelection::List(rpcs)) => rpcs.iter().any(|r| is_sync(&r.source_for)),
+                        Some(RpcSelection::List(rpcs)) => {
+                            rpcs.iter().any(|r| is_sync(&r.source_for))
+                        }
                         Some(RpcSelection::Url(_)) => default_for == For::Sync,
                         None => false,
                     }
@@ -1356,7 +1358,10 @@ impl Event {
                 }
                 // Add a space after comma if the next char isn't ')' or ']'
                 // (to handle cases like trailing commas)
-                if chars.peek().is_some() && chars.peek() != Some(&')') && chars.peek() != Some(&']') {
+                if chars.peek().is_some()
+                    && chars.peek() != Some(&')')
+                    && chars.peek() != Some(&']')
+                {
                     result.push(' ');
                 }
             } else {
