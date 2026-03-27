@@ -117,6 +117,7 @@ module SafeGauge = MakeSafePromMetric({
   let handleFloat = PromClient.Gauge.setFloat
 })
 
+
 module ProcessingBatch = {
   let loadTimeCounter = PromClient.Counter.makeCounter({
     "name": "envio_preload_seconds",
