@@ -64,6 +64,12 @@ let hypersyncClientSerializationFormat =
 let hypersyncClientEnableQueryCaching =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=true)
 
+let hypersyncLogLevel = envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", S.option(S.string))
+switch hypersyncLogLevel {
+| Some(level) => HyperSyncClient.setLogLevel(level)
+| None => ()
+}
+
 let logStrategy =
   envSafe->EnvSafe.get(
     "LOG_STRATEGY",
