@@ -4,6 +4,7 @@ expression: content
 ---
 import { describe, it, expect } from "vitest";
 import { createTestIndexer, type Contract1_NewGravatar } from "generated";
+import { Addresses } from "envio";
 
 describe("Contract1 contract NewGravatar event tests", () => {
   it("Contract1_NewGravatar is created correctly", async () => {
@@ -14,33 +15,30 @@ describe("Contract1 contract NewGravatar event tests", () => {
       contract: "Contract1" as const,
       event: "NewGravatar" as const,
       params: {
-        // id: ...,
-        // owner: ...,
-        // displayName: ...,
-        // imageUrl: ...,
+        id: 0n,
+        owner: Addresses.defaultAddress,
+        displayName: "default string value",
+        imageUrl: "default string value",
       },
     };
 
-    // TODO: Configure chain ID and start/end blocks for your contract
     await indexer.process({
       chains: {
         1: {
           startBlock: 0,
-          endBlock: 100,
+          endBlock: 0,
           simulate: [event],
         },
       },
     });
 
     // Getting the actual entity from the test indexer
-    let actualContract1NewGravatar = await indexer.Contract1_NewGravatar.get(
-      `${event.chainId}_${event.block.number}_${event.logIndex}`
-    );
+    let actualContract1NewGravatar = await indexer.Contract1_NewGravatar.getOrThrow("1_0_0");
 
     // Creating the expected entity
     const expectedContract1NewGravatar: Contract1_NewGravatar = {
-      id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
-      id: event.params.id,
+      id: "1_0_0",
+      event_id: event.params.id,
       owner: event.params.owner,
       displayName: event.params.displayName,
       imageUrl: event.params.imageUrl,

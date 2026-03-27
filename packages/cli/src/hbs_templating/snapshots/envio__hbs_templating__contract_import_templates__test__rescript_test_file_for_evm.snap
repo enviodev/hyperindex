@@ -6,24 +6,23 @@ open Vitest
 open Indexer
 
 describe("Contract1 contract NewGravatar event tests", () => {
-  Async.it("NewGravatar handler creates contract1_NewGravatar entity", async _t => {
+  Async.it("NewGravatar handler creates Contract1_NewGravatar entity", async _t => {
     let indexer = createTestIndexer()
 
-    // TODO: Configure chain ID and start/end blocks for your contract
     let _ = await indexer.process({
       chains: {
         \"1": {
           startBlock: 0,
-          endBlock: 100,
+          endBlock: 0,
           simulate: [
             makeSimulateItem(
               OnEvent({
                 event: Contract1(NewGravatar),
                 params: {
                 id: 0n,
-                owner: TestHelpers_MockAddresses.defaultAddress,
-                displayName: "foo",
-                imageUrl: "foo",
+                owner: Envio.TestHelpers.Addresses.defaultAddress,
+                displayName: "default string value",
+                imageUrl: "default string value",
               },
             }),
           ),
@@ -32,22 +31,19 @@ describe("Contract1 contract NewGravatar event tests", () => {
       },
     })
 
-    // Getting the actual entity from the test indexer
-    let actualContract1NewGravatar = await indexer.contract1_NewGravatar.getOrThrow("1_0_0")
+    let actualContract1NewGravatar = await indexer.\"Contract1_NewGravatar".getOrThrow("1_0_0")
 
-    // Creating the expected entity
-    let expectedContract1NewGravatar: contract1_NewGravatar = {
+    let expectedContract1NewGravatar: Entities.Contract1_NewGravatar.t = {
       id: "1_0_0",
       event_id: 0n,
-      owner: TestHelpers_MockAddresses.defaultAddress->Address.toString,
-      displayName: "foo",
-      imageUrl: "foo",
+      owner: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+      displayName: "default string value",
+      imageUrl: "default string value",
     }
 
-    //Assert the expected Contract1 NewGravatar entity
     expect(
       actualContract1NewGravatar,
-      ~message="Actual contract1_NewGravatar should be the same as the expected contract1_NewGravatar",
+      ~message="Actual Contract1_NewGravatar should be the same as the expected Contract1_NewGravatar",
     ).toEqual(expectedContract1NewGravatar)
   })
 })

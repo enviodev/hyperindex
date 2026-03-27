@@ -17,25 +17,22 @@ describe("Greeter contract NewGreeting event tests", () => {
       },
     };
 
-    // TODO: Configure chain ID and start/end blocks for your contract
     await indexer.process({
       chains: {
-        1: {
+        0: {
           startBlock: 0,
-          endBlock: 100,
+          endBlock: 0,
           simulate: [event],
         },
       },
     });
 
     // Getting the actual entity from the test indexer
-    let actualGreeterNewGreeting = await indexer.Greeter_NewGreeting.get(
-      `${event.chainId}_${event.block.height}_${event.logIndex}`
-    );
+    let actualGreeterNewGreeting = await indexer.Greeter_NewGreeting.getOrThrow("0_0_0");
 
     // Creating the expected entity
     const expectedGreeterNewGreeting: Greeter_NewGreeting = {
-      id: `${event.chainId}_${event.block.height}_${event.logIndex}`,
+      id: "0_0_0",
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);

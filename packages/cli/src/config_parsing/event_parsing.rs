@@ -239,7 +239,7 @@ mod tests {
 
         assert_eq!(
             user_address_res_type.get_default_value_rescript(),
-            "TestHelpers_MockAddresses.defaultAddress".to_string()
+            "Envio.TestHelpers.Addresses.defaultAddress".to_string()
         );
         assert_eq!(
             amount_uint256_res_type.get_default_value_rescript(),
@@ -247,7 +247,7 @@ mod tests {
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),
-            "(false, TestHelpers_MockAddresses.defaultAddress)".to_string()
+            "(false, Envio.TestHelpers.Addresses.defaultAddress)".to_string()
         );
         assert_eq!(
             bytes_arr_res_type.get_default_value_rescript(),
