@@ -59,6 +59,14 @@ let hypersyncClientSerializationFormat =
 let hypersyncClientEnableQueryCaching =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=true)
 
+let hypersyncLogLevel =
+  envSafe->EnvSafe.get(
+    "ENVIO_HYPERSYNC_LOG_LEVEL",
+    HyperSyncClient.logLevelSchema,
+    ~fallback=#info,
+  )
+HyperSyncClient.setLogLevel(hypersyncLogLevel)
+
 module Benchmark = {
   module SaveDataStrategy: {
     type t
