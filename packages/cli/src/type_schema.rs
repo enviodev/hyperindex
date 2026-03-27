@@ -713,7 +713,7 @@ impl TypeIdent {
             Self::BigDecimal => "// default value not required since BigDecimal doesn't exist on \
                                  contracts for contract import"
                 .to_string(),
-            Self::Address => "Addresses.defaultAddress".to_string(),
+            Self::Address => "TestHelpers.Addresses.defaultAddress".to_string(),
             Self::String => "\"default string value\"".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),

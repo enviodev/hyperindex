@@ -4,7 +4,7 @@ expression: content
 ---
 import { describe, it, expect } from "vitest";
 import { createTestIndexer, type Contract1_NewGravatar } from "generated";
-import { Addresses } from "envio";
+import { TestHelpers } from "envio";
 
 describe("Contract1 contract NewGravatar event tests", () => {
   it("Contract1_NewGravatar is created correctly", async () => {
@@ -16,7 +16,7 @@ describe("Contract1 contract NewGravatar event tests", () => {
       event: "NewGravatar" as const,
       params: {
         id: 0n,
-        owner: Addresses.defaultAddress,
+        owner: TestHelpers.Addresses.defaultAddress,
         displayName: "default string value",
         imageUrl: "default string value",
       },

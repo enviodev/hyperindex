@@ -406,7 +406,7 @@ impl Contract {
             entity_name
         ));
         if has_address_param {
-            content.push_str("import { Addresses } from \"envio\";\n");
+            content.push_str("import { TestHelpers } from \"envio\";\n");
         }
 
         content.push_str(&format!(
