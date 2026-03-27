@@ -521,14 +521,15 @@ let make = (
   )
 }
 
+type logLevel = [#trace | #debug | #info | #warn | #error]
+let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
+
 /**
  * Set the log level for the underlying Rust logger in hypersync-client.
- * Accepts values like "info", "warn", "debug", "trace", "error",
- * or a full filter directive like "hypersync_client=debug".
  * Must be called before creating any HypersyncClient.
  */
 @module("@envio-dev/hypersync-client")
-external setLogLevel: string => unit = "setLogLevel"
+external setLogLevel: logLevel => unit = "setLogLevel"
 
 module Decoder = {
   type rec decodedSolType<'a> = {val: 'a}
