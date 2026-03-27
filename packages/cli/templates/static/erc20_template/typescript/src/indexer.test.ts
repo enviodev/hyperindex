@@ -119,18 +119,18 @@ describe("Transfers", () => {
     });
 
     // Get the balance of userAddress1 after the transfer
-    const account1Balance = (await indexer.Account.get(userAddress1))?.balance;
+    const account1 = await indexer.Account.getOrThrow(userAddress1);
     // Assert the expected balance
     expect(
-      account1Balance,
+      account1.balance,
       "Should have subtracted transfer amount 3 from userAddress1 balance 5"
     ).toBe(2n);
 
     // Get the balance of userAddress2 after the transfer
-    const account2Balance = (await indexer.Account.get(userAddress2))?.balance;
+    const account2 = await indexer.Account.getOrThrow(userAddress2);
     // Assert the expected balance
     expect(
-      account2Balance,
+      account2.balance,
       "Should have added transfer amount 3 to userAddress2 balance 0"
     ).toBe(3n);
   });

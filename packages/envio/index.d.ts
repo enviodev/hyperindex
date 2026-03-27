@@ -17,7 +17,12 @@ export type { EffectCaller, Address } from "./src/Types.ts";
 
 export const TestHelpers: {
   Addresses: {
-    readonly mockAddresses: readonly Address[];
+    readonly mockAddresses: readonly [
+      Address, Address, Address, Address, Address,
+      Address, Address, Address, Address, Address,
+      Address, Address, Address, Address, Address,
+      Address, Address, Address, Address, Address,
+    ];
     readonly defaultAddress: Address;
   };
 };
@@ -559,61 +564,46 @@ type SimulateEventItemShared = {
 
 /** A typesafe simulate event item for EVM. */
 type EvmSimulateEventItem<Contracts extends Record<string, { events: string }>> =
-  SimulateContractEvent<Contracts> & SimulateEventItemShared & {
-    /** Override the block number. Defaults to startBlock. */
-    number?: number;
-  };
+  SimulateContractEvent<Contracts> & SimulateEventItemShared;
 
 /** A typesafe simulate event item for Fuel. */
 type FuelSimulateEventItem<Contracts extends Record<string, { events: string }>> =
-  SimulateContractEvent<Contracts> & SimulateEventItemShared & {
-    /** Override the block height. Defaults to startBlock. */
-    height?: number;
-  };
-
-/** A simulate block item for EVM specifying a block handler to invoke. */
-type EvmSimulateBlockItem = {
-  /** The onBlock handler name as defined in the handler registration. */
-  block: string;
-  /** Override the block number. Defaults to startBlock. */
-  number?: number;
-};
-
-/** A simulate block item for Fuel specifying a block handler to invoke. */
-type FuelSimulateBlockItem = {
-  /** The onBlock handler name as defined in the handler registration. */
-  block: string;
-  /** Override the block height. Defaults to startBlock. */
-  height?: number;
-};
+  SimulateContractEvent<Contracts> & SimulateEventItemShared;
 
 /** Simulate item type for EVM ecosystem. */
 type EvmSimulateItem<Config extends IndexerConfigTypes> =
   Config["evm"] extends { contracts?: Record<string, { events: string }> }
     ? Config["evm"]["contracts"] extends Record<string, { events: string }>
-      ? EvmSimulateEventItem<Config["evm"]["contracts"]> | EvmSimulateBlockItem
-      : EvmSimulateBlockItem
-    : EvmSimulateBlockItem;
+      ? EvmSimulateEventItem<Config["evm"]["contracts"]>
+      : never
+    : never;
 
 /** Simulate item type for Fuel ecosystem. */
 type FuelSimulateItem<Config extends IndexerConfigTypes> =
   Config["fuel"] extends { contracts?: Record<string, { events: string }> }
     ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
-      ? FuelSimulateEventItem<Config["fuel"]["contracts"]> | FuelSimulateBlockItem
-      : FuelSimulateBlockItem
-    : FuelSimulateBlockItem;
+      ? FuelSimulateEventItem<Config["fuel"]["contracts"]>
+      : never
+    : never;
 
-/** Simulate item type for SVM ecosystem. */
-type SvmSimulateItem = EvmSimulateBlockItem;
-
-/** Configuration for a single chain in the test indexer. */
-type TestIndexerChainConfig<SimulateItem> = {
+/** Configuration for a single EVM chain in the test indexer. */
+type EvmTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
   /** The block number to start processing from. */
   startBlock: number;
   /** The block number to stop processing at. */
   endBlock: number;
   /** Simulate items to process instead of fetching from real sources. */
-  simulate?: SimulateItem[];
+  simulate?: EvmSimulateItem<Config>[];
+};
+
+/** Configuration for a single Fuel chain in the test indexer. */
+type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
+  /** The block number to start processing from. */
+  startBlock: number;
+  /** The block number to stop processing at. */
+  endBlock: number;
+  /** Simulate items to process instead of fetching from real sources. */
+  simulate?: FuelSimulateItem<Config>[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
@@ -640,6 +630,8 @@ type ConfigEntities<Config extends IndexerConfigTypes> =
 type EntityOps<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
   readonly get: (id: string) => Promise<Entity | undefined>;
+  /** Get an entity by ID or throw if not found. */
+  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
   /** Set (create or update) an entity. */
   readonly set: (entity: Entity) => void;
 };
@@ -680,33 +672,15 @@ type FuelChainIds<Config extends IndexerConfigTypes> =
       : never
     : never;
 
-type SvmChainIds<Config extends IndexerConfigTypes> =
-  Config["svm"] extends { chains: infer Chains }
-    ? Chains extends Record<string, { id: number }>
-      ? Chains[keyof Chains]["id"]
-      : never
-    : never;
-
-// Helper to extract all chain IDs from config for test indexer
-type TestIndexerChainIds<Config extends IndexerConfigTypes> =
-  | EvmChainIds<Config>
-  | FuelChainIds<Config>
-  | SvmChainIds<Config>;
-
 // Per-ecosystem chain config mappings
 type EvmTestChains<Config extends IndexerConfigTypes> =
   HasEvm<Config> extends true
-    ? { [K in EvmChainIds<Config>]?: TestIndexerChainConfig<EvmSimulateItem<Config>> }
+    ? { [K in EvmChainIds<Config>]?: EvmTestIndexerChainConfig<Config> }
     : {};
 
 type FuelTestChains<Config extends IndexerConfigTypes> =
   HasFuel<Config> extends true
-    ? { [K in FuelChainIds<Config>]?: TestIndexerChainConfig<FuelSimulateItem<Config>> }
-    : {};
-
-type SvmTestChains<Config extends IndexerConfigTypes> =
-  HasSvm<Config> extends true
-    ? { [K in SvmChainIds<Config>]?: TestIndexerChainConfig<SvmSimulateItem> }
+    ? { [K in FuelChainIds<Config>]?: FuelTestIndexerChainConfig<Config> }
     : {};
 
 /** Process configuration for the test indexer, with chains keyed by chain ID. */
@@ -714,8 +688,7 @@ export type TestIndexerProcessConfig<Config extends IndexerConfigTypes> = {
   /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
   chains: Prettify<
     EvmTestChains<Config> &
-    FuelTestChains<Config> &
-    SvmTestChains<Config>
+    FuelTestChains<Config>
   >;
 };
 

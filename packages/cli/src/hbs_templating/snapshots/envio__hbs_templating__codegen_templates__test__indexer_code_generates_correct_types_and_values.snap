@@ -337,7 +337,7 @@ let makeSimulateItem = (
 }
 
 type testIndexerProcessConfigChains = {
-  \"1"?: TestIndexer.chainConfig,
+  \"1"?: TestIndexer.evmChainConfig,
 }
 
 type testIndexerProcessConfig = {

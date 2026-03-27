@@ -32,7 +32,7 @@ describe("Greeter template tests", () => {
       greetings: [greeting],
     };
 
-    const actualUserEntity = await indexer.User.get(userAddress);
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
     expect(actualUserEntity).toEqual(expectedUserEntity);
   });
 
@@ -63,8 +63,8 @@ describe("Greeter template tests", () => {
       },
     });
 
-    const actualUserEntity = await indexer.User.get(userAddress);
-    expect(actualUserEntity?.numberOfGreetings).toBe(2);
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
+    expect(actualUserEntity.numberOfGreetings).toBe(2);
   });
 
   it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", async () => {
@@ -94,7 +94,7 @@ describe("Greeter template tests", () => {
       },
     });
 
-    const actualUserEntity = await indexer.User.get(userAddress);
-    expect(actualUserEntity?.latestGreeting).toBe(greetingAgain);
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
+    expect(actualUserEntity.latestGreeting).toBe(greetingAgain);
   });
 });

@@ -13,8 +13,6 @@ describe("Greeter contract NewGreeting event tests", () => {
     const event = {
       contract: "Greeter" as const,
       event: "NewGreeting" as const,
-      params: {
-      },
     };
 
     await indexer.process({

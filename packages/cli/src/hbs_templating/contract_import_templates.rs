@@ -430,14 +430,16 @@ impl Contract {
             contract_name
         ));
         content.push_str(&format!("      event: \"{}\" as const,\n", event_name));
-        content.push_str("      params: {\n");
-        for param in &first_event.params {
-            content.push_str(&format!(
-                "        {}: {},\n",
-                param.js_name, param.default_value_typescript
-            ));
+        if !first_event.params.is_empty() {
+            content.push_str("      params: {\n");
+            for param in &first_event.params {
+                content.push_str(&format!(
+                    "        {}: {},\n",
+                    param.js_name, param.default_value_typescript
+                ));
+            }
+            content.push_str("      },\n");
         }
-        content.push_str("      },\n");
         content.push_str("    };\n");
 
         // Process
