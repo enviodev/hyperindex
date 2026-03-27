@@ -148,7 +148,6 @@ async fn connect_docker() -> anyhow::Result<Docker> {
 }
 
 struct EnvConfig {
-    pg_host: String,
     pg_port: String,
     pg_password: String,
     pg_user: String,
@@ -176,7 +175,6 @@ impl EnvConfig {
         };
 
         Self {
-            pg_host: var("ENVIO_PG_HOST", "localhost"),
             pg_port: var("ENVIO_PG_PORT", "5433"),
             pg_password: var("ENVIO_PG_PASSWORD", "testing"),
             pg_user: var("ENVIO_PG_USER", "postgres"),
@@ -824,7 +822,6 @@ mod tests {
     #[test]
     fn config_hash_deterministic() {
         let env1 = EnvConfig {
-            pg_host: "localhost".into(),
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
@@ -835,7 +832,6 @@ mod tests {
             hasura_admin_secret: "testing".into(),
         };
         let env2 = EnvConfig {
-            pg_host: "localhost".into(),
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
@@ -851,7 +847,6 @@ mod tests {
     #[test]
     fn config_hash_changes_on_diff() {
         let env1 = EnvConfig {
-            pg_host: "localhost".into(),
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
@@ -862,7 +857,6 @@ mod tests {
             hasura_admin_secret: "testing".into(),
         };
         let env2 = EnvConfig {
-            pg_host: "localhost".into(),
             pg_port: "5434".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
