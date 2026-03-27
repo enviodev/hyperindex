@@ -120,7 +120,7 @@ describe("SourceManager fetchNext", () => {
     let addresses = []
 
     for i in 0 to numContracts - 1 {
-      let address = TestHelpers.Addresses.mockAddresses[i]->Option.getExn
+      let address = Envio.TestHelpers.Addresses.mockAddresses[i]->Option.getExn
       addresses->Array.push(address)
     }
 

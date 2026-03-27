@@ -27,14 +27,14 @@ let getEarliestEvent = (fetchState: FetchState.t) => {
   }
 }
 
-let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
-let mockAddress1 = TestHelpers.Addresses.mockAddresses[1]->Option.getExn
-let mockAddress2 = TestHelpers.Addresses.mockAddresses[2]->Option.getExn
-let mockAddress3 = TestHelpers.Addresses.mockAddresses[3]->Option.getExn
-let mockAddress4 = TestHelpers.Addresses.mockAddresses[4]->Option.getExn
-let mockAddress5 = TestHelpers.Addresses.mockAddresses[5]->Option.getExn
-let mockAddress6 = TestHelpers.Addresses.mockAddresses[6]->Option.getExn
-let mockFactoryAddress = TestHelpers.Addresses.mockAddresses[7]->Option.getExn
+let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
+let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getExn
+let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[2]->Option.getExn
+let mockAddress3 = Envio.TestHelpers.Addresses.mockAddresses[3]->Option.getExn
+let mockAddress4 = Envio.TestHelpers.Addresses.mockAddresses[4]->Option.getExn
+let mockAddress5 = Envio.TestHelpers.Addresses.mockAddresses[5]->Option.getExn
+let mockAddress6 = Envio.TestHelpers.Addresses.mockAddresses[6]->Option.getExn
+let mockFactoryAddress = Envio.TestHelpers.Addresses.mockAddresses[7]->Option.getExn
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {

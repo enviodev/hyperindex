@@ -1798,7 +1798,21 @@ type testIndexer = {{
             test_indexer_chains_fields, test_indexer_entity_fields,
         );
 
-        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
+        let mut indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
+
+        // Generate getEntityOperations function
+        // The GADT name value compiles to a string at runtime via @as decorators,
+        // so we cast it to a string key and look up the entity operations on the indexer dict
+        if !entities.is_empty() {
+            let get_entity_operations = r#"@get_index external getEntityOperationsUnsafe: (testIndexer, string) => testIndexerEntityOperations<'entity> = ""
+
+/** Get entity operations from a test indexer by entity name. */
+let getEntityOperations = (indexer: testIndexer, entity: Entities.name<'entity>): testIndexerEntityOperations<'entity> => {
+  indexer->getEntityOperationsUnsafe(entity->(Utils.magic: Entities.name<'entity> => string))
+}"#;
+
+            indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
+        }
 
         let generated_top_level_bindings = format!(
             "{}\n\n{}",

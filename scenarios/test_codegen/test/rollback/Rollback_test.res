@@ -640,7 +640,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 102,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
+            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
           },
           handler,
         },
@@ -648,7 +648,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 103,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1))
+            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1))
           },
           handler,
         },
@@ -656,7 +656,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 104,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2))
+            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2))
           },
           handler,
         },
@@ -738,7 +738,7 @@ describe("E2E rollback tests", () => {
     ).toEqual(
       [
         {
-          id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
+          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
           chainId: 1337,
           registeringEventBlockNumber: 102,
           registeringEventLogIndex: 2,
@@ -746,7 +746,7 @@ describe("E2E rollback tests", () => {
           registeringEventContractName: "MockContract",
           registeringEventName: "MockEvent",
           registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-          contractAddress: TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+          contractAddress: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
           contractName: "SimpleNft",
         },
       ],
@@ -845,7 +845,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual(
       [
         {
-          id: `1337-${TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
+          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
           chainId: 1337,
           registeringEventBlockNumber: 102,
           registeringEventLogIndex: 2,
@@ -853,7 +853,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           registeringEventContractName: "MockContract",
           registeringEventName: "MockEvent",
           registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-          contractAddress: TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+          contractAddress: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
           contractName: "SimpleNft",
         },
       ],

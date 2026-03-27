@@ -6,15 +6,6 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   ()
 })
 
-// Helper to access entity ops on testIndexer (entity ops are dynamically added)
-type entityOps<'entity> = {
-  get: string => promise<option<'entity>>,
-  set: 'entity => unit,
-}
-let getEntityOps: (Indexer.testIndexer, string) => entityOps<'entity> = %raw(`
-  function(indexer, entityName) { return indexer[entityName]; }
-`)
-
 describe("Async linked entity loaders", () => {
   Async.it("should update the big int to be the same ", async t => {
     // Initializing values
@@ -44,9 +35,9 @@ describe("Async linked entity loaders", () => {
     }
 
     let indexer = Indexer.createTestIndexer()
-    let aOps: entityOps<Indexer.Entities.A.t> = indexer->getEntityOps("A")
-    let bOps: entityOps<Indexer.Entities.B.t> = indexer->getEntityOps("B")
-    let cOps: entityOps<Indexer.Entities.C.t> = indexer->getEntityOps("C")
+    let aOps = indexer->Indexer.getEntityOperations(Indexer.Entities.A)
+    let bOps = indexer->Indexer.getEntityOperations(Indexer.Entities.B)
+    let cOps = indexer->Indexer.getEntityOperations(Indexer.Entities.C)
 
     aOps.set(a)
     aOps.set(aNoGrandchild)
@@ -54,26 +45,24 @@ describe("Async linked entity loaders", () => {
     bOps.set(bNoC)
     cOps.set(c)
 
-    // Use raw processConfig with simulate since ReScript chainConfig type
-    // doesn't include simulate field
-    let processConfig: Indexer.testIndexerProcessConfig = {
-      "chains": {
-        "1337": {
-          "startBlock": 1,
-          "endBlock": 100,
-          "simulate": [
-            {
-              "contract": "Gravatar",
-              "event": "TestEventThatCopiesBigIntViaLinkedEntities",
-              "params": {
-                "param_that_should_be_removed_when_issue_1026_is_fixed": "",
-              },
-            },
+    let _ = await indexer.process({
+      chains: {
+        \"1337": {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            Indexer.makeSimulateItem(
+              OnEvent({
+                event: Gravatar(TestEventThatCopiesBigIntViaLinkedEntities),
+                params: {
+                  param_that_should_be_removed_when_issue_1026_is_fixed: "",
+                },
+              }),
+            ),
           ],
         },
       },
-    }->Utils.magic
-    let _ = await indexer.process(processConfig)
+    })
 
     // Expected string copied from C
     let updatedA = await aOps.get(EventHandlers.aIdWithGrandChildC)

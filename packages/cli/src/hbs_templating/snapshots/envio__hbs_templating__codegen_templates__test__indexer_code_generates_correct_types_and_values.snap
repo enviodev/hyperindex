@@ -365,3 +365,10 @@ type testIndexer = {
   \"EmptyEntity": testIndexerEntityOperations<Entities.EmptyEntity.t>,
   \"RelatedEntity": testIndexerEntityOperations<Entities.RelatedEntity.t>,
 }
+
+@get_index external getEntityOperationsUnsafe: (testIndexer, string) => testIndexerEntityOperations<'entity> = ""
+
+/** Get entity operations from a test indexer by entity name. */
+let getEntityOperations = (indexer: testIndexer, entity: Entities.name<'entity>): testIndexerEntityOperations<'entity> => {
+  indexer->getEntityOperationsUnsafe(entity->(Utils.magic: Entities.name<'entity> => string))
+}
