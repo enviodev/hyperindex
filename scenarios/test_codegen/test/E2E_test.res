@@ -1115,16 +1115,36 @@ describe("E2E tests", () => {
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
-      // Now the indexer should be at the head and will wait for new blocks.
-      // At this point, knownHeight > 0, so Live source should participate in racing.
-      // Both sources should race for the next height.
+      // First waitForNewBlock runs with isLive=false (NextQuery fires before
+      // EventBatchProcessed sets timestampCaughtUpToHeadOrEndblock).
+      // Only Sync participates in height racing initially.
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should be called again for next height",
+        ~message="Sync source should be called for first waitForNewBlock",
       ).toEqual(2)
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should now participate in height racing after initial sync",
+        ~message="Live source should NOT participate yet (isLive still false)",
+      ).toEqual(0)
+
+      // Resolve the first waitForNewBlock to advance to the next cycle
+      syncSource.resolveGetHeightOrThrow(301)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Resolve the items query for the new block
+      syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
+      await indexerMock.getBatchWritePromise()
+
+      // Now isLive=true (EventBatchProcessed has set timestampCaughtUpToHeadOrEndblock).
+      // Second waitForNewBlock: Live=Primary races, Sync=Secondary (not in main group).
+      t.expect(
+        syncSource.getHeightOrThrowCalls->Array.length,
+        ~message="Sync source should stay at 2 (now Secondary, not racing)",
+      ).toEqual(2)
+      t.expect(
+        liveSource.getHeightOrThrowCalls->Array.length,
+        ~message="Live source should now participate in height racing after isLive=true",
       ).toEqual(1)
     },
   )

@@ -192,7 +192,7 @@ describe("SourceManager source priority with Live sources", () => {
   }
 
   Async.it(
-    "During isLive=true with Live source: Live and Sync race, Fallback is secondary in waitForNewBlock",
+    "During isLive=true with Live source: Live is primary, Sync+Fallback are secondary in waitForNewBlock",
     async t => {
       let syncMock = Mock.Source.make([#getHeightOrThrow])
       let liveMock = Mock.Source.make([#getHeightOrThrow], ~sourceFor=Live)
@@ -206,16 +206,16 @@ describe("SourceManager source priority with Live sources", () => {
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
 
-      // Both Live and Sync race for height immediately
+      // Live is primary - should be called immediately
       t.expect(
         liveMock.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should race for height",
+        ~message="Live source should be called as primary",
       ).toEqual(1)
+      // Sync and Fallback are secondary - should NOT be called yet
       t.expect(
         syncMock.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should also race for height",
-      ).toEqual(1)
-      // Fallback is secondary - should NOT be called yet
+        ~message="Sync source should not be called yet (secondary)",
+      ).toEqual(0)
       t.expect(
         fallbackMock.getHeightOrThrowCalls->Array.length,
         ~message="Fallback source should not be called yet (secondary)",
@@ -229,7 +229,7 @@ describe("SourceManager source priority with Live sources", () => {
   )
 
   Async.it(
-    "During isLive=true with Live source: Fallback is used as secondary after timeout",
+    "During isLive=true with Live source: Sync and Fallback are used as secondary after timeout",
     async t => {
       let syncMock = Mock.Source.make([#getHeightOrThrow])
       let liveMock = Mock.Source.make([#getHeightOrThrow], ~sourceFor=Live)
@@ -243,27 +243,26 @@ describe("SourceManager source priority with Live sources", () => {
 
       let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
 
-      // Both Sync and Live race immediately, neither finds a new block
-      t.expect(
-        syncMock.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should race for height",
-      ).toEqual(1)
+      // Live doesn't find new block
       liveMock.resolveGetHeightOrThrow(100)
-      syncMock.resolveGetHeightOrThrow(100)
 
       // Wait for stall timeout
       await Utils.delay(newBlockStallTimeoutLive)
 
-      // After timeout, Fallback should be called as secondary
+      // After timeout, Sync and Fallback should be called as secondaries
+      t.expect(
+        syncMock.getHeightOrThrowCalls->Array.length,
+        ~message="Sync source should be called after stall timeout",
+      ).toEqual(1)
       t.expect(
         fallbackMock.getHeightOrThrowCalls->Array.length,
         ~message="Fallback source should be called after stall timeout",
       ).toEqual(1)
 
-      fallbackMock.resolveGetHeightOrThrow(101)
+      syncMock.resolveGetHeightOrThrow(101)
 
       t.expect(await p).toEqual(101)
-      t.expect(sourceManager->SourceManager.getActiveSource).toBe(fallbackMock.source)
+      t.expect(sourceManager->SourceManager.getActiveSource).toBe(syncMock.source)
     },
   )
 
@@ -1089,14 +1088,14 @@ describe("SourceManager wait for new blocks", () => {
       )
       let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=0)
 
-      // Both Sync and Live sources race for height
+      // With new priority logic: Live is Primary, Sync is Secondary when Live is present
       t.expect(
         syncMock.getHeightOrThrowCalls->Array.length,
-        ~message="Sync source should race for height",
-      ).toEqual(1)
+        ~message="Sync source should not be called yet (secondary when Live present)",
+      ).toEqual(0)
       t.expect(
         liveMock.getHeightOrThrowCalls->Array.length,
-        ~message="Live source should race for height when isLive is true",
+        ~message="Should call live source as primary when isLive is true",
       ).toEqual(1)
 
       liveMock.resolveGetHeightOrThrow(1)

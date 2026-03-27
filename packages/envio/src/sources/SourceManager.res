@@ -385,18 +385,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
   )
   logger->Logging.childTrace("Initiating check for new blocks.")
 
-  // For height racing: Sync sources always race, Live sources join once isLive.
-  // This allows Live RPC to race against HyperSync once we're at the head,
-  // while still letting HyperSync handle smart block detection during backfill.
-  let mainSources = []
-  sourcesState->Array.forEach(sourceState => {
-    if !sourceState.disabled {
-      let sf = sourceState.source.sourceFor
-      if sf === Sync || (sf === Live && isLive) {
-        mainSources->Array.push(sourceState)
-      }
-    }
-  })
+  let mainSources = sourceManager->getNextSources(~isLive)
 
   let status = ref(Active)
 
