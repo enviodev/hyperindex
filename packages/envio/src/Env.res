@@ -126,7 +126,7 @@ module ClickHouseSink = {
   }
   let password = switch host {
   | None => ""
-  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_PASSWORD", S.string, ~allowEmpty=true)
+  | Some(_) => envSafe->EnvSafe.get("ENVIO_CLICKHOUSE_SINK_PASSWORD", S.string)
   }
 }
 

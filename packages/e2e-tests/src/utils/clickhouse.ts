@@ -18,9 +18,13 @@ const CLICKHOUSE_IMAGE = "clickhouse/clickhouse-server:latest";
  * Returns parsed JSON for SELECT queries.
  */
 export async function queryClickHouse<T = unknown>(sql: string): Promise<T> {
+  const auth = Buffer.from(
+    `${config.clickhouseUsername}:${config.clickhousePassword}`
+  ).toString("base64");
   const url = `${config.clickhouseUrl}/?default_format=JSON`;
   const response = await fetch(url, {
     method: "POST",
+    headers: { Authorization: `Basic ${auth}` },
     body: sql,
   });
 
@@ -80,6 +84,7 @@ export async function ensureClickHouse(): Promise<void> {
   await execAsync(
     `docker run -d --name ${config.clickhouseContainer} ` +
       `-p ${config.clickhousePort}:8123 ` +
+      `-e CLICKHOUSE_PASSWORD=${config.clickhousePassword} ` +
       `${CLICKHOUSE_IMAGE}`
   );
 

@@ -108,7 +108,7 @@ export const config = {
   clickhousePort: 8123,
   clickhouseContainer: "envio-clickhouse-test",
   clickhouseUsername: "default",
-  clickhousePassword: "",
+  clickhousePassword: "testing",
 
   get clickhouseUrl() {
     return `http://localhost:${this.clickhousePort}`;
