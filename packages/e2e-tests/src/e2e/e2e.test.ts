@@ -1,10 +1,12 @@
 /**
  * E2E Indexer Test
  *
- * Tests the full indexer flow with database:
- * 1. Start `envio dev` in background
- * 2. Wait for "All chains are caught up to end blocks" in stdout
- * 3. Verify GraphQL queries return expected data
+ * Tests the full indexer flow with database and ClickHouse sink:
+ * 1. Ensure ClickHouse is running (CI service or local container)
+ * 2. Start `envio dev` in background with ClickHouse sink enabled
+ * 3. Wait for "All chains are caught up to end blocks" in stdout
+ * 4. Verify GraphQL queries return expected data
+ * 5. Verify ClickHouse sink received the indexed data
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -17,11 +19,22 @@ import {
   runCommand,
 } from "../utils/process.js";
 import { GraphQLClient } from "../utils/graphql.js";
+import {
+  ensureClickHouse,
+  stopClickHouse,
+  queryClickHouse,
+} from "../utils/clickhouse.js";
 import path from "path";
 
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
+const CH_DATABASE = "envio_sink";
 
-describe("E2E: Indexer with GraphQL", () => {
+interface ClickHouseResult<T> {
+  data: T[];
+  rows: number;
+}
+
+describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
 
@@ -31,6 +44,7 @@ describe("E2E: Indexer with GraphQL", () => {
       adminSecret: config.hasuraAdminSecret,
     });
 
+    await ensureClickHouse();
     await killProcessOnPort(config.indexerPort);
 
     // envio dev handles codegen, pnpm install, rescript build, migrations, and indexer start
@@ -39,6 +53,9 @@ describe("E2E: Indexer with GraphQL", () => {
       env: {
         TUI_OFF: "true",
         ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+        ENVIO_CLICKHOUSE_SINK_HOST: config.clickhouseUrl,
+        ENVIO_CLICKHOUSE_SINK_USERNAME: "default",
+        ENVIO_CLICKHOUSE_SINK_PASSWORD: "",
       },
     });
 
@@ -64,6 +81,7 @@ describe("E2E: Indexer with GraphQL", () => {
       cwd: PROJECT_DIR,
       timeout: 30000,
     }).catch(() => {});
+    await stopClickHouse();
   }, 30_000);
 
   it("should have _meta with isReady true", async () => {
@@ -120,5 +138,64 @@ describe("E2E: Indexer with GraphQL", () => {
     }>(`{ __schema { queryType { name } } }`);
 
     expect(result.data?.__schema.queryType.name).toBe("query_root");
+  });
+
+  it("should have Transfer data in ClickHouse sink view", async () => {
+    const result = await queryClickHouse<
+      ClickHouseResult<{
+        id: string;
+        from: string;
+        to: string;
+        value: string;
+        blockNumber: number;
+        transactionHash: string;
+      }>
+    >(`SELECT * FROM ${CH_DATABASE}.Transfer LIMIT 10`);
+
+    expect(result.rows).toBeGreaterThan(0);
+    expect(result.data[0]).toMatchObject({
+      id: expect.any(String),
+      from: expect.any(String),
+      to: expect.any(String),
+      blockNumber: expect.any(Number),
+      transactionHash: expect.any(String),
+    });
+  });
+
+  it("should have checkpoints in ClickHouse sink", async () => {
+    const result = await queryClickHouse<
+      ClickHouseResult<{
+        id: string;
+        chain_id: number;
+        block_number: number;
+      }>
+    >(`SELECT * FROM ${CH_DATABASE}.envio_checkpoints`);
+
+    expect(result.rows).toBeGreaterThan(0);
+    expect(result.data[0]).toMatchObject({
+      chain_id: 1,
+      block_number: expect.any(Number),
+    });
+
+    const maxBlock = Math.max(...result.data.map((r) => r.block_number));
+    expect(maxBlock).toBeGreaterThan(0);
+  });
+
+  it("should have entity history in ClickHouse sink", async () => {
+    const result = await queryClickHouse<
+      ClickHouseResult<{
+        id: string;
+        envio_change: string;
+        envio_checkpoint_id: string;
+      }>
+    >(
+      `SELECT * FROM ${CH_DATABASE}.\`envio_history_Transfer\` LIMIT 10`
+    );
+
+    expect(result.rows).toBeGreaterThan(0);
+    expect(result.data[0]).toMatchObject({
+      id: expect.any(String),
+      envio_change: "SET",
+    });
   });
 });
