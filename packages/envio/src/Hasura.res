@@ -103,13 +103,7 @@ let clearHasuraMetadata = async (~endpoint, ~auth) => {
   }
 }
 
-let trackTables = async (
-  ~endpoint,
-  ~auth,
-  ~pgSchema,
-  ~tableNames: array<string>,
-  ~timeTravelTableNames: Belt.Set.String.t=Belt.Set.String.empty,
-) => {
+let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
       {
@@ -117,8 +111,7 @@ let trackTables = async (
         "args": {
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
-          "tables": tableNames->Js.Array2.map(tableName => {
-            let isTimeTravel = timeTravelTableNames->Belt.Set.String.has(tableName)
+          "tables": tableNames->Js.Array2.map(tableName =>
             {
               "table": {
                 "name": tableName,
@@ -126,20 +119,10 @@ let trackTables = async (
               },
               "configuration": {
                 // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
-                // For @timeTravel entities, use an internal name to avoid conflict with the function
-                "custom_name": isTimeTravel ? tableName ++ "_table" : tableName,
-                // For @timeTravel entities, disable all root fields except select_by_pk
-                "custom_root_fields": isTimeTravel
-                  ? {
-                      "select": Js.Null.empty,
-                      "select_aggregate": Js.Null.empty,
-                      "select_stream": Js.Null.empty,
-                      "select_by_pk": tableName ++ "_by_pk",
-                    }
-                  : Js.Obj.empty(),
+                "custom_name": tableName,
               },
             }
-          }),
+          ),
         }->(Utils.magic: 'a => Js.Json.t),
       },
       ~client=Rest.client(endpoint),
@@ -232,28 +215,6 @@ let createEntityRelationship = async (
   )
 }
 
-let trackFunction = async (~endpoint, ~auth, ~pgSchema, ~functionName: string, ~customName: string) => {
-  await sendOperation(
-    ~endpoint,
-    ~auth,
-    ~operation={
-      "type": "pg_track_function",
-      "args": {
-        "source": "default",
-        "function": {
-          "schema": pgSchema,
-          "name": functionName,
-        },
-        "configuration": {
-          "custom_root_fields": {
-            "function": customName,
-          },
-        },
-      },
-    }->(Utils.magic: 'a => Js.Json.t),
-  )
-}
-
 let trackDatabase = async (
   ~endpoint,
   ~auth,
@@ -269,20 +230,18 @@ let trackDatabase = async (
     InternalTable.Views.chainMetadataViewName,
   ]
   let userTableNames = userEntities->Js.Array2.map(entity => entity.table.tableName)
-  let tableNames = [exposedInternalTableNames, userTableNames]->Belt.Array.concatMany
+  let timeTravelViewNames =
+    userEntities
+    ->Js.Array2.filter(entity => entity.timeTravel)
+    ->Js.Array2.map(entity => entity.table.tableName ++ "_historical")
+  let tableNames =
+    [exposedInternalTableNames, userTableNames, timeTravelViewNames]->Belt.Array.concatMany
 
   Logging.info("Tracking tables in Hasura")
 
-  // For @timeTravel entities, only expose select_by_pk (the function serves as the list query)
-  let timeTravelTableNames =
-    userEntities
-    ->Js.Array2.filter(entity => entity.timeTravel)
-    ->Js.Array2.map(entity => entity.table.tableName)
-    ->Belt.Set.String.fromArray
-
   let _ = await clearHasuraMetadata(~endpoint, ~auth)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames, ~timeTravelTableNames)
+  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
 
   for i in 0 to tableNames->Js.Array2.length - 1 {
     let tableName = tableNames->Js.Array2.unsafe_get(i)
@@ -328,21 +287,6 @@ let trackDatabase = async (
         ~objectName=field.fieldName,
         ~relationalKey=field.fieldName,
         ~mappedEntity=linkedEntityName,
-      )
-    }
-  }
-
-  // Track time travel functions for entities with @timeTravel
-  for i in 0 to userEntities->Js.Array2.length - 1 {
-    let entityConfig = userEntities->Js.Array2.unsafe_get(i)
-    if entityConfig.timeTravel {
-      let tableName = entityConfig.table.tableName
-      await trackFunction(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~functionName=tableName ++ "_historical",
-        ~customName=tableName,
       )
     }
   }

@@ -276,11 +276,11 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       )
   }
 
-  // Create time travel functions for entities with @timeTravel directive
+  // Create time travel views for entities with @timeTravel directive
   entities->Js.Array2.forEach((entityConfig: Internal.entityConfig) => {
     if entityConfig.timeTravel {
       let tableName = entityConfig.table.tableName
-      let fnName = tableName ++ "_historical"
+      let viewName = tableName ++ "_historical"
       let historyTableName = EntityHistory.historyTableName(
         ~entityName=tableName,
         ~entityIndex=entityConfig.index,
@@ -293,35 +293,16 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
           | DerivedFrom(_) => None
           }
         )
-        ->Belt.Array.map(name => `"${name}"`)
+        ->Belt.Array.map(name => `h."${name}"`)
         ->Js.Array2.joinWith(", ")
 
       query :=
         query.contents ++
         "\n" ++
-        `CREATE OR REPLACE FUNCTION "${pgSchema}"."${fnName}"("blockNumber" integer DEFAULT -1, "chainId" integer DEFAULT -1)
-RETURNS SETOF "${pgSchema}"."${tableName}" AS $$
-BEGIN
-  IF "blockNumber" = -1 AND "chainId" = -1 THEN
-    RETURN QUERY SELECT * FROM "${pgSchema}"."${tableName}";
-  ELSIF "blockNumber" = -1 OR "chainId" = -1 THEN
-    -- Both blockNumber and chainId must be provided together, return empty result
-    RETURN;
-  ELSE
-    RETURN QUERY
-      SELECT ${dataFieldNames} FROM (
-        SELECT DISTINCT ON ("id") ${dataFieldNames}, "${EntityHistory.changeFieldName}"
-        FROM "${pgSchema}"."${historyTableName}"
-        WHERE "${EntityHistory.checkpointIdFieldName}" <= (
-          SELECT MAX("id") FROM "${pgSchema}"."${InternalTable.Checkpoints.table.tableName}"
-          WHERE "chain_id" = "chainId" AND "block_number" <= "blockNumber"
-        )
-        ORDER BY "id", "${EntityHistory.checkpointIdFieldName}" DESC
-      ) sub
-      WHERE "${EntityHistory.changeFieldName}" = 'SET';
-  END IF;
-END;
-$$ LANGUAGE plpgsql STABLE;`
+        `CREATE VIEW "${pgSchema}"."${viewName}" AS
+SELECT ${dataFieldNames}, h."${EntityHistory.changeFieldName}", c."chain_id", c."block_number"
+FROM "${pgSchema}"."${historyTableName}" h
+JOIN "${pgSchema}"."${InternalTable.Checkpoints.table.tableName}" c ON c."id" = h."${EntityHistory.checkpointIdFieldName}";`
     }
   })
 
