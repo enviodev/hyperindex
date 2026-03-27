@@ -10,16 +10,6 @@ type evmSimulateEventItem = {
   transaction?: Js.Json.t,
 }
 
-type fuelSimulateEventItem = {
-  contract: string,
-  event: string,
-  params?: Js.Json.t,
-  srcAddress?: Address.t,
-  logIndex?: int,
-  block?: Js.Json.t,
-  transaction?: Js.Json.t,
-}
-
 // Codegen-facing type for constructing simulate items (all fields optional)
 type simulateItem = {
   event?: string,

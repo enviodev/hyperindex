@@ -1741,8 +1741,7 @@ type handlerContext = {{
         // Generate testIndexer types and createTestIndexer
         let chain_config_type = match cfg.get_ecosystem() {
             Ecosystem::Evm => "TestIndexer.evmChainConfig",
-            Ecosystem::Fuel => "TestIndexer.fuelChainConfig",
-            Ecosystem::Svm => "TestIndexer.evmChainConfig",
+            Ecosystem::Fuel | Ecosystem::Svm => "TestIndexer.chainConfig",
         };
         let test_indexer_chains_fields = chain_configs
             .iter()

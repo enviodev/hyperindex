@@ -6,12 +6,6 @@ type evmChainConfig = {
   simulate?: array<SimulateItems.evmSimulateEventItem>,
 }
 
-type fuelChainConfig = {
-  startBlock: int,
-  endBlock: int,
-  simulate?: array<SimulateItems.fuelSimulateEventItem>,
-}
-
 // Internal type used for block range validation and state management
 type chainConfig = {
   startBlock: int,
