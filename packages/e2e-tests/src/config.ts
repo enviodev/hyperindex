@@ -104,6 +104,14 @@ export const config = {
   /** Default Hasura admin secret */
   hasuraAdminSecret: "testing",
 
+  /** ClickHouse settings */
+  clickhousePort: 8123,
+  clickhouseContainer: "envio-clickhouse-test",
+
+  get clickhouseUrl() {
+    return `http://localhost:${this.clickhousePort}`;
+  },
+
   /** Timeouts (ms) */
   timeouts: {
     healthCheck: 5000,
