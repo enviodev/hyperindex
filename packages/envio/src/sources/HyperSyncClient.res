@@ -284,6 +284,10 @@ module QueryTypes = {
      * JoinNothing: join nothing.
      */
     joinMode?: joinMode,
+    /**
+     * If set to true, the server will return data for all blocks in the requested range [from_block, to_block).
+     */
+    includeAllBlocks?: bool,
   }
 }
 
@@ -455,9 +459,22 @@ module ResponseTypes = {
 type query = QueryTypes.query
 type eventResponse = ResponseTypes.eventResponse
 
+type queryResponseData = {
+  blocks: array<ResponseTypes.block>,
+  transactions: array<ResponseTypes.transaction>,
+  logs: array<ResponseTypes.log>,
+}
+
+type queryResponse = {
+  archiveHeight: option<int>,
+  nextBlock: int,
+  totalExecutionTime: int,
+  data: queryResponseData,
+  rollbackGuard: option<ResponseTypes.rollbackGuard>,
+}
+
 //Todo, add bindings for these types
 type streamConfig
-type queryResponse
 type queryResponseStream
 type eventStream
 
@@ -520,6 +537,16 @@ let make = (
     ~userAgent=`hyperindex/${envioVersion}`,
   )
 }
+
+type logLevel = [#trace | #debug | #info | #warn | #error]
+let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
+
+/**
+ * Set the log level for the underlying Rust logger in hypersync-client.
+ * Must be called before creating any HypersyncClient.
+ */
+@module("@envio-dev/hypersync-client")
+external setLogLevel: logLevel => unit = "setLogLevel"
 
 module Decoder = {
   type rec decodedSolType<'a> = {val: 'a}
