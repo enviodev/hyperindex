@@ -53,8 +53,7 @@ module GetLogs: {
 }
 
 let queryBlockData: (
-  ~serverUrl: string,
-  ~apiToken: string,
+  ~client: HyperSyncClient.t,
   ~blockNumber: int,
   ~sourceName: string,
   ~chainId: int,
@@ -62,8 +61,7 @@ let queryBlockData: (
 ) => promise<queryResponse<option<ReorgDetection.blockDataWithTimestamp>>>
 
 let queryBlockDataMulti: (
-  ~serverUrl: string,
-  ~apiToken: string,
+  ~client: HyperSyncClient.t,
   ~blockNumbers: array<int>,
   ~sourceName: string,
   ~chainId: int,

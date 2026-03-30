@@ -365,8 +365,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         //If there were no logs at all in the current page query then fetch the
         //timestamp of the heighest block accounted for
         HyperSync.queryBlockData(
-          ~serverUrl=endpointUrl,
-          ~apiToken,
+          ~client,
           ~blockNumber=heighestBlockQueried,
           ~sourceName=name,
           ~chainId=chain->ChainMap.Chain.toChainId,
@@ -501,8 +500,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
 
   let getBlockHashes = (~blockNumbers, ~logger) =>
     HyperSync.queryBlockDataMulti(
-      ~serverUrl=endpointUrl,
-      ~apiToken,
+      ~client,
       ~blockNumbers,
       ~sourceName=name,
       ~chainId=chain->ChainMap.Chain.toChainId,
