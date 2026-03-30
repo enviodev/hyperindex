@@ -120,6 +120,59 @@ let parseEvmSimulateTransaction = (
   transaction->(Utils.magic: _ => Internal.eventTransaction)
 }
 
+// Fuel simulate block schema — fields: id, height, time
+let fuelSimulateBlockSchema = S.schema(s =>
+  {
+    "id": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "height": s.matches(S.null(S.int)->S.Option.getOr(0)),
+    "time": s.matches(S.null(S.int)->S.Option.getOr(0)),
+  }
+)
+
+type fuelSimulateBlock = {height: int, time: int}
+
+let parseFuelSimulateBlock = (
+  ~defaultBlockNumber: int,
+  ~blockJson: option<Js.Json.t>,
+): Internal.eventBlock => {
+  let block = switch blockJson {
+  | Some(json) => json->S.convertOrThrow(fuelSimulateBlockSchema)
+  | None =>
+    Js.Dict.empty()
+    ->(Utils.magic: dict<unit> => Js.Json.t)
+    ->S.convertOrThrow(fuelSimulateBlockSchema)
+  }
+  let block = block->(Utils.magic: _ => Internal.eventBlock)
+  let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
+
+  // Only set block height when user didn't provide one (schema defaults to 0)
+  if blockJson->Option.isNone || blockFields.height === 0 {
+    let blockDict = block->(Utils.magic: Internal.eventBlock => Js.Dict.t<unknown>)
+    blockDict->Js.Dict.set("height", defaultBlockNumber->(Utils.magic: int => unknown))
+  }
+  block
+}
+
+// Fuel simulate transaction schema — fields: id
+let fuelSimulateTransactionSchema = S.schema(s =>
+  {
+    "id": s.matches(S.null(S.string)->S.Option.getOr("")),
+  }
+)
+
+let parseFuelSimulateTransaction = (
+  ~transactionJson: option<Js.Json.t>,
+): Internal.eventTransaction => {
+  let transaction = switch transactionJson {
+  | Some(json) => json->S.convertOrThrow(fuelSimulateTransactionSchema)
+  | None =>
+    Js.Dict.empty()
+    ->(Utils.magic: dict<unit> => Js.Json.t)
+    ->S.convertOrThrow(fuelSimulateTransactionSchema)
+  }
+  transaction->(Utils.magic: _ => Internal.eventTransaction)
+}
+
 // Raw JSON item from user - discriminated by presence of "contract"+"event" keys
 type rawSimulateItem
 
@@ -211,16 +264,26 @@ let parse = (
         addr.contents
       }
 
-      let block = parseEvmSimulateBlock(
-        ~defaultBlockNumber=currentBlock.contents,
-        ~blockJson=item.block,
-      )
-      let transaction = parseEvmSimulateTransaction(~transactionJson=item.transaction)
-
-      // Read actual block number and timestamp from parsed block
-      let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
-      let blockNumber = blockFields.number
-      let timestamp = blockFields.timestamp
+      let (block, blockNumber, timestamp) = switch config.ecosystem.name {
+      | Fuel =>
+        let block = parseFuelSimulateBlock(
+          ~defaultBlockNumber=currentBlock.contents,
+          ~blockJson=item.block,
+        )
+        let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
+        (block, blockFields.height, blockFields.time)
+      | _ =>
+        let block = parseEvmSimulateBlock(
+          ~defaultBlockNumber=currentBlock.contents,
+          ~blockJson=item.block,
+        )
+        let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
+        (block, blockFields.number, blockFields.timestamp)
+      }
+      let transaction = switch config.ecosystem.name {
+      | Fuel => parseFuelSimulateTransaction(~transactionJson=item.transaction)
+      | _ => parseEvmSimulateTransaction(~transactionJson=item.transaction)
+      }
 
       // Update currentBlock for subsequent items
       currentBlock := blockNumber

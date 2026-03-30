@@ -1701,6 +1701,11 @@ type handlerContext = {{
                 .collect::<Vec<_>>()
                 .join("\n");
 
+            let (params_optional, simulate_item_type) = match cfg.get_ecosystem() {
+                Ecosystem::Fuel => ("", "Envio.fuelSimulateEventItem"),
+                _ => ("?", "Envio.evmSimulateEventItem"),
+            };
+
             format!(
                 "@tag(\"contract\")\n\
                  type eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
@@ -1709,11 +1714,11 @@ type handlerContext = {{
                  type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =\n\
                  \x20 | OnEvent({{\n\
                  \x20     event: eventIdentity<'event, 'paramsConstructor, 'filters>,\n\
-                 \x20     params?: 'paramsConstructor,\n\
+                 \x20     params{params_optional}: 'paramsConstructor,\n\
                  \x20   }})\n\n\
                  let makeSimulateItem = (\n\
                  \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,\n\
-                 ): Envio.evmSimulateEventItem => {{\n\
+                 ): {simulate_item_type} => {{\n\
                  \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
                  \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
                  \x20 params: (constructor->Utils.magic)[\"params\"],\n\
@@ -1741,7 +1746,8 @@ type handlerContext = {{
         // Generate testIndexer types and createTestIndexer
         let chain_config_type = match cfg.get_ecosystem() {
             Ecosystem::Evm => "TestIndexer.evmChainConfig",
-            Ecosystem::Fuel | Ecosystem::Svm => "TestIndexer.chainConfig",
+            Ecosystem::Fuel => "TestIndexer.fuelChainConfig",
+            Ecosystem::Svm => "TestIndexer.chainConfig",
         };
         let test_indexer_chains_fields = chain_configs
             .iter()

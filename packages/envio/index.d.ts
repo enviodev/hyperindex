@@ -548,10 +548,8 @@ type SimulateContractEvent<Contracts extends Record<string, { events: string }>>
   };
 }[keyof Contracts];
 
-/** Shared fields for all simulate event items. */
-type SimulateEventItemShared = {
-  /** Event parameters. Keys match the event's parameter names. */
-  params?: Record<string, unknown>;
+/** Shared fields for all simulate event items (excluding params). */
+type SimulateEventItemBase = {
   /** Override the source address. Defaults to the first contract address. */
   srcAddress?: Address;
   /** Override the log index. Auto-increments by default. */
@@ -562,15 +560,33 @@ type SimulateEventItemShared = {
   transaction?: Record<string, unknown>;
 };
 
-/** A typesafe simulate event item for EVM. */
+/** A typesafe simulate event item for EVM (params optional). */
 type EvmSimulateEventItem<Contracts extends Record<string, { events: string }>> =
-  SimulateContractEvent<Contracts> & SimulateEventItemShared;
+  SimulateContractEvent<Contracts> & SimulateEventItemBase & {
+    /** Event parameters. Keys match the event's parameter names. */
+    params?: Record<string, unknown>;
+  };
+
+/** A typesafe simulate event item for Fuel (params required). */
+type FuelSimulateEventItem<Contracts extends Record<string, { events: string }>> =
+  SimulateContractEvent<Contracts> & SimulateEventItemBase & {
+    /** Event parameters. Keys match the event's parameter names. */
+    params: Record<string, unknown>;
+  };
 
 /** Simulate item type for EVM ecosystem. */
 type EvmSimulateItem<Config extends IndexerConfigTypes> =
   Config["evm"] extends { contracts?: Record<string, { events: string }> }
     ? Config["evm"]["contracts"] extends Record<string, { events: string }>
       ? EvmSimulateEventItem<Config["evm"]["contracts"]>
+      : never
+    : never;
+
+/** Simulate item type for Fuel ecosystem. */
+type FuelSimulateItem<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts?: Record<string, { events: string }> }
+    ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
+      ? FuelSimulateEventItem<Config["fuel"]["contracts"]>
       : never
     : never;
 
@@ -585,11 +601,13 @@ type EvmTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
 };
 
 /** Configuration for a single Fuel chain in the test indexer. */
-type FuelTestIndexerChainConfig = {
+type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
   /** The block number to start processing from. */
   startBlock: number;
   /** The block number to stop processing at. */
   endBlock: number;
+  /** Simulate items to process instead of fetching from real sources. */
+  simulate?: FuelSimulateItem<Config>[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
@@ -668,7 +686,7 @@ type EvmTestChains<Config extends IndexerConfigTypes> =
 
 type FuelTestChains<Config extends IndexerConfigTypes> =
   HasFuel<Config> extends true
-    ? { [K in FuelChainIds<Config>]?: FuelTestIndexerChainConfig }
+    ? { [K in FuelChainIds<Config>]?: FuelTestIndexerChainConfig<Config> }
     : {};
 
 /** Process configuration for the test indexer, with chains keyed by chain ID. */
