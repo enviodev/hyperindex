@@ -31,9 +31,17 @@ jobs:
         with:
           targets: ${{ matrix.job.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v5
         with:
-          cache-on-failure: true
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.job.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.job.target }}-
 
       - name: Patch Cargo.toml version
         shell: bash
