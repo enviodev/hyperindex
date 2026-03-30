@@ -27,6 +27,10 @@ let get = (self: t<'key, 'val>, key: 'key) =>
 
 let values = (self: t<'key, 'val>) => self.dict->Js.Dict.values
 
+let clone = (self: t<'key, 'val>) => {
+  ...self,
+  dict: self.dict->Lodash.cloneDeep,
+}
 
 module Entity = {
   type relatedEntityId = string
@@ -349,7 +353,11 @@ module Entity = {
       | None =>
         indicesSerializedToValue->setRow(
           index,
-          {index, relatedEntityIds: Utils.Set.make()->Utils.Set.add(entityId), lastReferencedCheckpointId: 0n},
+          {
+            index,
+            relatedEntityIds: Utils.Set.make()->Utils.Set.add(entityId),
+            lastReferencedCheckpointId: 0n,
+          },
         )
       | Some({relatedEntityIds}) => relatedEntityIds->Utils.Set.add(entityId)->ignore
       }
@@ -401,6 +409,7 @@ module Entity = {
             }
           }
         }
+
         // If no indices left for this field, remove the field entry
         if indicesSerializedToValue.dict->Js.Dict.keys->Array.length === 0 {
           inMemTable.fieldNameIndices.dict->Utils.Dict.deleteInPlace(fieldNameKey)
@@ -421,8 +430,7 @@ module Entity = {
           // Loaded entities are just cache — evict from memory
           inMemTable->deleteEntityFromIndices(~entityId=key, ~entityIndices=row.entityIndices)
           inMemTable.table.dict->Utils.Dict.deleteInPlace(key)
-        | Updated(update)
-          if update.latestChange->Change.getCheckpointId <= writtenCheckpointId =>
+        | Updated(update) if update.latestChange->Change.getCheckpointId <= writtenCheckpointId =>
           let hasActiveIndices = row.entityIndices->Utils.Set.size > 0
           if !hasActiveIndices {
             // Written to DB, no active index — evict entirely
@@ -453,4 +461,15 @@ module Entity = {
     inMemTable.changeCount = remainingChangeCount.contents
   }
 
+  let clone = ({table, fieldNameIndices, changeCount}: t<'entity>) => {
+    table: table->clone,
+    fieldNameIndices: {
+      ...fieldNameIndices,
+      dict: fieldNameIndices.dict
+      ->Js.Dict.entries
+      ->Array.map(((k, v)) => (k, v->clone))
+      ->Js.Dict.fromArray,
+    },
+    changeCount,
+  }
 }

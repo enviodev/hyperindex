@@ -32,6 +32,12 @@ module EntityTables = {
     }
   }
 
+  let clone = (self: t) => {
+    self
+    ->Js.Dict.entries
+    ->Belt.Array.map(((k, v)) => (k, v->InMemoryTable.Entity.clone))
+    ->Js.Dict.fromArray
+  }
 }
 
 type effectCacheInMemTable = {
@@ -57,6 +63,18 @@ let make = (~entities: array<Internal.entityConfig>): t => {
   totalChangeCount: 0.,
 }
 
+let clone = (self: t) => {
+  rawEvents: self.rawEvents->InMemoryTable.clone,
+  entities: self.entities->EntityTables.clone,
+  effects: Js.Dict.map(table => {
+    idsToStore: table.idsToStore->Array.copy,
+    invalidationsCount: table.invalidationsCount,
+    dict: table.dict->Utils.Dict.shallowCopy,
+    effect: table.effect,
+  }, self.effects),
+  rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
+  totalChangeCount: self.totalChangeCount,
+}
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
   let key = effect.name
@@ -116,7 +134,11 @@ let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
   inMemoryStore.effects
   ->Js.Dict.values
   ->Belt.Array.forEach(table => {
-    Js.Array2.removeCountInPlace(table.idsToStore, ~pos=0, ~count=table.idsToStore->Array.length)->ignore
+    Js.Array2.removeCountInPlace(
+      table.idsToStore,
+      ~pos=0,
+      ~count=table.idsToStore->Array.length,
+    )->ignore
     table.invalidationsCount = 0
   })
 }
@@ -181,8 +203,7 @@ let prepareForNextBatch = async (
     if inMemoryStore.totalChangeCount > halfCapacity {
       switch await persistence->Persistence.flushWrites {
       | Error(errHandler) => errHandler->ErrorHandling.log
-      | Ok(writtenCheckpointId) =>
-        inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)
+      | Ok(writtenCheckpointId) => inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)
       }
     }
   }
