@@ -19,10 +19,10 @@ describe("Contract1 contract NewGravatar event tests", () => {
               OnEvent({
                 event: Contract1(NewGravatar),
                 params: {
-                id: 0n,
-                owner: Envio.TestHelpers.Addresses.defaultAddress,
-                displayName: "default string value",
-                imageUrl: "default string value",
+                  id: 0n,
+                  owner: Envio.TestHelpers.Addresses.defaultAddress,
+                  displayName: "default string value",
+                  imageUrl: "default string value",
               },
             }),
           ),

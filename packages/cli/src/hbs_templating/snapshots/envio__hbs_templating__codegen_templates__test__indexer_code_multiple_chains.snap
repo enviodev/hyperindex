@@ -542,6 +542,8 @@ type testIndexerProcessConfig = {
 type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
@@ -559,9 +561,4 @@ type testIndexer = {
   \"EmptyEntity": testIndexerEntityOperations<Entities.EmptyEntity.t>,
 }
 
-@get_index external getEntityOperationsUnsafe: (testIndexer, string) => testIndexerEntityOperations<'entity> = ""
-
-/** Get entity operations from a test indexer by entity name. */
-let getEntityOperations = (indexer: testIndexer, entity: Entities.name<'entity>): testIndexerEntityOperations<'entity> => {
-  indexer->getEntityOperationsUnsafe(entity->(Utils.magic: Entities.name<'entity> => string))
-}
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""

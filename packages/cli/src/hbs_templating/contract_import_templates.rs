@@ -543,7 +543,7 @@ impl Contract {
             ));
             for param in &first_event.params {
                 content.push_str(&format!(
-                    "                {}: {},\n",
+                    "                  {}: {},\n",
                     param.res_name, param.default_value_rescript
                 ));
             }

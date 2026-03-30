@@ -391,8 +391,24 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
   }
 }
 
+let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
+  unit => promise<array<Internal.entity>>
+) => {
+  () => {
+    if state.processInProgress {
+      Js.Exn.raiseError(
+        `Cannot call ${entityConfig.name}.getAll() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
+      )
+    }
+    let entityDict =
+      state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
+    Promise.resolve(entityDict->Js.Dict.values)
+  }
+}
+
 type entityOperations = {
   get: string => promise<option<Internal.entity>>,
+  getAll: unit => promise<array<Internal.entity>>,
   getOrThrow: (string, ~message: string=?) => promise<Internal.entity>,
   set: Internal.entity => unit,
 }
@@ -426,6 +442,7 @@ let makeCreateTestIndexer = (
           entityConfig.name,
           {
             get: makeEntityGet(~state, ~entityConfig),
+            getAll: makeEntityGetAll(~state, ~entityConfig),
             getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
             set: makeEntitySet(~state, ~entityConfig),
           },

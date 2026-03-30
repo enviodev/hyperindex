@@ -35,9 +35,9 @@ describe("Async linked entity loaders", () => {
     }
 
     let indexer = Indexer.createTestIndexer()
-    let aOps = indexer->Indexer.getEntityOperations(Indexer.Entities.A)
-    let bOps = indexer->Indexer.getEntityOperations(Indexer.Entities.B)
-    let cOps = indexer->Indexer.getEntityOperations(Indexer.Entities.C)
+    let aOps = indexer->Indexer.getTestIndexerEntityOperations(Indexer.Entities.A)
+    let bOps = indexer->Indexer.getTestIndexerEntityOperations(Indexer.Entities.B)
+    let cOps = indexer->Indexer.getTestIndexerEntityOperations(Indexer.Entities.C)
 
     aOps.set(a)
     aOps.set(aNoGrandchild)

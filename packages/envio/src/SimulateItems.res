@@ -21,6 +21,116 @@ type simulateItem = {
   transaction?: Js.Json.t,
 }
 
+// EVM simulate block schema — all fields present with defaults for non-nullable ones.
+// Nullable fields (from Internal.evmNullableBlockFields) use S.null → option<T>.
+let evmSimulateBlockSchema = S.schema(s =>
+  {
+    // Non-nullable fields with defaults
+    "number": s.matches(S.null(S.int)->S.Option.getOr(0)),
+    "timestamp": s.matches(S.null(S.int)->S.Option.getOr(0)),
+    "hash": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "parentHash": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "sha3Uncles": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "logsBloom": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "transactionsRoot": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "stateRoot": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "receiptsRoot": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "miner": s.matches(
+      S.null(Address.schema)->S.Option.getOr(
+        Address.unsafeFromString("0x0000000000000000000000000000000000000000"),
+      ),
+    ),
+    "extraData": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "size": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "gasLimit": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "gasUsed": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    // Nullable fields
+    "nonce": s.matches(S.null(S.bigint)),
+    "difficulty": s.matches(S.null(S.bigint)),
+    "totalDifficulty": s.matches(S.null(S.bigint)),
+    "uncles": s.matches(S.null(S.array(S.string))),
+    "baseFeePerGas": s.matches(S.null(S.bigint)),
+    "blobGasUsed": s.matches(S.null(S.bigint)),
+    "excessBlobGas": s.matches(S.null(S.bigint)),
+    "parentBeaconBlockRoot": s.matches(S.null(S.string)),
+    "withdrawalsRoot": s.matches(S.null(S.string)),
+    "l1BlockNumber": s.matches(S.null(S.int)),
+    "sendCount": s.matches(S.null(S.string)),
+    "sendRoot": s.matches(S.null(S.string)),
+    "mixHash": s.matches(S.null(S.string)),
+  }
+)
+
+let parseSimulateBlock = (
+  ~blockNumber: int,
+  ~blockJson: option<Js.Json.t>,
+): Internal.eventBlock => {
+  let block = switch blockJson {
+  | Some(json) => json->S.convertOrThrow(evmSimulateBlockSchema)
+  | None =>
+    Js.Dict.empty()
+    ->(Utils.magic: dict<unit> => Js.Json.t)
+    ->S.convertOrThrow(evmSimulateBlockSchema)
+  }
+  let block = block->(Utils.magic: _ => Js.Dict.t<unknown>)
+  block->Js.Dict.set("number", blockNumber->(Utils.magic: int => unknown))
+  block->(Utils.magic: Js.Dict.t<unknown> => Internal.eventBlock)
+}
+
+// EVM simulate transaction schema — all fields present with defaults for non-nullable ones.
+let evmSimulateTransactionSchema = S.schema(s =>
+  {
+    // Non-nullable fields with defaults
+    "transactionIndex": s.matches(S.null(S.int)->S.Option.getOr(0)),
+    "hash": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "gas": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "input": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "nonce": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "value": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "cumulativeGasUsed": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "effectiveGasPrice": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "gasUsed": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "logsBloom": s.matches(S.null(S.string)->S.Option.getOr("")),
+    "accessList": s.matches(S.null(S.json(~validate=false))->S.Option.getOr(Js.Json.null)),
+    // Signature fields
+    "v": s.matches(S.null(S.string)),
+    "r": s.matches(S.null(S.string)),
+    "s": s.matches(S.null(S.string)),
+    "yParity": s.matches(S.null(S.string)),
+    // Nullable address fields
+    "from": s.matches(S.null(Address.schema)),
+    "to": s.matches(S.null(Address.schema)),
+    "contractAddress": s.matches(S.null(S.string)),
+    // Nullable fields
+    "gasPrice": s.matches(S.null(S.bigint)),
+    "maxPriorityFeePerGas": s.matches(S.null(S.bigint)),
+    "maxFeePerGas": s.matches(S.null(S.bigint)),
+    "maxFeePerBlobGas": s.matches(S.null(S.bigint)),
+    "blobVersionedHashes": s.matches(S.null(S.array(S.string))),
+    "root": s.matches(S.null(S.string)),
+    "status": s.matches(S.null(S.int)),
+    "type": s.matches(S.null(S.int)),
+    // L2 fields
+    "l1Fee": s.matches(S.null(S.bigint)),
+    "l1GasPrice": s.matches(S.null(S.bigint)),
+    "l1GasUsed": s.matches(S.null(S.bigint)),
+    "l1FeeScalar": s.matches(S.null(S.float)),
+    "gasUsedForL1": s.matches(S.null(S.bigint)),
+    "authorizationList": s.matches(S.null(S.json(~validate=false))),
+  }
+)
+
+let parseSimulateTransaction = (~transactionJson: option<Js.Json.t>): Internal.eventTransaction => {
+  let transaction = switch transactionJson {
+  | Some(json) => json->S.convertOrThrow(evmSimulateTransactionSchema)
+  | None =>
+    Js.Dict.empty()
+    ->(Utils.magic: dict<unit> => Js.Json.t)
+    ->S.convertOrThrow(evmSimulateTransactionSchema)
+  }
+  transaction->(Utils.magic: _ => Internal.eventTransaction)
+}
+
 // Raw JSON item from user - discriminated by presence of "contract"+"event" keys
 type rawSimulateItem
 
@@ -109,26 +219,8 @@ let parse = (
         addr.contents
       }
 
-      // Build block and transaction as empty objects with optional overrides
-      let block = switch item.block {
-      | Some(b) => b->(Utils.magic: Js.Json.t => Internal.eventBlock)
-      | None =>
-        let blockDict = Js.Dict.empty()
-        blockDict->Js.Dict.set(
-          config.ecosystem.blockNumberName,
-          blockNumber->(Utils.magic: int => unknown),
-        )
-        blockDict->Js.Dict.set(
-          config.ecosystem.blockTimestampName,
-          0->(Utils.magic: int => unknown),
-        )
-        blockDict->(Utils.magic: Js.Dict.t<unknown> => Internal.eventBlock)
-      }
-
-      let transaction = switch item.transaction {
-      | Some(t) => t->(Utils.magic: Js.Json.t => Internal.eventTransaction)
-      | None => Js.Dict.empty()->(Utils.magic: dict<unit> => Internal.eventTransaction)
-      }
+      let block = parseSimulateBlock(~blockNumber, ~blockJson=item.block)
+      let transaction = parseSimulateTransaction(~transactionJson=item.transaction)
 
       items
       ->Array.push(

@@ -256,7 +256,7 @@ describe("Use Envio test framework to test event handlers", () => {
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
     // FactoryEvent with syncRegistration testCase triggers context.addSimpleNft
-    await indexer.process({
+    const result = await indexer.process({
       chains: {
         1337: {
           startBlock: 1,
@@ -266,19 +266,24 @@ describe("Use Envio test framework to test event handlers", () => {
               contract: "Gravatar",
               event: "FactoryEvent",
               params: { contract: dcAddress, testCase: "syncRegistration" },
-              number: 2,
+              block: { number: 2 },
             },
           ],
         },
       },
     });
+
+    // Verify dynamic contract was registered
+    assert.deepEqual(result.changes[0]?.addresses?.sets, [
+      { address: dcAddress, contract: "SimpleNft" },
+    ]);
   });
 
   it("Runs contract register with async handler", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
-    await indexer.process({
+    const result = await indexer.process({
       chains: {
         1337: {
           startBlock: 1,
@@ -293,6 +298,36 @@ describe("Use Envio test framework to test event handlers", () => {
         },
       },
     });
+
+    // Verify dynamic contract was registered
+    assert.deepEqual(result.changes[0]?.addresses?.sets, [
+      { address: dcAddress, contract: "SimpleNft" },
+    ]);
+  });
+
+  it("Throws when contract registered in an unawaited macrotask", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "throwOnHangingRegistration" },
+            },
+          ],
+        },
+      },
+    });
+
+    // Since the error is thrown in a separate macrotask, the contract register
+    // should finish but the registration shouldn't succeed
+    assert.equal(result.changes[0]?.addresses, undefined);
   });
 
   it("entity.getOrCreate should create the entity if it doesn't exist", async () => {
@@ -315,14 +350,16 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     });
 
-    const user = await indexer.User.get("0");
-    assert.deepEqual(user, {
-      id: "0",
-      address: "0x",
-      updatesCountOnUserForTesting: 0,
-      gravatar_id: undefined,
-      accountType: "USER",
-    });
+    const users = await indexer.User.getAll();
+    assert.deepEqual(users, [
+      {
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      },
+    ]);
   });
 
   it("entity.getOrCreate should load the entity if it exists", async () => {
@@ -354,8 +391,8 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     });
 
-    const user = await indexer.User.get("0");
-    assert.deepEqual(user, existingUser);
+    const users = await indexer.User.getAll();
+    assert.deepEqual(users, [existingUser]);
   });
 
   it("entity.getOrThrow should return existing entity", async () => {
@@ -387,8 +424,8 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     });
 
-    const user = await indexer.User.get("0");
-    assert.deepEqual(user, existingUser);
+    const users = await indexer.User.getAll();
+    assert.deepEqual(users, [existingUser]);
   });
 
   it("entity.getOrThrow throws if entity doesn't exist", async () => {
@@ -480,14 +517,16 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     });
 
-    const user = await indexer.User.get("0");
-    assert.deepEqual(user, {
-      id: "0",
-      address: "0x",
-      updatesCountOnUserForTesting: 0,
-      gravatar_id: undefined,
-      accountType: "USER",
-    });
+    const users = await indexer.User.getAll();
+    assert.deepEqual(users, [
+      {
+        id: "0",
+        address: "0x",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      },
+    ]);
   });
 
   it("Process multiple events in batch", async () => {
@@ -515,10 +554,11 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     });
 
-    const d1 = await indexer.D.get("1");
-    const d2 = await indexer.D.get("2");
-    assert.deepEqual(d1, { id: "1", c: "1" });
-    assert.deepEqual(d2, { id: "2", c: "2" });
+    const allD = await indexer.D.getAll();
+    assert.deepEqual(allD, [
+      { id: "1", c: "1" },
+      { id: "2", c: "2" },
+    ]);
   });
 
   it("Throws when contract registered with invalid address", async () => {
@@ -544,6 +584,97 @@ describe("Use Envio test framework to test event handlers", () => {
         message:
           'Address "invalid-address" is invalid. Expected a 20-byte hex string starting with 0x.',
       }
+    );
+  });
+
+  it("Checksums address when contract registered with valid address", async () => {
+    const indexer = createTestIndexer();
+    // Use a lowercase address that will be checksummed to proper format
+    const inputAddress = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+    const expectedChecksummedAddress =
+      "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: inputAddress, testCase: "checksumsAddress" },
+            },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(result.changes[0]?.addresses?.sets, [
+      { address: expectedChecksummedAddress, contract: "SimpleNft" },
+    ]);
+  });
+
+  it("composes duplicate handlers with same options", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    // Process CustomSelection — original handler + composed handler should both run
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "CustomSelection",
+              transaction: { from: "0xfoo" },
+              block: { parentHash: "0xParentHash" },
+            },
+          ],
+        },
+      },
+    });
+
+    // Original handler sets entity with id = event.transaction.hash
+    // Composed handler sets entity with id = "composed-" + event.transaction.hash
+    const change = result.changes[0]?.CustomSelectionTestPass;
+    assert.equal(change?.sets?.length, 2, "Both original and composed handler should set entities");
+    assert.ok(
+      change?.sets?.some((e: { id: string }) => e.id.startsWith("composed-")),
+      "Composed handler should have set an entity with 'composed-' prefix"
+    );
+  });
+
+  it("composes duplicate contractRegister with same options", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    // Process FactoryEvent with composeContractRegister testCase —
+    // original contractRegister adds SimpleNft (via syncRegistration path),
+    // composed contractRegister adds NftFactory
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "composeContractRegister" },
+            },
+          ],
+        },
+      },
+    });
+
+    // The composed contractRegister should have registered NftFactory
+    const addresses = result.changes[0]?.addresses?.sets;
+    assert.ok(
+      addresses?.some((a: { contract: string }) => a.contract === "NftFactory"),
+      "Composed contractRegister should register NftFactory"
     );
   });
 

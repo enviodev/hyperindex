@@ -1757,6 +1757,8 @@ type handlerContext = {{
 type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
@@ -1800,16 +1802,11 @@ type testIndexer = {{
 
         let mut indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
 
-        // Generate getEntityOperations function
+        // Generate getTestIndexerEntityOperations external binding
         // The GADT name value compiles to a string at runtime via @as decorators,
-        // so we cast it to a string key and look up the entity operations on the indexer dict
+        // so @get_index can use Entities.name directly as a dictionary key
         if !entities.is_empty() {
-            let get_entity_operations = r#"@get_index external getEntityOperationsUnsafe: (testIndexer, string) => testIndexerEntityOperations<'entity> = ""
-
-/** Get entity operations from a test indexer by entity name. */
-let getEntityOperations = (indexer: testIndexer, entity: Entities.name<'entity>): testIndexerEntityOperations<'entity> => {
-  indexer->getEntityOperationsUnsafe(entity->(Utils.magic: Entities.name<'entity> => string))
-}"#;
+            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = """#;
 
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
