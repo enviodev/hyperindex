@@ -5,6 +5,9 @@ on:
     tags:
       - "v*.*.*"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # Determine npm tag from release tag name:
   #   v1.2.3, v1.2.3-alpha.1, v1.2.3-rc.1 → next
@@ -62,13 +65,13 @@ jobs:
         pkg: [envio-linux-x64, envio-linux-arm64, envio-darwin-x64, envio-darwin-arm64]
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
 
       - name: Download platform package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: npm-pkg-${{ matrix.pkg }}
           path: ./pkg
@@ -100,13 +103,13 @@ jobs:
     needs: [prepare, publish-platform-packages]
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
 
       - name: Download envio base package from Build & Verify
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: npm-pkg-envio
           path: ./pkg
