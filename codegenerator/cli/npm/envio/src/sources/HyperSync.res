@@ -199,7 +199,7 @@ module GetLogs = {
 }
 
 module BlockData = {
-  let makeRequestBody = (~fromBlock, ~toBlock): HyperSyncJsonApi.QueryTypes.postQueryBody => {
+  let makeRequestBody = (~fromBlock, ~toBlock): HyperSyncClient.QueryTypes.query => {
     fromBlock,
     toBlockExclusive: toBlock + 1,
     fieldSelection: {
@@ -208,51 +208,44 @@ module BlockData = {
     includeAllBlocks: true,
   }
 
-  let convertResponse = (res: HyperSyncJsonApi.ResponseTypes.queryResponse): queryResponse<
+  let convertResponse = (res: HyperSyncClient.queryResponse): queryResponse<
     array<ReorgDetection.blockDataWithTimestamp>,
   > => {
-    res.data
-    ->Array.flatMap(item => {
-      item.blocks->Option.mapWithDefault([], blocks => {
-        blocks->Array.map(
-          block => {
-            switch block {
-            | {number: blockNumber, timestamp, hash: blockHash} =>
-              let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
-              Ok(
-                (
-                  {
-                    blockTimestamp,
-                    blockNumber,
-                    blockHash,
-                  }: ReorgDetection.blockDataWithTimestamp
-                ),
-              )
-            | _ =>
-              let missingParams =
-                [
-                  block.number->Utils.Option.mapNone("block.number"),
-                  block.timestamp->Utils.Option.mapNone("block.timestamp"),
-                  block.hash->Utils.Option.mapNone("block.hash"),
-                ]->Array.keepMap(p => p)
-
-              Error(
-                UnexpectedMissingParams({
-                  queryName: "query block data HyperSync",
-                  missingParams,
-                }),
-              )
-            }
-          },
+    res.data.blocks
+    ->Option.getWithDefault([])
+    ->Array.map(block => {
+      switch block {
+      | {number: blockNumber, timestamp: blockTimestamp, hash: blockHash} =>
+        Ok(
+          (
+            {
+              blockTimestamp,
+              blockNumber,
+              blockHash,
+            }: ReorgDetection.blockDataWithTimestamp
+          ),
         )
-      })
+      | _ =>
+        let missingParams =
+          [
+            block.number->Utils.Option.mapNone("block.number"),
+            block.timestamp->Utils.Option.mapNone("block.timestamp"),
+            block.hash->Utils.Option.mapNone("block.hash"),
+          ]->Array.keepMap(p => p)
+
+        Error(
+          UnexpectedMissingParams({
+            queryName: "query block data HyperSync",
+            missingParams,
+          }),
+        )
+      }
     })
     ->Utils.Array.transposeResults
   }
 
   let rec queryBlockData = async (
-    ~serverUrl,
-    ~apiToken,
+    ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
     ~logger,
@@ -268,38 +261,28 @@ module BlockData = {
       },
     )
 
-    let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(() =>
-      HyperSyncJsonApi.queryRoute->Rest.fetch(
-        {
-          "query": body,
-          "token": apiToken,
-        },
-        ~client=Rest.client(serverUrl),
-      )
-    , ~logger) {
+    let maybeSuccessfulRes = switch await client.get(~query=body) {
     | exception _ => None
     | res if res.nextBlock <= fromBlock => None
     | res => Some(res)
     }
 
-    // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
+    // If the block is not found, retry the query. This can occur since replicas of hypersync might not have caught up yet
     switch maybeSuccessfulRes {
     | None => {
-        let logger = Logging.createChild(~params={"url": serverUrl})
         let delayMilliseconds = 100
         logger->Logging.childInfo(
           `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~serverUrl, ~apiToken, ~fromBlock, ~toBlock, ~logger)
+        await queryBlockData(~client, ~fromBlock, ~toBlock, ~logger)
       }
     | Some(res) =>
       switch res->convertResponse {
       | Error(_) as err => err
       | Ok(datas) if res.nextBlock <= toBlock => {
           let restRes = await queryBlockData(
-            ~serverUrl,
-            ~apiToken,
+            ~client,
             ~fromBlock=res.nextBlock,
             ~toBlock,
             ~logger,
@@ -311,7 +294,7 @@ module BlockData = {
     }
   }
 
-  let queryBlockDataMulti = async (~serverUrl, ~apiToken, ~blockNumbers, ~logger) => {
+  let queryBlockDataMulti = async (~client, ~blockNumbers, ~logger) => {
     switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstBlock) => {
@@ -336,8 +319,7 @@ module BlockData = {
         let res = await queryBlockData(
           ~fromBlock=fromBlock.contents,
           ~toBlock=toBlock.contents,
-          ~serverUrl,
-          ~apiToken,
+          ~client,
           ~logger,
         )
         let filtered = res->Result.map(datas => {
@@ -356,10 +338,9 @@ module BlockData = {
   }
 }
 
-let queryBlockData = (~serverUrl, ~apiToken, ~blockNumber, ~logger) =>
+let queryBlockData = (~client, ~blockNumber, ~logger) =>
   BlockData.queryBlockData(
-    ~serverUrl,
-    ~apiToken,
+    ~client,
     ~fromBlock=blockNumber,
     ~toBlock=blockNumber,
     ~logger,
