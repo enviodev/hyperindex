@@ -333,12 +333,16 @@ let patchConfig = (~config: Config.t, ~processConfig: Js.Json.t): Config.t => {
         | Some(simulateItems) =>
           let items = parse(~simulateItems, ~config, ~chainConfig)
           // Use endBlock from processConfig (the user-specified range)
+          let startBlock: int =
+            (processChainJson->(Utils.magic: Js.Json.t => {..}))["startBlock"]->(
+              Utils.magic: 'a => int
+            )
           let endBlock: int =
             (processChainJson->(Utils.magic: Js.Json.t => {..}))["endBlock"]->(
               Utils.magic: 'a => int
             )
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
-          {...chainConfig, sourceConfig: Config.CustomSources([source])}
+          {...chainConfig, startBlock, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }
       | None => chainConfig
