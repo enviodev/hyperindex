@@ -14,7 +14,8 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       Promise.resolve(Ok([]))
     },
     getHeightOrThrow: () => {
-      Promise.resolve(endBlock)
+      // Report at least height 1 so the engine doesn't treat 0 as "no blocks available"
+      Promise.resolve(max(endBlock, 1))
     },
     getItemsOrThrow: (
       ~fromBlock as _,
@@ -35,19 +36,19 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
         items
       }
 
-      let latestFetchedBlockNumber = endBlock
+      let reportedHeight = max(endBlock, 1)
       Promise.resolve({
-        Source.knownHeight: endBlock,
+        Source.knownHeight: reportedHeight,
         reorgGuard: {
           rangeLastBlock: {
             blockHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
-            blockNumber: latestFetchedBlockNumber,
+            blockNumber: reportedHeight,
           },
           prevRangeLastBlock: None,
         },
         parsedQueueItems: result,
         fromBlockQueried: 0,
-        latestFetchedBlockNumber,
+        latestFetchedBlockNumber: reportedHeight,
         latestFetchedBlockTimestamp: 0,
         stats: {
           totalTimeElapsed: 0.,
