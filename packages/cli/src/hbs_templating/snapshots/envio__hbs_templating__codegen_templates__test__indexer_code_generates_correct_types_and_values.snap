@@ -4,7 +4,6 @@ expression: project_template.indexer_code
 ---
 module Enums = {
   module Status = {
-    @genType
     type t =
       | @as("ACTIVE") ACTIVE
       | @as("INACTIVE") INACTIVE
@@ -15,14 +14,12 @@ module Entities = {
   type id = string
 
   module EmptyEntity = {
-    @genType
     type t = {id: id, emptyField: id, status: Enums.Status.t, optionalStatus: option<Enums.Status.t>, related_id: id, optionalRelated_id: option<id>, tags: array<string>, optionalTags: option<array<string>>}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>, @as("status") status?: Envio.whereOperator<Enums.Status.t>, @as("optionalStatus") optionalStatus?: Envio.whereOperator<option<Enums.Status.t>>, @as("related_id") related?: Envio.whereOperator<id>, @as("optionalRelated_id") optionalRelated?: Envio.whereOperator<option<id>>, @as("tags") tags?: Envio.whereOperator<array<string>>, @as("optionalTags") optionalTags?: Envio.whereOperator<option<array<string>>>}
   }
 
   module RelatedEntity = {
-    @genType
     type t = {id: id, name: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("name") name?: Envio.whereOperator<string>}

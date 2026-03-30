@@ -10,7 +10,6 @@ module Entities = {
   type id = string
 
   module EmptyEntity = {
-    @genType
     type t = {id: id, emptyField: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
