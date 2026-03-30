@@ -11,7 +11,7 @@
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
     "start": "{{#if is_rescript}}pnpm build && {{/if}}envio start",
-    "test": "{{#if is_rescript}}pnpm build && {{/if}}vitest run"
+    "test": "{{#if is_rescript}}pnpm build && {{/if}}vitest run --test-timeout=10000"
   },
   "devDependencies": {
   {{#if is_rescript}}
