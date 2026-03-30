@@ -618,6 +618,8 @@ type EntityOps<Entity> = {
   readonly get: (id: string) => Promise<Entity | undefined>;
   /** Get an entity by ID or throw if not found. */
   readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  /** Get all entities. */
+  readonly getAll: () => Promise<Entity[]>;
   /** Set (create or update) an entity. */
   readonly set: (entity: Entity) => void;
 };
