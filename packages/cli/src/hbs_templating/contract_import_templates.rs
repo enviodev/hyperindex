@@ -375,8 +375,8 @@ impl Contract {
 
             content.push_str("  }\n\n");
             content.push_str(&format!(
-                "  context.{}_{}.set(entity)\n",
-                self.name.uncapitalized, event.name
+                "  context.\"{}_{}\".set(entity)\n",
+                self.name.capitalized, event.name
             ));
             content.push_str("})\n");
         }

@@ -523,7 +523,7 @@ type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
 
 let makeSimulateItem = (
   constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,
-): SimulateItems.simulateItem => {
+): Envio.evmSimulateEventItem => {
   event: (constructor->Utils.magic)["event"]["_0"],
   contract: (constructor->Utils.magic)["event"]["contract"],
   params: (constructor->Utils.magic)["params"],

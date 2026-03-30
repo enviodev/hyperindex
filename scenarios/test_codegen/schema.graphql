@@ -165,6 +165,13 @@ type CustomSelectionTestPass {
   id: ID!
 }
 
+type SimulateTestEvent {
+  id: ID!
+  blockNumber: Int!
+  logIndex: Int!
+  timestamp: Int!
+}
+
 type SimpleEntity {
   id: ID!
   value: String!

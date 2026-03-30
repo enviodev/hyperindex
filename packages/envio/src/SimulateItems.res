@@ -1,26 +1,5 @@
 open Belt
 
-type evmSimulateEventItem = {
-  contract: string,
-  event: string,
-  params?: Js.Json.t,
-  srcAddress?: Address.t,
-  logIndex?: int,
-  block?: Js.Json.t,
-  transaction?: Js.Json.t,
-}
-
-// Codegen-facing type for constructing simulate items (all fields optional)
-type simulateItem = {
-  event?: string,
-  contract?: string,
-  params?: Js.Json.t,
-  srcAddress?: Address.t,
-  logIndex?: int,
-  block?: Js.Json.t,
-  transaction?: Js.Json.t,
-}
-
 // EVM simulate block schema — all fields present with defaults for non-nullable ones.
 // Nullable fields (from Internal.evmNullableBlockFields) use S.null → option<T>.
 let evmSimulateBlockSchema = S.schema(s =>
@@ -61,8 +40,10 @@ let evmSimulateBlockSchema = S.schema(s =>
   }
 )
 
-let parseSimulateBlock = (
-  ~blockNumber: int,
+type evmSimulateBlock = {number: int, timestamp: int}
+
+let parseEvmSimulateBlock = (
+  ~defaultBlockNumber: int,
   ~blockJson: option<Js.Json.t>,
 ): Internal.eventBlock => {
   let block = switch blockJson {
@@ -72,9 +53,15 @@ let parseSimulateBlock = (
     ->(Utils.magic: dict<unit> => Js.Json.t)
     ->S.convertOrThrow(evmSimulateBlockSchema)
   }
-  let block = block->(Utils.magic: _ => Js.Dict.t<unknown>)
-  block->Js.Dict.set("number", blockNumber->(Utils.magic: int => unknown))
-  block->(Utils.magic: Js.Dict.t<unknown> => Internal.eventBlock)
+  let block = block->(Utils.magic: _ => Internal.eventBlock)
+  let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
+
+  // Only set block number when user didn't provide one (schema defaults to 0)
+  if blockJson->Option.isNone || blockFields.number === 0 {
+    let blockDict = block->(Utils.magic: Internal.eventBlock => Js.Dict.t<unknown>)
+    blockDict->Js.Dict.set("number", defaultBlockNumber->(Utils.magic: int => unknown))
+  }
+  block
 }
 
 // EVM simulate transaction schema — all fields present with defaults for non-nullable ones.
@@ -120,7 +107,9 @@ let evmSimulateTransactionSchema = S.schema(s =>
   }
 )
 
-let parseSimulateTransaction = (~transactionJson: option<Js.Json.t>): Internal.eventTransaction => {
+let parseEvmSimulateTransaction = (
+  ~transactionJson: option<Js.Json.t>,
+): Internal.eventTransaction => {
   let transaction = switch transactionJson {
   | Some(json) => json->S.convertOrThrow(evmSimulateTransactionSchema)
   | None =>
@@ -184,17 +173,20 @@ let parse = (
         )
       }
 
-      // Parse event item fields (both ecosystem types have the same optional fields now)
-      let item = rawJson->(Utils.magic: Js.Json.t => evmSimulateEventItem)
+      // Parse event item fields
+      let item = rawJson->(Utils.magic: Js.Json.t => Envio.evmSimulateEventItem)
 
       // Parse params using the event's schema
       // Use undefined for events with no params (e.g. EmptyEvent()) to match codegen behavior
       let params = switch item.params {
-      | Some(paramsJson) => paramsJson->S.parseOrThrow(eventConfig.paramsRawEventSchema)
+      | Some(paramsJson) =>
+        paramsJson
+        ->(Utils.magic: Js.Json.t => Internal.eventParams)
+        ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
+        ->(Utils.magic: unknown => Internal.eventParams)
       | None => %raw(`undefined`)->(Utils.magic: 'a => Internal.eventParams)
       }
 
-      let blockNumber = currentBlock.contents
       let logIndex = switch item.logIndex {
       | Some(li) => li
       | None =>
@@ -219,14 +211,25 @@ let parse = (
         addr.contents
       }
 
-      let block = parseSimulateBlock(~blockNumber, ~blockJson=item.block)
-      let transaction = parseSimulateTransaction(~transactionJson=item.transaction)
+      let block = parseEvmSimulateBlock(
+        ~defaultBlockNumber=currentBlock.contents,
+        ~blockJson=item.block,
+      )
+      let transaction = parseEvmSimulateTransaction(~transactionJson=item.transaction)
+
+      // Read actual block number and timestamp from parsed block
+      let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
+      let blockNumber = blockFields.number
+      let timestamp = blockFields.timestamp
+
+      // Update currentBlock for subsequent items
+      currentBlock := blockNumber
 
       items
       ->Array.push(
         Internal.Event({
           eventConfig,
-          timestamp: 0,
+          timestamp,
           chain,
           blockNumber,
           logIndex,

@@ -1068,6 +1068,68 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  it("simulate block numbers and log indexes are managed correctly", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            // Item 1: no explicit block → uses startBlock (1), logIndex 0
+            { contract: "Gravatar", event: "EmptyEvent" },
+            // Item 2: no explicit block → same block (1), logIndex 1
+            { contract: "Gravatar", event: "EmptyEvent" },
+            // Item 3: explicit block number 50
+            { contract: "Gravatar", event: "EmptyEvent", block: { number: 50 } },
+            // Item 4: no explicit block → continues from last explicit (50)
+            { contract: "Gravatar", event: "EmptyEvent" },
+          ],
+        },
+      },
+    });
+
+    const entities = await indexer.SimulateTestEvent.getAll();
+    // Sort by id for stable ordering
+    entities.sort((a, b) => a.id.localeCompare(b.id));
+
+    assert.deepEqual(entities, [
+      { id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0 },
+      { id: "1_1", blockNumber: 1, logIndex: 1, timestamp: 0 },
+      { id: "50_2", blockNumber: 50, logIndex: 2, timestamp: 0 },
+      { id: "50_3", blockNumber: 50, logIndex: 3, timestamp: 0 },
+    ]);
+  });
+
+  it("simulate passes block timestamp to event", async () => {
+    const indexer = createTestIndexer();
+
+    await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "EmptyEvent",
+              block: { number: 5, timestamp: 1234567890 },
+            },
+          ],
+        },
+      },
+    });
+
+    const entity = await indexer.SimulateTestEvent.get("5_0");
+    assert.deepEqual(entity, {
+      id: "5_0",
+      blockNumber: 5,
+      logIndex: 0,
+      timestamp: 1234567890,
+    });
+  });
+
   it("createTestIndexer with simulate processes events without fetching", async () => {
     const indexer = createTestIndexer();
 

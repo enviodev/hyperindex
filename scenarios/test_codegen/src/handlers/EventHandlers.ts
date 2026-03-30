@@ -782,3 +782,13 @@ try {
 } catch (e) {
   mismatchedHandlerOptionsError = e as Error;
 }
+
+// Handler for testing simulate block/logIndex behavior
+Gravatar.EmptyEvent.handler(async ({ event, context }) => {
+  context.SimulateTestEvent.set({
+    id: `${event.block.number}_${event.logIndex}`,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    timestamp: event.block.timestamp,
+  });
+});

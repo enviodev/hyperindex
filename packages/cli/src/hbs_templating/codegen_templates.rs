@@ -1713,7 +1713,7 @@ type handlerContext = {{
                  \x20   }})\n\n\
                  let makeSimulateItem = (\n\
                  \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,\n\
-                 ): SimulateItems.simulateItem => {{\n\
+                 ): Envio.evmSimulateEventItem => {{\n\
                  \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
                  \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
                  \x20 params: (constructor->Utils.magic)[\"params\"],\n\
