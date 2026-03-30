@@ -232,11 +232,7 @@ let parse = (
       // Parse params using the event's schema
       // Use undefined for events with no params (e.g. EmptyEvent()) to match codegen behavior
       let params = switch item.params {
-      | Some(paramsJson) =>
-        paramsJson
-        ->(Utils.magic: Js.Json.t => Internal.eventParams)
-        ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
-        ->(Utils.magic: unknown => Internal.eventParams)
+      | Some(paramsJson) => paramsJson->S.convertOrThrow(eventConfig.paramsRawEventSchema)
       | None => %raw(`undefined`)->(Utils.magic: 'a => Internal.eventParams)
       }
 

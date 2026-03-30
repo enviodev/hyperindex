@@ -12,17 +12,17 @@ describe("Greeter contract NewGreeting event tests", () => {
     let _ = await indexer.process({
       chains: {
         \"0": {
-          startBlock: 0,
-          endBlock: 0,
+          startBlock: 1,
+          endBlock: 1,
           simulate: [makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
         },
       },
     })
 
-    let actualGreeterNewGreeting = await indexer.\"Greeter_NewGreeting".getOrThrow("0_0_0")
+    let actualGreeterNewGreeting = await indexer.\"Greeter_NewGreeting".getOrThrow("0_1_0")
 
     let expectedGreeterNewGreeting: Entities.Greeter_NewGreeting.t = {
-      id: "0_0_0",
+      id: "0_1_0",
     }
 
     t.expect(

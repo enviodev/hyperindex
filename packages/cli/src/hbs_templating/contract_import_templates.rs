@@ -393,7 +393,7 @@ impl Contract {
         let contract_name = &self.name.capitalized;
         let event_name = &first_event.name;
         let entity_name = format!("{}_{}", contract_name, event_name);
-        let entity_id = format!("{}_0_0", chain_id);
+        let entity_id = format!("{}_1_0", chain_id);
 
         let has_address_param = first_event.params.iter().any(|p| p.is_eth_address);
 
@@ -446,8 +446,8 @@ impl Contract {
         content.push_str("\n    await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str(&format!("        {}: {{\n", chain_id));
-        content.push_str("          startBlock: 0,\n");
-        content.push_str("          endBlock: 0,\n");
+        content.push_str("          startBlock: 1,\n");
+        content.push_str("          endBlock: 1,\n");
         content.push_str("          simulate: [event],\n");
         content.push_str("        },\n");
         content.push_str("      },\n");
@@ -503,7 +503,7 @@ impl Contract {
         let contract_name = &self.name.capitalized;
         let event_name = &first_event.name;
         let entity_name = format!("{}_{}", contract_name, event_name);
-        let entity_id = format!("{}_0_0", chain_id);
+        let entity_id = format!("{}_1_0", chain_id);
 
         let mut content = String::new();
 
@@ -523,8 +523,8 @@ impl Contract {
         content.push_str("\n    let _ = await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str(&format!("        \\\"{}\": {{\n", chain_id));
-        content.push_str("          startBlock: 0,\n");
-        content.push_str("          endBlock: 0,\n");
+        content.push_str("          startBlock: 1,\n");
+        content.push_str("          endBlock: 1,\n");
 
         // Generate makeSimulateItem call using GADT-based eventIdentity
         if first_event.params.is_empty() {

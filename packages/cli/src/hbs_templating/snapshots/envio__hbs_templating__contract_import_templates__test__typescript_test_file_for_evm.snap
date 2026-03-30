@@ -25,19 +25,19 @@ describe("Contract1 contract NewGravatar event tests", () => {
     await indexer.process({
       chains: {
         1: {
-          startBlock: 0,
-          endBlock: 0,
+          startBlock: 1,
+          endBlock: 1,
           simulate: [event],
         },
       },
     });
 
     // Getting the actual entity from the test indexer
-    let actualContract1NewGravatar = await indexer.Contract1_NewGravatar.getOrThrow("1_0_0");
+    let actualContract1NewGravatar = await indexer.Contract1_NewGravatar.getOrThrow("1_1_0");
 
     // Creating the expected entity
     const expectedContract1NewGravatar: Contract1_NewGravatar = {
-      id: "1_0_0",
+      id: "1_1_0",
       event_id: event.params.id,
       owner: event.params.owner,
       displayName: event.params.displayName,
