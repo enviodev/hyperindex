@@ -31,17 +31,9 @@ jobs:
         with:
           targets: ${{ matrix.job.target }}
 
-      - uses: actions/cache@v5
+      - uses: ./.github/actions/cargo-cache
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ matrix.job.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.job.target }}-
+          cache-suffix: ${{ matrix.job.target }}
 
       - name: Patch Cargo.toml version
         shell: bash
