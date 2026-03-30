@@ -6,7 +6,7 @@ open Vitest
 open Indexer
 
 describe("Greeter contract NewGreeting event tests", () => {
-  Async.it("NewGreeting handler creates Greeter_NewGreeting entity", async _t => {
+  Async.it("NewGreeting handler creates Greeter_NewGreeting entity", async t => {
     let indexer = createTestIndexer()
 
     let _ = await indexer.process({
@@ -25,7 +25,7 @@ describe("Greeter contract NewGreeting event tests", () => {
       id: "0_0_0",
     }
 
-    expect(
+    t.expect(
       actualGreeterNewGreeting,
       ~message="Actual Greeter_NewGreeting should be the same as the expected Greeter_NewGreeting",
     ).toEqual(expectedGreeterNewGreeting)

@@ -6,7 +6,7 @@ open Vitest
 open Indexer
 
 describe("Contract1 contract NewGravatar event tests", () => {
-  Async.it("NewGravatar handler creates Contract1_NewGravatar entity", async _t => {
+  Async.it("NewGravatar handler creates Contract1_NewGravatar entity", async t => {
     let indexer = createTestIndexer()
 
     let _ = await indexer.process({
@@ -41,7 +41,7 @@ describe("Contract1 contract NewGravatar event tests", () => {
       imageUrl: "default string value",
     }
 
-    expect(
+    t.expect(
       actualContract1NewGravatar,
       ~message="Actual Contract1_NewGravatar should be the same as the expected Contract1_NewGravatar",
     ).toEqual(expectedContract1NewGravatar)

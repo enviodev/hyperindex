@@ -514,7 +514,7 @@ impl Contract {
             contract_name, event_name
         ));
         content.push_str(&format!(
-            "  Async.it(\"{} handler creates {} entity\", async _t => {{\n",
+            "  Async.it(\"{} handler creates {} entity\", async t => {{\n",
             event_name, entity_name
         ));
         content.push_str("    let indexer = createTestIndexer()\n");
@@ -581,7 +581,7 @@ impl Contract {
 
         // Assert
         content.push_str(&format!(
-            "\n    expect(\n\
+            "\n    t.expect(\n\
              \x20     actual{contract_name}{event_name},\n\
              \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
              \x20   ).toEqual(expected{contract_name}{event_name})\n",
