@@ -11,10 +11,4 @@ import type { Indexer, TestIndexer } from "./src/Types.ts";
 export const indexer: Indexer;
 export const createTestIndexer: () => TestIndexer;
 
-export {
-{{#each gql_enums as |enum|}}
-  {{enum.name.capitalized}},
-{{/each}}
-} from "./src/Enum.gen";
-
 export {default as BigDecimal} from 'bignumber.js';
