@@ -18,19 +18,19 @@ describe("Greeter contract NewGreeting event tests", () => {
     await indexer.process({
       chains: {
         0: {
-          startBlock: 1,
-          endBlock: 1,
+          startBlock: 0,
+          endBlock: 0,
           simulate: [event],
         },
       },
     });
 
     // Getting the actual entity from the test indexer
-    let actualGreeterNewGreeting = await indexer.Greeter_NewGreeting.getOrThrow("0_1_0");
+    let actualGreeterNewGreeting = await indexer.Greeter_NewGreeting.getOrThrow("0_0_0");
 
     // Creating the expected entity
     const expectedGreeterNewGreeting: Greeter_NewGreeting = {
-      id: "0_1_0",
+      id: "0_0_0",
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);

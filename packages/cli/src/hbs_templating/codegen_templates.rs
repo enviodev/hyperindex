@@ -275,7 +275,6 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
 
     for gql_enum in gql_enums {
         writeln!(code, "module {} = {{", gql_enum.name.capitalized).unwrap();
-        writeln!(code, "  @genType").unwrap();
         writeln!(code, "  type t =").unwrap();
         for param in &gql_enum.params {
             writeln!(
@@ -299,7 +298,6 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
     for entity in entities {
         writeln!(code).unwrap();
         writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
-        writeln!(code, "  @genType").unwrap();
         writeln!(code, "  type t = {}", entity.type_code).unwrap();
         writeln!(code).unwrap();
         writeln!(

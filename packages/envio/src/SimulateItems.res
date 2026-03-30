@@ -338,7 +338,7 @@ let patchConfig = (~config: Config.t, ~processConfig: Js.Json.t): Config.t => {
               Utils.magic: 'a => int
             )
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
-          {...chainConfig, startBlock, sourceConfig: Config.CustomSources([source])}
+          {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }
       | None => chainConfig
