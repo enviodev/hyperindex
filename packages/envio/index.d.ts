@@ -613,7 +613,7 @@ type ConfigEntities<Config extends IndexerConfigTypes> =
   Config["entities"] extends Record<string, object> ? Config["entities"] : {};
 
 /** Entity operations available on test indexer for direct entity manipulation. */
-type EntityOps<Entity> = {
+type TestIndexerEntityOperations<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
   readonly get: (id: string) => Promise<Entity | undefined>;
   /** Get an entity by ID or throw if not found. */
@@ -696,7 +696,7 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
   ? SingleEcosystemChains<Config>
   : MultiEcosystemChains<Config>) & {
   /** Entity operations for direct manipulation outside of handlers. */
-  readonly [K in keyof ConfigEntities<Config>]: EntityOps<
+  readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<
     ConfigEntities<Config>[K]
   >;
 };
