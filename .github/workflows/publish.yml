@@ -5,6 +5,9 @@ on:
     tags:
       - "v*.*.*"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # Determine npm tag from release tag name:
   #   v1.2.3, v1.2.3-alpha.1, v1.2.3-rc.1 → next
