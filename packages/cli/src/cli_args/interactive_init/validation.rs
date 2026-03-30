@@ -131,9 +131,13 @@ mod tests {
 fn are_events_equivalent(event1: &AlloyEvent, event2: &AlloyEvent) -> bool {
     event1.name == event2.name
         && event1.inputs.len() == event2.inputs.len()
-        && event1.inputs.iter().zip(&event2.inputs).all(|(input1, input2)| {
-            input1.selector_type() == input2.selector_type() && input1.indexed == input2.indexed
-        })
+        && event1
+            .inputs
+            .iter()
+            .zip(&event2.inputs)
+            .all(|(input1, input2)| {
+                input1.selector_type() == input2.selector_type() && input1.indexed == input2.indexed
+            })
 }
 
 pub fn filter_duplicate_events(

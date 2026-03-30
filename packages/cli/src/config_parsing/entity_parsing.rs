@@ -573,9 +573,7 @@ impl Entity {
 fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
     match arg_value {
         Value::Int(i) => {
-            let val = i
-                .as_i64()
-                .context("Failed to convert value to i64")?;
+            let val = i.as_i64().context("Failed to convert value to i64")?;
             if val < 0 {
                 return Err(anyhow!("Value must be a positive integer"));
             }
@@ -1561,8 +1559,7 @@ mod tests {
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<'_, String>> {
-        parse_schema::<String>(schema)
-            .map_err(|e| anyhow!("Failed to parse schema: {:?}", e))
+        parse_schema::<String>(schema).map_err(|e| anyhow!("Failed to parse schema: {:?}", e))
     }
 
     fn get_entities_from_document(gql_doc: Document<String>) -> Vec<ObjectType<String>> {
@@ -2349,7 +2346,8 @@ type TestEntity {
 
         assert!(result.is_err());
         let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("The config directive is only applicable to BigInt and BigDecimal"));
+        assert!(err_message
+            .contains("The config directive is only applicable to BigInt and BigDecimal"));
     }
 
     #[test]

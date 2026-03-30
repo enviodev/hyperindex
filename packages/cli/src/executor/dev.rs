@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 
-pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
+pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<()> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
@@ -45,11 +45,14 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         }
 
         match persisted_state_file {
-            PersistedStateExists::Exists(ps) if ps.envio_version != persisted_state::current_version() => {
+            PersistedStateExists::Exists(ps)
+                if ps.envio_version != persisted_state::current_version() =>
+            {
                 println!(
                     "Envio version '{}' does not match the previous version '{}' used in the \
                      generated directory",
-                    persisted_state::current_version(), &ps.envio_version
+                    persisted_state::current_version(),
+                    &ps.envio_version
                 );
                 println!("Purging generated directory",);
                 commands::codegen::remove_files_except_git(&config.parsed_project_paths.generated)
@@ -80,13 +83,21 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         }
     }
 
-    //Get the persisted state from the db
-    let persisted_state_db = PersistedStateExists::read_from_db()
-        .await
-        .context("Failed to read persisted state from the DB")?;
+    //Get the persisted state from the db.
+    //Skip the read entirely when restarting — we don't use the result.
+    let persisted_state_db = if restart {
+        None
+    } else {
+        Some(
+            PersistedStateExists::read_from_db()
+                .await
+                .context("Failed to read persisted state from the DB")?,
+        )
+    };
 
     let (should_run_db_migrations, changes_detected) = match &persisted_state_db {
-        PersistedStateExists::Exists(persisted_state) =>
+        None => (true, vec![]),
+        Some(PersistedStateExists::Exists(persisted_state)) =>
         //In the case where the persisted state exists, compare it to current state
         //determine whether to run migrations and which changes have occured to
         //cause that.
@@ -97,16 +108,19 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
             (should_run_db_migrations, changes_detected)
         }
         //Otherwise we should run db migrations
-        PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
+        Some(PersistedStateExists::NotExists) | Some(PersistedStateExists::Corrupted) => {
+            (true, vec![])
+        }
     };
 
     if should_run_db_migrations {
         match persisted_state_db {
-            PersistedStateExists::NotExists => {
+            None => println!("Restarting indexing from scratch"),
+            Some(PersistedStateExists::NotExists) => {
                 println!("Db Migrations have not been run")
             }
-            PersistedStateExists::Corrupted => println!("Invalid DB persisted state"),
-            PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
+            Some(PersistedStateExists::Corrupted) => println!("Invalid DB persisted state"),
+            Some(PersistedStateExists::Exists(_)) => print_changes_detected(changes_detected),
         }
         println!("Running db migrations");
 

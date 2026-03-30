@@ -792,7 +792,11 @@ let checkAndFetchForChain = (
 
     await chainFetcher.sourceManager->SourceManager.fetchNext(
       ~fetchState,
-      ~waitForNewBlock=(~knownHeight) => chainFetcher.sourceManager->waitForNewBlock(~knownHeight),
+      ~waitForNewBlock=(~knownHeight) =>
+        chainFetcher.sourceManager->waitForNewBlock(
+          ~knownHeight,
+          ~isLive=chainFetcher->ChainFetcher.isReady,
+        ),
       ~onNewBlock=(~knownHeight) => dispatchAction(FinishWaitingForNewBlock({chain, knownHeight})),
       ~executeQuery=async query => {
         try {
@@ -800,6 +804,7 @@ let checkAndFetchForChain = (
             await chainFetcher.sourceManager->executeQuery(
               ~query,
               ~knownHeight=fetchState.knownHeight,
+              ~isLive=chainFetcher->ChainFetcher.isReady,
             )
           dispatchAction(ValidatePartitionQueryResponse({chain, response, query}))
         } catch {

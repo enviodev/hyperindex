@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use crate::{
-    clap_definitions::fuel::{ContractImportArgs, LocalImportArgs, LocalOrExplorerImport, TemplateArgs},
+    clap_definitions::fuel::{
+        ContractImportArgs, LocalImportArgs, LocalOrExplorerImport, TemplateArgs,
+    },
     config_parsing::{
-        contract_import::converters::normalize_contract_name,
-        human_config::fuel::EventConfig,
+        contract_import::converters::normalize_contract_name, human_config::fuel::EventConfig,
     },
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     init_config::fuel::{ContractImportSelection, InitFlow, Network, SelectedContract, Template},

@@ -205,21 +205,27 @@ async fn prompt_evm_init_option(language: &Language) -> Result<Ecosystem> {
 
     let init_flow = match selected {
         EvmInitOption::ContractImportExplorer => {
-            evm_prompts::prompt_contract_import_init_flow(clap_definitions::evm::ContractImportArgs {
-                local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Explorer(
-                    clap_definitions::evm::ExplorerImportArgs::default(),
-                )),
-                ..Default::default()
-            })
+            evm_prompts::prompt_contract_import_init_flow(
+                clap_definitions::evm::ContractImportArgs {
+                    local_or_explorer: Some(
+                        clap_definitions::evm::LocalOrExplorerImport::Explorer(
+                            clap_definitions::evm::ExplorerImportArgs::default(),
+                        ),
+                    ),
+                    ..Default::default()
+                },
+            )
             .await?
         }
         EvmInitOption::ContractImportLocal => {
-            evm_prompts::prompt_contract_import_init_flow(clap_definitions::evm::ContractImportArgs {
-                local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Local(
-                    clap_definitions::evm::LocalImportArgs::default(),
-                )),
-                ..Default::default()
-            })
+            evm_prompts::prompt_contract_import_init_flow(
+                clap_definitions::evm::ContractImportArgs {
+                    local_or_explorer: Some(clap_definitions::evm::LocalOrExplorerImport::Local(
+                        clap_definitions::evm::LocalImportArgs::default(),
+                    )),
+                    ..Default::default()
+                },
+            )
             .await?
         }
         EvmInitOption::TemplateErc20 => evm::InitFlow::Template(evm::Template::Erc20),
@@ -266,14 +272,12 @@ pub async fn prompt_missing_init_args(
 ) -> Result<InitConfig> {
     let directory: String = match &project_paths.directory {
         Some(args_directory) => args_directory.clone(),
-        None => {
-            Text::new("Specify a folder name (ENTER to skip): ")
-                .with_default(DEFAULT_PROJECT_ROOT_PATH)
-                .with_validator(is_valid_foldername_inquire_validator)
-                .with_validator(is_directory_new_validator)
-                .with_validator(contains_no_whitespace_validator)
-                .prompt()?
-        }
+        None => Text::new("Specify a folder name (ENTER to skip): ")
+            .with_default(DEFAULT_PROJECT_ROOT_PATH)
+            .with_validator(is_valid_foldername_inquire_validator)
+            .with_validator(is_directory_new_validator)
+            .with_validator(contains_no_whitespace_validator)
+            .prompt()?,
     };
 
     let name: String = match init_args.name {
