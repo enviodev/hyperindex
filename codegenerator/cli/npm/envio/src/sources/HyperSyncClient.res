@@ -284,6 +284,12 @@ module QueryTypes = {
      * JoinNothing: join nothing.
      */
     joinMode?: joinMode,
+    /**
+     * Whether to include all blocks regardless of if they are related to a returned transaction or log. Normally
+     *  the server will return only the blocks that are related to the transaction or logs in the response. But if this
+     *  is set to true, the server will return data for all blocks in the requested range [from_block, to_block).
+     */
+    includeAllBlocks?: bool,
   }
 }
 
@@ -456,9 +462,22 @@ type eventResponse = ResponseTypes.eventResponse
 
 //Todo, add bindings for these types
 type streamConfig
-type queryResponse
 type queryResponseStream
 type eventStream
+
+type queryResponseData = {
+  blocks: option<array<ResponseTypes.block>>,
+  transactions: option<array<ResponseTypes.transaction>>,
+  logs: option<array<ResponseTypes.log>>,
+}
+
+type queryResponse = {
+  archiveHeight: option<int>,
+  nextBlock: int,
+  totalExecutionTime: int,
+  data: queryResponseData,
+  rollbackGuard: option<ResponseTypes.rollbackGuard>,
+}
 
 @tag("type")
 type heightStreamEvent =

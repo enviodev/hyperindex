@@ -53,15 +53,13 @@ module GetLogs: {
 }
 
 let queryBlockData: (
-  ~serverUrl: string,
-  ~apiToken: string,
+  ~client: HyperSyncClient.t,
   ~blockNumber: int,
   ~logger: Pino.t,
 ) => promise<queryResponse<option<ReorgDetection.blockDataWithTimestamp>>>
 
 let queryBlockDataMulti: (
-  ~serverUrl: string,
-  ~apiToken: string,
+  ~client: HyperSyncClient.t,
   ~blockNumbers: array<int>,
   ~logger: Pino.t,
 ) => promise<queryResponse<array<ReorgDetection.blockDataWithTimestamp>>>

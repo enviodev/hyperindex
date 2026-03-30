@@ -369,8 +369,7 @@ let make = (
         //If there were no logs at all in the current page query then fetch the
         //timestamp of the heighest block accounted for
         HyperSync.queryBlockData(
-          ~serverUrl=endpointUrl,
-          ~apiToken,
+          ~client,
           ~blockNumber=heighestBlockQueried,
           ~logger,
         )->Promise.thenResolve(res =>
@@ -548,8 +547,7 @@ let make = (
 
   let getBlockHashes = (~blockNumbers, ~logger) =>
     HyperSync.queryBlockDataMulti(
-      ~serverUrl=endpointUrl,
-      ~apiToken,
+      ~client,
       ~blockNumbers,
       ~logger,
     )->Promise.thenResolve(HyperSync.mapExn)
