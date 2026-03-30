@@ -1117,11 +1117,16 @@ impl DataSource {
             }
             None => {
                 let url = hypersync_endpoint_url.ok_or(anyhow!(
-                    "Failed to automatically find HyperSync endpoint for the network {}. \
-                     Please provide it manually via the hypersync_config option, or provide an \
-                     RPC URL for historical sync. Read more in our docs: {}",
-                    network.id,
-                    links::DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG
+                    "Failed to automatically find HyperSync endpoint for the chain {chain_id}. \
+                     If the chain is supported by HyperSync, provide the endpoint manually:\n\n\
+                     chains:\n  - id: {chain_id}\n    hypersync_config:\n      \
+                     url: https://{chain_id}.hypersync.xyz\n\n\
+                     Or use an RPC endpoint for historical sync:\n\n\
+                     chains:\n  - id: {chain_id}\n    rpc:\n      \
+                     url: https://your-rpc-endpoint\n      for: sync\n\n\
+                     Read more: {docs_url}",
+                    chain_id = network.id,
+                    docs_url = links::DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG
                 ))?;
 
                 let parsed_url = parse_url(&url).ok_or(anyhow!(
