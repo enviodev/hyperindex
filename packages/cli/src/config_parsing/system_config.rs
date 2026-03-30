@@ -1045,7 +1045,24 @@ impl DataSource {
     fn from_evm_network_config(network: EvmChain) -> Result<Self> {
         let default_for = default_rpc_for(&network);
         let hypersync_endpoint_url = match &network.hypersync_config {
-            Some(config) => Some(config.url.to_string()),
+            Some(config) => {
+                // Validate that the chain is supported by HyperSync when a custom
+                // hypersync_config is provided. An unsupported chain silently causes
+                // other chains in the indexer to lag behind by 200 blocks (#761).
+                if hypersync_endpoints::get_default_hypersync_endpoint(network.id).is_err() {
+                    Err(anyhow!(
+                        "Chain {} is not supported by HyperSync. Remove the \
+                         hypersync_config and use an RPC endpoint instead:\n\n\
+                         chains:\n  - id: {}\n    rpc:\n      \
+                         url: https://your-rpc-endpoint\n      for: sync\n\n\
+                         Read more: {}",
+                        network.id,
+                        network.id,
+                        links::DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG
+                    ))?
+                }
+                Some(config.url.to_string())
+            }
             None => hypersync_endpoints::get_default_hypersync_endpoint(network.id).ok(),
         };
         let resolve_for = |rpc: Rpc| Rpc {
@@ -2216,6 +2233,28 @@ mod test {
                 rpcs: vec![],
             }
         );
+    }
+
+    #[test]
+    fn test_unsupported_hypersync_network_rejected() {
+        use crate::config_parsing::human_config::evm::{Chain as EvmChain, HypersyncConfig};
+
+        // Chain ID 1890 is not in the HypersyncNetwork subenum
+        let network = EvmChain {
+            id: 1890,
+            hypersync_config: Some(HypersyncConfig {
+                url: "https://lightlink.hypersync.xyz".to_string(),
+            }),
+            rpc: None,
+            start_block: 0,
+            end_block: None,
+            max_reorg_depth: None,
+            block_lag: None,
+            contracts: None,
+        };
+
+        let error = DataSource::from_evm_network_config(network).unwrap_err();
+        assert!(error.to_string().contains("is not supported by HyperSync"),);
     }
 
     #[test]
