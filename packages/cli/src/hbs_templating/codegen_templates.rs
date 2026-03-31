@@ -1708,14 +1708,14 @@ type handlerContext = {{
                 Ecosystem::Fuel => (
                     "",
                     "Envio.fuelSimulateEventItem",
-                    "Envio.fuelBlockConstructor",
-                    "Envio.fuelTransactionConstructor",
+                    "Envio.fuelBlockInput",
+                    "Envio.fuelTransactionInput",
                 ),
                 _ => (
                     "?",
                     "Envio.evmSimulateEventItem",
-                    "Internal.evmBlockConstructor",
-                    "Internal.evmTransactionConstructor",
+                    "Internal.evmBlockInput",
+                    "Internal.evmTransactionInput",
                 ),
             };
 

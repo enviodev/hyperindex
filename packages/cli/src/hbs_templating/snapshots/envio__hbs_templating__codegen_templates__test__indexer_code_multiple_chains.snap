@@ -519,8 +519,8 @@ type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
   | OnEvent({
       event: eventIdentity<'event, 'paramsConstructor, 'filters>,
       params?: 'paramsConstructor,
-      block?: Internal.evmBlockConstructor,
-      transaction?: Internal.evmTransactionConstructor,
+      block?: Internal.evmBlockInput,
+      transaction?: Internal.evmTransactionInput,
     })
 
 let makeSimulateItem = (

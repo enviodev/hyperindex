@@ -2,8 +2,6 @@ type eventParams
 type eventBlock
 type eventTransaction
 
-// Field name variants for type-safe field selection.
-// @unboxed compiles to plain strings at runtime, matching JS property names.
 @unboxed
 type evmBlockField =
   | @as("number") Number
@@ -136,7 +134,6 @@ let allEvmTransactionFields: array<evmTransactionField> = [
 ]
 let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 
-// Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
     [
@@ -183,9 +180,7 @@ let evmNullableTransactionFields = Utils.Set.fromArray(
   ),
 )
 
-// All EVM block fields as optional — used as the user-facing constructor type
-// for simulate items and shared across sources. Fields match evmBlockField enum.
-type evmBlockConstructor = {
+type evmBlockInput = {
   number?: int,
   timestamp?: int,
   hash?: string,
@@ -215,9 +210,7 @@ type evmBlockConstructor = {
   mixHash?: string,
 }
 
-// All EVM transaction fields as optional — used as the user-facing constructor type
-// for simulate items and shared across sources. Fields match evmTransactionField enum.
-type evmTransactionConstructor = {
+type evmTransactionInput = {
   transactionIndex?: int,
   hash?: string,
   from?: Address.t,

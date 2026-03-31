@@ -74,7 +74,7 @@ let transactionFieldToInt = (field: Internal.evmTransactionField) =>
 
 // Compile-time exhaustiveness check: evmBlockConstructor must have a field for every evmBlockField variant.
 // If a new variant is added to evmBlockField, this function will fail to compile until the constructor type is updated.
-let _assertBlockConstructorCoversAllFields = (b: Internal.evmBlockConstructor, field: Internal.evmBlockField) =>
+let _assertBlockConstructorCoversAllFields = (b: Internal.evmBlockInput, field: Internal.evmBlockField) =>
   switch field {
   | Number => b.number->ignore
   | Timestamp => b.timestamp->ignore
@@ -106,7 +106,7 @@ let _assertBlockConstructorCoversAllFields = (b: Internal.evmBlockConstructor, f
   }
 
 // Compile-time exhaustiveness check: evmTransactionConstructor must have a field for every evmTransactionField variant.
-let _assertTransactionConstructorCoversAllFields = (tx: Internal.evmTransactionConstructor, field: Internal.evmTransactionField) =>
+let _assertTransactionConstructorCoversAllFields = (tx: Internal.evmTransactionInput, field: Internal.evmTransactionField) =>
   switch field {
   | TransactionIndex => tx.transactionIndex->ignore
   | Hash => tx.hash->ignore
