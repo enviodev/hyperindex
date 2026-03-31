@@ -356,6 +356,12 @@ module Indexer = {
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
           }
+          // Await background write if still in progress so DB state
+          // is consistent for subsequent assertions
+          switch persistence.writePromise {
+          | Some(promise) => await promise
+          | None => ()
+          }
           resolve()
         })
       },

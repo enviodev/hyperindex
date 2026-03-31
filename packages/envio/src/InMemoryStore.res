@@ -179,11 +179,20 @@ let prepareForNextBatch = async (
   }
 
   persistence->Persistence.startWrite(~writeArgs)
-  await persistence->Persistence.flushWrites
 
   let halfCapacity = (Env.targetInMemoryStoreSize :> float) /. 2.
   if inMemoryStore.totalChangeCount > halfCapacity {
     inMemoryStore->cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
+    if inMemoryStore.totalChangeCount > halfCapacity {
+      // Still over half - must wait for current write to finish, then prune again
+      try {
+        await persistence->Persistence.flushWrites
+        inMemoryStore->cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
+      } catch {
+      // Write errors are already logged by Persistence.executeWrite
+      | _ => ()
+      }
+    }
   }
 }
 
