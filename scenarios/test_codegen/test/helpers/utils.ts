@@ -1,5 +1,6 @@
-import { runUpMigrations } from "../../generated/src/db/Migrations.res.mjs";
+import { runUpMigrations } from "envio/src/Migrations.res.mjs";
 import { makeClient } from "envio/src/PgStorage.gen";
+import { Generated } from "../../generated/src/Indexer.res.mjs";
 
 export const createSql = makeClient;
 
@@ -14,7 +15,7 @@ export const enableConsoleLog = () => {
 };
 
 export const runMigrationsNoExit = async () => {
-  await runUpMigrations(false, true);
+  await runUpMigrations(Generated.codegenPersistence, Generated.configWithoutRegistrations, false, true);
 };
 
 export const runFunctionNoLogs = async (func: () => any) => {

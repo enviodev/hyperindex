@@ -243,8 +243,8 @@ pub mod db_migrate {
         .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
 
         let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))",
-            to_js_path(&relative_generated)
+            "import('./{gen}/src/Indexer.res.mjs').then(i => import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(i.Generated.codegenPersistence, i.Generated.configWithoutRegistrations, true, false)))",
+            gen = to_js_path(&relative_generated)
         );
         let args = vec!["-e", &migration_script];
         let current_dir = &config.parsed_project_paths.project_root;
@@ -269,8 +269,8 @@ pub mod db_migrate {
         .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
 
         let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))",
-            to_js_path(&relative_generated)
+            "import('./{gen}/src/Indexer.res.mjs').then(i => import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(i.Generated.codegenPersistence, true)))",
+            gen = to_js_path(&relative_generated)
         );
         let args = vec!["-e", &migration_script];
         let current_dir = &config.parsed_project_paths.project_root;
@@ -288,8 +288,8 @@ pub mod db_migrate {
         .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
 
         let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))",
-            to_js_path(&relative_generated)
+            "import('./{gen}/src/Indexer.res.mjs').then(i => import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(i.Generated.codegenPersistence, i.Generated.configWithoutRegistrations, true, true)))",
+            gen = to_js_path(&relative_generated)
         );
         let args = vec!["-e", &migration_script];
         let current_dir = &config.parsed_project_paths.project_root;

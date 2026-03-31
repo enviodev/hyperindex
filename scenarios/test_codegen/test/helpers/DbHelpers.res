@@ -7,5 +7,12 @@ let resetPostgresClient: unit => unit = () => {
 
 let runUpDownMigration = async () => {
   resetPostgresClient()
-  (await Migrations.runUpMigrations(~shouldExit=false, ~reset=true))->ignore
+  (
+    await Migrations.runUpMigrations(
+      ~persistence=Indexer.Generated.codegenPersistence,
+      ~config=Indexer.Generated.configWithoutRegistrations,
+      ~shouldExit=false,
+      ~reset=true,
+    )
+  )->ignore
 }
