@@ -31,7 +31,7 @@ pub mod evm {
         Greeter,
         Erc20,
         #[strum(serialize = "Feature: External Calls")]
-        EffectsApi
+        ExternalCalls
     }
 
     ///A an object that holds all the values a user can select during

@@ -1,13 +1,19 @@
 import { createEffect, S } from "envio";
 import { UniswapV3Factory } from "generated";
 import { createPublicClient, http, parseAbi } from "viem";
-import { mainnet } from "viem/chains";
+import { arbitrum, mainnet } from "viem/chains";
 
-// Create a Viem client for mainnet RPC reads
-const client = createPublicClient({
-  chain: mainnet,
-  transport: http(process.env.ETHEREUM_MAINNET_RPC!, { batch: true }),
-});
+// Create Viem clients per chain for RPC reads
+const CHAIN_CLIENTS: Record<number, ReturnType<typeof createPublicClient>> = {
+  1: createPublicClient({
+    chain: mainnet,
+    transport: http(process.env.ENVIO_ETHEREUM_MAINNET_RPC!, { batch: true }),
+  }),
+  42161: createPublicClient({
+    chain: arbitrum,
+    transport: http(process.env.ENVIO_ARBITRUM_RPC!, { batch: true }),
+  }),
+};
 
 // Minimal ABI to fetch ERC20 decimals
 const ERC20_ABI = parseAbi(["function decimals() view returns (uint8)"]);
@@ -18,6 +24,7 @@ const fetchTokenDetails = createEffect(
     name: "fetchTokenDetails", // Name used internally for the effect
     input: {
       token: S.string, // Input: token address as string
+      chainId: S.number, // Input: chain ID to select the right RPC client
     },
     output: {
       decimal: S.number, // Output: decimal value for the token
@@ -26,6 +33,14 @@ const fetchTokenDetails = createEffect(
   },
   async ({ input, context }) => {
     try {
+      const client = CHAIN_CLIENTS[input.chainId];
+      if (!client) {
+        context.log.warn(
+          `No RPC client configured for chainId ${input.chainId}`
+        );
+        return { decimal: 18 };
+      }
+
       // Call token.decimals() via RPC
       const decimals = await client.readContract({
         address: input.token as `0x${string}`,
@@ -33,7 +48,7 @@ const fetchTokenDetails = createEffect(
         functionName: "decimals",
       });
 
-      return { decimal: decimals };
+      return { decimal: Number(decimals) };
     } catch (err) {
       // Log a warning instead of failing the entire event
       context.log.warn(
@@ -50,8 +65,14 @@ const fetchTokenDetails = createEffect(
 UniswapV3Factory.PoolCreated.handler(async ({ event, context }) => {
   // Run both token decimal fetches in parallel
   const [token0Details, token1Details] = await Promise.all([
-    context.effect(fetchTokenDetails, { token: event.params.token0 }),
-    context.effect(fetchTokenDetails, { token: event.params.token1 }),
+    context.effect(fetchTokenDetails, {
+      token: event.params.token0,
+      chainId: event.chainId,
+    }),
+    context.effect(fetchTokenDetails, {
+      token: event.params.token1,
+      chainId: event.chainId,
+    }),
   ]);
 
   // Entity data for indexing

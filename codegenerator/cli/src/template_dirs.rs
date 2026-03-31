@@ -17,7 +17,7 @@ impl Template for evm::Template {
         match self {
             evm::Template::Greeter => "greeter",
             evm::Template::Erc20 => "erc20",
-            evm::Template::EffectsApi => "effects_api",
+            evm::Template::ExternalCalls => "effects_api",
         }
         .to_string()
     }

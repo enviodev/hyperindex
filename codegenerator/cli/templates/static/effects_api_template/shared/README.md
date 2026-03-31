@@ -1,13 +1,13 @@
-# Effects API
+# Effect API
 
 _Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all [Envio](https://envio.dev) indexer features_
 
-With HyperIndex, the Effects API allows you to perform external calls from your handlers.
-These calls run in parallel with your handler logic, so they don’t block execution.
+With HyperIndex, the Effect API allows you to perform external calls from your handlers.
+These calls are executed within the handler context and support optional caching and rate limiting.
 
-You can learn more about the Effects API in the documentation: [https://docs.envio.dev/docs/HyperIndex/effect-api](https://docs.envio.dev/docs/HyperIndex/effect-api)
+You can learn more about the Effect API in the [documentation](https://docs.envio.dev/docs/HyperIndex/effect-api).
 
-The following example extends the **factory pattern** example to fetch the **decimal of a token** via an RPC call.
+The following example extends the **factory pattern** example to fetch the **decimal of a token** via an RPC call, indexing Uniswap V3 `PoolCreated` events across Ethereum Mainnet and Arbitrum.
 
 ## Create Effect
 
@@ -20,7 +20,7 @@ Effect options:
 - `input`: the input type of the effect
 - `output`: the output type of the effect
 - `cache`: whether to cache the effect result in the database
-- `rateLimit`: limits the execution frequency of this effect, read more [here](https://docs.envio.dev/docs/HyperIndex/effect-api#rate-limit)
+- `rateLimit`: limits the execution frequency of this effect, read more in the [documentation](https://docs.envio.dev/docs/HyperIndex/effect-api#rate-limit)
 
 ## Using Effect
 
@@ -42,6 +42,7 @@ const fetchTokenDetails = createEffect(
     name: "fetchTokenDetails", // Name used internally for the effect
     input: {
       token: S.string, // Input: token address as string
+      chainId: S.number, // Input: chain ID to select the right RPC client
     },
     output: {
       decimal: S.number, // Output: decimal value for the token
@@ -50,6 +51,12 @@ const fetchTokenDetails = createEffect(
   },
   async ({ input, context }) => {
     try {
+      const client = CHAIN_CLIENTS[input.chainId];
+      if (!client) {
+        context.log.warn(`No RPC client configured for chainId ${input.chainId}`);
+        return { decimal: 18 };
+      }
+
       // Call token.decimals() via RPC
       const decimals = await client.readContract({
         address: input.token as `0x${string}`,
@@ -57,7 +64,7 @@ const fetchTokenDetails = createEffect(
         functionName: "decimals",
       });
 
-      return { decimal: decimals };
+      return { decimal: Number(decimals) };
     } catch (err) {
       // Log a warning instead of failing the entire event
       context.log.warn(
@@ -81,10 +88,9 @@ Before running the indexer locally, make sure you have the following installed:
 
 ## Running the Indexer
 
-Add your Envio API key to the .env file, then start the indexer:
+Add your Envio API key and RPC URLs to the `.env` file, then start the indexer:
 
 ```bash
-pnpm install viem # install viem to interact with RPC
 pnpm dev
 ```
 
@@ -96,4 +102,4 @@ pnpm codegen
 
 ## GraphQL Playground
 
-While indexer is running, visit the Envio Console([https://envio.dev/console](https://envio.dev/console)) to open the GraphQL Playground and query your indexed data.
+While indexer is running, visit the [Envio Console](https://envio.dev/console) to open the GraphQL Playground and query your indexed data.

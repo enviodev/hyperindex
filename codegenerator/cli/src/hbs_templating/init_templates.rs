@@ -16,6 +16,7 @@ pub struct InitTemplates {
     //Used for the package.json reference to generated in handlers
     relative_path_from_root_to_generated: String,
     envio_api_token: Option<String>,
+    extra_dependencies: Vec<(String, String)>,
 }
 
 impl InitTemplates {
@@ -25,6 +26,7 @@ impl InitTemplates {
         project_paths: &ParsedProjectPaths,
         envio_version: String,
         envio_api_token: Option<String>,
+        extra_dependencies: Vec<(String, String)>,
     ) -> anyhow::Result<Self> {
         //Take the absolute paths of  project root and generated, diff them to get
         //relative path from root to generated and add a leading dot. So in a default project, if your
@@ -50,6 +52,7 @@ impl InitTemplates {
             envio_version,
             relative_path_from_root_to_generated,
             envio_api_token,
+            extra_dependencies,
         };
 
         Ok(template)
@@ -69,6 +72,7 @@ mod test {
             &ParsedProjectPaths::default(),
             "latest".to_string(),
             None,
+            vec![],
         )
         .unwrap();
 
@@ -79,6 +83,7 @@ mod test {
             envio_version: "latest".to_string(),
             relative_path_from_root_to_generated: "./generated".to_string(),
             envio_api_token: None,
+            extra_dependencies: vec![],
         };
 
         assert_eq!(expected, init_temp);
