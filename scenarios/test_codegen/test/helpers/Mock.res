@@ -378,7 +378,11 @@ module Indexer = {
         let ec = entityConfig(name)
         (
           async () => {
-            await persistence->Persistence.flushWrites
+            if persistence->Persistence.isWriting {
+              if persistence->Persistence.isWriting {
+          await persistence->Persistence.flushWrites
+        }
+            }
             let items = await sql->Postgres.unsafe(
               PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
             )
@@ -390,7 +394,11 @@ module Indexer = {
         let ec = entityConfig(name)
         (
           async () => {
-            await persistence->Persistence.flushWrites
+            if persistence->Persistence.isWriting {
+              if persistence->Persistence.isWriting {
+          await persistence->Persistence.flushWrites
+        }
+            }
             let items = await sql->Postgres.unsafe(
               PgStorage.makeLoadAllQuery(
                 ~pgSchema,
@@ -422,7 +430,9 @@ module Indexer = {
       queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
         (
           async () => {
-            await persistence->Persistence.flushWrites
+            if persistence->Persistence.isWriting {
+              await persistence->Persistence.flushWrites
+            }
             let items = await sql->Postgres.unsafe(
               PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
             )
@@ -431,7 +441,9 @@ module Indexer = {
         )()->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryCheckpoints: async () => {
-        await persistence->Persistence.flushWrites
+        if persistence->Persistence.isWriting {
+          await persistence->Persistence.flushWrites
+        }
         let rows = await sql->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
@@ -443,7 +455,9 @@ module Indexer = {
         ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
       },
       queryEffectCache: async (effectName: string) => {
-        await persistence->Persistence.flushWrites
+        if persistence->Persistence.isWriting {
+          await persistence->Persistence.flushWrites
+        }
         let result = await sql->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
         )
