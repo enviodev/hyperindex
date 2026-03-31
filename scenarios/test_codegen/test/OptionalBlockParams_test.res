@@ -1,61 +1,84 @@
+open Belt
 open Vitest
 
-let simulateItem = {
-  "contract": "Gravatar",
-  "event": "CustomSelection",
-  "transaction": {"from": "0xfoo"},
-  "block": {"parentHash": "0xParentHash"},
+let simulateItem: Envio.evmSimulateEventItem = {
+  contract: "Gravatar",
+  event: "EmptyEvent",
 }
 
 // Test: simulate with no startBlock/endBlock → defaults from config
 Async.it("Optional block params: defaults startBlock from config and endBlock to startBlock with simulate", async t => {
   let indexer = Indexer.createTestIndexer()
 
-  let result = await indexer.process(
-    {
-      "chains": {
-        "1337": {
-          "simulate": [simulateItem],
-        },
-      },
-    }->Utils.magic,
-  )
-  t.expect(result.changes->Array.length).toEqual(1)
+  // config.yaml has start_block: 1 for chain 1337
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {simulate: [simulateItem]},
+    },
+  })
+
+  let entities = await (indexer.\"SimulateTestEvent").getAll()
+  // startBlock defaults to config (1), endBlock defaults to startBlock (1)
+  t.expect(entities).toEqual([{id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0}])
 })
 
 // Test: simulate with only startBlock → endBlock defaults to startBlock
 Async.it("Optional block params: defaults endBlock to startBlock when only startBlock is provided", async t => {
   let indexer = Indexer.createTestIndexer()
 
-  let result = await indexer.process(
-    {
-      "chains": {
-        "1337": {
-          "startBlock": 5,
-          "simulate": [simulateItem],
-        },
-      },
-    }->Utils.magic,
-  )
-  t.expect(result.changes->Array.length).toEqual(1)
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {startBlock: 5, simulate: [simulateItem]},
+    },
+  })
+
+  let entities = await (indexer.\"SimulateTestEvent").getAll()
+  // Event block defaults to config startBlock (1) in SimulateItems.parse,
+  // but the process range is startBlock=5, endBlock=5
+  t.expect(entities).toEqual([{id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0}])
 })
 
 // Test: explicit startBlock and endBlock still work
 Async.it("Optional block params: uses explicit startBlock and endBlock when provided", async t => {
   let indexer = Indexer.createTestIndexer()
 
-  let result = await indexer.process(
-    {
-      "chains": {
-        "1337": {
-          "startBlock": 1,
-          "endBlock": 100,
-          "simulate": [simulateItem],
-        },
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {startBlock: 1, endBlock: 100, simulate: [simulateItem]},
+    },
+  })
+
+  let entities = await (indexer.\"SimulateTestEvent").getAll()
+  t.expect(entities).toEqual([{id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0}])
+})
+
+// Test: startBlock defaults to progressBlock+1 after a prior process() call
+Async.it("Optional block params: startBlock defaults to progressBlock+1 on second process call", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  // First process: blocks 1-100
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {startBlock: 1, endBlock: 100, simulate: [simulateItem]},
+    },
+  })
+
+  // Second process: omit startBlock → should default to 101 (progressBlock+1)
+  // Use explicit block number so the event falls within the resolved range [101, 101]
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {
+        simulate: [{...simulateItem, block: %raw(`{number: 101}`)}],
       },
-    }->Utils.magic,
-  )
-  t.expect(result.changes->Array.length).toEqual(1)
+    },
+  })
+
+  let entities = await (indexer.\"SimulateTestEvent").getAll()
+  let entities = entities->SortArray.stableSortBy((a, b) => compare(a.blockNumber, b.blockNumber))
+  t.expect(entities).toEqual([
+    {id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0},
+    {id: "101_0", blockNumber: 101, logIndex: 0, timestamp: 0},
+  ])
 })
 
 // Test: non-numeric chain ID → error
@@ -71,7 +94,7 @@ Async.it("Optional block params: raises error for non-numeric chain ID", async t
             "endBlock": 100,
           },
         },
-      }->Utils.magic,
+      }->(Utils.magic: 'a => Indexer.testIndexerProcessConfig),
     )
     None
   } catch {
@@ -96,7 +119,7 @@ Async.it("Optional block params: raises error for chain ID not in config", async
             "endBlock": 100,
           },
         },
-      }->Utils.magic,
+      }->(Utils.magic: 'a => Indexer.testIndexerProcessConfig),
     )
     None
   } catch {
@@ -108,50 +131,16 @@ Async.it("Optional block params: raises error for chain ID not in config", async
   )
 })
 
-// Test: startBlock defaults to progressBlock+1 after a prior process() call
-Async.it("Optional block params: startBlock defaults to progressBlock+1 on second process call", async t => {
-  let indexer = Indexer.createTestIndexer()
-
-  // First process: blocks 1-100
-  let _ = await indexer.process(
-    {
-      "chains": {
-        "1337": {
-          "startBlock": 1,
-          "endBlock": 100,
-          "simulate": [simulateItem],
-        },
-      },
-    }->Utils.magic,
-  )
-
-  // Second process: omit startBlock → should default to 101 (progressBlock+1)
-  let result = await indexer.process(
-    {
-      "chains": {
-        "1337": {
-          "simulate": [simulateItem],
-        },
-      },
-    }->Utils.magic,
-  )
-  t.expect(result.changes->Array.length).toEqual(1)
-})
-
 // Test: no simulate, no endBlock → error
 Async.it("Optional block params: raises error when endBlock is missing without simulate", async t => {
   let indexer = Indexer.createTestIndexer()
 
   let error = try {
-    let _ = await indexer.process(
-      {
-        "chains": {
-          "1337": {
-            "startBlock": 1,
-          },
-        },
-      }->Utils.magic,
-    )
+    let _ = await indexer.process({
+      chains: {
+        \"1337": {startBlock: 1},
+      },
+    })
     None
   } catch {
   | Js.Exn.Error(err) => err->Js.Exn.message

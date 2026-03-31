@@ -302,8 +302,7 @@ let makeInitialState = (
 }
 
 // Parse and validate block range from raw processConfig for a single chain.
-// Resolves optional startBlock/endBlock with defaults, validates the range,
-// and writes resolved values back to the raw object for the worker thread.
+// Resolves optional startBlock/endBlock with defaults and validates the range.
 let parseBlockRange = (
   ~chainIdStr: string,
   ~config: Config.t,
@@ -370,11 +369,6 @@ let parseBlockRange = (
     )
   | _ => ()
   }
-
-  // Write resolved values back to raw processConfig for worker
-  let rawDict = raw->(Utils.magic: {..} => Js.Dict.t<unknown>)
-  rawDict->Js.Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
-  rawDict->Js.Dict.set("endBlock", endBlock->(Utils.magic: int => unknown))
 
   {startBlock, endBlock}
 }
@@ -609,26 +603,53 @@ let makeCreateTestIndexer = (
           let rawChains: Js.Dict.t<{..}> = (processConfig->Utils.magic)["chains"]->Utils.magic
           let chainKeys = rawChains->Js.Dict.keys
 
-          switch chainKeys->Array.length {
-          | 0 => Js.Exn.raiseError("createTestIndexer requires exactly one chain to be defined")
-          | 1 => ()
-          | n =>
+          let chainIdStr = switch chainKeys {
+          | [single] => single
+          | [] => Js.Exn.raiseError("createTestIndexer requires exactly one chain to be defined")
+          | keys =>
             Js.Exn.raiseError(
-              `createTestIndexer does not support processing multiple chains at once. Found ${n->Int.toString} chains defined`,
+              `createTestIndexer does not support processing multiple chains at once. Found ${keys
+                ->Array.length
+                ->Int.toString} chains defined`,
             )
           }
 
-          // Resolve optional startBlock/endBlock defaults, validate, and build resolved chains
+          // Resolve optional startBlock/endBlock defaults and validate
+          let processChainConfig = parseBlockRange(
+            ~chainIdStr,
+            ~config,
+            ~raw=rawChains->Js.Dict.unsafeGet(chainIdStr),
+            ~progressBlock=state.progressBlockByChain->Js.Dict.get(chainIdStr),
+          )
           let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
-          chainKeys->Array.forEach(chainIdStr => {
-            let processChainConfig = parseBlockRange(
-              ~chainIdStr,
-              ~config,
-              ~raw=rawChains->Js.Dict.unsafeGet(chainIdStr),
-              ~progressBlock=state.progressBlockByChain->Js.Dict.get(chainIdStr),
-            )
-            chains->Js.Dict.set(chainIdStr, processChainConfig)
-          })
+          chains->Js.Dict.set(chainIdStr, processChainConfig)
+
+          // Build processConfig with resolved block range for worker
+          let resolvedChainDict: Js.Dict.t<unknown> = Js.Dict.empty()
+          let rawChain = rawChains->Js.Dict.unsafeGet(chainIdStr)
+          // Copy simulate items from the original raw config
+          let simulate =
+            rawChain["simulate"]->(Utils.magic: 'a => Js.Nullable.t<unknown>)->Js.Nullable.toOption
+          resolvedChainDict->Js.Dict.set(
+            "startBlock",
+            processChainConfig.startBlock->(Utils.magic: int => unknown),
+          )
+          resolvedChainDict->Js.Dict.set(
+            "endBlock",
+            processChainConfig.endBlock->(Utils.magic: int => unknown),
+          )
+          switch simulate {
+          | Some(s) => resolvedChainDict->Js.Dict.set("simulate", s)
+          | None => ()
+          }
+          let resolvedChainsDict: Js.Dict.t<unknown> = Js.Dict.empty()
+          resolvedChainsDict->Js.Dict.set(
+            chainIdStr,
+            resolvedChainDict->(Utils.magic: Js.Dict.t<unknown> => unknown),
+          )
+          let resolvedProcessConfig = {
+            "chains": resolvedChainsDict,
+          }
 
           // Reset processChanges for this run
           state.processChanges = []
@@ -641,12 +662,12 @@ let makeCreateTestIndexer = (
             ->Js.Dict.values
             ->Array.forEach(entity => {
               let dc = entity->castFromDcRegistry
-              let chainIdStr = dc.chainId->Int.toString
-              let contracts = switch dynamicContractsByChain->Js.Dict.get(chainIdStr) {
+              let dcChainIdStr = dc.chainId->Int.toString
+              let contracts = switch dynamicContractsByChain->Js.Dict.get(dcChainIdStr) {
               | Some(arr) => arr
               | None =>
                 let arr = []
-                dynamicContractsByChain->Js.Dict.set(chainIdStr, arr)
+                dynamicContractsByChain->Js.Dict.set(dcChainIdStr, arr)
                 arr
               }
               contracts->Array.push(dc->toIndexingContract)->ignore
@@ -664,7 +685,7 @@ let makeCreateTestIndexer = (
           Promise.make((resolve, reject) => {
             // Include initialState in workerData
             let workerDataObj = {
-              "processConfig": processConfig->(Utils.magic: 'a => Js.Json.t),
+              "processConfig": resolvedProcessConfig->(Utils.magic: 'a => Js.Json.t),
               "initialState": initialState->(Utils.magic: Persistence.initialState => Js.Json.t),
             }
             let workerData =
@@ -734,13 +755,8 @@ let makeCreateTestIndexer = (
               if code !== 0 {
                 reject(Utils.Error.make(`Worker exited with code ${code->Int.toString}`))
               } else {
-                // Update progressBlockByChain with processed endBlock for each chain
-                chainKeys->Array.forEach(
-                  chainIdStr => {
-                    let processChainConfig = chains->Js.Dict.unsafeGet(chainIdStr)
-                    state.progressBlockByChain->Js.Dict.set(chainIdStr, processChainConfig.endBlock)
-                  },
-                )
+                // Update progressBlockByChain with processed endBlock
+                state.progressBlockByChain->Js.Dict.set(chainIdStr, processChainConfig.endBlock)
                 // Worker exited successfully (SuccessExit was dispatched in GlobalState)
                 resolve({
                   changes: state.processChanges,
