@@ -575,7 +575,7 @@ let makeCreateTestIndexer = (
             )
           }
 
-          // Resolve optional startBlock/endBlock defaults and build resolved chains
+          // Resolve optional startBlock/endBlock defaults, validate, and build resolved chains
           let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
           chainKeys->Array.forEach(chainIdStr => {
             let chainId = switch chainIdStr->Int.fromString {
@@ -608,41 +608,25 @@ let makeCreateTestIndexer = (
 
             let endBlock = switch rawEndBlock {
             | Some(eb) => eb
+            | None if hasSimulate => startBlock
             | None =>
-              if hasSimulate {
-                startBlock
-              } else {
-                switch configChain.endBlock {
-                | Some(eb) => eb
-                | None =>
-                  Js.Exn.raiseError(
-                    `endBlock is required for chain ${chainIdStr} when simulate is not provided and chain config has no endBlock`,
-                  )
-                }
-              }
+              Js.Exn.raiseError(
+                `endBlock is required for chain ${chainIdStr} when simulate is not provided`,
+              )
             }
 
             // Write resolved values back to raw processConfig for worker
             rawDict->Js.Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
             rawDict->Js.Dict.set("endBlock", endBlock->(Utils.magic: int => unknown))
 
-            chains->Js.Dict.set(chainIdStr, {startBlock, endBlock})
-          })
-
-          // Validate block ranges for each chain
-          chainKeys->Array.forEach(chainIdStr => {
-            // chainIdStr already validated as numeric in the resolution loop above
-            let chainId = chainIdStr->Int.fromString->Option.getExn
-            let chain = ChainMap.Chain.makeUnsafe(~chainId)
-            let configChain = config.chainMap->ChainMap.get(chain)
-            let processChainConfig = chains->Js.Dict.unsafeGet(chainIdStr)
-            let progressBlock = state.progressBlockByChain->Js.Dict.get(chainIdStr)
+            let processChainConfig = {startBlock, endBlock}
+            chains->Js.Dict.set(chainIdStr, processChainConfig)
 
             validateBlockRange(
               ~chainId=chainIdStr,
               ~configChain,
               ~processChainConfig,
-              ~progressBlock,
+              ~progressBlock=state.progressBlockByChain->Js.Dict.get(chainIdStr),
             )
           })
 

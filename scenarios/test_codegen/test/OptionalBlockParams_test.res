@@ -129,7 +129,7 @@ Async.it("Optional block params: raises error when endBlock is missing without s
 
   t.expect(error).toEqual(
     Some(
-      "endBlock is required for chain 1337 when simulate is not provided and chain config has no endBlock",
+      "endBlock is required for chain 1337 when simulate is not provided",
     ),
   )
 })
