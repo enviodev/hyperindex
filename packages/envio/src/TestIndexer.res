@@ -301,39 +301,82 @@ let makeInitialState = (
   }
 }
 
-let validateBlockRange = (
-  ~chainId: string,
-  ~configChain: Config.chain,
-  ~processChainConfig: chainConfig,
+// Parse and validate block range from raw processConfig for a single chain.
+// Resolves optional startBlock/endBlock with defaults, validates the range,
+// and writes resolved values back to the raw object for the worker thread.
+let parseBlockRange = (
+  ~chainIdStr: string,
+  ~config: Config.t,
+  ~raw: {..},
   ~progressBlock: option<int>,
-) => {
-  // Check startBlock >= config.startBlock
-  if processChainConfig.startBlock < configChain.startBlock {
+): chainConfig => {
+  let chainId = switch chainIdStr->Int.fromString {
+  | Some(id) => id
+  | None => Js.Exn.raiseError(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
+  }
+  let chain = ChainMap.Chain.makeUnsafe(~chainId)
+  if !(config.chainMap->ChainMap.has(chain)) {
+    Js.Exn.raiseError(`Chain ${chainIdStr} is not configured in config.yaml`)
+  }
+  let configChain = config.chainMap->ChainMap.get(chain)
+
+  let rawStartBlock: option<int> =
+    raw["startBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
+  let rawEndBlock: option<int> =
+    raw["endBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
+  let hasSimulate: bool =
+    raw["simulate"]
+    ->(Utils.magic: 'a => Js.Nullable.t<unknown>)
+    ->Js.Nullable.toOption
+    ->Option.isSome
+
+  let startBlock = switch rawStartBlock {
+  | Some(sb) => sb
+  | None =>
+    switch progressBlock {
+    | Some(prevEndBlock) => prevEndBlock + 1
+    | None => configChain.startBlock
+    }
+  }
+
+  let endBlock = switch rawEndBlock {
+  | Some(eb) => eb
+  | None if hasSimulate => startBlock
+  | None =>
+    Js.Exn.raiseError(`endBlock is required for chain ${chainIdStr} when simulate is not provided`)
+  }
+
+  if startBlock < configChain.startBlock {
     Js.Exn.raiseError(
-      `Invalid block range for chain ${chainId}: startBlock (${processChainConfig.startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
+      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
       `Either use startBlock >= ${configChain.startBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   }
 
-  // Check endBlock <= config.endBlock (if defined)
   switch configChain.endBlock {
-  | Some(configEndBlock) if processChainConfig.endBlock > configEndBlock =>
+  | Some(configEndBlock) if endBlock > configEndBlock =>
     Js.Exn.raiseError(
-      `Invalid block range for chain ${chainId}: endBlock (${processChainConfig.endBlock->Int.toString}) exceeds config.endBlock (${configEndBlock->Int.toString}). ` ++
+      `Invalid block range for chain ${chainIdStr}: endBlock (${endBlock->Int.toString}) exceeds config.endBlock (${configEndBlock->Int.toString}). ` ++
       `Either use endBlock <= ${configEndBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   | _ => ()
   }
 
-  // Check startBlock > progressBlock
   switch progressBlock {
-  | Some(prevEndBlock) if processChainConfig.startBlock <= prevEndBlock =>
+  | Some(prevEndBlock) if startBlock <= prevEndBlock =>
     Js.Exn.raiseError(
-      `Invalid block range for chain ${chainId}: startBlock (${processChainConfig.startBlock->Int.toString}) must be greater than previously processed endBlock (${prevEndBlock->Int.toString}). ` ++
+      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) must be greater than previously processed endBlock (${prevEndBlock->Int.toString}). ` ++
       `Either use startBlock > ${prevEndBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   | _ => ()
   }
+
+  // Write resolved values back to raw processConfig for worker
+  let rawDict = raw->(Utils.magic: {..} => Js.Dict.t<unknown>)
+  rawDict->Js.Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
+  rawDict->Js.Dict.set("endBlock", endBlock->(Utils.magic: int => unknown))
+
+  {startBlock, endBlock}
 }
 
 // Entity operations for direct manipulation outside of handlers
@@ -578,56 +621,13 @@ let makeCreateTestIndexer = (
           // Resolve optional startBlock/endBlock defaults, validate, and build resolved chains
           let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
           chainKeys->Array.forEach(chainIdStr => {
-            let chainId = switch chainIdStr->Int.fromString {
-            | Some(id) => id
-            | None =>
-              Js.Exn.raiseError(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
-            }
-            let chain = ChainMap.Chain.makeUnsafe(~chainId)
-            if !(config.chainMap->ChainMap.has(chain)) {
-              Js.Exn.raiseError(`Chain ${chainIdStr} is not configured in config.yaml`)
-            }
-            let configChain = config.chainMap->ChainMap.get(chain)
-            let raw = rawChains->Js.Dict.unsafeGet(chainIdStr)
-            let rawDict = raw->(Utils.magic: {..} => Js.Dict.t<unknown>)
-
-            let rawStartBlock: option<int> =
-              raw["startBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
-            let rawEndBlock: option<int> =
-              raw["endBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
-            let hasSimulate: bool =
-              raw["simulate"]
-              ->(Utils.magic: 'a => Js.Nullable.t<unknown>)
-              ->Js.Nullable.toOption
-              ->Option.isSome
-
-            let startBlock = switch rawStartBlock {
-            | Some(sb) => sb
-            | None => configChain.startBlock
-            }
-
-            let endBlock = switch rawEndBlock {
-            | Some(eb) => eb
-            | None if hasSimulate => startBlock
-            | None =>
-              Js.Exn.raiseError(
-                `endBlock is required for chain ${chainIdStr} when simulate is not provided`,
-              )
-            }
-
-            // Write resolved values back to raw processConfig for worker
-            rawDict->Js.Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
-            rawDict->Js.Dict.set("endBlock", endBlock->(Utils.magic: int => unknown))
-
-            let processChainConfig = {startBlock, endBlock}
-            chains->Js.Dict.set(chainIdStr, processChainConfig)
-
-            validateBlockRange(
-              ~chainId=chainIdStr,
-              ~configChain,
-              ~processChainConfig,
+            let processChainConfig = parseBlockRange(
+              ~chainIdStr,
+              ~config,
+              ~raw=rawChains->Js.Dict.unsafeGet(chainIdStr),
               ~progressBlock=state.progressBlockByChain->Js.Dict.get(chainIdStr),
             )
+            chains->Js.Dict.set(chainIdStr, processChainConfig)
           })
 
           // Reset processChanges for this run

@@ -108,6 +108,36 @@ Async.it("Optional block params: raises error for chain ID not in config", async
   )
 })
 
+// Test: startBlock defaults to progressBlock+1 after a prior process() call
+Async.it("Optional block params: startBlock defaults to progressBlock+1 on second process call", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  // First process: blocks 1-100
+  let _ = await indexer.process(
+    {
+      "chains": {
+        "1337": {
+          "startBlock": 1,
+          "endBlock": 100,
+          "simulate": [simulateItem],
+        },
+      },
+    }->Utils.magic,
+  )
+
+  // Second process: omit startBlock → should default to 101 (progressBlock+1)
+  let result = await indexer.process(
+    {
+      "chains": {
+        "1337": {
+          "simulate": [simulateItem],
+        },
+      },
+    }->Utils.magic,
+  )
+  t.expect(result.changes->Array.length).toEqual(1)
+})
+
 // Test: no simulate, no endBlock → error
 Async.it("Optional block params: raises error when endBlock is missing without simulate", async t => {
   let indexer = Indexer.createTestIndexer()
