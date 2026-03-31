@@ -1,0 +1,469 @@
+open Belt
+
+let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
+  chainFetchers
+  ->ChainMap.values
+  ->Array.every(cf => cf->ChainFetcher.hasProcessedToEndblock)
+}
+
+let computeChainsState = (chainFetchers: ChainMap.t<ChainFetcher.t>): Internal.chains => {
+  let chains = Js.Dict.empty()
+
+  chainFetchers
+  ->ChainMap.entries
+  ->Array.forEach(((chain, chainFetcher)) => {
+    let chainId = chain->ChainMap.Chain.toChainId->Int.toString
+    let isLive = chainFetcher->ChainFetcher.isReady
+
+    chains->Js.Dict.set(
+      chainId,
+      {
+        Internal.id: chain->ChainMap.Chain.toChainId,
+        isLive,
+      },
+    )
+  })
+
+  chains
+}
+
+let convertFieldsToJson = (fields: option<dict<unknown>>) => {
+  switch fields {
+  | None => %raw(`{}`)
+  | Some(fields) => {
+      let keys = fields->Js.Dict.keys
+      let new = Js.Dict.empty()
+      for i in 0 to keys->Js.Array2.length - 1 {
+        let key = keys->Js.Array2.unsafe_get(i)
+        let value = fields->Js.Dict.unsafeGet(key)
+        // Skip `undefined` values and convert bigint fields to string
+        // There are not fields with nested bigints, so this is safe
+        new->Js.Dict.set(
+          key,
+          Js.typeof(value) === "bigint"
+            ? value
+              ->(Utils.magic: unknown => bigint)
+              ->BigInt.toString
+              ->(Utils.magic: string => unknown)
+            : value,
+        )
+      }
+      new->(Utils.magic: dict<unknown> => Js.Json.t)
+    }
+  }
+}
+
+let addItemToRawEvents = (
+  eventItem: Internal.eventItem,
+  ~inMemoryStore: InMemoryStore.t,
+  ~config: Config.t,
+) => {
+  let {event, eventConfig, chain, blockNumber, timestamp: blockTimestamp} = eventItem
+  let {block, transaction, params, logIndex, srcAddress} = event
+  let chainId = chain->ChainMap.Chain.toChainId
+  let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+  let blockFields =
+    block
+    ->(Utils.magic: Internal.eventBlock => option<dict<unknown>>)
+    ->convertFieldsToJson
+  let transactionFields =
+    transaction
+    ->(Utils.magic: Internal.eventTransaction => option<dict<unknown>>)
+    ->convertFieldsToJson
+
+  blockFields->config.ecosystem.cleanUpRawEventFieldsInPlace
+
+  // Serialize to unknown, because serializing to Js.Json.t fails for Bytes Fuel type, since it has unknown schema
+  let params =
+    params
+    ->S.reverseConvertOrThrow(eventConfig.paramsRawEventSchema)
+    ->(Utils.magic: unknown => Js.Json.t)
+  let params = if params === %raw(`null`) {
+    // Should probably make the params field nullable
+    // But this is currently needed to make events
+    // with empty params work
+    %raw(`"null"`)
+  } else {
+    params
+  }
+
+  let rawEvent: InternalTable.RawEvents.t = {
+    chainId,
+    eventId,
+    eventName: eventConfig.name,
+    contractName: eventConfig.contractName,
+    blockNumber,
+    logIndex,
+    srcAddress,
+    blockHash: block->config.ecosystem.getId,
+    blockTimestamp,
+    blockFields,
+    transactionFields,
+    params,
+  }
+
+  let eventIdStr = eventId->BigInt.toString
+
+  inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
+}
+
+exception ProcessingError({message: string, exn: exn, item: Internal.item})
+
+let runEventHandlerOrThrow = async (
+  item: Internal.item,
+  ~checkpointId,
+  ~handler,
+  ~inMemoryStore,
+  ~loadManager,
+  ~persistence,
+  ~shouldSaveHistory,
+  ~chains: Internal.chains,
+  ~config: Config.t,
+) => {
+  let eventItem = item->Internal.castUnsafeEventItem
+
+  //Include the load in time before handler
+  let timeBeforeHandler = Hrtime.makeTimer()
+
+  try {
+    let contextParams: UserContext.contextParams = {
+      item,
+      checkpointId,
+      inMemoryStore,
+      loadManager,
+      persistence,
+      shouldSaveHistory,
+      isPreload: false,
+      chains,
+      config,
+      isResolved: false,
+    }
+    await handler(
+      (
+        {
+          event: eventItem.event,
+          context: UserContext.getHandlerContext(contextParams),
+        }: Internal.handlerArgs
+      ),
+    )
+    contextParams.isResolved = true
+  } catch {
+  | exn =>
+    raise(
+      ProcessingError({
+        message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
+        item,
+        exn,
+      }),
+    )
+  }
+  let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toSecondsFloat
+  Prometheus.ProcessingHandler.increment(
+    ~contract=eventItem.eventConfig.contractName,
+    ~event=eventItem.eventConfig.name,
+    ~duration=handlerDuration,
+  )
+}
+
+let runHandlerOrThrow = async (
+  item: Internal.item,
+  ~checkpointId,
+  ~inMemoryStore,
+  ~loadManager,
+  ~ctx: Ctx.t,
+  ~shouldSaveHistory,
+  ~chains: Internal.chains,
+) => {
+  switch item {
+  | Block({onBlockConfig: {handler}, blockNumber}) =>
+    try {
+      let contextParams: UserContext.contextParams = {
+        item,
+        inMemoryStore,
+        loadManager,
+        persistence: ctx.persistence,
+        shouldSaveHistory,
+        checkpointId,
+        isPreload: false,
+        chains,
+        config: ctx.config,
+        isResolved: false,
+      }
+      await handler(
+        Ecosystem.makeOnBlockArgs(
+          ~blockNumber,
+          ~ecosystem=ctx.config.ecosystem,
+          ~context=UserContext.getHandlerContext(contextParams),
+        ),
+      )
+      contextParams.isResolved = true
+    } catch {
+    | exn =>
+      raise(
+        ProcessingError({
+          message: "Unexpected error in the block handler. Please handle the error to keep the indexer running smoothly.",
+          item,
+          exn,
+        }),
+      )
+    }
+  | Event({eventConfig}) => {
+      switch eventConfig.handler {
+      | Some(handler) =>
+        await item->runEventHandlerOrThrow(
+          ~handler,
+          ~checkpointId,
+          ~inMemoryStore,
+          ~loadManager,
+          ~persistence=ctx.persistence,
+          ~shouldSaveHistory,
+          ~chains,
+          ~config=ctx.config,
+        )
+      | None => ()
+      }
+
+      if ctx.config.enableRawEvents {
+        item
+        ->Internal.castUnsafeEventItem
+        ->addItemToRawEvents(~inMemoryStore, ~config=ctx.config)
+      }
+    }
+  }
+}
+
+let preloadBatchOrThrow = async (
+  batch: Batch.t,
+  ~loadManager,
+  ~persistence,
+  ~config: Config.t,
+  ~inMemoryStore,
+  ~chains: Internal.chains,
+) => {
+  // On the first run of loaders, we don't care about the result,
+  // whether it's an error or a return type.
+  // We'll rerun the loader again right before the handler run,
+  // to avoid having a stale data returned from the loader.
+
+  let promises = []
+  let itemIdx = ref(0)
+
+  for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
+    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointEventsProcessed =
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+
+    for idx in 0 to checkpointEventsProcessed - 1 {
+      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+      switch item {
+      | Event({eventConfig: {handler, contractName, name: eventName}, event}) =>
+        switch handler {
+        | None => ()
+        | Some(handler) =>
+          try {
+            let timerRef = Prometheus.PreloadHandler.startOperation(
+              ~contract=contractName,
+              ~event=eventName,
+            )
+            promises->Array.push(
+              handler({
+                event,
+                context: UserContext.getHandlerContext({
+                  item,
+                  inMemoryStore,
+                  loadManager,
+                  persistence,
+                  checkpointId,
+                  isPreload: true,
+                  shouldSaveHistory: false,
+                  chains,
+                  isResolved: false,
+                  config,
+                }),
+              })
+              ->Promise.thenResolve(_ => {
+                timerRef->Prometheus.PreloadHandler.endOperation(
+                  ~contract=contractName,
+                  ~event=eventName,
+                )
+              })
+              ->Promise.silentCatch,
+              // Must have Promise.catch as well as normal catch,
+              // because if user throws an error before await in the handler,
+              // it won't create a rejected promise
+            )
+          } catch {
+          | _ => ()
+          }
+        }
+      | Block({onBlockConfig: {handler}, blockNumber}) =>
+        try {
+          promises->Array.push(
+            handler({
+              Ecosystem.makeOnBlockArgs(
+                ~blockNumber,
+                ~ecosystem=config.ecosystem,
+                ~context=UserContext.getHandlerContext({
+                  item,
+                  inMemoryStore,
+                  loadManager,
+                  persistence,
+                  checkpointId,
+                  isPreload: true,
+                  shouldSaveHistory: false,
+                  chains,
+                  isResolved: false,
+                  config,
+                }),
+              )
+            })->Promise.silentCatch,
+          )
+        } catch {
+        | _ => ()
+        }
+      }
+    }
+
+    itemIdx := itemIdx.contents + checkpointEventsProcessed
+  }
+
+  let _ = await Promise.all(promises)
+}
+
+let runBatchHandlersOrThrow = async (
+  batch: Batch.t,
+  ~inMemoryStore,
+  ~loadManager,
+  ~ctx,
+  ~shouldSaveHistory,
+  ~chains: Internal.chains,
+) => {
+  let itemIdx = ref(0)
+
+  for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
+    let checkpointId = batch.checkpointIds->Js.Array2.unsafe_get(checkpointIdx)
+    let checkpointEventsProcessed =
+      batch.checkpointEventsProcessed->Js.Array2.unsafe_get(checkpointIdx)
+
+    for idx in 0 to checkpointEventsProcessed - 1 {
+      let item = batch.items->Js.Array2.unsafe_get(itemIdx.contents + idx)
+
+      await runHandlerOrThrow(
+        item,
+        ~checkpointId,
+        ~inMemoryStore,
+        ~loadManager,
+        ~ctx,
+        ~shouldSaveHistory,
+        ~chains,
+      )
+    }
+    itemIdx := itemIdx.contents + checkpointEventsProcessed
+  }
+}
+
+let registerProcessEventBatchMetrics = (
+  ~logger,
+  ~loadDuration,
+  ~handlerDuration,
+  ~dbWriteDuration,
+) => {
+  logger->Logging.childTrace({
+    "msg": "Finished processing batch",
+    "loader_time_elapsed": loadDuration,
+    "handlers_time_elapsed": handlerDuration,
+    "write_time_elapsed": dbWriteDuration,
+  })
+
+  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration, ~dbWriteDuration)
+}
+
+type logPartitionInfo = {
+  batchSize: int,
+  firstItemTimestamp: option<int>,
+  firstItemBlockNumber?: int,
+  lastItemBlockNumber?: int,
+}
+
+let processEventBatch = async (
+  ~batch: Batch.t,
+  ~inMemoryStore: InMemoryStore.t,
+  ~isInReorgThreshold,
+  ~loadManager,
+  ~ctx: Ctx.t,
+  ~chainFetchers: ChainMap.t<ChainFetcher.t>,
+) => {
+  let totalBatchSize = batch.totalBatchSize
+  // Compute chains state for this batch
+  let chains: Internal.chains = chainFetchers->computeChainsState
+
+  let logger = Logging.getLogger()
+  logger->Logging.childTrace({
+    "msg": "Started processing batch",
+    "totalBatchSize": totalBatchSize,
+    "chains": batch.progressedChainsById->Utils.Dict.mapValues(chainAfterBatch => {
+      {
+        "batchSize": chainAfterBatch.batchSize,
+        "progress": chainAfterBatch.progressBlockNumber,
+      }
+    }),
+  })
+
+  try {
+    let timeRef = Hrtime.makeTimer()
+
+    if batch.items->Utils.Array.notEmpty {
+      await batch->preloadBatchOrThrow(
+        ~loadManager,
+        ~persistence=ctx.persistence,
+        ~inMemoryStore,
+        ~chains,
+        ~config=ctx.config,
+      )
+    }
+
+    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+
+    if batch.items->Utils.Array.notEmpty {
+      await batch->runBatchHandlersOrThrow(
+        ~inMemoryStore,
+        ~loadManager,
+        ~ctx,
+        ~shouldSaveHistory=ctx.config->Config.shouldSaveHistory(~isInReorgThreshold),
+        ~chains,
+      )
+    }
+
+    let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+
+    try {
+      await ctx.persistence->Persistence.writeBatch(
+        ~batch,
+        ~config=ctx.config,
+        ~inMemoryStore,
+        ~isInReorgThreshold,
+      )
+
+      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+      let loaderDuration = elapsedTimeAfterLoaders
+      let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
+      let dbWriteDuration = elapsedTimeAfterDbWrite -. elapsedTimeAfterProcessing
+      registerProcessEventBatchMetrics(
+        ~logger,
+        ~loadDuration=loaderDuration,
+        ~handlerDuration,
+        ~dbWriteDuration,
+      )
+      Ok()
+    } catch {
+    | Persistence.StorageError({message, reason}) =>
+      reason->ErrorHandling.make(~msg=message, ~logger)->Error
+    | exn => exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
+    }
+  } catch {
+  | ProcessingError({message, exn, item}) =>
+    exn
+    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
+    ->Error
+  }
+}

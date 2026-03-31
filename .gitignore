@@ -1,13 +1,20 @@
 target
+.envio-artifacts
 .DS_Store
+.env
 # vim files
 *~
 *.swo
 *.swp
+.pnpm-store
+node_modules
 
 #All generated code for scenarios
+scenarios/**/generated
 scenarios/**/*.bs.js
 scenarios/**/*.res.js
 scenarios/**/*.gen.ts
 scenarios/**/lib/*
 scenarios/**/node_modules/*
+
+rescript.lock

@@ -3,17 +3,15 @@
 ### Run full tests
 
 - install packages, run codegen and bring up docker:
-    - `pnpm i`
 
-    - `pnpm codegen`
+  - `pnpm i`
 
-    - `pnpm docker-up`
+  - `pnpm codegen`
 
-- Make sure to gen ts types in contracts dir `(cd contracts && npx hardhat compile)`
+  - `pnpm docker-up`
 
-- Then run the tests and confirm all pass: 
-    - `pnpm test`
-
+- Then run the tests and confirm all pass:
+  - `pnpm test`
 
 ### Clean up
 

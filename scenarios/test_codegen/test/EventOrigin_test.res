@@ -1,20 +1,20 @@
-open RescriptMocha
+open Vitest
 
 describe("Chains State", () => {
   describe("chainInfo type", () => {
     it(
-      "should have isReady field set to false",
-      () => {
-        let chainInfo: Internal.chainInfo = {isReady: false}
-        Assert.equal(chainInfo.isReady, false)
+      "should have isLive field set to false",
+      t => {
+        let chainInfo: Internal.chainInfo = {id: 1, isLive: false}
+        t.expect(chainInfo.isLive).toBe(false)
       },
     )
 
     it(
-      "should have isReady field set to true",
-      () => {
-        let chainInfo: Internal.chainInfo = {isReady: true}
-        Assert.equal(chainInfo.isReady, true)
+      "should have isLive field set to true",
+      t => {
+        let chainInfo: Internal.chainInfo = {id: 1, isLive: true}
+        t.expect(chainInfo.isLive).toBe(true)
       },
     )
   })
@@ -22,48 +22,47 @@ describe("Chains State", () => {
   describe("chains dict", () => {
     it(
       "should support multiple chains with different states",
-      () => {
+      t => {
         let chains: Internal.chains = Js.Dict.empty()
-        chains->Js.Dict.set("1", {Internal.isReady: false})
-        chains->Js.Dict.set("2", {Internal.isReady: true})
+        chains->Js.Dict.set("1", {Internal.id: 1, isLive: false})
+        chains->Js.Dict.set("2", {Internal.id: 2, isLive: true})
 
-        Assert.equal(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady), Some(false))
-        Assert.equal(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isReady), Some(true))
+        t.expect(chains->Js.Dict.get("1")->Belt.Option.map(c => c.isLive)).toBe(Some(false))
+        t.expect(chains->Js.Dict.get("2")->Belt.Option.map(c => c.isLive)).toBe(Some(true))
       },
     )
   })
 
-  describe("chains in context", () => {
+  describe("chain in context", () => {
     Async.it(
       "should be accessible in handler context",
-      async () => {
-        // This test verifies that the chains field is accessible
+      async t => {
+        // This test verifies that the chain field is accessible
         // The actual integration test is in EventHandlers.res with the EmptyEvent handler
-        let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
+        let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
         let loadManager = LoadManager.make()
 
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
         let chains = Js.Dict.empty()
-        chains->Js.Dict.set("1", {Internal.isReady: false})
+        chains->Js.Dict.set("1337", {Internal.id: 1337, isLive: false})
 
         let handlerContext = UserContext.getHandlerContext({
           item,
           loadManager,
-          persistence: Generated.codegenPersistence,
+          persistence: Indexer.Generated.codegenPersistence,
           inMemoryStore,
           shouldSaveHistory: false,
           isPreload: false,
-          checkpointId: 0,
+          checkpointId: 0n,
           chains,
           isResolved: false,
+          config: Indexer.Generated.configWithoutRegistrations,
         })
 
-        // Verify we can access chains
-        Assert.equal(
-          handlerContext.chains->Js.Dict.get("1")->Belt.Option.map(c => c.isReady),
-          Some(false),
-        )
+        // Verify we can access current event's chain info
+        t.expect(handlerContext.chain.isLive).toBe(false)
+        t.expect(handlerContext.chain.id).toBe(1337)
       },
     )
   })

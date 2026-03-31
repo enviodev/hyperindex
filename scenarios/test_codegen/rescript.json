@@ -11,15 +11,15 @@
       "subdirs": true
     }
   ],
-  "suffix": ".res.js",
+  "suffix": ".res.mjs",
   "package-specs": {
-    "module": "commonjs",
+    "module": "esmodule",
     "in-source": true
   },
   "gentypeconfig": {
     "language": "typescript",
     "generatedFileExtension": ".gen.ts",
-    "module": "commonjs",
+    "moduleResolution": "node16",
     "debug": {
       "all": false,
       "basic": false
@@ -31,12 +31,9 @@
   "bs-dependencies": [
     "@rescript/react",
     "generated",
-    "rescript-nodejs",
     "rescript-schema",
     "helpers",
     "envio"
   ],
-  "bsc-flags": [
-    "-open RescriptSchema"
-  ]
+  "bsc-flags": ["-open RescriptSchema"]
 }

@@ -1,5 +1,5 @@
 open Belt
-open RescriptMocha
+open Vitest
 
 let chainId = 0
 
@@ -50,6 +50,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockConfigs) => {
     ~targetBufferSize=5000,
     ~chainId,
     ~onBlockConfigs?,
+    ~knownHeight=0,
   )
 }
 
@@ -63,31 +64,32 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
 })
 
 describe("FetchState onBlock functionality", () => {
-  it("should add block items to queue when processing first batch with onBlock config", () => {
+  it("should add block items to queue when processing first batch with onBlock config", t => {
     // Create a fetch state with onBlock config
     let onBlockConfig = makeOnBlockConfig(~interval=2, ~startBlock=Some(0))
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
 
     // Verify initial state - no items in queue
-    Assert.equal(fetchState->FetchState.bufferSize, 0, ~message="Initial queue should be empty")
+    t.expect(fetchState->FetchState.bufferSize, ~message="Initial queue should be empty").toBe(0)
 
     // Simulate getting first batch of events by calling handleQueryResult
     // This should trigger the onBlock logic and add block items to the queue
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -107,34 +109,34 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should respect onBlock startBlock configuration", () => {
+  it("should respect onBlock startBlock configuration", t => {
     // Create onBlock config with startBlock = 5
     let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(5))
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
 
     // Process a batch that goes from block 0 to 10
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -155,34 +157,34 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should respect onBlock endBlock configuration", () => {
+  it("should respect onBlock endBlock configuration", t => {
     // Create onBlock config with endBlock = 8
     let onBlockConfig = makeOnBlockConfig(~interval=1, ~endBlock=Some(8))
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig]))
 
     // Process a batch that goes from block 0 to 10
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -206,35 +208,35 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should handle multiple onBlock configs with different intervals", () => {
+  it("should handle multiple onBlock configs with different intervals", t => {
     // Create two onBlock configs with different intervals
     let onBlockConfig1 = makeOnBlockConfig(~name="config1", ~index=0, ~interval=2)
     let onBlockConfig2 = makeOnBlockConfig(~name="config2", ~index=1, ~interval=3)
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=Some([onBlockConfig1, onBlockConfig2]))
 
     // Process a batch
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 12, blockTimestamp: 12 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
@@ -263,33 +265,33 @@ describe("FetchState onBlock functionality", () => {
     ]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 
-  it("should not add block items when onBlock configs are not provided", () => {
+  it("should not add block items when onBlock configs are not provided", t => {
     // Create fetch state without onBlock configs
     let fetchState = makeInitialWithOnBlock(~onBlockConfigs=None)
 
     // Process a batch
+    let query: FetchState.query = {
+      partitionId: "0",
+      toBlock: None,
+      isChunk: false,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      fromBlock: 0,
+      indexingContracts: fetchState.indexingContracts,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState
-      ->FetchState.handleQueryResult(
-        ~query={
-          partitionId: "0",
-          target: Head,
-          selection: fetchState.normalSelection,
-          addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
-          fromBlock: 0,
-          indexingContracts: fetchState.indexingContracts,
-        },
+      fetchState->FetchState.handleQueryResult(
+        ~query,
         ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
-      ->Result.getExn
 
     // Verify that no block items were added when onBlock configs are not provided
     let queue = updatedFetchState.buffer
@@ -301,10 +303,9 @@ describe("FetchState onBlock functionality", () => {
     let expectedTuples = [(5, 0)]
 
     // Check that we have the exact expected tuples
-    Assert.deepEqual(
+    t.expect(
       blockNumberLogIndexTuples,
-      expectedTuples,
       ~message="Should have correct block number and log index tuples",
-    )
+    ).toEqual(expectedTuples)
   })
 })

@@ -236,13 +236,7 @@ module Make = () => {
   }
 
   let executeQuery = (self: t, query: FetchState.query): Source.blockRangeFetchResponse => {
-    let {fromBlock} = query
-    let toBlock = switch query.target {
-    | Head => None
-    | EndBlock({toBlock})
-    | Merge({toBlock}) =>
-      Some(toBlock)
-    }
+    let {fromBlock, toBlock} = query
 
     let unfilteredBlocks = self->getBlocks(~fromBlock, ~toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
@@ -250,7 +244,7 @@ module Make = () => {
       self
       ->getBlock(~blockNumber=fromBlock - 1)
       ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
-    let currentBlockHeight = self->getHeight
+    let knownHeight = self->getHeight
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
       let addresses = query.addressesByContractName->Js.Dict.get(c.name)->Option.getWithDefault([])
@@ -265,7 +259,7 @@ module Make = () => {
     let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
 
     {
-      currentBlockHeight,
+      knownHeight,
       reorgGuard: {
         rangeLastBlock: {
           blockHash: heighstBlock.blockHash,
@@ -279,7 +273,7 @@ module Make = () => {
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: (
         {
-          totalTimeElapsed: 0,
+          totalTimeElapsed: 0.,
         }: Source.blockRangeFetchStats
       ),
     }

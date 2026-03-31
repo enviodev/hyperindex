@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 /// NOTE: diagrams for these tests can be found here: https://www.figma.com/file/TrBPqQHYoJ8wg6e0kAynZo/Scenarios-to-test-Linked-Entities?type=whiteboard&node-id=0%3A1&t=CZAE4T4oY9PCbszw-1
 
@@ -42,9 +42,9 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //     {id: "TODO_TURN_THIS_INTO_NONE", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
   //   ]
   //
-  //   await Entities.batchSet(sql, aEntities, ~entityMod=module(Entities.A))
-  //   await Entities.batchSet(sql, bEntities, ~entityMod=module(Entities.B))
-  //   await Entities.batchSet(sql, cEntities, ~entityMod=module(Entities.C))
+  //   await Indexer.Entities.batchSet(sql, aEntities, ~entityMod=module(Indexer.Entities.A))
+  //   await Indexer.Entities.batchSet(sql, bEntities, ~entityMod=module(Indexer.Entities.B))
+  //   await Indexer.Entities.batchSet(sql, cEntities, ~entityMod=module(Indexer.Entities.C))
   //
   //   let inMemoryStore = IO.InMemoryStore.make()
   //
@@ -160,29 +160,29 @@ describe_skip("Linked Entity Loader Integration Test", () => {
 })
 
 describe("Async linked entity loaders", () => {
-  Async.it("should update the big int to be the same ", async () => {
+  Async.it("should update the big int to be the same ", async t => {
     // Initializing values for mock db
     let messageFromC = "Hi there I was in C originally"
     // mockDbInitial->Testhelpers.MockDb.
-    let c: Types.c = {
+    let c: Indexer.Entities.C.t = {
       id: "hasStringToCopy",
       stringThatIsMirroredToA: messageFromC,
       a_id: "",
     }
-    let b: Types.b = {
+    let b: Indexer.Entities.B.t = {
       id: "hasC",
       c_id: Some(c.id),
     }
-    let a: Types.a = {
+    let a: Indexer.Entities.A.t = {
       id: EventHandlers.aIdWithGrandChildC,
       b_id: b.id,
       optionalStringToTestLinkedEntities: None,
     }
-    let bNoC: Types.b = {
+    let bNoC: Indexer.Entities.B.t = {
       id: "noC",
       c_id: None,
     }
-    let aNoGrandchild: Types.a = {
+    let aNoGrandchild: Indexer.Entities.A.t = {
       id: EventHandlers.aIdWithNoGrandChildC,
       b_id: bNoC.id,
       optionalStringToTestLinkedEntities: None,
@@ -208,7 +208,7 @@ describe("Async linked entity loaders", () => {
       updatedMockDb.entities.a.get(EventHandlers.aIdWithGrandChildC)->Belt.Option.flatMap(
         a => a.optionalStringToTestLinkedEntities,
       )
-    Assert.deepEqual(stringInAFromC, Some(messageFromC))
+    t.expect(stringInAFromC).toEqual(Some(messageFromC))
 
     // Expected string to be null still since no c grandchild.
     let optionalStringToTestLinkedEntitiesNoGrandchild =
@@ -216,6 +216,6 @@ describe("Async linked entity loaders", () => {
         a => a.optionalStringToTestLinkedEntities,
       )
 
-    Assert.deepEqual(optionalStringToTestLinkedEntitiesNoGrandchild, None)
+    t.expect(optionalStringToTestLinkedEntitiesNoGrandchild).toEqual(None)
   })
 })

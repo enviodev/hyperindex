@@ -1,29 +1,36 @@
 open Belt
 
+type chainId = Indexer.chainId
+
+let config = Indexer.Generated.configWithoutRegistrations
+
+let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
+  config.userEntitiesByName
+  ->Js.Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
+  ->Option.getExn
+
 module InMemoryStore = {
-  let setEntity = (inMemoryStore, ~entityMod, entity) => {
+  let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable =
-      inMemoryStore->InMemoryStore.getInMemTable(
-        ~entityConfig=entityMod->Entities.entityModToInternal,
-      )
-    let entity = entity->(Utils.magic: 'a => Entities.internalEntity)
+      inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+    let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
-      {
-        entityId: entity->Entities.getEntityId,
-        checkpointId: 0,
-        entityUpdateAction: Set(entity),
-      },
-      ~shouldSaveHistory=Generated.configWithoutRegistrations->Config.shouldSaveHistory(
+      Set({
+        entityId: (entity: Internal.entity).id,
+        checkpointId: 0n,
+        entity,
+      }),
+      ~shouldSaveHistory=config->Config.shouldSaveHistory(
         ~isInReorgThreshold=false,
       ),
     )
   }
 
   let make = (~entities=[]) => {
-    let inMemoryStore = InMemoryStore.make(~entities=Entities.allEntities)
-    entities->Js.Array2.forEach(((entityMod, items)) => {
+    let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
+    entities->Js.Array2.forEach(((entityConfig, items)) => {
       items->Js.Array2.forEach(entity => {
-        inMemoryStore->setEntity(~entityMod, entity)
+        inMemoryStore->setEntity(~entityConfig, entity)
       })
     })
     inMemoryStore
@@ -36,10 +43,8 @@ module Storage = {
     | #initialize
     | #resumeInitialState
     | #dumpEffectCache
-    | #setEffectCacheOrThrow
     | #loadByIdsOrThrow
     | #loadByFieldOrThrow
-    | #setOrThrow
   ]
 
   type t = {
@@ -48,7 +53,7 @@ module Storage = {
     initializeCalls: array<{
       "entities": array<Internal.entityConfig>,
       "chainConfigs": array<Config.chain>,
-      "enums": array<Internal.enumConfig<Internal.enum>>,
+      "enums": array<Table.enumConfig<Table.enum>>,
     }>,
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
@@ -88,7 +93,6 @@ module Storage = {
     let loadByIdsOrThrowCalls = []
     let loadByFieldOrThrowCalls = []
     let dumpEffectCacheCalls = ref(0)
-    let setEffectCacheOrThrowCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
 
@@ -137,14 +141,6 @@ module Storage = {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
           Promise.resolve()
         }),
-        setEffectCacheOrThrow: implement(#setEffectCacheOrThrow, (
-          ~effect as _,
-          ~items as _,
-          ~initialize as _,
-        ) => {
-          setEffectCacheOrThrowCalls := setEffectCacheOrThrowCalls.contents + 1
-          Promise.resolve()
-        }),
         loadByIdsOrThrow: (
           type item,
           ~ids,
@@ -181,46 +177,51 @@ module Storage = {
             Promise.resolve([])
           })
         },
-        setOrThrow: (~items as _, ~table as _, ~itemSchema as _) => {
-          implementBody(#setOrThrow, () => Js.Exn.raiseError("Not implemented"))
-        },
-        executeUnsafe: _ => Promise.resolve(%raw(`undefined`)),
-        hasEntityHistoryRows: () => Promise.resolve(false),
-        setChainMeta: _ => Promise.resolve(%raw(`undefined`)),
-        pruneStaleCheckpoints: _ => Promise.resolve(),
+        reset: () => Js.Exn.raiseError("Not implemented"),
+        setChainMeta: _ => Js.Exn.raiseError("Not implemented"),
+        pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not implemented"),
         pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-          Promise.resolve(),
+          Js.Exn.raiseError("Not implemented"),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
-          Promise.resolve([]),
-        getRollbackProgressDiff: _ => Promise.resolve([]),
+          Js.Exn.raiseError("Not implemented"),
+        getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
+          Js.Exn.raiseError("Not implemented"),
         getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
-          Promise.resolve(([], [])),
+          Js.Exn.raiseError("Not implemented"),
         writeBatch: (
           ~batch as _,
-          ~inMemoryStore as _,
+          ~rawEvents as _,
+          ~rollbackTargetCheckpointId as _,
           ~isInReorgThreshold as _,
           ~config as _,
           ~allEntities as _,
-          ~batchCache as _,
-        ) => Promise.resolve(),
+          ~updatedEffectsCache as _,
+          ~updatedEntities as _,
+        ) => Js.Exn.raiseError("Not implemented"),
       },
     }
   }
 
   let toPersistence = (storageMock: t) => {
     {
-      ...Generated.codegenPersistence,
+      ...Indexer.Generated.codegenPersistence,
       storage: storageMock.storage,
       storageStatus: Ready({
         cleanRun: false,
         cache: Js.Dict.empty(),
         chains: [],
         reorgCheckpoints: [],
-        checkpointId: 0,
+        checkpointId: 0n,
       }),
     }
   }
 }
+
+// Aliases to access the generated Indexer module after the local `module Indexer` shadows it
+type eventLog<'a> = Indexer.eventLog<'a>
+type handlerContext = Indexer.handlerContext
+type contractRegister<'a> = Indexer.HandlerTypes.contractRegister<'a>
+module Transaction = Indexer.Transaction
 
 module Indexer = {
   type metric = {
@@ -231,10 +232,9 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
-    query: 'entity. module(Entities.Entity with type t = 'entity) => promise<array<'entity>>,
-    queryHistory: 'entity. module(Entities.Entity with type t = 'entity) => promise<
-      array<EntityHistory.entityUpdate<'entity>>,
-    >,
+    query: 'entity. Indexer.Entities.name<'entity> => promise<array<'entity>>,
+    queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
+    queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
@@ -242,7 +242,7 @@ module Indexer = {
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
-  type chainConfig = {chain: Types.chain, sources: array<Source.t>, startBlock?: int}
+  type chainConfig = {chain: chainId, sourceConfig: Config.sourceConfig, startBlock?: int, blockLag?: int}
 
   let rec make = async (
     ~chains: array<chainConfig>,
@@ -252,14 +252,21 @@ module Indexer = {
     // makes tests ~1.9 seconds faster
     ~enableHasura=false,
     ~reset=true,
+    ~batchSize=?,
   ) => {
     // TODO: Should stop using global client
     PromClient.defaultRegister->PromClient.resetMetrics
 
-    let registrations = Generated.registerAllHandlers()
+    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
+    switch Env.userLogLevel {
+    | None => Logging.setLogLevel(#silent)
+    | Some(_) => ()
+    }
+
+    let registrations = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
 
     let config = {
-      let config = Generated.makeGeneratedConfig()
+      let config = Indexer.Generated.makeGeneratedConfig()
 
       let chainMap =
         chains
@@ -270,9 +277,12 @@ module Indexer = {
             chain,
             {
               ...originalChainConfig,
-              sources: chainConfig.sources,
+              sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getWithDefault(
                 originalChainConfig.startBlock,
+              ),
+              blockLag: chainConfig.blockLag->Option.getWithDefault(
+                originalChainConfig.blockLag,
               ),
             },
           )
@@ -286,20 +296,21 @@ module Indexer = {
         enableRawEvents: false,
         chainMap,
         multichain,
+        batchSize: batchSize->Option.getWithDefault(config.batchSize),
       }
     }
 
-    let sql = Db.makeClient()
+    let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let storage = Indexer.Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
     let persistence = {
-      ...Generated.codegenPersistence,
+      ...Indexer.Generated.codegenPersistence,
       storageStatus: Persistence.Unknown,
       storage,
     }
 
-    let indexer = {
-      Indexer.registrations,
+    let ctx = {
+      Ctx.registrations,
       config,
       persistence,
     }
@@ -320,10 +331,9 @@ module Indexer = {
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~registrations,
-      ~persistence,
     )
     let globalState = GlobalState.make(
-      ~indexer,
+      ~ctx,
       ~chainManager,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
@@ -363,8 +373,50 @@ module Indexer = {
           resolve()
         })
       },
-      query: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
+      query: (type entity, name: Indexer.Entities.name<entity>) => {
+        let ec = entityConfig(name)
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(ec.rowsSchema)
+        })
+        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+      },
+      queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
+        let ec = entityConfig(name)
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
+          ),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(
+            S.array(
+              S.union([
+                PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
+                S.object((s): Change.t<'entity> => {
+                  s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                  Delete({
+                    entityId: s.field("id", S.string),
+                    checkpointId: s.field(
+                      EntityHistory.checkpointIdFieldName,
+                      EntityHistory.unsafeCheckpointIdSchema,
+                    ),
+                  })
+                }),
+              ]),
+            ),
+          )
+        })
+        ->(
+          Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
+        )
+      },
+      queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
@@ -374,38 +426,6 @@ module Indexer = {
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
-      queryHistory: (type entity, entityMod) => {
-        let entityConfig = entityMod->Entities.entityModToInternal
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=entityConfig.entityHistory.table.tableName,
-          ),
-        )
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(
-            S.array(
-              S.union([
-                entityConfig.entityHistory.setUpdateSchema,
-                S.object((s): EntityHistory.entityUpdate<'entity> => {
-                  s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-                  {
-                    entityId: s.field("id", S.string),
-                    checkpointId: s.field(EntityHistory.checkpointIdFieldName, S.int),
-                    entityUpdateAction: Delete,
-                  }
-                }),
-              ]),
-            ),
-          )
-        })
-        ->(
-          Utils.magic: promise<array<EntityHistory.entityUpdate<Internal.entity>>> => promise<
-            array<EntityHistory.entityUpdate<entity>>,
-          >
-        )
-      },
       queryCheckpoints: () => {
         sql
         ->Postgres.unsafe(
@@ -414,7 +434,11 @@ module Indexer = {
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
         )
-        ->(Utils.magic: promise<unknown> => promise<array<InternalTable.Checkpoints.t>>)
+        ->Promise.thenResolve(rows =>
+          rows
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        )
       },
       queryEffectCache: (effectName: string) => {
         sql
@@ -439,7 +463,7 @@ module Indexer = {
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false)
+        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false, ~batchSize?)
       },
       graphql: query => {
         if !enableHasura {
@@ -457,17 +481,36 @@ module Indexer = {
 }
 
 module Source = {
+  module CallPayload = {
+    @get external addresses: {..} => dict<array<Address.t>> = "addresses"
+  }
+
   type method = [
     | #getBlockHashes
     | #getHeightOrThrow
     | #getItemsOrThrow
+    | #createHeightSubscription
   ]
 
   type itemMock = {
     blockNumber: int,
     logIndex: int,
-    handler?: Types.HandlerTypes.loader<unit, unit>,
-    contractRegister?: Types.HandlerTypes.contractRegister<unit>,
+    handler?: Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<
+      unit,
+    >,
+    contractRegister?: contractRegister<unit>,
+  }
+
+  type getItemsOrThrowCall = {
+    payload: {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string},
+    resolve: (
+      array<itemMock>,
+      ~latestFetchedBlockNumber: int=?,
+      ~latestFetchedBlockHash: string=?,
+      ~knownHeight: int=?,
+      ~prevRangeLastBlock: ReorgDetection.blockData=?,
+    ) => unit,
+    reject: 'exn. 'exn => unit,
   }
 
   type t = {
@@ -477,20 +520,25 @@ module Source = {
     getHeightOrThrowCalls: array<bool>,
     resolveGetHeightOrThrow: int => unit,
     rejectGetHeightOrThrow: 'exn. 'exn => unit,
-    getItemsOrThrowCalls: array<{"fromBlock": int, "toBlock": option<int>, "retry": int}>,
+    getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+    // TODO: Remove in favor of getItemsOrThrowCalls
     resolveGetItemsOrThrow: (
       array<itemMock>,
+      ~resolveAt: [#first | #all | #last]=?,
       ~latestFetchedBlockNumber: int=?,
       ~latestFetchedBlockHash: string=?,
-      ~currentBlockHeight: int=?,
+      ~knownHeight: int=?,
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
-    rejectGetItemsOrThrow: 'exn. 'exn => unit,
     getBlockHashesCalls: array<array<int>>,
     resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
+    // Height subscription mocking
+    heightSubscriptionCalls: array<bool>,
+    triggerHeightSubscription: int => unit,
+    unsubscribeHeightSubscription: unit => unit,
   }
 
-  let make = (methods, ~chain=#1: Types.chain, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
+  let make = (methods, ~chain=#1: chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
     let implement = (method: method, fn) => {
       if methods->Js.Array2.includes(method) {
         fn
@@ -504,10 +552,39 @@ module Source = {
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
     let getItemsOrThrowCalls = []
-    let getItemsOrThrowResolveFns = []
-    let getItemsOrThrowRejectFns = []
     let getBlockHashesCalls = []
     let getBlockHashesResolveFns = []
+    // Height subscription state
+    let heightSubscriptionCalls = []
+    let heightSubscriptionCallbacks: array<int => unit> = []
+    let heightSubscriptionUnsubscribed = ref(false)
+
+    // With the function we keep only the pending calls,
+    // and remove the resolved ones automatically.
+    let keepOnlyPendingCalls = (~array, ~fn) => {
+      Promise.make((resolve, reject) => {
+        let callRef = ref(%raw(`null`))
+        callRef :=
+          fn(
+            ~resolve=arg => {
+              resolve(arg)
+              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              if indexOf !== -1 {
+                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+              }
+            },
+            ~reject=arg => {
+              reject(arg)
+              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              if indexOf !== -1 {
+                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+              }
+            },
+          )
+        array->Js.Array2.push(callRef.contents)->ignore
+      })
+    }
+
     {
       getHeightOrThrowCalls,
       resolveGetHeightOrThrow: height => {
@@ -522,27 +599,31 @@ module Source = {
       getItemsOrThrowCalls,
       resolveGetItemsOrThrow: (
         items,
+        ~resolveAt=#all,
         ~latestFetchedBlockNumber=?,
         ~latestFetchedBlockHash=?,
-        ~currentBlockHeight=?,
+        ~knownHeight=?,
         ~prevRangeLastBlock=?,
       ) => {
-        if getItemsOrThrowResolveFns->Utils.Array.isEmpty {
-          Js.Exn.raiseError("getItemsOrThrowResolveFns is empty")
+        let calls = switch resolveAt {
+        | #first => getItemsOrThrowCalls->Js.Array2.slice(~start=0, ~end_=1)
+        | #all => getItemsOrThrowCalls->Utils.Array.copy
+        | #last => getItemsOrThrowCalls->Js.Array2.sliceFrom(getItemsOrThrowCalls->Array.length - 1)
         }
-        getItemsOrThrowResolveFns->Array.forEach(resolve =>
-          resolve({
-            "items": items,
-            "latestFetchedBlockNumber": latestFetchedBlockNumber,
-            "latestFetchedBlockHash": latestFetchedBlockHash,
-            "prevRangeLastBlock": prevRangeLastBlock,
-            "currentBlockHeight": currentBlockHeight,
-          })
-        )
-        getItemsOrThrowResolveFns->Utils.Array.clearInPlace
-      },
-      rejectGetItemsOrThrow: exn => {
-        getItemsOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
+
+        switch calls {
+        | [] => Js.Exn.raiseError("getItemsOrThrowCalls is empty")
+        | calls =>
+          calls->Array.forEach(call =>
+            call.resolve(
+              items,
+              ~latestFetchedBlockNumber?,
+              ~latestFetchedBlockHash?,
+              ~knownHeight?,
+              ~prevRangeLastBlock?,
+            )
+          )
+        }
       },
       getBlockHashesCalls,
       resolveGetBlockHashes: blockHashes => {
@@ -551,6 +632,16 @@ module Source = {
         }
         getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
         getBlockHashesResolveFns->Utils.Array.clearInPlace
+      },
+      heightSubscriptionCalls,
+      triggerHeightSubscription: height => {
+        if !heightSubscriptionUnsubscribed.contents {
+          heightSubscriptionCallbacks->Array.forEach(callback => callback(height))
+        }
+      },
+      unsubscribeHeightSubscription: () => {
+        heightSubscriptionUnsubscribed := true
+        heightSubscriptionCallbacks->Utils.Array.clearInPlace
       },
       source: {
         {
@@ -575,43 +666,47 @@ module Source = {
           getItemsOrThrow: implement(#getItemsOrThrow, (
             ~fromBlock,
             ~toBlock,
-            ~addressesByContractName as _,
+            ~addressesByContractName as _addressesByContractName,
             ~indexingContracts as _,
-            ~currentBlockHeight,
-            ~partitionId as _,
+            ~knownHeight,
+            ~partitionId,
             ~selection as _,
             ~retry,
             ~logger as _,
           ) => {
-            getItemsOrThrowCalls
-            ->Js.Array2.push({
-              "fromBlock": fromBlock,
-              "toBlock": toBlock,
-              "retry": retry,
-            })
-            ->ignore
-            Promise.make((resolve, reject) => {
-              getItemsOrThrowResolveFns
-              ->Js.Array2.push(
-                data => {
+            keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
+              let payload = {
+                "fromBlock": fromBlock,
+                "toBlock": toBlock,
+                "retry": retry,
+                "p": partitionId,
+              }
+              let _ = %raw(`Object.defineProperty(payload, 'addresses', { value: _addressesByContractName })`)
+              {
+                payload,
+                resolve: (
+                  items,
+                  ~latestFetchedBlockNumber=?,
+                  ~latestFetchedBlockHash=?,
+                  ~knownHeight=knownHeight,
+                  ~prevRangeLastBlock=?,
+                ) => {
                   let latestFetchedBlockNumber =
-                    data["latestFetchedBlockNumber"]->Option.getWithDefault(
+                    latestFetchedBlockNumber->Option.getWithDefault(
                       toBlock->Option.getWithDefault(fromBlock),
                     )
 
                   resolve({
-                    Source.currentBlockHeight: data["currentBlockHeight"]->Option.getWithDefault(
-                      currentBlockHeight,
-                    ),
+                    Source.knownHeight,
                     reorgGuard: {
                       rangeLastBlock: {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: switch data["latestFetchedBlockHash"] {
+                        blockHash: switch latestFetchedBlockHash {
                         | Some(latestFetchedBlockHash) => latestFetchedBlockHash
                         | None => `0x${latestFetchedBlockNumber->Int.toString}`
                         },
                       },
-                      prevRangeLastBlock: switch data["prevRangeLastBlock"] {
+                      prevRangeLastBlock: switch prevRangeLastBlock {
                       | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
                       | None =>
                         if fromBlock > 0 {
@@ -624,7 +719,7 @@ module Source = {
                         }
                       },
                     },
-                    parsedQueueItems: data["items"]->Array.map(
+                    parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
                           eventConfig: ({
@@ -646,25 +741,28 @@ module Source = {
                                   }
                                 }
                               )->(
-                                Utils.magic: Types.HandlerTypes.loader<unit, unit> => option<
-                                  Internal.handler,
-                                >
+                                Utils.magic: (
+                                  Internal.genericHandlerArgs<
+                                    eventLog<unknown>,
+                                    handlerContext,
+                                  > => promise<unit>
+                                ) => option<Internal.handler>
                               )
 
                             | None => None
                             },
                             contractRegister: item.contractRegister->(
                               Utils.magic: option<
-                                Types.HandlerTypes.contractRegister<unit>,
+                                contractRegister<unit>,
                               > => option<Internal.contractRegister>
                             ),
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
-                            blockSchema: S.object(_ => ())->Utils.magic,
-                            transactionSchema: S.object(_ => ())->Utils.magic,
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+                            selectedBlockFields: Utils.Set.make(),
+                            selectedTransactionFields: Utils.Set.make(),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
                           timestamp: item.blockNumber,
                           chain,
@@ -689,15 +787,29 @@ module Source = {
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
                     stats: {
-                      totalTimeElapsed: 0,
+                      totalTimeElapsed: 0.,
                     },
                   })
                 },
-              )
-              ->ignore
-              getItemsOrThrowRejectFns->Js.Array2.push(reject)->ignore
+                reject: reject->Utils.magic,
+              }
             })
           }),
+          createHeightSubscription: ?switch methods->Js.Array2.includes(#createHeightSubscription) {
+          | true =>
+            Some(
+              (~onHeight) => {
+                heightSubscriptionCalls->Js.Array2.push(true)->ignore
+                heightSubscriptionCallbacks->Js.Array2.push(onHeight)->ignore
+                heightSubscriptionUnsubscribed := false
+                () => {
+                  heightSubscriptionUnsubscribed := true
+                  heightSubscriptionCallbacks->Utils.Array.clearInPlace
+                }
+              },
+            )
+          | false => None
+          },
         }
       },
     }
@@ -705,24 +817,25 @@ module Source = {
 }
 
 module Helper = {
-  let initialEnterReorgThreshold = async (~indexerMock: Indexer.t, ~sourceMock: Source.t) => {
-    open RescriptMocha
-
-    Assert.deepEqual(
+  let initialEnterReorgThreshold = async (
+    ~t: Vitest.testContext,
+    ~indexerMock: Indexer.t,
+    ~sourceMock: Source.t,
+  ) => {
+    t.expect(
       sourceMock.getHeightOrThrowCalls->Array.length,
-      1,
       ~message="should have called getHeightOrThrow to get initial height",
-    )
+    ).toEqual(1)
     sourceMock.resolveGetHeightOrThrow(300)
     await Utils.delay(0)
     await Utils.delay(0)
 
-    let expectedGetItemsCall1 = {"fromBlock": 0, "toBlock": Some(100), "retry": 0}
-
-    Assert.deepEqual(
-      sourceMock.getItemsOrThrowCalls,
-      [expectedGetItemsCall1],
+    t.expect(
+      sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
       ~message="Should request items until reorg threshold",
+    ).toEqual(
+      // fromBlock 1 since it's in the config.yaml start_block is 1
+      [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}],
     )
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()
@@ -737,13 +850,7 @@ let mockRawEventRow: InternalTable.RawEvents.t = {
   eventName: "SimpleNftCreated",
   blockNumber: 1000,
   logIndex: 10,
-  transactionFields: S.reverseConvertToJsonOrThrow(
-    {
-      Types.Transaction.transactionIndex: 20,
-      hash: "0x1234567890abcdef",
-    },
-    Types.Transaction.schema,
-  ),
+  transactionFields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
   srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
   blockHash: "0x9876543210fedcba9876543210fedcba987654321",
   blockTimestamp: 1620720000,
@@ -759,8 +866,8 @@ let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47
 let evmEventConfig = (
   ~id=eventId,
   ~contractName="ERC20",
-  ~blockSchema: option<S.t<'block>>=?,
-  ~transactionSchema: option<S.t<'transaction>>=?,
+  ~blockFieldNames: array<Internal.evmBlockField>=[],
+  ~transactionFieldNames: array<Internal.evmTransactionField>=[],
   ~isWildcard=false,
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
@@ -778,12 +885,6 @@ let evmEventConfig = (
     paramsRawEventSchema: S.literal(%raw(`null`))
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    blockSchema: blockSchema
-    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
-    ->Utils.magic,
-    transactionSchema: transactionSchema
-    ->Belt.Option.getWithDefault(S.object(_ => ())->Utils.magic)
-    ->Utils.magic,
     getEventFiltersOrThrow: _ =>
       switch dependsOnAddresses {
       | Some(true) =>
@@ -814,5 +915,7 @@ let evmEventConfig = (
         ])
       },
     convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
+    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
   }
 }

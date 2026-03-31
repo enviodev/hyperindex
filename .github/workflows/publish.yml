@@ -1,0 +1,136 @@
+name: Publish to NPM
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  # Determine npm tag from release tag name:
+  #   v1.2.3, v1.2.3-alpha.1, v1.2.3-rc.1 → next
+  #   anything else → dev
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      npm_tag: ${{ steps.tag.outputs.npm_tag }}
+      version: ${{ steps.tag.outputs.version }}
+      build_run_id: ${{ steps.find_build.outputs.run_id }}
+    steps:
+      - name: Determine npm tag
+        id: tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION=$(echo "$TAG" | sed 's/^v//')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Valid semver or semver with -alpha/-rc prerelease → next
+          if echo "$VERSION" | grep -qP '^\d+\.\d+\.\d+(-(?:alpha|rc)\.\d+)?$'; then
+            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+            echo "Tag: next"
+          else
+            echo "npm_tag=dev" >> "$GITHUB_OUTPUT"
+            echo "Tag: dev"
+          fi
+
+      - name: Find successful Build & Verify run for this commit
+        id: find_build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_id=$(gh api "repos/${{ github.repository }}/actions/workflows/build_and_verify.yml/runs?head_sha=${{ github.sha }}&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "No successful Build & Verify run found for ${{ github.sha }}"
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Found run: $run_id"
+
+  # Build all 4 platform packages with the release version baked into the binary
+  build-platforms:
+    needs: prepare
+    uses: ./.github/workflows/build-platforms.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+
+  # Publish all 4 platform packages to npm
+  publish-platform-packages:
+    runs-on: ubuntu-latest
+    needs: [prepare, build-platforms]
+    strategy:
+      matrix:
+        pkg: [envio-linux-x64, envio-linux-arm64, envio-darwin-x64, envio-darwin-arm64]
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download platform package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-${{ matrix.pkg }}
+          path: ./pkg
+
+      - name: Patch version and publish
+        working-directory: ./pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          # Restore execute permission (GitHub Actions artifacts don't preserve permissions)
+          if [ ! -f bin/envio ]; then
+            echo "ERROR: bin/envio not found in platform package"
+            exit 1
+          fi
+          chmod +x bin/envio
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "Publishing $(node -p "require('./package.json').name")@${VERSION}"
+          npm publish --access public --tag latest
+
+  # Publish the base envio package to npm
+  publish-envio-package:
+    runs-on: ubuntu-latest
+    needs: [prepare, publish-platform-packages]
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download envio base package from Build & Verify
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pkg-envio
+          path: ./pkg
+          run-id: ${{ needs.prepare.outputs.build_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch version and publish
+        working-directory: ./pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
+        run: |
+          # Patch version and optionalDependencies versions
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+            pkg.version = process.env.VERSION;
+            if (pkg.optionalDependencies) {
+              for (const dep of Object.keys(pkg.optionalDependencies)) {
+                pkg.optionalDependencies[dep] = process.env.VERSION;
+              }
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "Publishing envio@${VERSION} with tag ${NPM_TAG}"
+          npm publish --access public --tag "$NPM_TAG"

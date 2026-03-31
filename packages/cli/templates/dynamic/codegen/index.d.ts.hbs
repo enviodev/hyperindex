@@ -1,0 +1,35 @@
+export {
+  onBlock,
+{{#each codegen_contracts as |contract|}}
+  {{contract.name.capitalized}},
+{{/each}}
+} from "./src/Indexer.gen";
+export type * from "./src/Indexer.gen";
+export type * from "./src/Types.ts";
+
+import type { Indexer, TestIndexer } from "./src/Types.ts";
+export const indexer: Indexer;
+export const createTestIndexer: () => TestIndexer;
+import {
+{{#each codegen_contracts as |contract|}}
+  {{contract.name.capitalized}},
+{{/each}}
+  MockDb,
+  Addresses
+} from "./src/TestHelpers.gen";
+
+export const TestHelpers = {
+{{#each codegen_contracts as |contract|}}
+  {{contract.name.capitalized}},
+{{/each}}
+  MockDb,
+  Addresses
+};
+
+export {
+{{#each gql_enums as |enum|}}
+  {{enum.name.capitalized}},
+{{/each}}
+} from "./src/Enum.gen";
+
+export {default as BigDecimal} from 'bignumber.js';

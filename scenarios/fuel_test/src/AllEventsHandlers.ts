@@ -3,7 +3,7 @@
  */
 import { S } from "envio";
 import { AllEvents } from "generated";
-import { expectType, TypeEqual } from "ts-expect";
+import { expectType, type TypeEqual } from "ts-expect";
 
 type RemoveReadonly<T> = T extends {}
   ? {
@@ -233,7 +233,7 @@ AllEvents.Burn.handler(async ({ event }) => {
 
 const transferOutSchema = S.schema({
   assetId: S.string,
-  to: S.string,
+  to: S.address,
   amount: S.bigint,
 });
 AllEvents.Transfer.handler(async ({ event }) => {

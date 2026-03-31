@@ -1,0 +1,61 @@
+/**
+A set of stats for logging about the block range fetch
+*/
+type blockRangeFetchStats = {
+  @as("total time elapsed (s)") totalTimeElapsed: float,
+  @as("parsing time (s)") parsingTimeElapsed?: float,
+  @as("page fetch time (s)") pageFetchTime?: float,
+}
+
+/**
+Thes response returned from a block range fetch
+*/
+type blockRangeFetchResponse = {
+  knownHeight: int,
+  reorgGuard: ReorgDetection.reorgGuard,
+  parsedQueueItems: array<Internal.item>,
+  fromBlockQueried: int,
+  latestFetchedBlockNumber: int,
+  latestFetchedBlockTimestamp: int,
+  stats: blockRangeFetchStats,
+}
+
+type getItemsRetry =
+  | WithSuggestedToBlock({toBlock: int})
+  | WithBackoff({message: string, backoffMillis: int})
+  | ImpossibleForTheQuery({message: string})
+
+type getItemsError =
+  | UnsupportedSelection({message: string})
+  | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
+  | FailedGettingItems({exn: exn, attemptedToBlock: int, retry: getItemsRetry})
+
+exception GetItemsError(getItemsError)
+
+type sourceFor = Sync | Fallback | Live
+
+type t = {
+  name: string,
+  sourceFor: sourceFor,
+  chain: ChainMap.Chain.t,
+  poweredByHyperSync: bool,
+  /* Frequency (in ms) used when polling for new events on this network. */
+  pollingInterval: int,
+  getBlockHashes: (
+    ~blockNumbers: array<int>,
+    ~logger: Pino.t,
+  ) => promise<result<array<ReorgDetection.blockDataWithTimestamp>, exn>>,
+  getHeightOrThrow: unit => promise<int>,
+  getItemsOrThrow: (
+    ~fromBlock: int,
+    ~toBlock: option<int>,
+    ~addressesByContractName: dict<array<Address.t>>,
+    ~indexingContracts: dict<Internal.indexingContract>,
+    ~knownHeight: int,
+    ~partitionId: string,
+    ~selection: FetchState.selection,
+    ~retry: int,
+    ~logger: Pino.t,
+  ) => promise<blockRangeFetchResponse>,
+  createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
+}

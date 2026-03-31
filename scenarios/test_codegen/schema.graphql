@@ -53,7 +53,8 @@ type NftCollection {
 
 type Token
   @index(fields: ["id", "tokenId"])
-  @index(fields: ["tokenId", "collection"]) {
+  @index(fields: ["tokenId", "collection"])
+  @index(fields: [["tokenId", "DESC"], ["owner", "ASC"]]) {
   id: ID!
   tokenId: BigInt! @index
   collection: NftCollection! @index
@@ -115,9 +116,8 @@ type EntityWithAllTypes {
   optBigDecimal: BigDecimal
   bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
   arrayOfBigDecimals: [BigDecimal!]!
-  # NOTE: Timestamp serialization is currently just a type cast and so testing is non deterministic
-  # timestamp: Timestamp!
-  # optTimestamp: Timestamp
+  timestamp: Timestamp!
+  optTimestamp: Timestamp
   # NOTE: array of timestamps has the same problem as array of booleans described above
   # arrayOfTimestamps: [Timestamp!]!
   json: Json!
@@ -131,6 +131,11 @@ type EntityWith63LenghtName______________________________________one {
 
 type EntityWith63LenghtName______________________________________two {
   id: ID!
+}
+
+type EntityWithRestrictedReScriptField {
+  id: ID!
+  type: String!
 }
 
 # We are using insert unnest for the case
@@ -152,6 +157,8 @@ type EntityWithAllNonArrayTypes {
   bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
   enumField: AccountType!
   optEnumField: AccountType
+  timestamp: Timestamp!
+  optTimestamp: Timestamp
 }
 
 type CustomSelectionTestPass {

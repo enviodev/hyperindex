@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 open TestHelpers
 
@@ -27,7 +27,7 @@ type expectedGlobalBlockFields = {
 }
 
 // The same as for TS but in ReScript
-Async.it("Handles event with a custom field selection (in ReScript)", async () => {
+Async.it("Handles event with a custom field selection (in ReScript)", async t => {
   // Initializing the mock database
   let mockDbInitial = MockDb.createMockDb()
 
@@ -50,19 +50,19 @@ Async.it("Handles event with a custom field selection (in ReScript)", async () =
   })
 
   // Test content of the generated record type
-  let _ = ((event.transaction: Types.Gravatar.CustomSelection.transaction :> expectedTransactionFields) :> Types.Gravatar.CustomSelection.transaction)
-  let _ = ((event.block: Types.Gravatar.CustomSelection.block :> expectedBlockFields) :> Types.Gravatar.CustomSelection.block)
+  let _ = ((event.transaction: Indexer.Gravatar.CustomSelection.transaction :> expectedTransactionFields) :> Indexer.Gravatar.CustomSelection.transaction)
+  let _ = ((event.block: Indexer.Gravatar.CustomSelection.block :> expectedBlockFields) :> Indexer.Gravatar.CustomSelection.block)
 
   // The event not used for the test, but we want to make sure
   // that events without custom field selection use the global one
   let anotherEvent = Gravatar.EmptyEvent.createMockEvent({})
-  let _ = ((anotherEvent.transaction: Types.Gravatar.EmptyEvent.transaction :> expectedGlobalTransactionFields) :> Types.Gravatar.EmptyEvent.transaction)
-  let _ = ((anotherEvent.block: Types.Gravatar.EmptyEvent.block :> expectedGlobalBlockFields) :> Types.Gravatar.EmptyEvent.block)
+  let _ = ((anotherEvent.transaction: Indexer.Gravatar.EmptyEvent.transaction :> expectedGlobalTransactionFields) :> Indexer.Gravatar.EmptyEvent.transaction)
+  let _ = ((anotherEvent.block: Indexer.Gravatar.EmptyEvent.block :> expectedGlobalBlockFields) :> Indexer.Gravatar.EmptyEvent.block)
 
   let updatedMockDb = await Gravatar.CustomSelection.processEvent({
     event,
     mockDb: mockDbInitial,
   })
 
-  Assert.notEqual(updatedMockDb.entities.customSelectionTestPass.get(hash), None)
+  t.expect(updatedMockDb.entities.customSelectionTestPass.get(hash)).not.toBe(None)
 })

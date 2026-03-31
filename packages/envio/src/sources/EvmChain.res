@@ -1,0 +1,94 @@
+open Belt
+
+type rpc = {
+  url: string,
+  sourceFor: Source.sourceFor,
+  syncConfig?: Config.sourceSyncOptions,
+  ws?: string,
+}
+
+let getSyncConfig = (
+  {
+    ?initialBlockInterval,
+    ?backoffMultiplicative,
+    ?accelerationAdditive,
+    ?intervalCeiling,
+    ?backoffMillis,
+    ?queryTimeoutMillis,
+    ?fallbackStallTimeout,
+    ?pollingInterval,
+  }: Config.sourceSyncOptions,
+): Config.sourceSync => {
+  let queryTimeoutMillis = queryTimeoutMillis->Option.getWithDefault(20_000)
+  {
+    initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getWithDefault(
+      initialBlockInterval->Option.getWithDefault(10_000),
+    ),
+    // After an RPC error, how much to scale back the number of blocks requested at once
+    backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getWithDefault(
+      backoffMultiplicative->Option.getWithDefault(0.8),
+    ),
+    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+    accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getWithDefault(
+      accelerationAdditive->Option.getWithDefault(500),
+    ),
+    // Do not further increase the block interval past this limit
+    intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getWithDefault(
+      intervalCeiling->Option.getWithDefault(10_000),
+    ),
+    // After an error, how long to wait before retrying
+    backoffMillis: backoffMillis->Option.getWithDefault(5000),
+    // How long to wait before cancelling an RPC request
+    queryTimeoutMillis,
+    fallbackStallTimeout: fallbackStallTimeout->Option.getWithDefault(queryTimeoutMillis / 2),
+    // How frequently to check for new blocks in realtime (default: 1000ms)
+    pollingInterval: pollingInterval->Option.getWithDefault(1000),
+  }
+}
+
+let makeSources = (
+  ~chain,
+  ~contracts: array<Internal.evmContractConfig>,
+  ~hyperSync,
+  ~allEventSignatures,
+  ~rpcs: array<rpc>,
+  ~lowercaseAddresses,
+) => {
+  let eventRouter =
+    contracts
+    ->Belt.Array.flatMap(contract => contract.events)
+    ->EventRouter.fromEvmEventModsOrThrow(~chain)
+
+  let sources = switch hyperSync {
+  | Some(endpointUrl) => [
+      HyperSyncSource.make({
+        chain,
+        endpointUrl,
+        allEventSignatures,
+        eventRouter,
+        apiToken: Env.envioApiToken,
+        clientMaxRetries: Env.hyperSyncClientMaxRetries,
+        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        lowercaseAddresses,
+        serializationFormat: Env.hypersyncClientSerializationFormat,
+        enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
+      }),
+    ]
+  | _ => []
+  }
+  rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+    let source = RpcSource.make({
+      chain,
+      sourceFor,
+      syncConfig: getSyncConfig(syncConfig->Option.getWithDefault({})),
+      url,
+      eventRouter,
+      allEventSignatures,
+      lowercaseAddresses,
+      ?ws,
+    })
+    let _ = sources->Js.Array2.push(source)
+  })
+
+  sources
+}

@@ -1,4 +1,4 @@
-open RescriptMocha
+open Vitest
 
 let mockChain = ChainMap.Chain.makeUnsafe(~chainId=1)
 let mockAddress1 = TestHelpers.Addresses.mockAddresses[0]
@@ -9,7 +9,7 @@ let mockFromArray = (array): EventRouter.t<'a> => {
 }
 
 describe("EventRouter", () => {
-  it("Succeeds on unique insertions", () => {
+  it("Succeeds on unique insertions", t => {
     let router: EventRouter.t<int> = EventRouter.empty()
 
     router->EventRouter.addOrThrow(
@@ -29,8 +29,9 @@ describe("EventRouter", () => {
       ~isWildcard=false,
     )
 
-    Assert.deepEqual(
+    t.expect(
       router,
+    ).toEqual(
       mockFromArray([
         (
           "test-event-tag",
@@ -43,7 +44,7 @@ describe("EventRouter", () => {
     )
   })
 
-  it("Fails on duplicate insertions", () => {
+  it("Fails on duplicate insertions", t => {
     let router = EventRouter.empty()
 
     router->EventRouter.addOrThrow(
@@ -55,7 +56,7 @@ describe("EventRouter", () => {
       ~isWildcard=false,
     )
 
-    Assert.throws(
+    t.expect(
       () => {
         router->EventRouter.addOrThrow(
           "test-event-tag",
@@ -66,13 +67,10 @@ describe("EventRouter", () => {
           ~isWildcard=false,
         )
       },
-      ~error={
-        "message": "Duplicate event detected: Event1 for contract Contract1 on chain 1",
-      },
-    )
+    ).toThrowError("Duplicate event detected: Event1 for contract Contract1 on chain 1")
   })
 
-  it("Fails on duplicate wildcard insertions", () => {
+  it("Fails on duplicate wildcard insertions", t => {
     let router = EventRouter.empty()
 
     router->EventRouter.addOrThrow(
@@ -84,7 +82,7 @@ describe("EventRouter", () => {
       ~isWildcard=true,
     )
 
-    Assert.throws(
+    t.expect(
       () => {
         router->EventRouter.addOrThrow(
           "test-event-tag",
@@ -95,13 +93,10 @@ describe("EventRouter", () => {
           ~isWildcard=true,
         )
       },
-      ~error={
-        "message": "Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1",
-      },
-    )
+    ).toThrowError("Another event is already registered with the same signature that would interfer with wildcard filtering: Event1 for contract Contract2 on chain 1")
   })
 
-  it("get doesn't returns the correct eventMod without address in mapping if unique", () => {
+  it("get doesn't returns the correct eventMod without address in mapping if unique", t => {
     let router = EventRouter.empty()
 
     router->EventRouter.addOrThrow(
@@ -113,21 +108,22 @@ describe("EventRouter", () => {
       ~isWildcard=false,
     )
 
-    Assert.deepEqual(
+    t.expect(
       router->EventRouter.get(
         ~tag="test-event-tag",
         ~contractAddress=mockAddress1,
         ~blockNumber=0,
         ~indexingContracts=Js.Dict.empty(),
       ),
-      None,
       ~message=`We can return Some, but we want to always check that event is after contract startBlock`,
+    ).toEqual(
+      None,
     )
   })
 
   it(
     "get returns correct event mod with multiple contracts for both wildcard and non wildcard",
-    () => {
+    t => {
       let wildcardContractAddress = mockAddress1
       let nonWildcardContractAddress = mockAddress2
       let nonWildcardContractName = "Contract2"
@@ -162,36 +158,39 @@ describe("EventRouter", () => {
         },
       )
 
-      Assert.deepEqual(
+      t.expect(
         router->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=nonWildcardContractAddress,
           ~blockNumber=0,
           ~indexingContracts,
         ),
-        Some("non-wildcard"),
         ~message="Should return the non wildcard event",
+      ).toEqual(
+        Some("non-wildcard"),
       )
 
-      Assert.deepEqual(
+      t.expect(
         router->EventRouter.get(
           ~tag="test-event-tag",
           ~contractAddress=wildcardContractAddress,
           ~blockNumber=0,
           ~indexingContracts,
         ),
-        Some("wildcard"),
         ~message="Should return the wildcard event",
+      ).toEqual(
+        Some("wildcard"),
       )
     },
   )
 
-  it("fromEvmEventModsOrThrow works", () => {
-    let item = Types.Gravatar.NewGravatar.register()
+  it("fromEvmEventModsOrThrow works", t => {
+    let item = Indexer.Gravatar.NewGravatar.register()
     let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
 
-    Assert.deepEqual(
+    t.expect(
       router,
+    ).toEqual(
       mockFromArray([
         (
           "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1",

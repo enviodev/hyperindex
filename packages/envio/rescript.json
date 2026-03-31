@@ -1,0 +1,27 @@
+{
+  "name": "envio",
+  "namespace": false,
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    }
+  ],
+  "suffix": ".res.mjs",
+  "package-specs": {
+    "module": "esmodule",
+    "in-source": true
+  },
+  "gentypeconfig": {
+    "shims": {
+      "Js": "Js"
+    },
+    "generatedFileExtension": ".gen.ts",
+    "moduleResolution": "node16"
+  },
+  "jsx": {
+    "version": 4
+  },
+  "bs-dependencies": ["rescript-schema", "@rescript/react", "rescript-envsafe"],
+  "bsc-flags": ["-open RescriptSchema"]
+}

@@ -1,0 +1,165 @@
+use crate::{config_parsing::chain_helpers::HypersyncNetwork, evm::address::Address};
+use alloy_json_abi::Event;
+use anyhow::{Context, Result};
+use std::fmt::{self, Display};
+
+/// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores.
+pub fn normalize_contract_name(name: String) -> String {
+    name.replace([' ', '-', '.'], "_")
+}
+
+///The hierarchy is based on how you would add items to
+///your selection as you go. Ie. Once you have constructed
+///the selection of a contract you can add more addresses or
+///chains
+#[derive(Clone, Debug)]
+pub struct SelectedContract {
+    pub name: String,
+    pub chains: Vec<ContractImportNetworkSelection>,
+    pub events: Vec<Event>,
+}
+
+impl SelectedContract {
+    pub fn new(
+        name: String,
+        network_selection: ContractImportNetworkSelection,
+        events: Vec<Event>,
+    ) -> Self {
+        Self {
+            name: normalize_contract_name(name),
+            chains: vec![network_selection],
+            events,
+        }
+    }
+
+    pub fn get_last_chain_mut(&mut self) -> Result<&mut ContractImportNetworkSelection> {
+        self.chains
+            .last_mut()
+            .context("Failed to get the last select contract chain")
+    }
+
+    pub fn get_last_chain_name(&self) -> Result<String> {
+        let network_selection = self
+            .chains
+            .last()
+            .context("Failed to get the last select contract chain")?;
+        Ok(network_selection.network.to_string())
+    }
+
+    pub fn get_chain_ids(&self) -> Vec<u64> {
+        self.chains
+            .iter()
+            .map(|n| n.network.get_network_id())
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum NetworkKind {
+    Supported(HypersyncNetwork),
+    Unsupported {
+        network_id: u64,
+        rpc_url: String,
+        start_block: u64,
+    },
+}
+
+impl NetworkKind {
+    pub fn get_network_id(&self) -> u64 {
+        match self {
+            Self::Supported(n) => *n as u64,
+            Self::Unsupported { network_id, .. } => *network_id,
+        }
+    }
+    pub fn get_start_block(&self) -> u64 {
+        match self {
+            Self::Supported(_) => 0,
+            Self::Unsupported { start_block, .. } => *start_block,
+        }
+    }
+    pub fn uses_hypersync(&self) -> bool {
+        match self {
+            Self::Supported(_) => true,
+            Self::Unsupported { .. } => false,
+        }
+    }
+}
+
+impl Display for NetworkKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Self::Supported(n) => write!(f, "{}", n),
+            Self::Unsupported { network_id, .. } => write!(f, "{}", network_id),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ContractImportNetworkSelection {
+    pub network: NetworkKind,
+    pub addresses: Vec<Address>,
+}
+
+impl ContractImportNetworkSelection {
+    pub fn new(network: NetworkKind, address: Address) -> Self {
+        Self {
+            network,
+            addresses: vec![address],
+        }
+    }
+
+    pub fn new_without_addresses(network: NetworkKind) -> Self {
+        Self {
+            network,
+            addresses: vec![],
+        }
+    }
+
+    pub fn uses_hypersync(&self) -> bool {
+        self.network.uses_hypersync()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_contract_name() {
+        // Spaces are replaced with underscores
+        assert_eq!(
+            normalize_contract_name("Yearn V3 Vault".to_string()),
+            "Yearn_V3_Vault"
+        );
+
+        // Hyphens are replaced with underscores
+        assert_eq!(
+            normalize_contract_name("Uniswap-V3".to_string()),
+            "Uniswap_V3"
+        );
+
+        // Dots are replaced with underscores
+        assert_eq!(
+            normalize_contract_name("Token.Contract".to_string()),
+            "Token_Contract"
+        );
+
+        // Multiple special characters
+        assert_eq!(
+            normalize_contract_name("My-Contract.Name V2".to_string()),
+            "My_Contract_Name_V2"
+        );
+
+        // Already valid name remains unchanged
+        assert_eq!(
+            normalize_contract_name("ValidContractName".to_string()),
+            "ValidContractName"
+        );
+
+        // Underscores are preserved
+        assert_eq!(
+            normalize_contract_name("Valid_Contract_Name".to_string()),
+            "Valid_Contract_Name"
+        );
+    }
+}

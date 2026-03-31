@@ -1,14 +1,17 @@
-open RescriptMocha
+open Vitest
+
+let _ = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
 
 // Test types:
-let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Types.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
+let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
 
 describe("Test eventFilters", () => {
-  it("Supports multichain filters", () => {
-    let eventConfig = Types.EventFiltersTest.Transfer.register()
+  it("Supports multichain filters", t => {
+    let eventConfig = Indexer.EventFiltersTest.Transfer.register()
 
-    Assert.deepEqual(
+    t.expect(
       eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
+    ).toEqual(
       Static([
         {
           topic0: [
@@ -38,27 +41,29 @@ describe("Test eventFilters", () => {
         },
       ]),
     )
-    Assert.equal(
+    t.expect(
       eventConfig.dependsOnAddresses,
-      false,
       ~message=`Even though event filter has a callback,
       dependsOnAddresses should be set to false.
       Otherwise the wildcard event won't fetch for contracts without addresses`,
+    ).toBe(
+      false,
     )
   })
 
-  it("Supports filter depending on addresses", () => {
-    let eventConfig = Types.EventFiltersTest.WildcardWithAddress.register()
+  it("Supports filter depending on addresses", t => {
+    let eventConfig = Indexer.EventFiltersTest.WildcardWithAddress.register()
 
-    Assert.deepEqual(
+    t.expect(
       switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {
-      | Static(_) => Assert.fail("Should be dynamic")
+      | Static(_) => Js.Exn.raiseError("Should be dynamic")
       | Dynamic(fn) =>
         fn([
           "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"->Address.unsafeFromString,
           "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"->Address.unsafeFromString,
         ])
       },
+    ).toEqual(
       [
         {
           topic0: [
@@ -88,15 +93,16 @@ describe("Test eventFilters", () => {
         },
       ],
     )
-    Assert.equal(eventConfig.dependsOnAddresses, true)
-    Assert.equal(eventConfig.isWildcard, true)
+    t.expect(eventConfig.dependsOnAddresses).toBe(true)
+    t.expect(eventConfig.isWildcard).toBe(true)
   })
 
-  it("Empty filters should fallback to normal topic selection with only topic0", () => {
-    let eventConfig = Types.EventFiltersTest.EmptyFiltersArray.register()
+  it("Empty filters should fallback to normal topic selection with only topic0", t => {
+    let eventConfig = Indexer.EventFiltersTest.EmptyFiltersArray.register()
 
-    Assert.deepEqual(
-      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=1)),
+    t.expect(
+      eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
+    ).toEqual(
       Static([
         {
           topic0: [
@@ -108,19 +114,16 @@ describe("Test eventFilters", () => {
         },
       ]),
     )
-    Assert.equal(eventConfig.dependsOnAddresses, false)
+    t.expect(eventConfig.dependsOnAddresses, ~message="foo").toBe(false)
   })
 
-  it("Fails on filter with excess field", () => {
-    let eventConfig = Types.EventFiltersTest.WithExcessField.register()
+  it("Fails on filter with excess field", t => {
+    let eventConfig = Indexer.EventFiltersTest.WithExcessField.register()
 
-    Assert.throws(
+    t.expect(
       () => {
-        eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=1))
+        eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137))
       },
-      ~error={
-        "message": `Invalid event filters configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`,
-      },
-    )
+    ).toThrowError(`Invalid event filters configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
   })
 })

@@ -18,7 +18,7 @@ By submitting a Pull Request or making any contribution to this project, you aut
 
 Install prerequisite tools:
 
-1. Node.js (install v18) https://nodejs.org/en
+1. Node.js v22+ (v24 recommended) https://nodejs.org/en
    (Recommended to use a node manager like fnm or nvm)
 2. pnpm
 
@@ -39,7 +39,7 @@ Install prerequisite tools:
 > If you want to test the latest changes in the `envio` CLI
 
 ```sh
-cargo install --path codegenerator/cli --locked --debug
+cargo install --path packages/cli --locked --debug
 ```
 
 Command to see available CLI commands
@@ -53,7 +53,7 @@ Alternatively you can add an alias in your shell config. This will allow you to 
 Go to your shell config file and add the following line:
 
 ```sh
-alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/codegenerator/cli/Cargo.toml --"
+alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/packages/cli/Cargo.toml --"
 ```
 
 > `lenvio` is like `local envio` 😁
@@ -64,7 +64,7 @@ Envio is split into a Rust CLI and the generated indexer runtime.
 
 Top-level folders:
 
-- `codegenerator/cli` – Rust source of the Envio CLI (`Cargo.toml` lives here).
+- `packages/cli` – Rust source of the Envio CLI (`Cargo.toml` lives here).
   - `src/commands.rs` – dispatches sub-commands using Clap.
   - `src/executor/` – implementation details for each command.
   - `src/config_parsing/` – configuration loading pipeline:
@@ -82,22 +82,22 @@ Main CLI commands:
 
 Generated indexer runtime locations:
 
-1. Library-ified code: `codegenerator/cli/npm/envio` (ReScript/TypeScript). Use `pnpm rescript-w` for live recompilation; no `pnpm codegen` needed.
-2. Static scaffold: `codegenerator/cli/templates/static/codegen` and dynamic templates in `codegenerator/cli/templates/dynamic/codegen` (requires `pnpm codegen` after edits).
+1. Library-ified code: `packages/envio` (ReScript/TypeScript). Use `pnpm rescript-w` for live recompilation; no `pnpm codegen` needed.
+2. Static scaffold: `packages/cli/templates/static/codegen` and dynamic templates in `packages/cli/templates/dynamic/codegen` (requires `pnpm codegen` after edits).
 3. Scenario & regression tests: `scenarios/` (e.g. `scenarios/test_codegen`). Run `pnpm codegen` then `pnpm test`. (You don't need to run `pnpm codegen` when changing librariefied code).
 4. Quick-iteration trick when working with static code a lot: open `scenarios/test_codegen/generated`, run `pnpm rescript -w`, adjust files, then copy changes back into templates.
 
 Navigation cheat-sheet (useful for code search / AI):
 
-- CLI entry point: `codegenerator/cli/src/lib.rs`
-- Command definitions: `codegenerator/cli/src/commands.rs`
-- Arg parsing: `codegenerator/cli/src/cli_args/`
-- EVM helpers: `codegenerator/cli/src/evm/`
-- Fuel helpers: `codegenerator/cli/src/fuel/`
+- CLI entry point: `packages/cli/src/lib.rs`
+- Command definitions: `packages/cli/src/commands.rs`
+- Arg parsing: `packages/cli/src/cli_args/`
+- EVM helpers: `packages/cli/src/evm/`
+- Fuel helpers: `packages/cli/src/fuel/`
 
 ## Generated Indexer Runtime Architecture
 
-All code below is generated into your project’s `generated/` folder or located in the reusable library components in `codegenerator/cli/npm/envio`.
+All code below is generated into your project’s `generated/` folder or located in the reusable library components in `packages/envio`.
 
 Entry point:
 
@@ -146,7 +146,7 @@ Monitoring & health:
 
 Quick dev tips:
 
-- Library code under `npm/envio` → hot-recompile with `pnpm rescript -w`.
+- Library code under `packages/envio` → hot-recompile with `pnpm rescript -w`.
 - Changes inside generated require rerunning `pnpm codegen` (unless you are in the quick-iteration workflow described above).
 
 ### Case study: per-address `startBlock`
@@ -163,13 +163,13 @@ Need to expose a `startBlock` setting for every contract address in `config.yaml
 8.  Add the field to `Config.res`.
 9.  Compress the two previous arrays passed to `FetchState.res` `make` function (static vs dynamic contracts) into a single `array<IndexingContract>` that already contains `startBlock`.
 10. Inside `FetchState.res` in `make` function create the initial block-partitions from the `startBlock` of each contract.
-11. Compile changes in `npm/envio` by running `pnpm rescript` or `pnpm rescript -w` if you want to see changes live.
+11. Compile changes in `packages/envio` by running `pnpm rescript` or `pnpm rescript -w` if you want to see changes live.
 12. Test changes in `scenarios/test_codegen` by running `pnpm codegen` and `pnpm test`.
 
 ## Update CLI Generated Docs
 
 Navigate to the cli directory
-`cd codegenerator/cli`
+`cd packages/cli`
 
 To update all generated docs run
 
@@ -211,7 +211,7 @@ This will generate the config, schema and event handlers files according to the 
 
 ## Configure the files according to your project
 
-Our greeter template [config.yaml](./codegenerator/cli/templates/static/greeter_template/typescript/config.yaml) and [schema.graphql](./codegenerator/cli/templates/static/greeter_template/shared/schema.graphql) is an example of how to layout a configuration file for indexing.
+Our greeter template [config.yaml](./packages/cli/templates/static/greeter_template/typescript/config.yaml) and [schema.graphql](./packages/cli/templates/static/greeter_template/shared/schema.graphql) is an example of how to layout a configuration file for indexing.
 
 _Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all [Envio](https://envio.dev) indexer features_
 
@@ -220,7 +220,7 @@ _Please refer to the [documentation website](https://docs.envio.dev) for a thoro
 Once you have configured the above files and deployed the contracts, the following can be used generate all the code that is required for indexing your project:
 
 ```sh
-envio codegen
+pnpm codegen
 ```
 
 ## Run the indexer
@@ -241,10 +241,8 @@ Admin-secret for local Hasura is `testing`.
 
 ### Running Tests in test_codegen
 
-**Prerequisites:**
-- Compile contracts to generate typechain types: `cd scenarios/test_codegen && npx hardhat compile`
-
 **Commands:**
+
 ```sh
 cd scenarios/test_codegen
 pnpm codegen  # Generate indexer code (only needed after config/schema changes)
@@ -253,5 +251,6 @@ pnpm mocha --grep "test name pattern"  # Run specific tests
 ```
 
 **Development workflow:**
-- Changes to library code (`codegenerator/cli/npm/envio`): Run `pnpm rescript -w` for live compilation
+
+- Changes to library code (`packages/envio`): Run `pnpm rescript -w` for live compilation
 - Changes to templates or config: Run `pnpm codegen` then `pnpm test` in `scenarios/test_codegen`

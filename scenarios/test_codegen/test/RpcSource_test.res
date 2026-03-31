@@ -1,20 +1,19 @@
-open RescriptMocha
+open Vitest
+open Internal
 
-let mockEthersLog = (
+let testApiToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
+
+let mockLog = (
   ~transactionHash="0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-): Ethers.log => {
+): Rpc.GetLogs.log => {
   blockNumber: 123456,
   blockHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-  removed: Some(false),
+  removed: false,
   address: Address.Evm.fromStringOrThrow("0x1234567890abcdef1234567890abcdef12345678"),
   data: "0xdeadbeefdeadbeefdeadbeefdeadbeef",
   topics: [
-    EvmTypes.Hex.fromStringUnsafe(
-      "0xd78ad95fa46c994b6551d0da85fc275fe613dbe680204dd5837f03aa2f863b9b",
-    ),
-    EvmTypes.Hex.fromStringUnsafe(
-      "0x0000000000000000000000000000000000000000000000000000000000000000",
-    ),
+    "0xd78ad95fa46c994b6551d0da85fc275fe613dbe680204dd5837f03aa2f863b9b",
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
   ],
   transactionHash,
   transactionIndex: 1,
@@ -22,250 +21,723 @@ let mockEthersLog = (
 }
 
 describe("RpcSource - name", () => {
-  it("Returns the name of the source including sanitized rpc url", () => {
+  it("Returns the name of the source including sanitized rpc url", t => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
-      contracts: [],
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
-      syncConfig: NetworkSources.getSyncConfig({}),
+      syncConfig: EvmChain.getSyncConfig({}),
       allEventSignatures: [],
-      shouldUseHypersyncClientDecoder: false,
       lowercaseAddresses: false,
     })
-    Assert.equal(source.name, "RPC (eth.rpc.hypersync.xyz)")
+    t.expect(source.name).toBe("RPC (eth.rpc.hypersync.xyz)")
   })
 })
 
 describe("RpcSource - getHeightOrThrow", () => {
-  Async.it("Returns the name of the source including sanitized rpc url", async () => {
+  Async.it("Returns the name of the source including sanitized rpc url", async t => {
     let source = RpcSource.make({
-      url: "https://eth.rpc.hypersync.xyz",
+      url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
-      contracts: [],
       eventRouter: EventRouter.empty(),
       sourceFor: Sync,
-      syncConfig: NetworkSources.getSyncConfig({}),
+      syncConfig: EvmChain.getSyncConfig({}),
       allEventSignatures: ["a", "b", "c"],
-      shouldUseHypersyncClientDecoder: true,
       lowercaseAddresses: false,
     })
     let height = await source.getHeightOrThrow()
-    Assert.equal(height > 21994218, true)
-    Assert.equal(height < 30000000, true)
+    t.expect(height > 21994218).toBe(true)
+    t.expect(height < 30000000).toBe(true)
   })
 })
 
 describe("RpcSource - getEventTransactionOrThrow", () => {
-  let neverGetTransactionFields = _ => Assert.fail("The getTransactionFields should not be called")
-
-  it("Panics with invalid schema", () => {
-    Assert.throws(
-      () => {
-        RpcSource.makeThrowingGetEventTransaction(~getTransactionFields=neverGetTransactionFields)(
-          mockEthersLog(),
-          ~transactionSchema=S.string,
-        )
-      },
-      ~error={
-        "message": "Unexpected internal error: transactionSchema is not an object",
-      },
-    )
-  })
+  let neverGetTransactionJson = _ => Js.Exn.raiseError("getTransactionJson should not be called")
+  let neverGetReceiptJson = _ => Js.Exn.raiseError("getReceiptJson should not be called")
 
   Async.it(
     "Returns empty object when empty field selection. Doesn't make a transaction request",
-    async () => {
+    async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-        ~getTransactionFields=neverGetTransactionFields,
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
       )
-      Assert.deepEqual(
-        await mockEthersLog()->getEventTransactionOrThrow(~transactionSchema=S.object(_ => ())),
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(~selectedTransactionFields=Utils.Set.fromArray([])),
+      ).toEqual(
         %raw(`{}`),
       )
     },
   )
 
-  Async.it("Works with a single transactionIndex field", async () => {
+  Async.it("Works with a single transactionIndex field", async t => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
-    )
-    Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "transactionIndex": s.matches(S.int),
-            },
-        ),
-      ),
-      {
-        "transactionIndex": 1,
-      },
-    )
-  })
-
-  Async.it("Works with a single hash field", async () => {
-    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
-    )
-    Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "hash": s.matches(S.string),
-            },
-        ),
-      ),
-      {
-        "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-      },
-    )
-  })
-
-  Async.it("Works with a only transactionIndex & hash field", async () => {
-    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
-    )
-    Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "hash": s.matches(S.string),
-              "transactionIndex": s.matches(S.int),
-            },
-        ),
-      ),
-      {
-        "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-        "transactionIndex": 1,
-      },
-    )
-
-    // In different fields order in the schema
-    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
-    )
-    Assert.deepEqual(
-      await mockEthersLog()->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "transactionIndex": s.matches(S.int),
-              "hash": s.matches(S.string),
-            },
-        ),
-      ),
-      {
-        "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-        "transactionIndex": 1,
-      },
-    )
-  })
-
-  Async.it("Queries transaction with a non-log field (with real Ethers.provider)", async () => {
-    let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
-
-    let provider = Ethers.JsonRpcProvider.make(~rpcUrl="https://eth.rpc.hypersync.xyz", ~chainId=1)
-    let getTransactionFields = Ethers.JsonRpcProvider.makeGetTransactionFields(
-      ~getTransactionByHash=transactionHash =>
-        provider->Ethers.JsonRpcProvider.getTransaction(~transactionHash),
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
       ~lowercaseAddresses=false,
     )
+    t.expect(
+      await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex]),
+      ),
+    ).toEqual(
+      {
+        "transactionIndex": 1,
+      },
+    )
+  })
+
+  Async.it("Works with a single hash field", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([Hash]),
+      ),
+    ).toEqual(
+      {
+        "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
+      },
+    )
+  })
+
+  Async.it("Works with a only transactionIndex & hash field", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([Hash, TransactionIndex]),
+      ),
+    ).toEqual(
+      {
+        "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
+        "transactionIndex": 1,
+      },
+    )
+
+    // In different fields order
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([TransactionIndex, Hash]),
+      ),
+    ).toEqual(
+      {
+        "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
+        "transactionIndex": 1,
+      },
+    )
+  })
+
+  Async.it("Queries transaction fields from raw JSON (with real RPC)", async t => {
+    let testTransactionHash = "0x3dce529e9661cfb65defa88ae5cd46866ddf39c9751d89774d89728703c2049f"
+
+    let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
+    let client = Rest.client(rpcUrl)
 
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields,
+      ~getTransactionJson=async txHash =>
+        switch await Rpc.GetTransactionByHash.rawRoute->Rest.fetch(txHash, ~client) {
+        | Some(json) => json
+        | None => Js.Exn.raiseError(`Transaction not found for hash: ${txHash}`)
+        },
+      ~getReceiptJson=async txHash =>
+        switch await Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(txHash, ~client) {
+        | Some(json) => json
+        | None => Js.Exn.raiseError(`Receipt not found for hash: ${txHash}`)
+        },
+      ~lowercaseAddresses=false,
     )
-    Assert.deepEqual(
-      await mockEthersLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
-        ~transactionSchema=S.schema(
-          s =>
-            {
-              "hash": s.matches(S.string),
-              "transactionIndex": s.matches(S.int),
-              "from": s.matches(S.option(Address.schema)),
-              "to": s.matches(S.option(Address.schema)),
-              // "gas": s.matches(BigInt.nativeSchema), --- Not exposed by Ethers
-              "gasPrice": s.matches(S.option(BigInt.nativeSchema)),
-              "maxPriorityFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
-              "maxFeePerGas": s.matches(S.option(BigInt.nativeSchema)),
-              // "cumulativeGasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "cumulativeGasUsed" found in the RPC response. Error: Expected bigint
-              // "effectiveGasPrice": s.matches(BigInt.nativeSchema), --- Invalid transaction field "effectiveGasPrice" found in the RPC response. Error: Expected bigint
-              // "gasUsed": s.matches(BigInt.nativeSchema), --- Invalid transaction field "gasUsed" found in the RPC response. Error: Expected bigint
-              "input": s.matches(S.string),
-              // "nonce": s.matches(BigInt.nativeSchema), --- Returned as number by ethers
-              "value": s.matches(BigInt.nativeSchema),
-              // "v": s.matches(S.option(S.string)), --- Invalid transaction field "v" found in the RPC response. Error: Expected Option(String), received 28
-              // "r": s.matches(S.option(S.string)), --- Inside of signature
-              // "s": s.matches(S.option(S.string)),
-              // "yParity": s.matches(S.option(S.string)), --- Inside of signature and decoded to int
-              "contractAddress": s.matches(S.option(Address.schema)),
-              // "logsBloom": s.matches(S.string), --- Invalid transaction field "logsBloom" found in the RPC response. Error: Expected String, received undefined
-              "root": s.matches(S.option(S.string)),
-              "status": s.matches(S.option(S.int)),
-              // "chainId": s.matches(S.option(S.int)), --- Decoded to bigint by ethers
-              "maxFeePerBlobGas": s.matches(S.option(BigInt.nativeSchema)),
-              "blobVersionedHashes": s.matches(S.option(S.array(S.string))),
-              "kind": s.matches(S.option(S.int)),
-              "l1Fee": s.matches(S.option(BigInt.nativeSchema)),
-              "l1GasPrice": s.matches(S.option(BigInt.nativeSchema)),
-              "l1GasUsed": s.matches(S.option(BigInt.nativeSchema)),
-              "l1FeeScalar": s.matches(S.option(S.float)),
-              "gasUsedForL1": s.matches(S.option(BigInt.nativeSchema)),
-            },
-        ),
+    t.expect(
+      await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          Hash, TransactionIndex, From, To, Gas, GasPrice,
+          MaxPriorityFeePerGas, MaxFeePerGas, Input, Nonce,
+          Value, V, R, S, YParity,
+          // Receipt fields
+          GasUsed, EffectiveGasPrice, Status,
+        ]),
       ),
+    ).toEqual(
       {
         "hash": testTransactionHash,
         "transactionIndex": 1,
-        "from": Some("0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow),
-        "to": Some("0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.Evm.fromStringOrThrow),
-        "gasPrice": Some(17699339493n),
-        "maxPriorityFeePerGas": Some(0n),
-        "maxFeePerGas": Some(17699339493n),
+        "from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
+        "to": "0x4675C7e5BaAFBFFbca748158bEcBA61ef3b0a263"->Address.Evm.fromStringOrThrow,
+        "gasPrice": 17699339493n,
+        "gas": 21000n,
+        "maxPriorityFeePerGas": 0n,
+        "maxFeePerGas": 17699339493n,
         "input": "0x",
+        "nonce": 1722147n,
         "value": 34302998902926621n,
-        // "r": Some("0xb73e53731ff8484f3c30c2850328f0ad7ca5a8dd8681d201ba52777aaf972f87"),
-        // "s": Some("0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a"),
-        "contractAddress": None,
-        "root": None,
-        "status": None,
-        // "yParity": Some("0x1"),
-        // "chainId": Some(1),
-        "maxFeePerBlobGas": None,
-        "blobVersionedHashes": None,
-        "kind": None,
-        "l1Fee": None,
-        "l1GasPrice": None,
-        "l1GasUsed": None,
-        "l1FeeScalar": None,
-        "gasUsedForL1": None,
-      }->Obj.magic,
+        "r": "0xb73e53731ff8484f3c30c2850328f0ad7ca5a8dd8681d201ba52777aaf972f87",
+        "s": "0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a",
+        "v": "0x1",
+        "yParity": "0x1",
+        // Receipt fields
+        "gasUsed": 21000n,
+        "effectiveGasPrice": 17699339493n,
+        "status": 1,
+      },
     )
   })
 
-  Async.it("Error with a value not matching the schema", async () => {
-    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionFields=neverGetTransactionFields,
-    )
-    Assert.throws(
-      () => {
-        mockEthersLog()->getEventTransactionOrThrow(
-          ~transactionSchema=S.schema(
-            s =>
-              {
-                "hash": s.matches(S.int),
-              },
+  Async.it(
+    "Successfully fetches ZKSync EIP-712 transactions (type 0x71) with optional signature fields",
+    async t => {
+      // Transaction from Abstract Testnet (ZKSync-based) that lacks r/s/v signature fields
+      let testTransactionHash = "0x245134326b7fecdcb7e0ed0a6cf090fc8881a63420ecd329ef645686b85647ed"
+
+      let client = Rest.client("https://api.testnet.abs.xyz")
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=async txHash =>
+          switch await Rpc.GetTransactionByHash.rawRoute->Rest.fetch(txHash, ~client) {
+          | Some(json) => json
+          | None => Js.Exn.raiseError(`Transaction not found for hash: ${txHash}`)
+          },
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=true,
+      )
+
+      // ZKSync EIP-712 transactions lack signature fields (v, r, s, yParity).
+      // Per-field parsing handles this — absent fields are simply not included.
+      t.expect(
+        await mockLog(~transactionHash=testTransactionHash)->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([
+            Hash, From, To, Gas, GasPrice, Nonce, Value, Type,
+            MaxFeePerGas, MaxPriorityFeePerGas,
+          ]),
+        ),
+      ).toEqual(
+        {
+          "hash": testTransactionHash,
+          "from": "0x58027ecef16a9da81835a82cfc4afa1e729c74ff"->Address.unsafeFromString,
+          "to": "0xd929e47c6e94cbf744fef53ecbc8e61f0f1ff73a"->Address.unsafeFromString,
+          "gas": 1189904n,
+          "gasPrice": 25000000n,
+          "nonce": 662n,
+          "value": 0n,
+          "type": 113, // 0x71 = ZKSync EIP-712
+          "maxFeePerGas": 25000000n,
+          "maxPriorityFeePerGas": 0n,
+        },
+      )
+    },
+  )
+
+  // Issue #931: Contract creation transactions have null `to` field.
+  // Per-field parsing handles this — null fields are simply not included in the result.
+  Async.it(
+    "Contract creation transaction with null `to` field should parse successfully",
+    async t => {
+      // Mock a contract creation tx where `to` is null
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(
+            %raw(`{"from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5", "to": null, "gas": "0x5208"}`),
           ),
-        )
-      },
-      ~error={
-        "message": `Invalid transaction field "hash" found in the RPC response. Error: Expected int32, received "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef"`,
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([From, Gas]),
+        ),
+      ).toEqual(
+        {
+          "from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"->Address.Evm.fromStringOrThrow,
+          "gas": 21000n,
+        },
+      )
+    },
+  )
+
+  // gasUsed, cumulativeGasUsed, and effectiveGasPrice are receipt-only fields.
+  // Only the receipt JSON is fetched — transaction JSON is not needed.
+  Async.it(
+    "Fetches gasUsed from receipt only (no transaction call)",
+    async t => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([GasUsed]),
+        ),
+      ).toEqual(
+        {"gasUsed": 21000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches cumulativeGasUsed from receipt only (no transaction call)",
+    async t => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"cumulativeGasUsed": "0x7a120"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([CumulativeGasUsed]),
+        ),
+      ).toEqual(
+        {"cumulativeGasUsed": 500000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches effectiveGasPrice from receipt only (no transaction call)",
+    async t => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"effectiveGasPrice": "0x41ef67ce5"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([EffectiveGasPrice]),
+        ),
+      ).toEqual(
+        {"effectiveGasPrice": 17699339493n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches from both transaction and receipt when fields from both are needed",
+    async t => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(%raw(`{"gas": "0x5208", "value": "0x3e8"}`)),
+        ~getReceiptJson=_ =>
+          Promise.resolve(
+            %raw(`{"gasUsed": "0x5208", "effectiveGasPrice": "0x41ef67ce5", "status": "0x1"}`),
+          ),
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([Hash, Gas, GasUsed, EffectiveGasPrice, Status]),
+        ),
+      ).toEqual(
+        {
+          "hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
+          "gas": 21000n,
+          "gasUsed": 21000n,
+          "effectiveGasPrice": 17699339493n,
+          "status": 1,
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "Transaction-only fields don't call getReceiptJson",
+    async t => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(%raw(`{"gas": "0x5208", "input": "0xdeadbeef"}`)),
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([Gas, Input]),
+        ),
+      ).toEqual(
+        {
+          "gas": 21000n,
+          "input": "0xdeadbeef",
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "Unknown extra fields in JSON don't cause failures",
+    async t => {
+      // The RPC response has many extra fields (blockHash, blockNumber, chainId, etc.)
+      // that the user didn't request. These should be silently ignored.
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=_ =>
+          Promise.resolve(
+            %raw(`{
+              "gas": "0x5208",
+              "blockHash": "0xabc",
+              "blockNumber": "0x1",
+              "chainId": "0x1",
+              "unknownField": "some value",
+              "anotherUnknown": 42
+            }`),
+          ),
+        ~getReceiptJson=neverGetReceiptJson,
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([Gas]),
+        ),
+      ).toEqual(
+        {"gas": 21000n},
+      )
+    },
+  )
+
+  Async.it(
+    "Fetches l1FeeScalar from receipt (decimal string, not hex)",
+    async t => {
+      let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+        ~getTransactionJson=neverGetTransactionJson,
+        ~getReceiptJson=_ => Promise.resolve(%raw(`{"l1FeeScalar": "0.684"}`)),
+        ~lowercaseAddresses=false,
+      )
+
+      t.expect(
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([L1FeeScalar]),
+        ),
+      ).toEqual(
+        {"l1FeeScalar": 0.684},
+      )
+    },
+  )
+
+  Async.it("Error with a value not matching the field schema", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=_ => Promise.resolve(%raw(`{"gas": "not-a-hex-value"}`)),
+      ~getReceiptJson=neverGetReceiptJson,
+      ~lowercaseAddresses=false,
+    )
+    try {
+      let _ = await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([Gas]),
+      )
+      Js.Exn.raiseError("Should have thrown")
+    } catch {
+    | Js.Exn.Error(e) =>
+      t.expect(
+        e->Js.Exn.message->Belt.Option.getExn,
+      ).toBe(
+        `Invalid transaction field "gas" found in the RPC response. Error: The string is not valid hex`,
+      )
+    }
+  })
+
+  Async.it("Address fields are normalized with lowercaseAddresses=true", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=_ =>
+        Promise.resolve(
+          %raw(`{"from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5", "contractAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"}`),
+        ),
+      ~lowercaseAddresses=true,
+    )
+
+    let result = await mockLog()->getEventTransactionOrThrow(
+      ~selectedTransactionFields=Utils.Set.fromArray([From, ContractAddress]),
+    )
+    t.expect(
+      result,
+    ).toEqual(
+      {
+        "from": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"->Address.unsafeFromString,
+        "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"->Address.unsafeFromString,
       },
     )
+  })
+})
+
+describe("RpcSource - getEventBlockOrThrow", () => {
+  let neverGetBlockJson = _ => Js.Exn.raiseError("getBlockJson should not be called")
+  // Internal.eventBlock is opaque, cast to Js.Json.t for test assertions
+  let toJson = (block: Internal.eventBlock) =>
+    block->(Utils.magic: Internal.eventBlock => Js.Json.t)
+
+  Async.it(
+    "Returns empty object when empty field selection. Doesn't make a block request",
+    async t => {
+      let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+        ~getBlockJson=neverGetBlockJson,
+        ~lowercaseAddresses=false,
+      )
+      t.expect(
+        (await mockLog()->getEventBlockOrThrow(~selectedBlockFields=Utils.Set.fromArray([])))->toJson,
+      ).toEqual(
+        %raw(`{}`),
+      )
+    },
+  )
+
+  Async.it("Works with a single number field", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabc"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~selectedBlockFields=Utils.Set.fromArray([Number]),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"number": 123456}`),
+    )
+  })
+
+  Async.it("Works with number, timestamp, and hash fields", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabcdef"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~selectedBlockFields=Utils.Set.fromArray([Number, Timestamp, (Hash: evmBlockField)]),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"number": 123456, "timestamp": 100000000, "hash": "0xabcdef"}`),
+    )
+  })
+
+  Async.it("Parses selected block fields from raw JSON", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1e240",
+            "timestamp": "0x5f5e100",
+            "hash": "0xabcdef",
+            "gasUsed": "0x5208",
+            "gasLimit": "0x1c9c380",
+            "parentHash": "0xparent",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~selectedBlockFields=Utils.Set.fromArray([(GasUsed: evmBlockField), GasLimit]),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"gasUsed": 21000n, "gasLimit": 30000000n}`),
+    )
+  })
+
+  Async.it("Parses miner address with lowercaseAddresses=true", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=true,
+    )
+    let result = await mockLog()->getEventBlockOrThrow(
+      ~selectedBlockFields=Utils.Set.fromArray([Miner]),
+    )
+    t.expect(result->toJson).toEqual(
+      %raw(`{"miner": "0x95222290dd7278aa3ddd389cc1e1d165cc4bafe5"}`),
+    )
+  })
+
+  Async.it("Parses miner address with lowercaseAddresses=false (checksum)", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    let result = await mockLog()->getEventBlockOrThrow(
+      ~selectedBlockFields=Utils.Set.fromArray([Miner]),
+    )
+    t.expect(result->toJson).toEqual(
+      %raw(`{"miner": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5"}`),
+    )
+  })
+
+  Async.it("Unknown extra fields in JSON don't cause failures", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1e240",
+            "timestamp": "0x5f5e100",
+            "hash": "0xabcdef",
+            "gasUsed": "0x5208",
+            "unknownField": "some value",
+            "anotherUnknown": 42,
+            "transactions": ["0x123"]
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    t.expect(
+      (await mockLog()->getEventBlockOrThrow(
+        ~selectedBlockFields=Utils.Set.fromArray([(GasUsed: evmBlockField)]),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{"gasUsed": 21000n}`),
+    )
+  })
+
+  Async.it("Error with a value not matching the field schema", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "gasUsed": "not-a-hex-value"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    try {
+      let _ = await mockLog()->getEventBlockOrThrow(
+        ~selectedBlockFields=Utils.Set.fromArray([(GasUsed: evmBlockField)]),
+      )
+      Js.Exn.raiseError("Should have thrown")
+    } catch {
+    | Js.Exn.Error(e) =>
+      t.expect(
+        e->Js.Exn.message->Belt.Option.getExn,
+      ).toBe(
+        `Invalid block field "gasUsed" found in the RPC response. Error: The string is not valid hex`,
+      )
+    }
+  })
+
+  Async.it("Parses optional fields correctly (nullable with value)", async t => {
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=_ =>
+        Promise.resolve(
+          %raw(`{
+            "number": "0x1",
+            "timestamp": "0x1",
+            "hash": "0x1",
+            "baseFeePerGas": "0x3b9aca00",
+            "difficulty": "0x400000000"
+          }`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+    let result = (await mockLog()->getEventBlockOrThrow(
+      ~selectedBlockFields=Utils.Set.fromArray([BaseFeePerGas, Difficulty]),
+    ))->toJson
+    t.expect(result).toEqual(
+      %raw(`{"baseFeePerGas": 1000000000n, "difficulty": 17179869184n}`),
+    )
+  })
+
+  Async.it("Queries block fields from raw JSON (with real RPC)", async t => {
+    let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
+    let client = Rpc.makeClient(rpcUrl)
+
+    let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+      ~getBlockJson=async blockNumber =>
+        switch await Rpc.getRawBlock(~client, ~blockNumber) {
+        | Some(json) => json
+        | None => Js.Exn.raiseError(`Block not found for number: ${blockNumber->Belt.Int.toString}`)
+        },
+      ~lowercaseAddresses=false,
+    )
+
+    // Block 21758655 on Ethereum mainnet
+    let log = {
+      ...mockLog(),
+      blockNumber: 21758655,
+    }
+
+    t.expect(
+      (await log->getEventBlockOrThrow(
+        ~selectedBlockFields=Utils.Set.fromArray([
+          Number,
+          Timestamp,
+          (Hash: evmBlockField),
+          GasUsed,
+          GasLimit,
+          BaseFeePerGas,
+          ParentHash,
+        ]),
+      ))->toJson,
+    ).toEqual(
+      %raw(`{
+        "number": 21758655,
+        "timestamp": 1738497227,
+        "hash": "0x806a18dd9f7bb88e35e08658783c556974ea46a222f1f85a0bccb1da31bbde5f",
+        "gasUsed": 23618146n,
+        "gasLimit": 30352977n,
+        "baseFeePerGas": 3237306347n,
+        "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949"
+      }`),
+    )
+  })
+})
+
+describe("RpcSource - fieldRegistry completeness", () => {
+  it("blockFieldRegistry contains all evmBlockField variants", t => {
+    let registry = RpcSource.blockFieldRegistryLowercase
+    let missing = Internal.allEvmBlockFields->Js.Array2.filter(field =>
+      registry->Utils.Record.get(field) == None
+    )
+    t.expect(missing->(Utils.magic: array<evmBlockField> => array<string>)).toEqual([])
+  })
+
+  it("fieldRegistry contains all non-log-derived evmTransactionField variants", t => {
+    let registry = RpcSource.fieldRegistryLowercase
+    // TransactionIndex and Hash are log-derived, AccessList and AuthorizationList are not in the RPC registry
+    let logDerivedOrUnsupported: array<evmTransactionField> = [
+      TransactionIndex,
+      Hash,
+      AccessList,
+      AuthorizationList,
+    ]
+    let missing =
+      Internal.allEvmTransactionFields->Js.Array2.filter(field =>
+        registry->Utils.Record.get(field) == None &&
+          logDerivedOrUnsupported->Js.Array2.every(excluded => excluded != field)
+      )
+    t.expect(missing->(Utils.magic: array<evmTransactionField> => array<string>)).toEqual([])
   })
 })
 
@@ -273,25 +745,26 @@ let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
 
-  it("Selection config for the most basic case with no wildcards", () => {
+  it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
       dependsOnAddresses: true,
       eventConfigs: [(Mock.evmEventConfig() :> Internal.eventConfig)],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(
         ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
+      ~message=`Should include only single topic0 address`,
+    ).toEqual(
       {
         addresses: Some([mockAddress0]),
         topicQuery: [Single(Mock.eventId)],
       },
-      ~message=`Should include only single topic0 address`,
     )
   })
 
-  it("Selection config with wildcard events", () => {
+  it("Selection config with wildcard events", t => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
@@ -300,17 +773,18 @@ describe("RpcSource - getSelectionConfig", () => {
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Js.Dict.empty()),
+      ~message=`Should include only topic0 addresses`,
+    ).toEqual(
       {
         addresses: None,
         topicQuery: [Multiple(["1", "2"])],
       },
-      ~message=`Should include only topic0 addresses`,
     )
   })
 
-  Async.it("Wildcard topic selection which depends on addresses", async () => {
+  Async.it("Wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
@@ -322,10 +796,11 @@ describe("RpcSource - getSelectionConfig", () => {
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(
         ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
+    ).toEqual(
       {
         addresses: None,
         topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
@@ -333,7 +808,7 @@ describe("RpcSource - getSelectionConfig", () => {
     )
   })
 
-  Async.it("Non-wildcard topic selection which depends on addresses", async () => {
+  Async.it("Non-wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
@@ -345,10 +820,11 @@ describe("RpcSource - getSelectionConfig", () => {
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
-    Assert.deepEqual(
+    t.expect(
       selectionConfig.getLogSelectionOrThrow(
         ~addressesByContractName=Js.Dict.fromArray([("ERC20", [mockAddress0])]),
       ),
+    ).toEqual(
       {
         addresses: Some([mockAddress0]),
         topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
@@ -356,24 +832,25 @@ describe("RpcSource - getSelectionConfig", () => {
     )
   })
 
-  it("Panics when selection has empty event configs", () => {
+  it("Panics when selection has empty event configs", t => {
     try {
       let _ = {
         dependsOnAddresses: true,
         eventConfigs: [],
       }->RpcSource.getSelectionConfig(~chain)
-      Assert.fail("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
-      Assert.equal(
+      t.expect(
         message,
+      ).toBe(
         "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
       )
-    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    | _ => Js.Exn.raiseError("Should have thrown UnsupportedSelection")
     }
   })
 
-  it("Panics when selection has normal event and event with filters", () => {
+  it("Panics when selection has normal event and event with filters", t => {
     try {
       let _ = {
         dependsOnAddresses: true,
@@ -382,14 +859,15 @@ describe("RpcSource - getSelectionConfig", () => {
           (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
         ],
       }->RpcSource.getSelectionConfig(~chain)
-      Assert.fail("Should have thrown")
+      Js.Exn.raiseError("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
-      Assert.equal(
+      t.expect(
         message,
+      ).toBe(
         "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
       )
-    | _ => Assert.fail("Should have thrown UnsupportedSelection")
+    | _ => Js.Exn.raiseError("Should have thrown UnsupportedSelection")
     }
   })
 })
@@ -397,7 +875,7 @@ describe("RpcSource - getSelectionConfig", () => {
 describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
 
-  it("Should handle retry with the range", () => {
+  it("Should handle retry with the range", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -423,14 +901,14 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
           "jsonrpc": "2.0"
         },
         "shortMessage": "could not coalesce error"
-    
+
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((510, false)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((510, false)))
   })
 
-  it("Shouldn't retry on height not available", () => {
+  it("Shouldn't retry on height not available", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -451,10 +929,10 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), None)
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(None)
   })
 
-  it("Should retry on block range too large", () => {
+  it("Should retry on block range too large", t => {
     let error = JsError(
       %raw(`{
         code: 'UNKNOWN_ERROR',
@@ -467,10 +945,10 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
   })
 
-  it("Should ignore invalid range errors where toBlock is less than fromBlock", () => {
+  it("Should ignore invalid range errors where toBlock is less than fromBlock", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -496,14 +974,14 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
           "jsonrpc": "2.0"
         },
         "shortMessage": "could not coalesce error"
-    
+
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), None)
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(None)
   })
 
-  it("Should handle block range limit from https://1rpc.io/eth", () => {
+  it("Should handle block range limit from https://1rpc.io/eth", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -515,7 +993,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
           "method": "eth_getLogs",
           "params": [
             {
-              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7", 
+              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
               "topics": [
                 [
                   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -532,10 +1010,10 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((1000, true)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
   })
 
-  it("Should handle block range limit from Alchemy", () => {
+  it("Should handle block range limit from Alchemy", t => {
     let error = JsError(
       %raw(`{
         "code": "UNKNOWN_ERROR",
@@ -562,6 +1040,22 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
       }`),
     )
 
-    Assert.deepEqual(getSuggestedBlockIntervalFromExn(error), Some((500, true)))
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((500, true)))
+  })
+
+  it("Should handle Rpc.JsonRpcError with block range limit", t => {
+    let error = Rpc.JsonRpcError({
+      code: -32000,
+      message: "eth_getLogs is limited to a 1000 blocks range",
+    })
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
+  })
+
+  it("Should handle Rpc.JsonRpcError with suggested range", t => {
+    let error = Rpc.JsonRpcError({
+      code: -32602,
+      message: "query exceeds max results 20000, retry with the range 6000000-6000509",
+    })
+    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((510, false)))
   })
 })

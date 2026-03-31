@@ -1,0 +1,33 @@
+{"log.level":"info","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"##Current log level: info"}
+{"log.level":"info","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is an info message."}
+{"log.level":"warn","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a warning message."}
+{"log.level":"error","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","msg":"This is an error message.","err":{"RE_EXN_ID":"LogTesting.SomethingWrong/1","myMessage":"example exception"}}
+{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","0":"This is a fatal message.","1":"another"}
+{"log.level":"info","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"##Current log level: debug"}
+{"log.level":"debug","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a debug message."}
+{"log.level":"info","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is an info message."}
+{"log.level":"warn","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a warning message."}
+{"log.level":"error","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","msg":"This is an error message.","err":{"RE_EXN_ID":"LogTesting.SomethingWrong/1","myMessage":"example exception"}}
+{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a fatal message."}
+{"log.level":"info","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"##Current log level: info"}
+{"log.level":"info","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is an info message."}
+{"log.level":"warn","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a warning message."}
+{"log.level":"error","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","msg":"This is an error message.","err":{"RE_EXN_ID":"LogTesting.SomethingWrong/1","myMessage":"example exception"}}
+{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a fatal message."}
+{"log.level":"udebug","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs debug","message":"This is a user debug message."}
+{"log.level":"uinfo","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs debug","message":"This is a user info message."}
+{"log.level":"uwarn","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs debug","message":"This is a user warn message."}
+{"log.level":"uerror","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs debug","message":"This is a user error message."}
+{"log.level":"uinfo","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs info","message":"This is a user info message."}
+{"log.level":"uwarn","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs info","type":"warn","data":{"blockHash":"0x123"},"message":"This is a user warn message."}
+{"log.level":"uerror","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs info","message":"This is a user error message."}
+{"log.level":"uerror","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","err":{"RE_EXN_ID":"LogTesting.SomethingWrong/1","myMessage":"example exception"},"message":"This is a user error with exception."}
+{"log.level":"uwarn","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs warn","message":"This is a user warn message."}
+{"log.level":"uerror","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs warn","message":"This is a user error message."}
+{"log.level":"uerror","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","contractName":"Gravatar","eventName":"NewGravatar","chainId":1337,"block":1,"logIndex":11,"address":"0xabc0000000000000000000000000000000000000","child":"userLogs error","message":"This is a user error message."}
+{"log.level":"warn","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a warning message."}
+{"log.level":"error","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","msg":"This is an error message.","err":{"RE_EXN_ID":"LogTesting.SomethingWrong/1","myMessage":"example exception"}}
+{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a fatal message."}
+{"log.level":"error","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","msg":"This is an error message.","err":{"RE_EXN_ID":"LogTesting.SomethingWrong/1","myMessage":"example exception"}}
+{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","message":"This is a fatal message."}
+{"log.level":"fatal","@timestamp":"TIMESTAMP","ecs.version":"1.6.0","this":"is","a":"fatal","message":"object","with":{"nested":"objects","and":{"arrays":["of","things"]},"additionally":{"numbers":0.5654}}}

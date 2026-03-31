@@ -35,3 +35,5 @@ generated
 logs
 build
 .nyc_output
+.env
+.pnpm-store
