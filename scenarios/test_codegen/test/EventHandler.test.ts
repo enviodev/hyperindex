@@ -274,9 +274,9 @@ describe("Use Envio test framework to test event handlers", () => {
     });
 
     // Verify dynamic contract was registered
-    assert.deepEqual(result.changes[0]?.addresses?.sets, [
-      { address: dcAddress, contract: "SimpleNft" },
-    ]);
+    assert.deepEqual(result.changes[0]?.addresses, {
+      sets: [{ address: dcAddress, contract: "SimpleNft" }],
+    });
   });
 
   it("Runs contract register with async handler", async () => {
@@ -300,12 +300,12 @@ describe("Use Envio test framework to test event handlers", () => {
     });
 
     // Verify dynamic contract was registered
-    assert.deepEqual(result.changes[0]?.addresses?.sets, [
-      { address: dcAddress, contract: "SimpleNft" },
-    ]);
+    assert.deepEqual(result.changes[0]?.addresses, {
+      sets: [{ address: dcAddress, contract: "SimpleNft" }],
+    });
   });
 
-  it("Throws when contract registered in an unawaited macrotask", async () => {
+  it("Throws when contract registered in an unawaited macrotask", async (t) => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
 
@@ -327,7 +327,12 @@ describe("Use Envio test framework to test event handlers", () => {
 
     // Since the error is thrown in a separate macrotask, the contract register
     // should finish but the registration shouldn't succeed
-    assert.equal(result.changes[0]?.addresses, undefined);
+    t.expect(result.changes[0]?.addresses).toBeUndefined();
+    // Currently no good way to test this:
+    // But you should be able to see it in the logs when running the test
+    // t.expect(log.message).toEqual(
+    //   "Impossible to access context.addSimpleNft after the contract register is resolved. Make sure you didn't miss an await in the handler.",
+    // );
   });
 
   it("entity.getOrCreate should create the entity if it doesn't exist", async () => {
@@ -610,9 +615,9 @@ describe("Use Envio test framework to test event handlers", () => {
       },
     });
 
-    assert.deepEqual(result.changes[0]?.addresses?.sets, [
-      { address: expectedChecksummedAddress, contract: "SimpleNft" },
-    ]);
+    assert.deepEqual(result.changes[0]?.addresses, {
+      sets: [{ address: expectedChecksummedAddress, contract: "SimpleNft" }],
+    });
   });
 
   it("composes duplicate handlers with same options", async () => {
