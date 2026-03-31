@@ -270,6 +270,7 @@ let start = async (
   ~makeGeneratedConfig: unit => Config.t,
   ~persistence: Persistence.t,
   ~isTest=false,
+  ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
   let shouldUseTui = !isTest && !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
@@ -286,6 +287,11 @@ let start = async (
     {...config, shouldRollbackOnReorg: false}
   } else {
     config
+  }
+
+  let config = switch patchConfig {
+  | Some(patchConfig) => patchConfig(config, registrations)
+  | None => config
   }
   let ctx = {
     Ctx.registrations,

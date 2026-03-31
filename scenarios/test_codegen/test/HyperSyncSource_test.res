@@ -1,7 +1,7 @@
 open Vitest
 open Belt
 
-let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
+let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
 let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
 

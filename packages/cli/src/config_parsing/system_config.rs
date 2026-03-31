@@ -392,17 +392,33 @@ pub fn get_envio_version() -> Result<String> {
         return Ok(VERSION.to_string());
     }
 
-    // Dev mode: walk up from the binary to find the local packages/envio.
+    // Dev mode: walk up from the binary to find the local envio package.
     // Using current_exe() instead of current_dir() so this works even when
     // cwd is outside the repo (e.g. template tests that run in /tmp/).
     let exe = env::current_exe()
         .and_then(|p| p.canonicalize())
         .context("failed to resolve current executable path")?;
+    // When the binary lives inside .envio-artifacts/ (the pre-built CI artifact),
+    // prefer .envio-artifacts/envio — it has compiled .res.mjs files that the
+    // source directory lacks. Dev binaries in target/ should use packages/envio
+    // to avoid creating a duplicate envio instance alongside workspace packages
+    // that already reference packages/envio (duplicate instances cause Prometheus
+    // metric registration collisions).
+    let prefer_artifact = exe
+        .components()
+        .any(|c| c.as_os_str() == ".envio-artifacts");
     let mut dir = exe.parent();
     while let Some(d) = dir {
-        let candidate = d.join("packages/envio");
-        if candidate.is_dir() {
-            return Ok(format!("file:{}", candidate.to_string_lossy()));
+        let artifact = d.join(".envio-artifacts/envio");
+        let source = d.join("packages/envio");
+        if prefer_artifact && artifact.is_dir() {
+            return Ok(format!("file:{}", artifact.to_string_lossy()));
+        }
+        if source.is_dir() {
+            return Ok(format!("file:{}", source.to_string_lossy()));
+        }
+        if artifact.is_dir() {
+            return Ok(format!("file:{}", artifact.to_string_lossy()));
         }
         dir = d.parent();
     }

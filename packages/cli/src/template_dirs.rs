@@ -531,12 +531,6 @@ mod test {
         template_dirs
             .get_contract_import_shared_dir()
             .expect("contract import shared");
-
-        for lang in Language::iter() {
-            template_dirs
-                .get_contract_import_lang_dir(&lang)
-                .expect("contract import lang");
-        }
     }
 
     // Subgraph migration is a deprecated feature

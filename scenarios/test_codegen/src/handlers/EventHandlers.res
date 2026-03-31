@@ -34,11 +34,11 @@ Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
     size: gravatarSize,
   }
 
-  context.gravatar.set(gravatarObject)
+  context.\"Gravatar".set(gravatarObject)
 })
 
 Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
-  let maybeGravatar = await context.gravatar.get(event.params.id->BigInt.toString)
+  let maybeGravatar = await context.\"Gravatar".get(event.params.id->BigInt.toString)
 
   /// Some examples of user logging
   context.log.debug(`We are processing the event, ${event.block.hash} (debug)`)
@@ -106,10 +106,10 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
 
   if event.params.id->BigInt.toString == "1001" {
     context.log.info("id matched, deleting gravatar 1004")
-    context.gravatar.deleteUnsafe("1004")
+    context.\"Gravatar".deleteUnsafe("1004")
   }
 
-  context.gravatar.set(gravatar)
+  context.\"Gravatar".set(gravatar)
 })
 
 let aIdWithGrandChildC = "aIdWithGrandChildC"
@@ -117,15 +117,15 @@ let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
 Indexer.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
   let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
-    switch await context.a.get(idOfGrandparent) {
+    switch await context.\"A".get(idOfGrandparent) {
     | Some(a) =>
-      let optB = await context.b.get(a.b_id)
+      let optB = await context.\"B".get(a.b_id)
 
       switch optB->Belt.Option.flatMap(b => b.c_id) {
       | Some(c_id) =>
-        switch await context.c.get(c_id) {
+        switch await context.\"C".get(c_id) {
         | Some(cWithText) =>
-          context.a.set({
+          context.\"A".set({
             ...a,
             optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
           })

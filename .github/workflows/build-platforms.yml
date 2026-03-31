@@ -7,6 +7,9 @@ on:
         required: true
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-platform-package:
     name: Build ${{ matrix.job.name }}
@@ -21,16 +24,16 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.job.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/cargo-cache
         with:
-          cache-on-failure: true
+          cache-suffix: ${{ matrix.job.target }}
 
       - name: Patch Cargo.toml version
         shell: bash
@@ -59,7 +62,7 @@ jobs:
         run: cargo build --release --bins --target ${{ matrix.job.target }}
 
       - name: Install node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -80,7 +83,7 @@ jobs:
           chmod +x "${node_pkg}/bin/envio"
 
       - name: Upload platform npm package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-pkg-envio-${{ matrix.job.name }}
           path: packages/cli/npm/envio-${{ matrix.job.name }}

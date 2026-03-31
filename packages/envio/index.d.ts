@@ -15,6 +15,18 @@ export type {
 import type { Address } from "./src/Types.ts";
 export type { EffectCaller, Address } from "./src/Types.ts";
 
+export const TestHelpers: {
+  Addresses: {
+    readonly mockAddresses: readonly [
+      Address, Address, Address, Address, Address,
+      Address, Address, Address, Address, Address,
+      Address, Address, Address, Address, Address,
+      Address, Address, Address, Address, Address,
+    ];
+    readonly defaultAddress: Address;
+  };
+};
+
 /** Utility type to expand/flatten complex types for better IDE display. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 
@@ -378,11 +390,11 @@ type SvmChain<Id extends number = number> = {
 type IndexerConfigTypes = {
   evm?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, {}>;
+    contracts?: Record<string, { events: string }>;
   };
   fuel?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, {}>;
+    contracts?: Record<string, { events: string }>;
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
@@ -526,12 +538,76 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
 
 // ============== Test Indexer Types ==============
 
-/** Configuration for a single chain in the test indexer. */
-export type TestIndexerChainConfig = {
+// Helper: Build a union of {contract, event} pairs from a contracts record
+type SimulateContractEvent<Contracts extends Record<string, { events: string }>> = {
+  [C in keyof Contracts]: {
+    /** The contract name as defined in config.yaml. */
+    contract: C;
+    /** The event name as defined in the contract ABI. */
+    event: Contracts[C]["events"];
+  };
+}[keyof Contracts];
+
+/** Shared fields for all simulate event items (excluding params). */
+type SimulateEventItemBase = {
+  /** Override the source address. Defaults to the first contract address. */
+  srcAddress?: Address;
+  /** Override the log index. Auto-increments by default. */
+  logIndex?: number;
+  /** Override block fields. */
+  block?: Record<string, unknown>;
+  /** Override transaction fields. */
+  transaction?: Record<string, unknown>;
+};
+
+/** A typesafe simulate event item for EVM (params optional). */
+type EvmSimulateEventItem<Contracts extends Record<string, { events: string }>> =
+  SimulateContractEvent<Contracts> & SimulateEventItemBase & {
+    /** Event parameters. Keys match the event's parameter names. */
+    params?: Record<string, unknown>;
+  };
+
+/** A typesafe simulate event item for Fuel (params required). */
+type FuelSimulateEventItem<Contracts extends Record<string, { events: string }>> =
+  SimulateContractEvent<Contracts> & SimulateEventItemBase & {
+    /** Event parameters. Keys match the event's parameter names. */
+    params: Record<string, unknown>;
+  };
+
+/** Simulate item type for EVM ecosystem. */
+type EvmSimulateItem<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts?: Record<string, { events: string }> }
+    ? Config["evm"]["contracts"] extends Record<string, { events: string }>
+      ? EvmSimulateEventItem<Config["evm"]["contracts"]>
+      : never
+    : never;
+
+/** Simulate item type for Fuel ecosystem. */
+type FuelSimulateItem<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts?: Record<string, { events: string }> }
+    ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
+      ? FuelSimulateEventItem<Config["fuel"]["contracts"]>
+      : never
+    : never;
+
+/** Configuration for a single EVM chain in the test indexer. */
+type EvmTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
   /** The block number to start processing from. */
   startBlock: number;
   /** The block number to stop processing at. */
   endBlock: number;
+  /** Simulate items to process instead of fetching from real sources. */
+  simulate?: EvmSimulateItem<Config>[];
+};
+
+/** Configuration for a single Fuel chain in the test indexer. */
+type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
+  /** The block number to start processing from. */
+  startBlock: number;
+  /** The block number to stop processing at. */
+  endBlock: number;
+  /** Simulate items to process instead of fetching from real sources. */
+  simulate?: FuelSimulateItem<Config>[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
@@ -555,9 +631,13 @@ type ConfigEntities<Config extends IndexerConfigTypes> =
   Config["entities"] extends Record<string, object> ? Config["entities"] : {};
 
 /** Entity operations available on test indexer for direct entity manipulation. */
-type EntityOps<Entity> = {
+type TestIndexerEntityOperations<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
   readonly get: (id: string) => Promise<Entity | undefined>;
+  /** Get an entity by ID or throw if not found. */
+  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  /** Get all entities. */
+  readonly getAll: () => Promise<Entity[]>;
   /** Set (create or update) an entity. */
   readonly set: (entity: Entity) => void;
 };
@@ -583,34 +663,39 @@ type EntityChange<Config extends IndexerConfigTypes> = {
 };
 
 
-// Helper to extract chain IDs from config for test indexer
-type TestIndexerChainIds<Config extends IndexerConfigTypes> =
-  HasEvm<Config> extends true
-    ? Config["evm"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: number }>
-        ? Chains[keyof Chains]["id"]
-        : never
-      : never
-    : HasFuel<Config> extends true
-    ? Config["fuel"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: number }>
-        ? Chains[keyof Chains]["id"]
-        : never
-      : never
-    : HasSvm<Config> extends true
-    ? Config["svm"] extends { chains: infer Chains }
-      ? Chains extends Record<string, { id: number }>
-        ? Chains[keyof Chains]["id"]
-        : never
+// Helper to extract chain IDs per ecosystem
+type EvmChainIds<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: number }>
+      ? Chains[keyof Chains]["id"]
       : never
     : never;
+
+type FuelChainIds<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: number }>
+      ? Chains[keyof Chains]["id"]
+      : never
+    : never;
+
+// Per-ecosystem chain config mappings
+type EvmTestChains<Config extends IndexerConfigTypes> =
+  HasEvm<Config> extends true
+    ? { [K in EvmChainIds<Config>]?: EvmTestIndexerChainConfig<Config> }
+    : {};
+
+type FuelTestChains<Config extends IndexerConfigTypes> =
+  HasFuel<Config> extends true
+    ? { [K in FuelChainIds<Config>]?: FuelTestIndexerChainConfig<Config> }
+    : {};
 
 /** Process configuration for the test indexer, with chains keyed by chain ID. */
 export type TestIndexerProcessConfig<Config extends IndexerConfigTypes> = {
   /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
-  chains: {
-    [K in TestIndexerChainIds<Config>]?: TestIndexerChainConfig;
-  };
+  chains: Prettify<
+    EvmTestChains<Config> &
+    FuelTestChains<Config>
+  >;
 };
 
 /**
@@ -629,7 +714,7 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
   ? SingleEcosystemChains<Config>
   : MultiEcosystemChains<Config>) & {
   /** Entity operations for direct manipulation outside of handlers. */
-  readonly [K in keyof ConfigEntities<Config>]: EntityOps<
+  readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<
     ConfigEntities<Config>[K]
   >;
 };

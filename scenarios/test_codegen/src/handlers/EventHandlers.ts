@@ -5,10 +5,10 @@ import {
   S,
   type Logger,
   type EffectCaller,
+  TestHelpers,
 } from "envio";
 import {
   TestEvents,
-  TestHelpers,
   EventFiltersTest,
   Gravatar,
   BigDecimal,
@@ -760,15 +760,19 @@ EventFiltersTest.FilterTestEvent.handler(
 
 // Duplicate handler registration tests
 
-// Same options (no options) → should compose without error
-export let composedHandlerCalled = false;
-Gravatar.CustomSelection.handler(async () => {
-  composedHandlerCalled = true;
+// Same options (no options) → should compose without error.
+// The composed handler sets an additional entity to prove it ran.
+Gravatar.CustomSelection.handler(async ({ event, context }) => {
+  context.CustomSelectionTestPass.set({
+    id: "composed-" + event.transaction.hash,
+  });
 });
 
-export let composedContractRegisterCalled = false;
-Gravatar.FactoryEvent.contractRegister(() => {
-  composedContractRegisterCalled = true;
+// Same options → composed contractRegister registers an additional contract
+Gravatar.FactoryEvent.contractRegister(({ event, context }) => {
+  if (event.params.testCase === "composeContractRegister") {
+    context.addNftFactory(event.params.contract);
+  }
 });
 
 // Different options → should throw
@@ -778,3 +782,13 @@ try {
 } catch (e) {
   mismatchedHandlerOptionsError = e as Error;
 }
+
+// Handler for testing simulate block/logIndex behavior
+Gravatar.EmptyEvent.handler(async ({ event, context }) => {
+  context.SimulateTestEvent.set({
+    id: `${event.block.number}_${event.logIndex}`,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    timestamp: event.block.timestamp,
+  });
+});

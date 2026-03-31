@@ -25,7 +25,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
           blockNumber: 100,
           logIndex: 0,
           handler: async ({context}) => {
-            context.entityWithTimestamp.set({
+            context.\"EntityWithTimestamp".set({
               id: "testEntity",
               timestamp: Js.Date.fromString("1970-01-01T00:02:03.456Z"),
             })

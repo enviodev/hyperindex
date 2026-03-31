@@ -83,14 +83,14 @@ describe("Write/read tests", () => {
         blockNumber: 50,
         logIndex: 1,
         handler: async ({context}) => {
-          context.entityWithAllTypes.set(entityWithAllTypes)
-          context.entityWithAllNonArrayTypes.set(entityWithAllNonArrayTypes)
+          context.\"EntityWithAllTypes".set(entityWithAllTypes)
+          context.\"EntityWithAllNonArrayTypes".set(entityWithAllNonArrayTypes)
 
           // Test that for entities of max length, we can correctly save history (envio_history_<entityName>) is truncated correctly.
-          context.entityWith63LenghtName______________________________________one.set({
+          context.\"EntityWith63LenghtName______________________________________one".set({
             id: "1",
           })
-          context.entityWith63LenghtName______________________________________two.set({
+          context.\"EntityWith63LenghtName______________________________________two".set({
             id: "2",
           })
         },
@@ -236,7 +236,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
         logIndex: 1,
         handler: async ({context}) => {
           // Set up test entities
-          context.user.set({
+          context.\"User".set({
             id: testUserId,
             address: "0x1234567890123456789012345678901234567890"->Utils.magic,
             gravatar_id: None,
@@ -244,7 +244,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
             accountType: USER,
           })
 
-          context.nftCollection.set({
+          context.\"NftCollection".set({
             id: testCollectionId,
             contractAddress: "0xabcdef0123456789abcdef0123456789abcdef01"->Utils.magic,
             name: "Test Collection",
@@ -253,14 +253,14 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
             currentSupply: 1,
           })
 
-          context.token.set({
+          context.\"Token".set({
             id: "token-1",
             tokenId: BigInt.fromInt(50),
             collection_id: testCollectionId,
             owner_id: testUserId,
           })
 
-          context.token.set({
+          context.\"Token".set({
             id: "token-2",
             tokenId: BigInt.fromInt(60),
             collection_id: testCollectionId,
@@ -268,24 +268,24 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
           })
 
           // Execute getWhere queries
-          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
-          whereEqTokenIdTest := (await context.token.getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
-          whereTokenIdGt50Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
-          whereTokenIdGt49Test := (await context.token.getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
-          whereTokenIdLt50Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
-          whereTokenIdLt51Test := (await context.token.getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
+          whereEqOwnerTest := (await context.\"Token".getWhere({owner: {_eq: testUserId}}))
+          whereEqTokenIdTest := (await context.\"Token".getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
+          whereTokenIdGt50Test := (await context.\"Token".getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
+          whereTokenIdGt49Test := (await context.\"Token".getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
+          whereTokenIdLt50Test := (await context.\"Token".getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
+          whereTokenIdLt51Test := (await context.\"Token".getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
 
           // Execute _gte and _lte queries
-          whereTokenIdGte50Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
-          whereTokenIdGte51Test := (await context.token.getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
-          whereTokenIdLte50Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
-          whereTokenIdLte49Test := (await context.token.getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
+          whereTokenIdGte50Test := (await context.\"Token".getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
+          whereTokenIdGte51Test := (await context.\"Token".getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
+          whereTokenIdLte50Test := (await context.\"Token".getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
+          whereTokenIdLte49Test := (await context.\"Token".getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
 
           // Execute _in queries
-          whereInOwnerTest := (await context.token.getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
-          whereInTokenIdTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]}}))
-          whereInTokenIdNoMatchTest := (await context.token.getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}))
-          whereInTokenIdEmptyTest := (await context.token.getWhere({tokenId: {_in: []}}))
+          whereInOwnerTest := (await context.\"Token".getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
+          whereInTokenIdTest := (await context.\"Token".getWhere({tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]}}))
+          whereInTokenIdNoMatchTest := (await context.\"Token".getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}))
+          whereInTokenIdEmptyTest := (await context.\"Token".getWhere({tokenId: {_in: []}}))
         },
       },
     ])
@@ -389,10 +389,10 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
         blockNumber: 51,
         logIndex: 1,
         handler: async ({context}) => {
-          context.token.deleteUnsafe("token-1")
+          context.\"Token".deleteUnsafe("token-1")
 
           // Execute getWhere query after deletion
-          whereEqOwnerTest := (await context.token.getWhere({owner: {_eq: testUserId}}))
+          whereEqOwnerTest := (await context.\"Token".getWhere({owner: {_eq: testUserId}}))
         },
       },
     ])

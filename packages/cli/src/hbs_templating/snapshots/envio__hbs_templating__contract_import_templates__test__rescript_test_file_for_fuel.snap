@@ -1,0 +1,33 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+open Vitest
+open Indexer
+
+describe("Greeter contract NewGreeting event tests", () => {
+  Async.it("NewGreeting handler creates Greeter_NewGreeting entity", async t => {
+    let indexer = createTestIndexer()
+
+    let _ = await indexer.process({
+      chains: {
+        \"0": {
+          startBlock: 0,
+          endBlock: 0,
+          simulate: [makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
+        },
+      },
+    })
+
+    let actualGreeterNewGreeting = await indexer.\"Greeter_NewGreeting".getOrThrow("0_0_0")
+
+    let expectedGreeterNewGreeting: Entities.Greeter_NewGreeting.t = {
+      id: "0_0_0",
+    }
+
+    t.expect(
+      actualGreeterNewGreeting,
+      ~message="Actual Greeter_NewGreeting should be the same as the expected Greeter_NewGreeting",
+    ).toEqual(expectedGreeterNewGreeting)
+  })
+})
