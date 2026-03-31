@@ -364,6 +364,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
     let getUsersWithUpdates = fieldValue =>
       LoadLayer.loadByField(
@@ -377,6 +378,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let users1 = await getUsersWithId("123")
@@ -416,6 +418,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let users3 = await getUsersWithUpdatesLt(5)
@@ -472,6 +475,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     let getUsersWithUpdates = fieldValue =>
@@ -486,6 +490,7 @@ describe("LoadLayer", () => {
         ~item,
         ~fieldValue,
         ~shouldGroup=true,
+        ~checkpointId=0n,
       )
 
     t.expect(await getUsersWithId("1")).toEqual([user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)])
@@ -576,6 +581,7 @@ describe("LoadLayer", () => {
           ~item,
           ~fieldValue,
           ~shouldGroup=true,
+          ~checkpointId=0n,
         )
 
       let users = await getUsersWithId("1")
