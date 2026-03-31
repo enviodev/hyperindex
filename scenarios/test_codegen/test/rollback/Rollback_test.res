@@ -821,6 +821,14 @@ describe("E2E rollback tests", () => {
     )
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
+    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
+
+    // Wait for the empty batches to process and for the system to dispatch
+    // new queries. Background writes add microtask yields that delay this.
+    while sourceMock.getItemsOrThrowCalls->Array.length < 2 {
+      await Utils.delay(1)
+    }
+
     sourceMock.resolveGetItemsOrThrow(
       [
         {
@@ -829,10 +837,10 @@ describe("E2E rollback tests", () => {
           handler,
         },
       ],
-      ~resolveAt=#last,
+      ~resolveAt=#first,
       ~latestFetchedBlockNumber=104,
     )
-    await indexerMock.getBatchWritePromise()
+
     await indexerMock.getBatchWritePromise()
 
 
