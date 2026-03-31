@@ -58,6 +58,56 @@ Async.it("Optional block params: uses explicit startBlock and endBlock when prov
   t.expect(result.changes->Array.length).toEqual(1)
 })
 
+// Test: non-numeric chain ID → error
+Async.it("Optional block params: raises error for non-numeric chain ID", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  let error = try {
+    let _ = await indexer.process(
+      {
+        "chains": {
+          "abc": {
+            "startBlock": 1,
+            "endBlock": 100,
+          },
+        },
+      }->Utils.magic,
+    )
+    None
+  } catch {
+  | Js.Exn.Error(err) => err->Js.Exn.message
+  }
+
+  t.expect(error).toEqual(
+    Some("Invalid chain ID \"abc\": expected a numeric chain ID"),
+  )
+})
+
+// Test: chain ID not in config → error
+Async.it("Optional block params: raises error for chain ID not in config", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  let error = try {
+    let _ = await indexer.process(
+      {
+        "chains": {
+          "9999": {
+            "startBlock": 1,
+            "endBlock": 100,
+          },
+        },
+      }->Utils.magic,
+    )
+    None
+  } catch {
+  | Js.Exn.Error(err) => err->Js.Exn.message
+  }
+
+  t.expect(error).toEqual(
+    Some("Chain 9999 is not configured in config.yaml"),
+  )
+})
+
 // Test: no simulate, no endBlock → error
 Async.it("Optional block params: raises error when endBlock is missing without simulate", async t => {
   let indexer = Indexer.createTestIndexer()

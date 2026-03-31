@@ -578,8 +578,15 @@ let makeCreateTestIndexer = (
           // Resolve optional startBlock/endBlock defaults and build resolved chains
           let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
           chainKeys->Array.forEach(chainIdStr => {
-            let chainId = chainIdStr->Int.fromString->Option.getWithDefault(0)
+            let chainId = switch chainIdStr->Int.fromString {
+            | Some(id) => id
+            | None =>
+              Js.Exn.raiseError(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
+            }
             let chain = ChainMap.Chain.makeUnsafe(~chainId)
+            if !(config.chainMap->ChainMap.has(chain)) {
+              Js.Exn.raiseError(`Chain ${chainIdStr} is not configured in config.yaml`)
+            }
             let configChain = config.chainMap->ChainMap.get(chain)
             let raw = rawChains->Js.Dict.unsafeGet(chainIdStr)
             let rawDict = raw->(Utils.magic: {..} => Js.Dict.t<unknown>)
@@ -624,7 +631,8 @@ let makeCreateTestIndexer = (
 
           // Validate block ranges for each chain
           chainKeys->Array.forEach(chainIdStr => {
-            let chainId = chainIdStr->Int.fromString->Option.getWithDefault(0)
+            // chainIdStr already validated as numeric in the resolution loop above
+            let chainId = chainIdStr->Int.fromString->Option.getExn
             let chain = ChainMap.Chain.makeUnsafe(~chainId)
             let configChain = config.chainMap->ChainMap.get(chain)
             let processChainConfig = chains->Js.Dict.unsafeGet(chainIdStr)
