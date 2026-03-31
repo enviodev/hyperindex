@@ -301,12 +301,30 @@ let makeInitialState = (
   }
 }
 
+type rawChainConfig = {
+  startBlock: option<int>,
+  endBlock: option<int>,
+  simulate: option<array<Js.Json.t>>,
+}
+
+let rawChainConfigSchema = S.schema(s => {
+  startBlock: s.matches(S.option(S.int)),
+  endBlock: s.matches(S.option(S.int)),
+  simulate: s.matches(S.option(S.array(S.json(~validate=false)))),
+})
+
+let processConfigSchema = S.schema(s =>
+  {
+    "chains": s.matches(S.dict(rawChainConfigSchema)),
+  }
+)
+
 // Parse and validate block range from raw processConfig for a single chain.
 // Resolves optional startBlock/endBlock with defaults and validates the range.
 let parseBlockRange = (
   ~chainIdStr: string,
   ~config: Config.t,
-  ~raw: {..},
+  ~rawChainConfig: rawChainConfig,
   ~progressBlock: option<int>,
 ): chainConfig => {
   let chainId = switch chainIdStr->Int.fromString {
@@ -319,17 +337,7 @@ let parseBlockRange = (
   }
   let configChain = config.chainMap->ChainMap.get(chain)
 
-  let rawStartBlock: option<int> =
-    raw["startBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
-  let rawEndBlock: option<int> =
-    raw["endBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
-  let hasSimulate: bool =
-    raw["simulate"]
-    ->(Utils.magic: 'a => Js.Nullable.t<unknown>)
-    ->Js.Nullable.toOption
-    ->Option.isSome
-
-  let startBlock = switch rawStartBlock {
+  let startBlock = switch rawChainConfig.startBlock {
   | Some(sb) => sb
   | None =>
     switch progressBlock {
@@ -338,9 +346,9 @@ let parseBlockRange = (
     }
   }
 
-  let endBlock = switch rawEndBlock {
+  let endBlock = switch rawChainConfig.endBlock {
   | Some(eb) => eb
-  | None if hasSimulate => startBlock
+  | None if rawChainConfig.simulate->Option.isSome => startBlock
   | None =>
     Js.Exn.raiseError(`endBlock is required for chain ${chainIdStr} when simulate is not provided`)
   }
@@ -599,8 +607,14 @@ let makeCreateTestIndexer = (
             )
           }
 
-          // Validate chains
-          let rawChains: Js.Dict.t<{..}> = (processConfig->Utils.magic)["chains"]->Utils.magic
+          // Parse and validate processConfig
+          let parsedConfig = try processConfig->S.parseOrThrow(processConfigSchema) catch {
+          | S.Raised(exn) =>
+            Js.Exn.raiseError(
+              `Invalid processConfig: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
+            )
+          }
+          let rawChains = parsedConfig["chains"]
           let chainKeys = rawChains->Js.Dict.keys
 
           let chainIdStr = switch chainKeys {
@@ -614,11 +628,13 @@ let makeCreateTestIndexer = (
             )
           }
 
+          let rawChainConfig = rawChains->Js.Dict.unsafeGet(chainIdStr)
+
           // Resolve optional startBlock/endBlock defaults and validate
           let processChainConfig = parseBlockRange(
             ~chainIdStr,
             ~config,
-            ~raw=rawChains->Js.Dict.unsafeGet(chainIdStr),
+            ~rawChainConfig,
             ~progressBlock=state.progressBlockByChain->Js.Dict.get(chainIdStr),
           )
           let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
@@ -626,10 +642,6 @@ let makeCreateTestIndexer = (
 
           // Build processConfig with resolved block range for worker
           let resolvedChainDict: Js.Dict.t<unknown> = Js.Dict.empty()
-          let rawChain = rawChains->Js.Dict.unsafeGet(chainIdStr)
-          // Copy simulate items from the original raw config
-          let simulate =
-            rawChain["simulate"]->(Utils.magic: 'a => Js.Nullable.t<unknown>)->Js.Nullable.toOption
           resolvedChainDict->Js.Dict.set(
             "startBlock",
             processChainConfig.startBlock->(Utils.magic: int => unknown),
@@ -638,8 +650,12 @@ let makeCreateTestIndexer = (
             "endBlock",
             processChainConfig.endBlock->(Utils.magic: int => unknown),
           )
-          switch simulate {
-          | Some(s) => resolvedChainDict->Js.Dict.set("simulate", s)
+          switch rawChainConfig.simulate {
+          | Some(s) =>
+            resolvedChainDict->Js.Dict.set(
+              "simulate",
+              s->(Utils.magic: array<Js.Json.t> => unknown),
+            )
           | None => ()
           }
           let resolvedChainsDict: Js.Dict.t<unknown> = Js.Dict.empty()

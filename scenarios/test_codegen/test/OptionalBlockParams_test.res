@@ -131,6 +131,30 @@ Async.it("Optional block params: raises error for chain ID not in config", async
   )
 })
 
+// Test: schema rejects invalid types
+Async.it("Optional block params: raises error for invalid startBlock type", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  let error = try {
+    let _ = await indexer.process(
+      {
+        "chains": {
+          "1337": {
+            "startBlock": "not_a_number",
+          },
+        },
+      }->(Utils.magic: 'a => Indexer.testIndexerProcessConfig),
+    )
+    None
+  } catch {
+  | Js.Exn.Error(err) => err->Js.Exn.message
+  }
+
+  t.expect(
+    error->Option.map(msg => msg->Js.String2.startsWith("Invalid processConfig:")),
+  ).toEqual(Some(true))
+})
+
 // Test: no simulate, no endBlock → error
 Async.it("Optional block params: raises error when endBlock is missing without simulate", async t => {
   let indexer = Indexer.createTestIndexer()
