@@ -1,13 +1,21 @@
 open Vitest
 
 let _ = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
+// Rebuild config after handler registration to pick up event filters
+let configWithRegistrations = Indexer.Generated.makeGeneratedConfig()
+
+let getEvmEventConfig = (~contractName, ~eventName) =>
+  configWithRegistrations
+  ->Config.getEventConfig(~contractName, ~eventName)
+  ->Belt.Option.getExn
+  ->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
 
 // Test types:
 let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
 
 describe("Test eventFilters", () => {
   it("Supports multichain filters", t => {
-    let eventConfig = Indexer.EventFiltersTest.Transfer.register()
+    let eventConfig = getEvmEventConfig(~contractName="EventFiltersTest", ~eventName="Transfer")
 
     t.expect(
       eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
@@ -52,7 +60,7 @@ describe("Test eventFilters", () => {
   })
 
   it("Supports filter depending on addresses", t => {
-    let eventConfig = Indexer.EventFiltersTest.WildcardWithAddress.register()
+    let eventConfig = getEvmEventConfig(~contractName="EventFiltersTest", ~eventName="WildcardWithAddress")
 
     t.expect(
       switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {
@@ -98,7 +106,7 @@ describe("Test eventFilters", () => {
   })
 
   it("Empty filters should fallback to normal topic selection with only topic0", t => {
-    let eventConfig = Indexer.EventFiltersTest.EmptyFiltersArray.register()
+    let eventConfig = getEvmEventConfig(~contractName="EventFiltersTest", ~eventName="EmptyFiltersArray")
 
     t.expect(
       eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)),
@@ -118,7 +126,7 @@ describe("Test eventFilters", () => {
   })
 
   it("Fails on filter with excess field", t => {
-    let eventConfig = Indexer.EventFiltersTest.WithExcessField.register()
+    let eventConfig = getEvmEventConfig(~contractName="EventFiltersTest", ~eventName="WithExcessField")
 
     t.expect(
       () => {

@@ -544,7 +544,6 @@ pub struct EventMod {
     pub global_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
     pub params_constructor_type: String,
-    pub params_event_kind: EventKind,
 }
 
 impl Display for EventMod {
@@ -555,7 +554,6 @@ impl Display for EventMod {
 
 impl EventMod {
     fn to_string_internal(&self) -> String {
-        let sighash = &self.sighash;
         let event_name = &self.event_name;
         let data_type = &self.data_type;
         let event_filter_type = &self.event_filter_type;
@@ -593,70 +591,8 @@ type contractRegister = Internal.genericContractRegister<Internal.genericContrac
 
         let params_constructor_type = &self.params_constructor_type;
 
-        // Generate register() function that delegates to EventConfigBuilder
-        let register_code = match &self.fuel_event_kind {
-            None => {
-                // EVM: generate params JSON for EventConfigBuilder
-                let params_json = match &self.fuel_event_kind {
-                    Some(_) => "[]".to_string(),
-                    None => {
-                        if let EventKind::Params(params) = &self.params_event_kind {
-                            let params_items: Vec<String> = params
-                                .iter()
-                                .map(|p| {
-                                    let indexed = if p.indexed { "true" } else { "false" };
-                                    format!(
-                                        r#"{{"name":"{}","abiType":"{}","indexed":{}}}"#,
-                                        p.name,
-                                        p.kind.to_string(),
-                                        indexed
-                                    )
-                                })
-                                .collect();
-                            format!("[{}]", params_items.join(","))
-                        } else {
-                            "[]".to_string()
-                        }
-                    }
-                };
-                format!(
-                    r#"
-let register = (): Internal.evmEventConfig =>
-  EventConfigBuilder.buildEvmEventConfig(
-    ~contractName, ~eventName=name, ~sighash,
-    ~params=%raw(`{params_json}`),
-    ~isWildcard=HandlerRegister.isWildcard(~contractName, ~eventName=name),
-    ~handler=HandlerRegister.getHandler(~contractName, ~eventName=name),
-    ~contractRegister=HandlerRegister.getContractRegister(~contractName, ~eventName=name),
-    ~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name),
-  )"#
-                )
-            }
-            Some(fuel_kind) => {
-                let kind_str = match fuel_kind {
-                    FuelEventKind::LogData(_) => "logData",
-                    FuelEventKind::Mint => "mint",
-                    FuelEventKind::Burn => "burn",
-                    FuelEventKind::Transfer => "transfer",
-                    FuelEventKind::Call => "call",
-                };
-                format!(
-                    r#"
-let register = (): Internal.fuelEventConfig =>
-  EventConfigBuilder.buildFuelEventConfig(
-    ~contractName, ~eventName=name, ~sighash,
-    ~kind="{kind_str}", ~abi,
-    ~isWildcard=HandlerRegister.isWildcard(~contractName, ~eventName=name),
-    ~handler=HandlerRegister.getHandler(~contractName, ~eventName=name),
-    ~contractRegister=HandlerRegister.getContractRegister(~contractName, ~eventName=name),
-  )"#
-                )
-            }
-        };
-
         format!(
             r#"
-let sighash = "{sighash}"
 let name = "{event_name}"
 let contractName = contractName
 
@@ -691,7 +627,6 @@ block: block,
 type eventFilter = {event_filter_type}
 
 {event_filters_type_code}
-{register_code}
 
 let contractRegister: fnWithEventConfig<
   Internal.genericContractRegister<
@@ -864,7 +799,6 @@ impl EventTemplate {
             global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
             params_constructor_type: "Internal.fuelSupplyParams".to_string(),
-            params_event_kind: config_event.kind.clone(),
         };
         EventTemplate {
             name: event_name,
@@ -893,7 +827,6 @@ impl EventTemplate {
             global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
             params_constructor_type: "Internal.fuelTransferParams".to_string(),
-            params_event_kind: config_event.kind.clone(),
         };
         EventTemplate {
             name: event_name,
@@ -980,7 +913,6 @@ impl EventTemplate {
                     global_field_selection: Some(global_field_selection.clone()),
                     fuel_event_kind: None,
                     params_constructor_type,
-                    params_event_kind: config_event.kind.clone(),
                 };
 
                 Ok(EventTemplate {
@@ -1012,7 +944,6 @@ impl EventTemplate {
                             global_field_selection: None,
                             fuel_event_kind: Some(fuel_event_kind),
                             params_constructor_type: data_type_str,
-                            params_event_kind: config_event.kind.clone(),
                         };
 
                         Ok(EventTemplate {
@@ -2649,95 +2580,6 @@ mod test {
                 default_value_non_rescript: res_type.get_default_value_non_rescript(),
                 is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,
             }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn make_expected_event_template(sighash: String) -> EventTemplate {
-        let params = vec![
-            EventParamTypeTemplate::new("id", RESCRIPT_BIG_INT_TYPE),
-            EventParamTypeTemplate::new("owner", RESCRIPT_ADDRESS_TYPE),
-            EventParamTypeTemplate::new("displayName", RESCRIPT_STRING_TYPE),
-            EventParamTypeTemplate::new("imageUrl", RESCRIPT_STRING_TYPE),
-        ];
-
-        EventTemplate {
-            name: "NewGravatar".to_string(),
-            params,
-            module_code: format!(
-                r#"
-let sighash = "{sighash}"
-let name = "NewGravatar"
-let contractName = contractName
-
-@genType
-type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
-/** Event params with all fields optional. Missing fields use default values. */
-type paramsConstructor = {{id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}}
-@genType
-type block = Block.t
-@genType
-type transaction = Transaction.t
-
-@genType
-type event = {{
-/** The parameters or arguments associated with this event. */
-params: eventArgs,
-/** The unique identifier of the blockchain network where this event occurred. */
-chainId: chainId,
-/** The address of the contract that emitted this event. */
-srcAddress: Address.t,
-/** The index of this event's log within the block. */
-logIndex: int,
-/** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
-transaction: transaction,
-/** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
-block: block,
-}}
-
-@genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
-@genType
-type handler = Internal.genericHandler<handlerArgs>
-@genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
-
-@genType
-type eventFilter = {{}}
-
-@genType type eventFilters = Internal.noEventFilters
-
-let contractRegister: fnWithEventConfig<
-  Internal.genericContractRegister<
-    Internal.genericContractRegisterArgs<event, contractRegistrations>,
-  >,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (contractRegister, ~eventConfig=?) =>
-  HandlerRegister.setContractRegister(
-    ~contractName,
-    ~eventName=name,
-    contractRegister,
-    ~eventOptions=eventConfig,
-  )
-
-let handler: fnWithEventConfig<
-  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (handler, ~eventConfig=?) => {{
-  HandlerRegister.setHandler(
-    ~contractName,
-    ~eventName=name,
-    handler->(
-      Utils.magic: Internal.genericHandler<
-        Internal.genericHandlerArgs<event, handlerContext>,
-      > => Internal.genericHandler<
-        Internal.genericHandlerArgs<event, Internal.handlerContext>,
-      >
-    ),
-    ~eventOptions=eventConfig,
-  )
-}}"#
-            ),
         }
     }
 

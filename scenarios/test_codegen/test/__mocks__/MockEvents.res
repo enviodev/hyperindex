@@ -143,7 +143,7 @@ let newGravatarEventToBatchItem = (
   chain: MockConfig.chain1337,
   blockNumber: event.block.number,
   logIndex: event.logIndex,
-  eventConfig: (Indexer.Gravatar.NewGravatar.register() :> Internal.eventConfig),
+  eventConfig: Indexer.Generated.configWithoutRegistrations->Config.getEventConfig(~contractName="Gravatar", ~eventName="NewGravatar")->Belt.Option.getExn,
   event: event->Internal.fromGenericEvent,
 })
 
@@ -154,7 +154,7 @@ let updatedGravatarEventToBatchItem = (
   chain: MockConfig.chain1337,
   blockNumber: event.block.number,
   logIndex: event.logIndex,
-  eventConfig: (Indexer.Gravatar.UpdatedGravatar.register() :> Internal.eventConfig),
+  eventConfig: Indexer.Generated.configWithoutRegistrations->Config.getEventConfig(~contractName="Gravatar", ~eventName="UpdatedGravatar")->Belt.Option.getExn,
   event: event->Internal.fromGenericEvent,
 })
 
