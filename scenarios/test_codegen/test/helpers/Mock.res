@@ -376,92 +376,77 @@ module Indexer = {
       },
       query: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
-        (
-          async () => {
-            if persistence->Persistence.isWriting {
-              if persistence->Persistence.isWriting {
-          await persistence->Persistence.flushWrites
-        }
-            }
-            let items = await sql->Postgres.unsafe(
-              PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
-            )
-            items->S.parseOrThrow(ec.rowsSchema)
-          }
-        )()->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(ec.rowsSchema)
+        })
+        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
-        (
-          async () => {
-            if persistence->Persistence.isWriting {
-              if persistence->Persistence.isWriting {
-          await persistence->Persistence.flushWrites
-        }
-            }
-            let items = await sql->Postgres.unsafe(
-              PgStorage.makeLoadAllQuery(
-                ~pgSchema,
-                ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
-              ),
-            )
-            items->S.parseOrThrow(
-              S.array(
-                S.union([
-                  PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
-                  S.object((s): Change.t<'entity> => {
-                    s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-                    Delete({
-                      entityId: s.field("id", S.string),
-                      checkpointId: s.field(
-                        EntityHistory.checkpointIdFieldName,
-                        EntityHistory.unsafeCheckpointIdSchema,
-                      ),
-                    })
-                  }),
-                ]),
-              ),
-            )
-          }
-        )()->(
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
+          ),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(
+            S.array(
+              S.union([
+                PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
+                S.object((s): Change.t<'entity> => {
+                  s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                  Delete({
+                    entityId: s.field("id", S.string),
+                    checkpointId: s.field(
+                      EntityHistory.checkpointIdFieldName,
+                      EntityHistory.unsafeCheckpointIdSchema,
+                    ),
+                  })
+                }),
+              ]),
+            ),
+          )
+        })
+        ->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         )
       },
       queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
-        (
-          async () => {
-            if persistence->Persistence.isWriting {
-              await persistence->Persistence.flushWrites
-            }
-            let items = await sql->Postgres.unsafe(
-              PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-            )
-            items->S.parseOrThrow(entityConfig.rowsSchema)
-          }
-        )()->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+        )
+        ->Promise.thenResolve(items => {
+          items->S.parseOrThrow(entityConfig.rowsSchema)
+        })
+        ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
       },
-      queryCheckpoints: async () => {
-        if persistence->Persistence.isWriting {
-          await persistence->Persistence.flushWrites
-        }
-        let rows = await sql->Postgres.unsafe(
+      queryCheckpoints: () => {
+        sql
+        ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
         )
-        rows
-        ->(Utils.magic: unknown => array<unknown>)
-        ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        ->Promise.thenResolve(rows =>
+          rows
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        )
       },
-      queryEffectCache: async (effectName: string) => {
-        if persistence->Persistence.isWriting {
-          await persistence->Persistence.flushWrites
-        }
-        let result = await sql->Postgres.unsafe(
+      queryEffectCache: (effectName: string) => {
+        sql
+        ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
         )
-        result->(Utils.magic: unknown => array<{"id": string, "output": Js.Json.t}>)
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": Js.Json.t}>>)
       },
       metric: async name => {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
