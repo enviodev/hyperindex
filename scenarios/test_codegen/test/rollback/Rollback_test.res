@@ -664,7 +664,9 @@ describe("E2E rollback tests", () => {
       ~latestFetchedBlockNumber=104,
     )
 
+
     await indexerMock.getBatchWritePromise()
+
 
     t.expect(
       (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
@@ -709,7 +711,9 @@ describe("E2E rollback tests", () => {
       ~resolveAt=#first,
       ~latestFetchedBlockNumber=102,
     )
+
     await indexerMock.getBatchWritePromise()
+
     t.expect(
       (calls, sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload)),
       ~message=`Should process the block 102 after DC partition finished fetching it`,
@@ -753,7 +757,9 @@ describe("E2E rollback tests", () => {
     )
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
+
     await indexerMock.getBatchWritePromise()
+
     t.expect(
       (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
       ~message="Should add the processed dynamic contracts to the db",
@@ -788,7 +794,9 @@ describe("E2E rollback tests", () => {
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
+
     await indexerMock.getRollbackReadyPromise()
+
 
     t.expect(
       sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
@@ -837,7 +845,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~latestFetchedBlockNumber=104,
     )
 
+
     await indexerMock.getBatchWritePromise()
+
 
     t.expect(
       await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
