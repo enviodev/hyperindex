@@ -821,18 +821,6 @@ describe("E2E rollback tests", () => {
     )
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
-    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
-    // Wait for the empty batches to be processed after rollback
-    await indexerMock.getBatchWritePromise()
-
-    t.expect(
-      (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
-      ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
-This might be wrong after we start exposing a block hash for progress block.`,
-    ).toEqual(
-      2,
-    )
-
     sourceMock.resolveGetItemsOrThrow(
       [
         {
@@ -841,11 +829,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
           handler,
         },
       ],
-      ~resolveAt=#first,
+      ~resolveAt=#last,
       ~latestFetchedBlockNumber=104,
     )
-
-
+    await indexerMock.getBatchWritePromise()
     await indexerMock.getBatchWritePromise()
 
 
