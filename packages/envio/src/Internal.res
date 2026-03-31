@@ -183,45 +183,74 @@ let evmNullableTransactionFields = Utils.Set.fromArray(
   ),
 )
 
-// Shared EVM transaction fields type used by both RPC and HyperSync sources
-// Field names match HyperSyncClient.ResponseTypes.transaction for consistency
-type evmTransactionFields = {
+// All EVM block fields as optional — used as the user-facing constructor type
+// for simulate items and shared across sources. Fields match evmBlockField enum.
+type evmBlockConstructor = {
+  number?: int,
+  timestamp?: int,
+  hash?: string,
+  parentHash?: string,
+  nonce?: bigint,
+  sha3Uncles?: string,
+  logsBloom?: string,
+  transactionsRoot?: string,
+  stateRoot?: string,
+  receiptsRoot?: string,
+  miner?: Address.t,
+  difficulty?: bigint,
+  totalDifficulty?: bigint,
+  extraData?: string,
+  size?: bigint,
+  gasLimit?: bigint,
+  gasUsed?: bigint,
+  uncles?: array<string>,
+  baseFeePerGas?: bigint,
+  blobGasUsed?: bigint,
+  excessBlobGas?: bigint,
+  parentBeaconBlockRoot?: string,
+  withdrawalsRoot?: string,
+  l1BlockNumber?: int,
+  sendCount?: string,
+  sendRoot?: string,
+  mixHash?: string,
+}
+
+// All EVM transaction fields as optional — used as the user-facing constructor type
+// for simulate items and shared across sources. Fields match evmTransactionField enum.
+type evmTransactionConstructor = {
+  transactionIndex?: int,
+  hash?: string,
   from?: Address.t,
   to?: Address.t,
   gas?: bigint,
   gasPrice?: bigint,
-  hash?: string,
+  maxPriorityFeePerGas?: bigint,
+  maxFeePerGas?: bigint,
+  cumulativeGasUsed?: bigint,
+  effectiveGasPrice?: bigint,
+  gasUsed?: bigint,
   input?: string,
   nonce?: bigint,
-  transactionIndex?: int,
   value?: bigint,
-  // Signature fields - optional for ZKSync EIP-712 compatibility
   v?: string,
   r?: string,
   s?: string,
   yParity?: string,
-  // EIP-1559 fields
-  maxPriorityFeePerGas?: bigint,
-  maxFeePerGas?: bigint,
-  // EIP-4844 blob fields
-  maxFeePerBlobGas?: bigint,
-  blobVersionedHashes?: array<string>,
-  // Receipt fields (from joined transaction receipts)
-  cumulativeGasUsed?: bigint,
-  effectiveGasPrice?: bigint,
-  gasUsed?: bigint,
   contractAddress?: string,
   logsBloom?: string,
-  @as("type")
-  type_?: int,
   root?: string,
   status?: int,
-  // L2 specific fields (Optimism, Arbitrum, etc.)
+  accessList?: Js.Json.t,
+  maxFeePerBlobGas?: bigint,
+  blobVersionedHashes?: array<string>,
+  @as("type")
+  type_?: int,
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
   l1FeeScalar?: float,
   gasUsedForL1?: bigint,
+  authorizationList?: Js.Json.t,
 }
 
 @genType

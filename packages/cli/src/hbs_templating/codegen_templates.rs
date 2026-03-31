@@ -1714,8 +1714,8 @@ type handlerContext = {{
                 _ => (
                     "?",
                     "Envio.evmSimulateEventItem",
-                    "Envio.evmBlockConstructor",
-                    "Envio.evmTransactionConstructor",
+                    "Internal.evmBlockConstructor",
+                    "Internal.evmTransactionConstructor",
                 ),
             };
 
