@@ -1,14 +1,14 @@
 open Belt
 
 type evmChainConfig = {
-  startBlock: int,
-  endBlock: int,
+  startBlock?: int,
+  endBlock?: int,
   simulate?: array<Envio.evmSimulateEventItem>,
 }
 
 type fuelChainConfig = {
-  startBlock: int,
-  endBlock: int,
+  startBlock?: int,
+  endBlock?: int,
   simulate?: array<Envio.fuelSimulateEventItem>,
 }
 
@@ -563,8 +563,8 @@ let makeCreateTestIndexer = (
           }
 
           // Validate chains
-          let chains: Js.Dict.t<chainConfig> = (processConfig->Utils.magic)["chains"]->Utils.magic
-          let chainKeys = chains->Js.Dict.keys
+          let rawChains: Js.Dict.t<{..}> = (processConfig->Utils.magic)["chains"]->Utils.magic
+          let chainKeys = rawChains->Js.Dict.keys
 
           switch chainKeys->Array.length {
           | 0 => Js.Exn.raiseError("createTestIndexer requires exactly one chain to be defined")
@@ -574,6 +574,53 @@ let makeCreateTestIndexer = (
               `createTestIndexer does not support processing multiple chains at once. Found ${n->Int.toString} chains defined`,
             )
           }
+
+          // Resolve optional startBlock/endBlock defaults and build resolved chains
+          let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
+          chainKeys->Array.forEach(chainIdStr => {
+            let chainId = chainIdStr->Int.fromString->Option.getWithDefault(0)
+            let chain = ChainMap.Chain.makeUnsafe(~chainId)
+            let configChain = config.chainMap->ChainMap.get(chain)
+            let raw = rawChains->Js.Dict.unsafeGet(chainIdStr)
+            let rawDict = raw->(Utils.magic: {..} => Js.Dict.t<unknown>)
+
+            let rawStartBlock: option<int> =
+              raw["startBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
+            let rawEndBlock: option<int> =
+              raw["endBlock"]->(Utils.magic: 'a => Js.Nullable.t<int>)->Js.Nullable.toOption
+            let hasSimulate: bool =
+              raw["simulate"]
+              ->(Utils.magic: 'a => Js.Nullable.t<unknown>)
+              ->Js.Nullable.toOption
+              ->Option.isSome
+
+            let startBlock = switch rawStartBlock {
+            | Some(sb) => sb
+            | None => configChain.startBlock
+            }
+
+            let endBlock = switch rawEndBlock {
+            | Some(eb) => eb
+            | None =>
+              if hasSimulate {
+                startBlock
+              } else {
+                switch configChain.endBlock {
+                | Some(eb) => eb
+                | None =>
+                  Js.Exn.raiseError(
+                    `endBlock is required for chain ${chainIdStr} when simulate is not provided and chain config has no endBlock`,
+                  )
+                }
+              }
+            }
+
+            // Write resolved values back to raw processConfig for worker
+            rawDict->Js.Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
+            rawDict->Js.Dict.set("endBlock", endBlock->(Utils.magic: int => unknown))
+
+            chains->Js.Dict.set(chainIdStr, {startBlock, endBlock})
+          })
 
           // Validate block ranges for each chain
           chainKeys->Array.forEach(chainIdStr => {
