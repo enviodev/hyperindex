@@ -356,6 +356,8 @@ module Indexer = {
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
           }
+          // Await background write to complete so DB state is consistent for assertions
+          let _ = await persistence->Persistence.flushWrites
           resolve()
         })
       },

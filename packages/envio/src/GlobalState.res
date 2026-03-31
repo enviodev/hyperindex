@@ -733,17 +733,17 @@ let actionReducer = (state: t, action: action) => {
       [NextQuery(CheckAllChains)],
     )
   | SetRollbackState({rollbackDiff, rollbackedChainManager, eventsProcessedDiffByChain}) =>
-      state.ctx.inMemoryStore->InMemoryStore.applyRollbackDiff(~rollbackDiff)
-      (
-        {
-          ...state,
-          rollbackState: RollbackReady({
-            eventsProcessedDiffByChain: eventsProcessedDiffByChain,
-          }),
-          chainManager: rollbackedChainManager,
-        },
-        [NextQuery(CheckAllChains), ProcessEventBatch],
-      )
+    state.ctx.inMemoryStore->InMemoryStore.applyRollbackDiff(~rollbackDiff)
+    (
+      {
+        ...state,
+        rollbackState: RollbackReady({
+          eventsProcessedDiffByChain: eventsProcessedDiffByChain,
+        }),
+        chainManager: rollbackedChainManager,
+      },
+      [NextQuery(CheckAllChains), ProcessEventBatch],
+    )
   | SuccessExit => {
       Logging.info("Exiting with success")
       NodeJs.process->NodeJs.exitWithCode(Success)
@@ -1040,8 +1040,7 @@ let injectedTaskReducer = (
       // so prepareForNextBatch has already queued the write. We just await its completion
       // to ensure DB state is consistent for rollback queries.
       switch await state.ctx.persistence->Persistence.flushWrites {
-      | Error(errHandler) =>
-        dispatchAction(ErrorExit(errHandler))
+      | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
       | Ok(_) => ()
       }
 
@@ -1088,11 +1087,9 @@ let injectedTaskReducer = (
           eventsProcessedDiffByChain->Utils.Dict.setByInt(
             diff["chain_id"],
             {
-              let eventsProcessedDiff = Float.fromString(
-                diff["events_processed_diff"],
-              )->Option.getExn
-              rollbackedProcessedEvents :=
-                rollbackedProcessedEvents.contents +. eventsProcessedDiff
+              let eventsProcessedDiff =
+                Float.fromString(diff["events_processed_diff"])->Option.getExn
+              rollbackedProcessedEvents := rollbackedProcessedEvents.contents +. eventsProcessedDiff
               eventsProcessedDiff
             },
           )
@@ -1115,9 +1112,10 @@ let injectedTaskReducer = (
           let fetchState =
             cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
           let newTotalEventsProcessed =
-            cf.numEventsProcessed -. (eventsProcessedDiffByChain
+            cf.numEventsProcessed -.
+            eventsProcessedDiffByChain
             ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
-            ->Option.getUnsafe)
+            ->Option.getUnsafe
 
           if cf.committedProgressBlockNumber !== newProgressBlockNumber {
             Prometheus.ProgressBlockNumber.set(
