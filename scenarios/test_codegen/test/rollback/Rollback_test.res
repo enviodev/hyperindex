@@ -820,15 +820,10 @@ describe("E2E rollback tests", () => {
       ],
     )
 
+    // Resolve first partition (normal) with empty items
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
-    sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
-
-    // Wait for empty batches to process and new queries to be dispatched.
-    // Background writes add microtask yields that delay query dispatching.
-    while sourceMock.getItemsOrThrowCalls->Array.length === 0 {
-      await Utils.delay(1)
-    }
-
+    // Resolve second partition (DC) with the real items.
+    // This ensures items are available before any processing consumes the pending queries.
     sourceMock.resolveGetItemsOrThrow(
       [
         {
@@ -841,6 +836,8 @@ describe("E2E rollback tests", () => {
       ~latestFetchedBlockNumber=104,
     )
 
+    // Wait for both batches to be processed (empty + real items)
+    await indexerMock.getBatchWritePromise()
     await indexerMock.getBatchWritePromise()
 
 
