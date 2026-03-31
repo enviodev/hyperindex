@@ -919,14 +919,20 @@ describe("Use Envio test framework to test event handlers", () => {
   it("createTestIndexer throws when startBlock overlaps with previously processed blocks", async () => {
     const indexer = createTestIndexer();
 
-    // First process: blocks 1-100
+    // First process: block 1 with simulate event (WriteBatch sets progress to block 1)
     await indexer.process({
       chains: {
-        1: { startBlock: 1, endBlock: 100 },
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Gravatar", event: "EmptyEvent", block: { number: 100 } },
+          ],
+        },
       },
     });
 
-    // Second process with startBlock <= 100 should throw
+    // Second process with startBlock <= 100 should throw (progress block is 100 from WriteBatch)
     assert.throws(
       () =>
         indexer.process({

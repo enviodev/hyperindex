@@ -506,6 +506,7 @@ type workerData = {
   startBlock: int,
   endBlock: int,
   simulate: option<array<Js.Json.t>>,
+  initialState: Persistence.initialState,
 }
 
 let makeCreateTestIndexer = (
@@ -690,12 +691,44 @@ let makeCreateTestIndexer = (
           // Reset processChanges for this run
           state.processChanges = []
 
+          // Build initialState from resolved block range
+          let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
+          chains->Js.Dict.set(chainIdStr, processChainConfig)
+
+          // Extract dynamic contracts from state.entities for each chain
+          let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Js.Dict.empty()
+          switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+          | Some(dcDict) =>
+            dcDict
+            ->Js.Dict.values
+            ->Array.forEach(entity => {
+              let dc = entity->castFromDcRegistry
+              let dcChainIdStr = dc.chainId->Int.toString
+              let contracts = switch dynamicContractsByChain->Js.Dict.get(dcChainIdStr) {
+              | Some(arr) => arr
+              | None =>
+                let arr = []
+                dynamicContractsByChain->Js.Dict.set(dcChainIdStr, arr)
+                arr
+              }
+              contracts->Array.push(dc->toIndexingContract)->ignore
+            })
+          | None => ()
+          }
+
+          let initialState = makeInitialState(
+            ~config,
+            ~processConfigChains=chains,
+            ~dynamicContractsByChain,
+          )
+
           Promise.make((resolve, reject) => {
             let workerData: workerData = {
               chainId,
               startBlock: processChainConfig.startBlock,
               endBlock: processChainConfig.endBlock,
               simulate: rawChainConfig.simulate,
+              initialState,
             }
             let worker = try {
               NodeJs.WorkerThreads.makeWorker(
@@ -760,8 +793,6 @@ let makeCreateTestIndexer = (
               if code !== 0 {
                 reject(Utils.Error.make(`Worker exited with code ${code->Int.toString}`))
               } else {
-                // Ensure progressBlockByChain is set even for empty runs with no WriteBatch
-                state.progressBlockByChain->Js.Dict.set(chainIdStr, processChainConfig.endBlock)
                 resolve({
                   changes: state.processChanges,
                 })
@@ -788,18 +819,8 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
 
   let workerData: option<workerData> = NodeJs.WorkerThreads.workerData->Js.Nullable.toOption
   switch workerData {
-  | Some({chainId, startBlock, endBlock, simulate}) =>
-    let config = makeGeneratedConfig()
+  | Some({chainId, startBlock, endBlock, simulate, initialState}) =>
     let chainIdStr = chainId->Int.toString
-
-    // Build initialState from resolved block range
-    let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
-    chains->Js.Dict.set(chainIdStr, {startBlock, endBlock})
-    let initialState = makeInitialState(
-      ~config,
-      ~processConfigChains=chains,
-      ~dynamicContractsByChain=Js.Dict.empty(),
-    )
 
     // Build processConfig JSON for SimulateItems.patchConfig
     let resolvedChainDict: Js.Dict.t<unknown> = Js.Dict.empty()
@@ -821,6 +842,7 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
+    let config = makeGeneratedConfig()
     let persistence = Persistence.make(
       ~userEntities=config.userEntities,
       ~allEnums=config.allEnums,
@@ -834,13 +856,7 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
     }
 
     let patchConfig = (config, _registrations) => SimulateItems.patchConfig(~config, ~processConfig)
-    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true, ~patchConfig)
-    ->Promise.catch(exn => {
-      Logging.error(exn->Utils.prettifyExn)
-      NodeJs.process->NodeJs.exitWithCode(Failure)
-      Promise.resolve()
-    })
-    ->ignore
+    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true, ~patchConfig)->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

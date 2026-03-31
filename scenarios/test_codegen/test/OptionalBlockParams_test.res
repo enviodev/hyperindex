@@ -1,10 +1,7 @@
 open Belt
 open Vitest
 
-let simulateItem: Envio.evmSimulateEventItem = {
-  contract: "Gravatar",
-  event: "EmptyEvent",
-}
+let simulateItem = Indexer.makeSimulateItem(OnEvent({event: Gravatar(EmptyEvent)}))
 
 // Test: simulate with no startBlock/endBlock → defaults from config
 Async.it("Optional block params: defaults startBlock from config and endBlock to startBlock with simulate", async t => {
@@ -64,11 +61,13 @@ Async.it("Optional block params: startBlock defaults to progressBlock+1 on secon
   })
 
   // Second process: omit startBlock → should default to 101 (progressBlock+1)
-  // Use explicit block number so the event falls within the resolved range [101, 101]
+  let simulateItemAtBlock101 = Indexer.makeSimulateItem(
+    OnEvent({event: Gravatar(EmptyEvent), block: {number: 101}}),
+  )
   let _ = await indexer.process({
     chains: {
       \"1337": {
-        simulate: [{...simulateItem, block: %raw(`{number: 101}`)}],
+        simulate: [simulateItemAtBlock101],
       },
     },
   })
@@ -85,12 +84,13 @@ Async.it("Optional block params: startBlock defaults to progressBlock+1 on secon
 Async.it("Optional block params: endBlock defaults to max simulate block number", async t => {
   let indexer = Indexer.createTestIndexer()
 
+  let simulateItemAtBlock50 = Indexer.makeSimulateItem(
+    OnEvent({event: Gravatar(EmptyEvent), block: {number: 50}}),
+  )
   let _ = await indexer.process({
     chains: {
       \"1337": {
-        simulate: [
-          {...simulateItem, block: %raw(`{number: 50}`)},
-        ],
+        simulate: [simulateItemAtBlock50],
       },
     },
   })

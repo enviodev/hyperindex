@@ -260,25 +260,24 @@ let parse = (
         addr.contents
       }
 
+      let rawItem = rawJson->(Utils.magic: Js.Json.t => {..})
+      let blockJson: option<Js.Json.t> =
+        rawItem["block"]->(Utils.magic: 'a => Js.Nullable.t<Js.Json.t>)->Js.Nullable.toOption
+      let transactionJson: option<Js.Json.t> =
+        rawItem["transaction"]->(Utils.magic: 'a => Js.Nullable.t<Js.Json.t>)->Js.Nullable.toOption
       let (block, blockNumber, timestamp) = switch config.ecosystem.name {
       | Fuel =>
-        let block = parseFuelSimulateBlock(
-          ~defaultBlockNumber=currentBlock.contents,
-          ~blockJson=item.block,
-        )
+        let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
         (block, blockFields.height, blockFields.time)
       | _ =>
-        let block = parseEvmSimulateBlock(
-          ~defaultBlockNumber=currentBlock.contents,
-          ~blockJson=item.block,
-        )
+        let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
         (block, blockFields.number, blockFields.timestamp)
       }
       let transaction = switch config.ecosystem.name {
-      | Fuel => parseFuelSimulateTransaction(~transactionJson=item.transaction)
-      | _ => parseEvmSimulateTransaction(~transactionJson=item.transaction)
+      | Fuel => parseFuelSimulateTransaction(~transactionJson)
+      | _ => parseEvmSimulateTransaction(~transactionJson)
       }
 
       // Update currentBlock for subsequent items
