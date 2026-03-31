@@ -392,14 +392,21 @@ pub fn get_envio_version() -> Result<String> {
         return Ok(VERSION.to_string());
     }
 
-    // Dev mode: walk up from the binary to find the local packages/envio.
+    // Dev mode: walk up from the binary to find the local envio package.
     // Using current_exe() instead of current_dir() so this works even when
     // cwd is outside the repo (e.g. template tests that run in /tmp/).
+    // Prefer .envio-artifacts/envio (pre-built with compiled files) over
+    // packages/envio (source only, may lack compiled .res.mjs files).
     let exe = env::current_exe()
         .and_then(|p| p.canonicalize())
         .context("failed to resolve current executable path")?;
     let mut dir = exe.parent();
     while let Some(d) = dir {
+        // Prefer the pre-built artifact (has compiled .res.mjs files)
+        let artifact = d.join(".envio-artifacts/envio");
+        if artifact.is_dir() {
+            return Ok(format!("file:{}", artifact.to_string_lossy()));
+        }
         let candidate = d.join("packages/envio");
         if candidate.is_dir() {
             return Ok(format!("file:{}", candidate.to_string_lossy()));
