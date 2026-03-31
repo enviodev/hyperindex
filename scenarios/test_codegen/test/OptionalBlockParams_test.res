@@ -81,6 +81,40 @@ Async.it("Optional block params: startBlock defaults to progressBlock+1 on secon
   ])
 })
 
+// Test: simulate item with explicit block number → endBlock defaults to that block number
+Async.it("Optional block params: endBlock defaults to max simulate block number", async t => {
+  let indexer = Indexer.createTestIndexer()
+
+  let _ = await indexer.process({
+    chains: {
+      \"1337": {
+        simulate: [
+          {...simulateItem, block: %raw(`{number: 50}`)},
+        ],
+      },
+    },
+  })
+
+  let entities = await (indexer.\"SimulateTestEvent").getAll()
+  t.expect(entities).toEqual([{id: "50_0", blockNumber: 50, logIndex: 0, timestamp: 0}])
+})
+
+// Test: Fuel-style block height field is recognized for endBlock default
+Async.it("Optional block params: endBlock defaults to max simulate block height (Fuel)", async t => {
+  // getSimulateEndBlock uses config.ecosystem.blockNumberName to read the field.
+  // For EVM it's "number", for Fuel it's "height". This test verifies the "height"
+  // field path works by testing the function directly.
+  let config = Indexer.Generated.makeGeneratedConfig()
+  let result = TestIndexer.getSimulateEndBlock(
+    ~simulateItems=[
+      {"block": {"height": 50}}->(Utils.magic: 'a => Js.Json.t),
+    ],
+    ~config={...config, ecosystem: {...config.ecosystem, blockNumberName: "height"}},
+    ~startBlock=1,
+  )
+  t.expect(result).toEqual(50)
+})
+
 // Test: non-numeric chain ID → error
 Async.it("Optional block params: raises error for non-numeric chain ID", async t => {
   let indexer = Indexer.createTestIndexer()
