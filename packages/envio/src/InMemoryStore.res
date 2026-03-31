@@ -121,6 +121,9 @@ let cleanupAfterWrite = (inMemoryStore: t, ~writtenCheckpointId: bigint) => {
     )->ignore
     table.invalidationsCount = 0
   })
+
+  // Reset rollback checkpoint after it's been written
+  inMemoryStore.rollbackTargetCheckpointId = None
 }
 
 // Extract write data from in-memory store, queue background write,
@@ -176,19 +179,11 @@ let prepareForNextBatch = async (
   }
 
   persistence->Persistence.startWrite(~writeArgs)
+  await persistence->Persistence.flushWrites
 
   let halfCapacity = (Env.targetInMemoryStoreSize :> float) /. 2.
   if inMemoryStore.totalChangeCount > halfCapacity {
     inMemoryStore->cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
-    if inMemoryStore.totalChangeCount > halfCapacity {
-      try {
-        await persistence->Persistence.flushWrites
-        inMemoryStore->cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
-      } catch {
-      // Write errors are already logged by Persistence.executeWrite
-      | _ => ()
-      }
-    }
   }
 }
 
