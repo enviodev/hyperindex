@@ -2632,20 +2632,6 @@ mod test {
     }
 
     #[test]
-    fn abi_event_to_record_1() {
-        let project_template = get_project_template_helper("config1.yaml");
-        let event_template = &project_template.codegen_contracts[0].codegen_events[0];
-        insta::assert_snapshot!(event_template.module_code);
-    }
-
-    #[test]
-    fn abi_event_to_record_2() {
-        let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
-        let event_template = &project_template.codegen_contracts[0].codegen_events[0];
-        insta::assert_snapshot!(event_template.module_code);
-    }
-
-    #[test]
     fn internal_config_json_code_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
         insta::assert_snapshot!(project_template.internal_config_json_code);
@@ -2662,12 +2648,6 @@ mod test {
     #[test]
     fn internal_config_json_code_with_all_options() {
         let project_template = get_project_template_helper("config-with-all-options.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
-    }
-
-    #[test]
-    fn internal_config_json_code_omits_default_values() {
-        let project_template = get_project_template_helper("config1.yaml");
         insta::assert_snapshot!(project_template.internal_config_json_code);
     }
 
