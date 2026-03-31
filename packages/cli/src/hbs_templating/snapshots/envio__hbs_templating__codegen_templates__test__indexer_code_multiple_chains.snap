@@ -47,7 +47,6 @@ let contractName = "Contract1"
 
   module NewGravatar = {
 
-    let id = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1"
     let sighash = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b"
     let name = "NewGravatar"
     let contractName = contractName
@@ -84,31 +83,20 @@ let contractName = "Contract1"
     @genType
     type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
-    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
-
     @genType
     type eventFilter = {}
 
     @genType type eventFilters = Internal.noEventFilters
 
-    let register = (): Internal.evmEventConfig => {
-    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
-    {
-      getEventFiltersOrThrow,
-      filterByAddresses,
-      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
-      selectedBlockFields: Utils.Set.make(),
-      selectedTransactionFields: Utils.Set.make(),
-      id,
-    name,
-    contractName,
-    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
-    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-    }
-    }
+    let register = (): Internal.evmEventConfig =>
+      EventConfigBuilder.buildEvmEventConfig(
+        ~contractName, ~eventName=name, ~sighash,
+        ~params=%raw(`[{"name":"id","abiType":"uint256","indexed":false},{"name":"owner","abiType":"address","indexed":false},{"name":"displayName","abiType":"string","indexed":false},{"name":"imageUrl","abiType":"string","indexed":false}]`),
+        ~isWildcard=HandlerRegister.isWildcard(~contractName, ~eventName=name),
+        ~handler=HandlerRegister.getHandler(~contractName, ~eventName=name),
+        ~contractRegister=HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+        ~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name),
+      )
 
     let contractRegister: fnWithEventConfig<
       Internal.genericContractRegister<
@@ -144,7 +132,6 @@ let contractName = "Contract1"
 
   module UpdatedGravatar = {
 
-    let id = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c_1"
     let sighash = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c"
     let name = "UpdatedGravatar"
     let contractName = contractName
@@ -181,31 +168,20 @@ let contractName = "Contract1"
     @genType
     type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
-    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
-
     @genType
     type eventFilter = {}
 
     @genType type eventFilters = Internal.noEventFilters
 
-    let register = (): Internal.evmEventConfig => {
-    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
-    {
-      getEventFiltersOrThrow,
-      filterByAddresses,
-      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
-      selectedBlockFields: Utils.Set.make(),
-      selectedTransactionFields: Utils.Set.make(),
-      id,
-    name,
-    contractName,
-    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
-    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-    }
-    }
+    let register = (): Internal.evmEventConfig =>
+      EventConfigBuilder.buildEvmEventConfig(
+        ~contractName, ~eventName=name, ~sighash,
+        ~params=%raw(`[{"name":"id","abiType":"uint256","indexed":false},{"name":"owner","abiType":"address","indexed":false},{"name":"displayName","abiType":"string","indexed":false},{"name":"imageUrl","abiType":"string","indexed":false}]`),
+        ~isWildcard=HandlerRegister.isWildcard(~contractName, ~eventName=name),
+        ~handler=HandlerRegister.getHandler(~contractName, ~eventName=name),
+        ~contractRegister=HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+        ~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name),
+      )
 
     let contractRegister: fnWithEventConfig<
       Internal.genericContractRegister<
@@ -250,7 +226,6 @@ let contractName = "Contract2"
 
   module NewGravatar = {
 
-    let id = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1"
     let sighash = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b"
     let name = "NewGravatar"
     let contractName = contractName
@@ -287,31 +262,20 @@ let contractName = "Contract2"
     @genType
     type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
-    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
-
     @genType
     type eventFilter = {}
 
     @genType type eventFilters = Internal.noEventFilters
 
-    let register = (): Internal.evmEventConfig => {
-    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
-    {
-      getEventFiltersOrThrow,
-      filterByAddresses,
-      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
-      selectedBlockFields: Utils.Set.make(),
-      selectedTransactionFields: Utils.Set.make(),
-      id,
-    name,
-    contractName,
-    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
-    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-    }
-    }
+    let register = (): Internal.evmEventConfig =>
+      EventConfigBuilder.buildEvmEventConfig(
+        ~contractName, ~eventName=name, ~sighash,
+        ~params=%raw(`[{"name":"id","abiType":"uint256","indexed":false},{"name":"owner","abiType":"address","indexed":false},{"name":"displayName","abiType":"string","indexed":false},{"name":"imageUrl","abiType":"string","indexed":false}]`),
+        ~isWildcard=HandlerRegister.isWildcard(~contractName, ~eventName=name),
+        ~handler=HandlerRegister.getHandler(~contractName, ~eventName=name),
+        ~contractRegister=HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+        ~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name),
+      )
 
     let contractRegister: fnWithEventConfig<
       Internal.genericContractRegister<
@@ -347,7 +311,6 @@ let contractName = "Contract2"
 
   module UpdatedGravatar = {
 
-    let id = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c_1"
     let sighash = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c"
     let name = "UpdatedGravatar"
     let contractName = contractName
@@ -384,31 +347,20 @@ let contractName = "Contract2"
     @genType
     type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
 
-    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
-
     @genType
     type eventFilter = {}
 
     @genType type eventFilters = Internal.noEventFilters
 
-    let register = (): Internal.evmEventConfig => {
-    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
-    {
-      getEventFiltersOrThrow,
-      filterByAddresses,
-      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
-      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
-      selectedBlockFields: Utils.Set.make(),
-      selectedTransactionFields: Utils.Set.make(),
-      id,
-    name,
-    contractName,
-    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
-    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
-    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
-    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
-    }
-    }
+    let register = (): Internal.evmEventConfig =>
+      EventConfigBuilder.buildEvmEventConfig(
+        ~contractName, ~eventName=name, ~sighash,
+        ~params=%raw(`[{"name":"id","abiType":"uint256","indexed":false},{"name":"owner","abiType":"address","indexed":false},{"name":"displayName","abiType":"string","indexed":false},{"name":"imageUrl","abiType":"string","indexed":false}]`),
+        ~isWildcard=HandlerRegister.isWildcard(~contractName, ~eventName=name),
+        ~handler=HandlerRegister.getHandler(~contractName, ~eventName=name),
+        ~contractRegister=HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+        ~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name),
+      )
 
     let contractRegister: fnWithEventConfig<
       Internal.genericContractRegister<

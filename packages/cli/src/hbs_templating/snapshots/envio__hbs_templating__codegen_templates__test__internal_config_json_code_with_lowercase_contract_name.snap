@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2716
 expression: project_template.internal_config_json_code
 ---
 {
@@ -23,7 +22,14 @@ expression: project_template.internal_config_json_code
             "backoffMillis": 5000,
             "queryTimeoutMillis": 20000
           }
-        ]
+        ],
+        "contracts": {
+          "Contract1": {
+            "addresses": [
+              "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+            ]
+          }
+        }
       }
     },
     "contracts": {
@@ -33,11 +39,49 @@ expression: project_template.internal_config_json_code
         "events": [
           {
             "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
-            "name": "NewGravatar"
+            "name": "NewGravatar",
+            "sighash": "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b",
+            "params": [
+              {
+                "name": "id",
+                "abiType": "uint256"
+              },
+              {
+                "name": "owner",
+                "abiType": "address"
+              },
+              {
+                "name": "displayName",
+                "abiType": "string"
+              },
+              {
+                "name": "imageUrl",
+                "abiType": "string"
+              }
+            ]
           },
           {
             "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)",
-            "name": "UpdatedGravatar"
+            "name": "UpdatedGravatar",
+            "sighash": "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c",
+            "params": [
+              {
+                "name": "id",
+                "abiType": "uint256"
+              },
+              {
+                "name": "owner",
+                "abiType": "address"
+              },
+              {
+                "name": "displayName",
+                "abiType": "string"
+              },
+              {
+                "name": "imageUrl",
+                "abiType": "string"
+              }
+            ]
           }
         ]
       }
