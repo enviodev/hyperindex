@@ -181,9 +181,12 @@ let prepareForNextBatch = async (
   if inMemoryStore.totalChangeCount > halfCapacity {
     inMemoryStore->cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
     if inMemoryStore.totalChangeCount > halfCapacity {
-      switch await persistence->Persistence.flushWrites {
-      | Error(errHandler) => errHandler->ErrorHandling.log
-      | Ok(writtenCheckpointId) => inMemoryStore->cleanupAfterWrite(~writtenCheckpointId)
+      try {
+        await persistence->Persistence.flushWrites
+        inMemoryStore->cleanupAfterWrite(~writtenCheckpointId=persistence.writtenCheckpointId)
+      } catch {
+      // Write errors are already logged by Persistence.executeWrite
+      | _ => ()
       }
     }
   }

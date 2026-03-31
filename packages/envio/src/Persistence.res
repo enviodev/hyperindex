@@ -161,7 +161,7 @@ type t = {
   allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
-  mutable writePromise: option<promise<result<unit, ErrorHandling.t>>>,
+  mutable writePromise: option<promise<unit>>,
   mutable pendingWrite: option<writeArgs>,
   mutable writtenCheckpointId: bigint,
 }
@@ -290,9 +290,7 @@ let writeBatch = (
       ~updatedEffectsCache={
         effectCacheWriteData->Belt.Array.mapU(({effect, items, invalidationsCount}) => {
           let effectName = effect.name
-          let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(
-            effectName,
-          ) {
+          let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
           | Some(c) => c
           | None => {
               let c = {effectName, count: 0}
@@ -359,44 +357,44 @@ let rec executeWrite = persistence => {
     let logger = Logging.getLogger()
     let timeRef = Hrtime.makeTimer()
 
-    let promise = (async () => {
-      try {
-        await persistence->writeBatch(
-          ~batch,
-          ~config,
-          ~isInReorgThreshold,
-          ~updatedEntities,
-          ~rawEvents,
-          ~effectCacheWriteData,
-          ~rollbackTargetCheckpointId,
-        )
+    let promise = (
+      async () => {
+        try {
+          await persistence->writeBatch(
+            ~batch,
+            ~config,
+            ~isInReorgThreshold,
+            ~updatedEntities,
+            ~rawEvents,
+            ~effectCacheWriteData,
+            ~rollbackTargetCheckpointId,
+          )
 
-        persistence.writtenCheckpointId = batch->getLastCheckpointId
+          persistence.writtenCheckpointId = batch->getLastCheckpointId
 
-        let dbWriteDuration = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-        logger->Logging.childTrace({
-          "msg": "Background write completed",
-          "write_time_elapsed": dbWriteDuration,
-        })
-        Prometheus.ProcessingBatch.setDbWriteDuration(~dbWriteDuration)
+          let dbWriteDuration = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+          logger->Logging.childTrace({
+            "msg": "Background write completed",
+            "write_time_elapsed": dbWriteDuration,
+          })
+          Prometheus.ProcessingBatch.setDbWriteDuration(~dbWriteDuration)
 
-        onWriteComplete(persistence.writtenCheckpointId)
+          onWriteComplete(persistence.writtenCheckpointId)
 
-        persistence.writePromise = None
+          persistence.writePromise = None
 
-        // If a new write was queued during this write, start it
-        executeWrite(persistence)
-
-        Ok()
-      } catch {
-      | StorageError({message, reason}) =>
-        persistence.writePromise = None
-        Error(reason->ErrorHandling.make(~msg=message, ~logger))
-      | exn =>
-        persistence.writePromise = None
-        Error(exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger))
+          // If a new write was queued during this write, start it
+          executeWrite(persistence)
+        } catch {
+        | StorageError({message, reason}) =>
+          persistence.writePromise = None
+          reason->ErrorHandling.mkLogAndRaise(~msg=message, ~logger)
+        | exn =>
+          persistence.writePromise = None
+          exn->ErrorHandling.mkLogAndRaise(~msg="Failed writing batch to database", ~logger)
+        }
       }
-    })()
+    )()
 
     persistence.writePromise = Some(promise)
   }
@@ -411,30 +409,23 @@ let startWrite = (persistence, ~writeArgs) => {
 }
 
 // Await the current write and any pending writes.
-// Returns the last write result.
+@raises("WriteError")
 let awaitCurrentWrite = async persistence => {
-  let lastResult = ref(Ok())
   let continue = ref(true)
   while continue.contents {
     switch persistence.writePromise {
-    | Some(promise) =>
-      let result = await promise
-      lastResult := result
+    | Some(promise) => await promise
     | None => continue := false
     }
   }
-  lastResult.contents
 }
 
-// Flush all pending and in-progress writes. Returns the writtenCheckpointId.
+// Flush all pending and in-progress writes.
+@raises("WriteError")
 let flushWrites = async persistence => {
   // Start any pending write that hasn't begun yet
   if !isWriting(persistence) {
     executeWrite(persistence)
   }
-  switch await awaitCurrentWrite(persistence) {
-  | Error(e) => Error(e)
-  | Ok() => Ok(persistence.writtenCheckpointId)
-  }
+  await awaitCurrentWrite(persistence)
 }
-
