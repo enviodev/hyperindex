@@ -1,5 +1,5 @@
 ---
-source: cli/src/hbs_templating/codegen_templates.rs
+source: packages/cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
 module Enums = {
@@ -10,7 +10,6 @@ module Entities = {
   type id = string
 
   module EmptyEntity = {
-    @genType
     type t = {id: id, emptyField: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
@@ -21,7 +20,7 @@ module Entities = {
 }
 
 @genType
-type entityHandlerContext<'entity, 'getWhereFilter> = {
+type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -36,11 +35,417 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-  @as("EmptyEntity") emptyEntity: entityHandlerContext<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
+  \"EmptyEntity": handlerEntityOperations<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
 }
 
 @genType.import(("./Types.ts", "EvmChainId"))
 type chainId = [#1 | #2]
+
+@genType
+module Contract1 = {
+let contractName = "Contract1"
+
+  module NewGravatar = {
+
+    let id = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1"
+    let sighash = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b"
+    let name = "NewGravatar"
+    let contractName = contractName
+
+    @genType
+    type eventArgs = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
+    /** Event params with all fields optional. Missing fields use default values. */
+    type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
+    @genType
+    type block = Block.t
+    @genType
+    type transaction = Transaction.t
+
+    @genType
+    type event = {
+    /** The parameters or arguments associated with this event. */
+    params: eventArgs,
+    /** The unique identifier of the blockchain network where this event occurred. */
+    chainId: chainId,
+    /** The address of the contract that emitted this event. */
+    srcAddress: Address.t,
+    /** The index of this event's log within the block. */
+    logIndex: int,
+    /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+    transaction: transaction,
+    /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+    block: block,
+    }
+
+    @genType
+    type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+    @genType
+    type handler = Internal.genericHandler<handlerArgs>
+    @genType
+    type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
+    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
+
+    @genType
+    type eventFilter = {}
+
+    @genType type eventFilters = Internal.noEventFilters
+
+    let register = (): Internal.evmEventConfig => {
+    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
+    {
+      getEventFiltersOrThrow,
+      filterByAddresses,
+      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
+      selectedBlockFields: Utils.Set.make(),
+      selectedTransactionFields: Utils.Set.make(),
+      id,
+    name,
+    contractName,
+    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
+    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
+    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+    }
+    }
+
+    let contractRegister: fnWithEventConfig<
+      Internal.genericContractRegister<
+        Internal.genericContractRegisterArgs<event, contractRegistrations>,
+      >,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (contractRegister, ~eventConfig=?) =>
+      HandlerRegister.setContractRegister(
+        ~contractName,
+        ~eventName=name,
+        contractRegister,
+        ~eventOptions=eventConfig,
+      )
+
+    let handler: fnWithEventConfig<
+      Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (handler, ~eventConfig=?) => {
+      HandlerRegister.setHandler(
+        ~contractName,
+        ~eventName=name,
+        handler->(
+          Utils.magic: Internal.genericHandler<
+            Internal.genericHandlerArgs<event, handlerContext>,
+          > => Internal.genericHandler<
+            Internal.genericHandlerArgs<event, Internal.handlerContext>,
+          >
+        ),
+        ~eventOptions=eventConfig,
+      )
+    }
+  }
+
+  module UpdatedGravatar = {
+
+    let id = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c_1"
+    let sighash = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c"
+    let name = "UpdatedGravatar"
+    let contractName = contractName
+
+    @genType
+    type eventArgs = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
+    /** Event params with all fields optional. Missing fields use default values. */
+    type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
+    @genType
+    type block = Block.t
+    @genType
+    type transaction = Transaction.t
+
+    @genType
+    type event = {
+    /** The parameters or arguments associated with this event. */
+    params: eventArgs,
+    /** The unique identifier of the blockchain network where this event occurred. */
+    chainId: chainId,
+    /** The address of the contract that emitted this event. */
+    srcAddress: Address.t,
+    /** The index of this event's log within the block. */
+    logIndex: int,
+    /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+    transaction: transaction,
+    /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+    block: block,
+    }
+
+    @genType
+    type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+    @genType
+    type handler = Internal.genericHandler<handlerArgs>
+    @genType
+    type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
+    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
+
+    @genType
+    type eventFilter = {}
+
+    @genType type eventFilters = Internal.noEventFilters
+
+    let register = (): Internal.evmEventConfig => {
+    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
+    {
+      getEventFiltersOrThrow,
+      filterByAddresses,
+      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
+      selectedBlockFields: Utils.Set.make(),
+      selectedTransactionFields: Utils.Set.make(),
+      id,
+    name,
+    contractName,
+    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
+    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
+    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+    }
+    }
+
+    let contractRegister: fnWithEventConfig<
+      Internal.genericContractRegister<
+        Internal.genericContractRegisterArgs<event, contractRegistrations>,
+      >,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (contractRegister, ~eventConfig=?) =>
+      HandlerRegister.setContractRegister(
+        ~contractName,
+        ~eventName=name,
+        contractRegister,
+        ~eventOptions=eventConfig,
+      )
+
+    let handler: fnWithEventConfig<
+      Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (handler, ~eventConfig=?) => {
+      HandlerRegister.setHandler(
+        ~contractName,
+        ~eventName=name,
+        handler->(
+          Utils.magic: Internal.genericHandler<
+            Internal.genericHandlerArgs<event, handlerContext>,
+          > => Internal.genericHandler<
+            Internal.genericHandlerArgs<event, Internal.handlerContext>,
+          >
+        ),
+        ~eventOptions=eventConfig,
+      )
+    }
+  }
+
+  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =
+    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.eventFilter>
+    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.eventFilter>
+}
+
+@genType
+module Contract2 = {
+let contractName = "Contract2"
+
+  module NewGravatar = {
+
+    let id = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1"
+    let sighash = "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b"
+    let name = "NewGravatar"
+    let contractName = contractName
+
+    @genType
+    type eventArgs = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
+    /** Event params with all fields optional. Missing fields use default values. */
+    type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
+    @genType
+    type block = Block.t
+    @genType
+    type transaction = Transaction.t
+
+    @genType
+    type event = {
+    /** The parameters or arguments associated with this event. */
+    params: eventArgs,
+    /** The unique identifier of the blockchain network where this event occurred. */
+    chainId: chainId,
+    /** The address of the contract that emitted this event. */
+    srcAddress: Address.t,
+    /** The index of this event's log within the block. */
+    logIndex: int,
+    /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+    transaction: transaction,
+    /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+    block: block,
+    }
+
+    @genType
+    type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+    @genType
+    type handler = Internal.genericHandler<handlerArgs>
+    @genType
+    type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
+    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
+
+    @genType
+    type eventFilter = {}
+
+    @genType type eventFilters = Internal.noEventFilters
+
+    let register = (): Internal.evmEventConfig => {
+    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
+    {
+      getEventFiltersOrThrow,
+      filterByAddresses,
+      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
+      selectedBlockFields: Utils.Set.make(),
+      selectedTransactionFields: Utils.Set.make(),
+      id,
+    name,
+    contractName,
+    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
+    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
+    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+    }
+    }
+
+    let contractRegister: fnWithEventConfig<
+      Internal.genericContractRegister<
+        Internal.genericContractRegisterArgs<event, contractRegistrations>,
+      >,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (contractRegister, ~eventConfig=?) =>
+      HandlerRegister.setContractRegister(
+        ~contractName,
+        ~eventName=name,
+        contractRegister,
+        ~eventOptions=eventConfig,
+      )
+
+    let handler: fnWithEventConfig<
+      Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (handler, ~eventConfig=?) => {
+      HandlerRegister.setHandler(
+        ~contractName,
+        ~eventName=name,
+        handler->(
+          Utils.magic: Internal.genericHandler<
+            Internal.genericHandlerArgs<event, handlerContext>,
+          > => Internal.genericHandler<
+            Internal.genericHandlerArgs<event, Internal.handlerContext>,
+          >
+        ),
+        ~eventOptions=eventConfig,
+      )
+    }
+  }
+
+  module UpdatedGravatar = {
+
+    let id = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c_1"
+    let sighash = "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c"
+    let name = "UpdatedGravatar"
+    let contractName = contractName
+
+    @genType
+    type eventArgs = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
+    /** Event params with all fields optional. Missing fields use default values. */
+    type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
+    @genType
+    type block = Block.t
+    @genType
+    type transaction = Transaction.t
+
+    @genType
+    type event = {
+    /** The parameters or arguments associated with this event. */
+    params: eventArgs,
+    /** The unique identifier of the blockchain network where this event occurred. */
+    chainId: chainId,
+    /** The address of the contract that emitted this event. */
+    srcAddress: Address.t,
+    /** The index of this event's log within the block. */
+    logIndex: int,
+    /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+    transaction: transaction,
+    /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+    block: block,
+    }
+
+    @genType
+    type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
+    @genType
+    type handler = Internal.genericHandler<handlerArgs>
+    @genType
+    type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
+
+    let paramsRawEventSchema = S.object((s): eventArgs => {id: s.field("id", BigInt.schema), owner: s.field("owner", Address.schema), displayName: s.field("displayName", S.string), imageUrl: s.field("imageUrl", S.string)})
+
+    @genType
+    type eventFilter = {}
+
+    @genType type eventFilters = Internal.noEventFilters
+
+    let register = (): Internal.evmEventConfig => {
+    let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[])
+    {
+      getEventFiltersOrThrow,
+      filterByAddresses,
+      dependsOnAddresses: !HandlerRegister.isWildcard(~contractName, ~eventName=name) || filterByAddresses,
+      convertHyperSyncEventArgs: (decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {id: decodedEvent.body->Utils.Array.firstUnsafe->HyperSyncClient.Decoder.toUnderlying->Utils.magic, owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic, }->(Utils.magic: eventArgs => Internal.eventParams),
+      selectedBlockFields: Utils.Set.make(),
+      selectedTransactionFields: Utils.Set.make(),
+      id,
+    name,
+    contractName,
+    isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName=name),
+    handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
+    contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
+    paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
+    }
+    }
+
+    let contractRegister: fnWithEventConfig<
+      Internal.genericContractRegister<
+        Internal.genericContractRegisterArgs<event, contractRegistrations>,
+      >,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (contractRegister, ~eventConfig=?) =>
+      HandlerRegister.setContractRegister(
+        ~contractName,
+        ~eventName=name,
+        contractRegister,
+        ~eventOptions=eventConfig,
+      )
+
+    let handler: fnWithEventConfig<
+      Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+      HandlerTypes.eventConfig<eventFilters>,
+    > = (handler, ~eventConfig=?) => {
+      HandlerRegister.setHandler(
+        ~contractName,
+        ~eventName=name,
+        handler->(
+          Utils.magic: Internal.genericHandler<
+            Internal.genericHandlerArgs<event, handlerContext>,
+          > => Internal.genericHandler<
+            Internal.genericHandlerArgs<event, Internal.handlerContext>,
+          >
+        ),
+        ~eventOptions=eventConfig,
+      )
+    }
+  }
+
+  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =
+    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.eventFilter>
+    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.eventFilter>
+}
 
 /** Contract configuration with name and ABI. */
 type indexerContract = {
@@ -70,9 +475,9 @@ type indexerChain = {
 
 /** Strongly-typed record of chain configurations keyed by chain ID. */
 type indexerChains = {
-  @as("1") chain1: indexerChain,
+  \"1": indexerChain,
   ethereumMainnet: indexerChain,
-  @as("2") chain2: indexerChain,
+  \"2": indexerChain,
 }
 
 /** Metadata and configuration for the indexer. */
@@ -90,8 +495,8 @@ type indexer = {
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
 switch chainId {
-  | #1 => indexer.chains.chain1
-  | #2 => indexer.chains.chain2
+  | #1 => indexer.chains.\"1"
+  | #2 => indexer.chains.\"2"
 }
 }
 
@@ -103,16 +508,48 @@ Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
 HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
 
+@tag("contract")
+type eventIdentity<'event, 'paramsConstructor, 'filters> =
+  | Contract1(Contract1.eventIdentity<'event, 'paramsConstructor, 'filters>)
+  | Contract2(Contract2.eventIdentity<'event, 'paramsConstructor, 'filters>)
+
+@tag("kind")
+type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
+  | OnEvent({
+      event: eventIdentity<'event, 'paramsConstructor, 'filters>,
+      params?: 'paramsConstructor,
+    })
+
+let makeSimulateItem = (
+  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,
+): Envio.evmSimulateEventItem => {
+  event: (constructor->Utils.magic)["event"]["_0"],
+  contract: (constructor->Utils.magic)["event"]["contract"],
+  params: (constructor->Utils.magic)["params"],
+}
+
 type testIndexerProcessConfigChains = {
-  @as("1") chain1?: TestIndexer.chainConfig,
-  @as("2") chain2?: TestIndexer.chainConfig,
+  \"1"?: TestIndexer.evmChainConfig,
+  \"2"?: TestIndexer.evmChainConfig,
 }
 
 type testIndexerProcessConfig = {
   chains: testIndexerProcessConfigChains,
 }
 
-/** Test indexer type with process method and chain info. */
+/** Entity operations for direct access outside handlers. */
+type testIndexerEntityOperations<'entity> = {
+  /** Get an entity by ID. */
+  get: string => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}
+
+/** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {
   /** Process blocks for the specified chains and return progress with changes. */
   process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
@@ -120,4 +557,7 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+  \"EmptyEntity": testIndexerEntityOperations<Entities.EmptyEntity.t>,
 }
+
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""

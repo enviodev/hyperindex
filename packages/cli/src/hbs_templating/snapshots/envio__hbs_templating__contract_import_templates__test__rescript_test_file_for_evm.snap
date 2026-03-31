@@ -1,0 +1,49 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+open Vitest
+open Indexer
+
+describe("Contract1 contract NewGravatar event tests", () => {
+  Async.it("NewGravatar handler creates Contract1_NewGravatar entity", async t => {
+    let indexer = createTestIndexer()
+
+    let _ = await indexer.process({
+      chains: {
+        \"1": {
+          startBlock: 0,
+          endBlock: 0,
+          simulate: [
+            makeSimulateItem(
+              OnEvent({
+                event: Contract1(NewGravatar),
+                params: {
+                  id: 0n,
+                  owner: Envio.TestHelpers.Addresses.defaultAddress,
+                  displayName: "default string value",
+                  imageUrl: "default string value",
+              },
+            }),
+          ),
+          ],
+        },
+      },
+    })
+
+    let actualContract1NewGravatar = await indexer.\"Contract1_NewGravatar".getOrThrow("1_0_0")
+
+    let expectedContract1NewGravatar: Entities.Contract1_NewGravatar.t = {
+      id: "1_0_0",
+      event_id: 0n,
+      owner: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+      displayName: "default string value",
+      imageUrl: "default string value",
+    }
+
+    t.expect(
+      actualContract1NewGravatar,
+      ~message="Actual Contract1_NewGravatar should be the same as the expected Contract1_NewGravatar",
+    ).toEqual(expectedContract1NewGravatar)
+  })
+})

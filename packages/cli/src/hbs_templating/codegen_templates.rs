@@ -10,7 +10,7 @@ use crate::{
     config_parsing::{
         chain_helpers::Network,
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField, IndexFieldDirection},
-        event_parsing::{abi_to_rescript_type, EthereumEventParam},
+        event_parsing::{abi_to_rescript_type, EvmEventParam},
         field_types,
         human_config::{evm::For, HumanConfig},
         system_config::{
@@ -275,7 +275,6 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
 
     for gql_enum in gql_enums {
         writeln!(code, "module {} = {{", gql_enum.name.capitalized).unwrap();
-        writeln!(code, "  @genType").unwrap();
         writeln!(code, "  type t =").unwrap();
         for param in &gql_enum.params {
             writeln!(
@@ -299,7 +298,6 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
     for entity in entities {
         writeln!(code).unwrap();
         writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
-        writeln!(code, "  @genType").unwrap();
         writeln!(code, "  type t = {}", entity.type_code).unwrap();
         writeln!(code).unwrap();
         writeln!(
@@ -518,6 +516,7 @@ pub struct EventMod {
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub global_field_selection: Option<system_config::FieldSelection>,
     pub fuel_event_kind: Option<FuelEventKind>,
+    pub params_constructor_type: String,
 }
 
 impl Display for EventMod {
@@ -627,6 +626,8 @@ type handler = Internal.genericHandler<handlerArgs>
 @genType
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string();
 
+        let params_constructor_type = &self.params_constructor_type;
+
         format!(
             r#"
 let id = "{event_id}"
@@ -636,6 +637,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = {data_type}
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = {params_constructor_type}
 @genType
 type block = {block_type}
 @genType
@@ -665,7 +668,38 @@ let paramsRawEventSchema = {params_raw_event_schema}
 type eventFilter = {event_filter_type}
 
 {event_filters_type_code}
-{non_event_mod_code}"#
+{non_event_mod_code}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {{
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
+}}"#
         )
     }
 }
@@ -713,7 +747,7 @@ impl EventTemplate {
             indexed_params
                 .enumerate()
                 .fold(String::new(), |mut output, (i, param)| {
-                    let param = EthereumEventParam::from(param);
+                    let param = EvmEventParam::from(param);
                     let topic_number = i + 1;
                     let param_name = RecordField::to_valid_rescript_name(param.name);
                     let topic_encoder = param.get_topic_encoder();
@@ -806,6 +840,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
+            params_constructor_type: "Internal.fuelSupplyParams".to_string(),
         };
         EventTemplate {
             name: event_name,
@@ -833,6 +868,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             global_field_selection: None,
             fuel_event_kind: Some(fuel_event_kind),
+            params_constructor_type: "Internal.fuelTransferParams".to_string(),
         };
         EventTemplate {
             name: event_name,
@@ -880,6 +916,28 @@ impl EventTemplate {
                     )
                 };
 
+                // Generate params_constructor_type (all fields optional)
+                let params_constructor_type = if params.is_empty() {
+                    "unit".to_string()
+                } else {
+                    let fields = params
+                        .iter()
+                        .map(|p| {
+                            let field = RecordField::new(
+                                p.name.to_string(),
+                                abi_to_rescript_type(&p.into()),
+                            );
+                            let as_prefix = field
+                                .as_name
+                                .as_ref()
+                                .map_or("".to_string(), |s| format!("@as(\"{s}\") "));
+                            format!("{}{}?: {}", as_prefix, field.name, field.type_ident)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{{{}}}", fields)
+                };
+
                 let event_mod = EventMod {
                     sighash: config_event.sighash.to_string(),
                     topic_count: params
@@ -896,6 +954,7 @@ impl EventTemplate {
                     custom_field_selection: config_event.field_selection.clone(),
                     global_field_selection: Some(global_field_selection.clone()),
                     fuel_event_kind: None,
+                    params_constructor_type,
                 };
 
                 Ok(EventTemplate {
@@ -908,22 +967,25 @@ impl EventTemplate {
                 let fuel_event_kind = fuel_event_kind.clone();
                 match &fuel_event_kind {
                     FuelEventKind::LogData(type_indent) => {
+                        let data_type_str = type_indent.to_string();
+                        let params_raw_event_schema_str = format!(
+                            "{}->Utils.Schema.coerceToJsonPgType",
+                            type_indent.to_rescript_schema(&SchemaMode::ForDb)
+                        );
                         let event_mod = EventMod {
                             sighash: config_event.sighash.to_string(),
                             topic_count: 0, //Default to 0 for fuel,
                             event_name: event_name.clone(),
                             parse_event_filters_code: "".to_string(),
-                            data_type: type_indent.to_string(),
-                            params_raw_event_schema: format!(
-                                "{}->Utils.Schema.coerceToJsonPgType",
-                                type_indent.to_rescript_schema(&SchemaMode::ForDb)
-                            ),
+                            data_type: data_type_str.clone(),
+                            params_raw_event_schema: params_raw_event_schema_str,
                             convert_hyper_sync_event_args_code:
                                 Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
                             global_field_selection: None,
                             fuel_event_kind: Some(fuel_event_kind),
+                            params_constructor_type: data_type_str,
                         };
 
                         Ok(EventTemplate {
@@ -966,40 +1028,9 @@ impl ContractTemplate {
             .map(|event| EventTemplate::from_config_event(event, global_field_selection))
             .collect::<Result<_>>()?;
 
-        let chain_ids = contract.get_chain_ids(config);
-
-        let chain_id_type_code = {
-            let chain_id_type = if chain_ids.is_empty() {
-                "int".to_string()
-            } else {
-                format!(
-                    "[{}]",
-                    chain_ids
-                        .iter()
-                        .map(|chain_id| format!("#{chain_id}"))
-                        .collect::<Vec<_>>()
-                        .join(" | ")
-                )
-            };
-            format!("@genType type chainId = {chain_id_type}")
-        };
-
         let module_code = match &contract.abi {
-            Abi::Evm(abi) => {
-                let signatures = abi.get_event_signatures();
-
-                format!(
-                    r#"let abi = (%raw(`{}`): EvmTypes.Abi.t)
-let eventSignatures = [{}]
-{chain_id_type_code}"#,
-                    abi.raw,
-                    signatures
-                        .iter()
-                        .map(|w| format!("\"{}\"", w))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
+            // EVM: abi and eventSignatures are already in internal.config.json
+            Abi::Evm(_) => String::new(),
             Abi::Fuel(abi) => {
                 let all_abi_type_declarations = abi.to_type_decl_multi().context(format!(
                     "Failed getting types from the '{}' contract ABI",
@@ -1007,11 +1038,11 @@ let eventSignatures = [{}]
                 ))?;
 
                 format!(
-                  "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
-                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}\n{chain_id_type_code}",
-                  // If we decide to inline the abi, instead of using require
-                  // we need to remember that abi might contain ` and we should escape it
-                  abi.path_buf.to_string_lossy(),
+                    "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
+                   relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
+                    // If we decide to inline the abi, instead of using require
+                    // we need to remember that abi might contain ` and we should escape it
+                    abi.path_buf.to_string_lossy(),
                     all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
                 )
@@ -1490,7 +1521,7 @@ type indexerChain = {{
             .iter()
             .map(|chain| {
                 let id = chain.network_config.id;
-                let id_field = format!("  @as(\"{}\") chain{}: indexerChain,", id, id);
+                let id_field = format!("  \\\"{}\": indexerChain,", id);
                 // Add name-based field only for known networks
                 if let Ok(network) = Network::from_network_id(id) {
                     let name = network.to_string().to_case(Case::Camel);
@@ -1527,7 +1558,7 @@ type indexer = {
             .iter()
             .map(|chain| {
                 format!(
-                    "  | #{} => indexer.chains.chain{}",
+                    "  | #{} => indexer.chains.\\\"{}\"",
                     chain.network_config.id, chain.network_config.id
                 )
             })
@@ -1553,9 +1584,8 @@ switch chainId {{
             .iter()
             .map(|entity| {
                 format!(
-                    "  @as(\"{}\") {}: entityHandlerContext<Entities.{}.t, Entities.{}.getWhereFilter>,",
+                    "  \\\"{}\": handlerEntityOperations<Entities.{}.t, Entities.{}.getWhereFilter>,",
                     entity.name.original,
-                    entity.name.uncapitalized,
                     entity.name.capitalized,
                     entity.name.capitalized,
                 )
@@ -1565,7 +1595,7 @@ switch chainId {{
 
         let handler_context_code = format!(
             r#"@genType
-type entityHandlerContext<'entity, 'getWhereFilter> = {{
+type handlerEntityOperations<'entity, 'getWhereFilter> = {{
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -1585,27 +1615,167 @@ type handlerContext = {{
             handler_context_entity_fields
         );
 
+        // Generate contract modules with event sub-modules
+        let contract_modules_code = codegen_contracts
+            .iter()
+            .map(|contract| {
+                let events_code = contract
+                    .codegen_events
+                    .iter()
+                    .map(|event| {
+                        let indented = event
+                            .module_code
+                            .lines()
+                            .map(|l| {
+                                if l.is_empty() {
+                                    l.to_string()
+                                } else {
+                                    format!("    {l}")
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        format!("  module {} = {{\n{}\n  }}", event.name, indented)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                // Generate per-contract eventIdentity GADT inside the contract module
+                let event_identity = if contract.codegen_events.is_empty() {
+                    String::new()
+                } else {
+                    let gadt_constructors = contract
+                        .codegen_events
+                        .iter()
+                        .map(|event| {
+                            format!(
+                                "    | @as(\"{event_name}\") {event_name}: eventIdentity<\
+                                 {event_name}.event, {event_name}.paramsConstructor, \
+                                 {event_name}.eventFilter>",
+                                event_name = event.name,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!(
+                        "\n\n  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =\n{}",
+                        gadt_constructors,
+                    )
+                };
+
+                let module_header = if contract.module_code.is_empty() {
+                    format!("let contractName = \"{}\"", contract.name.capitalized)
+                } else {
+                    format!(
+                        "{}\nlet contractName = \"{}\"",
+                        contract.module_code, contract.name.capitalized
+                    )
+                };
+                format!(
+                    "@genType\nmodule {} = {{\n{}\n\n{}{}\n}}",
+                    contract.name.capitalized, module_header, events_code, event_identity,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Generate GADT event identifier types for type-safe simulate items
+        let simulate_types_code = if codegen_contracts.is_empty() {
+            String::new()
+        } else {
+            let contracts_with_events: Vec<_> = codegen_contracts
+                .iter()
+                .filter(|c| !c.codegen_events.is_empty())
+                .collect();
+
+            let top_constructors = contracts_with_events
+                .iter()
+                .map(|c| {
+                    let name = &c.name.capitalized;
+                    format!(
+                        "  | {name}({name}.eventIdentity<'event, 'paramsConstructor, 'filters>)"
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let (params_optional, simulate_item_type) = match cfg.get_ecosystem() {
+                Ecosystem::Fuel => ("", "Envio.fuelSimulateEventItem"),
+                _ => ("?", "Envio.evmSimulateEventItem"),
+            };
+
+            format!(
+                "@tag(\"contract\")\n\
+                 type eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
+                 {top_constructors}\n\n\
+                 @tag(\"kind\")\n\
+                 type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =\n\
+                 \x20 | OnEvent({{\n\
+                 \x20     event: eventIdentity<'event, 'paramsConstructor, 'filters>,\n\
+                 \x20     params{params_optional}: 'paramsConstructor,\n\
+                 \x20   }})\n\n\
+                 let makeSimulateItem = (\n\
+                 \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,\n\
+                 ): {simulate_item_type} => {{\n\
+                 \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
+                 \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
+                 \x20 params: (constructor->Utils.magic)[\"params\"],\n\
+                 }}"
+            )
+        };
+
         // Combine all parts into indexer_code
         let indexer_code = format!(
-            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            "module Enums = {{\n{}\n}}\n\nmodule Entities = {{\n{}\n}}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
             enums_module_code,
             entities_module_code,
             handler_context_code,
             chain_id_type,
+            contract_modules_code,
             indexer_contract_type,
             indexer_chain_type,
             indexer_chains_type,
             indexer_type,
             get_chain_by_id,
             on_block_code,
+            simulate_types_code,
         );
 
         // Generate testIndexer types and createTestIndexer
+        let chain_config_type = match cfg.get_ecosystem() {
+            Ecosystem::Evm => "TestIndexer.evmChainConfig",
+            Ecosystem::Fuel => "TestIndexer.fuelChainConfig",
+            Ecosystem::Svm => "TestIndexer.chainConfig",
+        };
         let test_indexer_chains_fields = chain_configs
             .iter()
             .map(|chain| {
                 let id = chain.network_config.id;
-                format!("  @as(\"{}\") chain{}?: TestIndexer.chainConfig,", id, id)
+                format!("  \\\"{}\"?: {},", id, chain_config_type)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Generate entity ops fields for the testIndexer type
+        let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
+type testIndexerEntityOperations<'entity> = {
+  /** Get an entity by ID. */
+  get: string => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}"#;
+
+        let test_indexer_entity_fields = entities
+            .iter()
+            .map(|entity| {
+                format!(
+                    "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
+                    entity.name.original, entity.name.capitalized,
+                )
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1619,7 +1789,9 @@ type testIndexerProcessConfig = {{
   chains: testIndexerProcessConfigChains,
 }}
 
-/** Test indexer type with process method and chain info. */
+{test_indexer_entity_ops_type}
+
+/** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {{
   /** Process blocks for the specified chains and return progress with changes. */
   process: testIndexerProcessConfig => promise<TestIndexer.processResult>,
@@ -1627,11 +1799,21 @@ type testIndexer = {{
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+{}
 }}"#,
-            test_indexer_chains_fields
+            test_indexer_chains_fields, test_indexer_entity_fields,
         );
 
-        let indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
+        let mut indexer_code = format!("{}\n\n{}", indexer_code, test_indexer_types);
+
+        // Generate getTestIndexerEntityOperations external binding
+        // The GADT name value compiles to a string at runtime via @as decorators,
+        // so @get_index can use Entities.name directly as a dictionary key
+        if !entities.is_empty() {
+            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = """#;
+
+            indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
+        }
 
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
@@ -1950,8 +2132,15 @@ type testIndexer = {{
             // Generate EvmContracts type
             let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 cfg.contracts
-                    .keys()
-                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .iter()
+                    .map(|(name, contract)| {
+                        let event_names: Vec<String> = contract
+                            .events
+                            .iter()
+                            .map(|event| format!("\"{}\"", event.name))
+                            .collect();
+                        format!("  \"{}\": {{ events: {} }};", name, event_names.join(" | "))
+                    })
                     .collect()
             } else {
                 vec![]
@@ -1993,8 +2182,15 @@ type testIndexer = {{
             // Generate FuelContracts type
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 cfg.contracts
-                    .keys()
-                    .map(|name| format!("  \"{}\": {{}};", name))
+                    .iter()
+                    .map(|(name, contract)| {
+                        let event_names: Vec<String> = contract
+                            .events
+                            .iter()
+                            .map(|event| format!("\"{}\"", event.name))
+                            .collect();
+                        format!("  \"{}\": {{ events: {} }};", name, event_names.join(" | "))
+                    })
                     .collect()
             } else {
                 vec![]
@@ -2408,6 +2604,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = {{id: bigint, owner: Address.t, displayName: string, imageUrl: string}}
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = {{id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}}
 @genType
 type block = Block.t
 @genType
@@ -2460,6 +2658,37 @@ handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
 contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }}
+}}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {{
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
 }}"#
             ),
         }
@@ -2494,6 +2723,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = unit
 @genType
 type block = Block.t
 @genType
@@ -2546,6 +2777,37 @@ handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
 contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
+}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
 }"#.to_string(),
           }
       );
@@ -2586,6 +2848,8 @@ let contractName = contractName
 
 @genType
 type eventArgs = unit
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = unit
 @genType
 type block = {number: int, timestamp: int, hash: string}
 @genType
@@ -2638,6 +2902,37 @@ handler: HandlerRegister.getHandler(~contractName, ~eventName=name),
 contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName=name),
 paramsRawEventSchema: paramsRawEventSchema->(Utils.magic: S.t<eventArgs> => S.t<Internal.eventParams>),
 }
+}
+
+let contractRegister: fnWithEventConfig<
+  Internal.genericContractRegister<
+    Internal.genericContractRegisterArgs<event, contractRegistrations>,
+  >,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (contractRegister, ~eventConfig=?) =>
+  HandlerRegister.setContractRegister(
+    ~contractName,
+    ~eventName=name,
+    contractRegister,
+    ~eventOptions=eventConfig,
+  )
+
+let handler: fnWithEventConfig<
+  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
+  HandlerTypes.eventConfig<eventFilters>,
+> = (handler, ~eventConfig=?) => {
+  HandlerRegister.setHandler(
+    ~contractName,
+    ~eventName=name,
+    handler->(
+      Utils.magic: Internal.genericHandler<
+        Internal.genericHandlerArgs<event, handlerContext>,
+      > => Internal.genericHandler<
+        Internal.genericHandlerArgs<event, Internal.handlerContext>,
+      >
+    ),
+    ~eventOptions=eventConfig,
+  )
 }"#.to_string(),
           }
       );

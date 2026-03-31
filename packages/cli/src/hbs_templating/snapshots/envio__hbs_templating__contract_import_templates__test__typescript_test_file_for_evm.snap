@@ -1,0 +1,49 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+import { describe, it, expect } from "vitest";
+import { createTestIndexer, type Contract1_NewGravatar } from "generated";
+import { TestHelpers } from "envio";
+
+describe("Contract1 contract NewGravatar event tests", () => {
+  it("Contract1_NewGravatar is created correctly", async () => {
+    const indexer = createTestIndexer();
+
+    // Creating mock for Contract1 contract NewGravatar event
+    const event = {
+      contract: "Contract1" as const,
+      event: "NewGravatar" as const,
+      params: {
+        id: 0n,
+        owner: TestHelpers.Addresses.defaultAddress,
+        displayName: "default string value",
+        imageUrl: "default string value",
+      },
+    };
+
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 0,
+          simulate: [event],
+        },
+      },
+    });
+
+    // Getting the actual entity from the test indexer
+    let actualContract1NewGravatar = await indexer.Contract1_NewGravatar.getOrThrow("1_0_0");
+
+    // Creating the expected entity
+    const expectedContract1NewGravatar: Contract1_NewGravatar = {
+      id: "1_0_0",
+      event_id: event.params.id,
+      owner: event.params.owner,
+      displayName: event.params.displayName,
+      imageUrl: event.params.imageUrl,
+    };
+    // Asserting that the entity in the mock database is the same as the expected entity
+    expect(actualContract1NewGravatar, "Actual Contract1NewGravatar should be the same as the expected Contract1NewGravatar").toEqual(expectedContract1NewGravatar);
+  });
+});

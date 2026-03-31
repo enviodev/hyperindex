@@ -3,21 +3,21 @@ use alloy_dyn_abi::DynSolType;
 use crate::config_parsing::abi_compat::EventParam;
 use crate::type_schema::TypeIdent;
 
-pub struct EthereumEventParam<'a> {
+pub struct EvmEventParam<'a> {
     pub name: &'a str,
     abi_type: &'a DynSolType,
 }
 
-impl<'a> From<&'a EventParam> for EthereumEventParam<'a> {
-    fn from(abi_param: &'a EventParam) -> EthereumEventParam<'a> {
-        EthereumEventParam {
+impl<'a> From<&'a EventParam> for EvmEventParam<'a> {
+    fn from(abi_param: &'a EventParam) -> EvmEventParam<'a> {
+        EvmEventParam {
             name: &abi_param.name,
             abi_type: &abi_param.kind,
         }
     }
 }
 
-impl EthereumEventParam<'_> {
+impl EvmEventParam<'_> {
     /// Returns the depth of the nested type
     /// A value type would return 0
     /// An array or tuple type would have a nested type
@@ -111,7 +111,7 @@ impl EthereumEventParam<'_> {
     }
 }
 
-pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
+pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
     match &param.abi_type {
         DynSolType::Uint(_) => TypeIdent::BigInt,
         DynSolType::Int(_) => TypeIdent::BigInt,
@@ -124,14 +124,14 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
             unreachable!("Function type should be filtered out before reaching here")
         }
         DynSolType::Array(abi_type) => {
-            let sub_param = EthereumEventParam {
+            let sub_param = EvmEventParam {
                 abi_type,
                 name: param.name,
             };
             TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
         DynSolType::FixedArray(abi_type, _) => {
-            let sub_param = EthereumEventParam {
+            let sub_param = EvmEventParam {
                 abi_type,
                 name: param.name,
             };
@@ -142,7 +142,7 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
             let rescript_types: Vec<TypeIdent> = abi_types
                 .iter()
                 .map(|abi_type| {
-                    let ethereum_param = EthereumEventParam {
+                    let ethereum_param = EvmEventParam {
                         // Note the name doesn't matter since it's creating tuple without keys
                         //   it is only included so that the type is the same for recursion.
                         name: "",
@@ -160,14 +160,14 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> TypeIdent {
 
 #[cfg(test)]
 mod tests {
-    use super::{abi_to_rescript_type, EthereumEventParam};
+    use super::{abi_to_rescript_type, EvmEventParam};
     use crate::config_parsing::abi_compat;
     use alloy_dyn_abi::DynSolType;
 
     #[test]
     fn test_record_type_array() {
         let array_string_type = DynSolType::Array(Box::new(DynSolType::String));
-        let param = EthereumEventParam {
+        let param = EvmEventParam {
             abi_type: &array_string_type,
             name: "myArray",
         };
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn test_record_type_fixed_array() {
         let array_fixed_arr_type = DynSolType::FixedArray(Box::new(DynSolType::String), 1);
-        let param = EthereumEventParam {
+        let param = EvmEventParam {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
         };
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn test_record_type_tuple() {
         let tuple_type = DynSolType::Tuple(vec![DynSolType::String, DynSolType::Uint(256)]);
-        let param = EthereumEventParam {
+        let param = EvmEventParam {
             abi_type: &tuple_type,
             name: "myArrayFixed",
         };
@@ -218,7 +218,7 @@ mod tests {
         )
         .expect("parsing event");
 
-        let params: Vec<EthereumEventParam> = event.inputs.iter().map(|p| p.into()).collect();
+        let params: Vec<EvmEventParam> = event.inputs.iter().map(|p| p.into()).collect();
         let user_address = &params[0];
         let amount_uint256 = &params[1];
         let tuple_bool_string = &params[2];
@@ -239,7 +239,7 @@ mod tests {
 
         assert_eq!(
             user_address_res_type.get_default_value_rescript(),
-            "TestHelpers_MockAddresses.defaultAddress".to_string()
+            "Envio.TestHelpers.Addresses.defaultAddress".to_string()
         );
         assert_eq!(
             amount_uint256_res_type.get_default_value_rescript(),
@@ -247,7 +247,7 @@ mod tests {
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),
-            "(false, TestHelpers_MockAddresses.defaultAddress)".to_string()
+            "(false, Envio.TestHelpers.Addresses.defaultAddress)".to_string()
         );
         assert_eq!(
             bytes_arr_res_type.get_default_value_rescript(),

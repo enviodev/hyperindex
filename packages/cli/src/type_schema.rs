@@ -646,8 +646,8 @@ impl TypeIdent {
             Self::BigInt => "0n".to_string(),
             Self::Json => "%raw(`{}`)".to_string(),
             Self::BigDecimal => "BigDecimal.zero".to_string(),
-            Self::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
-            Self::String => "\"foo\"".to_string(),
+            Self::Address => "Envio.TestHelpers.Addresses.defaultAddress".to_string(),
+            Self::String => "\"default string value\"".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
             Self::Timestamp => "Js.Date.fromFloat(0.)".to_string(),
@@ -713,8 +713,8 @@ impl TypeIdent {
             Self::BigDecimal => "// default value not required since BigDecimal doesn't exist on \
                                  contracts for contract import"
                 .to_string(),
-            Self::Address => "Addresses.defaultAddress".to_string(),
-            Self::String => "\"foo\"".to_string(),
+            Self::Address => "TestHelpers.Addresses.defaultAddress".to_string(),
+            Self::String => "\"default string value\"".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
             Self::Timestamp => "new Date(0)".to_string(),

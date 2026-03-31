@@ -96,13 +96,6 @@ module HandlerTypes = {
   type eventConfig<'eventFilters> = Internal.eventOptions<'eventFilters>
 }
 
-module type Event = {
-  type event
-  let contractName: string
-  let name: string
-  type eventFilters
-}
-
 @genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
 type fnWithEventConfig<'fn, 'eventConfig> = ('fn, ~eventConfig: 'eventConfig=?) => unit
 
@@ -118,58 +111,6 @@ type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
 >
 
 {{{indexer_code}}}
-
-module MakeRegister = (Event: Event) => {
-  let contractRegister: fnWithEventConfig<
-    Internal.genericContractRegister<
-      Internal.genericContractRegisterArgs<Event.event, contractRegistrations>,
-    >,
-    HandlerTypes.eventConfig<Event.eventFilters>,
-  > = (contractRegister, ~eventConfig=?) =>
-    HandlerRegister.setContractRegister(
-      ~contractName=Event.contractName,
-      ~eventName=Event.name,
-      contractRegister,
-      ~eventOptions=eventConfig,
-    )
-
-  let handler: fnWithEventConfig<
-    Internal.genericHandler<Internal.genericHandlerArgs<Event.event, handlerContext>>,
-    HandlerTypes.eventConfig<Event.eventFilters>,
-  > = (handler, ~eventConfig=?) => {
-    HandlerRegister.setHandler(
-      ~contractName=Event.contractName,
-      ~eventName=Event.name,
-      handler->(
-        Utils.magic: Internal.genericHandler<
-          Internal.genericHandlerArgs<Event.event, handlerContext>,
-        > => Internal.genericHandler<
-          Internal.genericHandlerArgs<Event.event, Internal.handlerContext>,
-        >
-      ),
-      ~eventOptions=eventConfig,
-    )
-  }
-}
-
-{{#each codegen_contracts as | contract |}}
-@genType
-module {{contract.name.capitalized}} = {
-{{contract.module_code}}
-let contractName = "{{contract.name.capitalized}}"
-{{#each contract.codegen_events as | event |}}
-
-module {{event.name}}Event = {
-{{event.module_code}}
-}
-module {{event.name}} = {
-  include {{event.name}}Event
-  include MakeRegister({{event.name}}Event)
-}
-{{/each}}
-}
-
-{{/each}}
 
 module Generated = {
 let makeGeneratedConfig = () => {

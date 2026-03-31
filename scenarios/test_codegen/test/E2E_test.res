@@ -181,7 +181,7 @@ describe("E2E tests", () => {
           let _ = Js.Global.setTimeout(
             () => {
               try {
-                context.simpleEntity.set({
+                context.\"SimpleEntity".set({
                   id: "1",
                   value: "value-1",
                 })
@@ -197,7 +197,7 @@ describe("E2E tests", () => {
         blockNumber: 11,
         logIndex: 0,
         handler: async ({context}) => {
-          context.simpleEntity.set({
+          context.\"SimpleEntity".set({
             id: "1",
             value: "value-2",
           })
@@ -260,7 +260,7 @@ describe("E2E tests", () => {
     let handler = async (
       {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
     ) => {
-      context.simpleEntity.set({
+      context.\"SimpleEntity".set({
         id: "1",
         value: `call-${getCallCount()->Int.toString}`,
       })
@@ -1286,7 +1286,7 @@ describe("E2E tests", () => {
         blockNumber: 1500,
         logIndex: 0,
         handler: async ({context}) => {
-          context.simpleEntity.set({id: "item-1500", value: "from-chunk2"})
+          context.\"SimpleEntity".set({id: "item-1500", value: "from-chunk2"})
         },
       },
     ])
@@ -1316,7 +1316,7 @@ describe("E2E tests", () => {
           blockNumber: 850,
           logIndex: 0,
           handler: async ({context}) => {
-            context.simpleEntity.set({id: "item-850", value: "from-chunk1"})
+            context.\"SimpleEntity".set({id: "item-850", value: "from-chunk1"})
           },
         },
       ],

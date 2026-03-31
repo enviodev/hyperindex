@@ -3,7 +3,7 @@ open Vitest
 
 let chainId = 0
 
-let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]->Option.getExn
+let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 

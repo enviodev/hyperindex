@@ -743,7 +743,7 @@ describe("RpcSource - fieldRegistry completeness", () => {
 
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
-  let mockAddress0 = TestHelpers.Addresses.mockAddresses[0]
+  let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]
 
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {

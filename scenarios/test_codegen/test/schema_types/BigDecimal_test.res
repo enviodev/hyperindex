@@ -25,11 +25,11 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
           blockNumber: 100,
           logIndex: 0,
           handler: async ({context}) => {
-            context.entityWithBigDecimal.set({
+            context.\"EntityWithBigDecimal".set({
               id: "testEntity",
               bigDecimal: BigDecimal.fromFloat(123.456),
             })
-            context.entityWithBigDecimal.set({
+            context.\"EntityWithBigDecimal".set({
               id: "testEntity2",
               bigDecimal: BigDecimal.fromFloat(654.321),
             })
