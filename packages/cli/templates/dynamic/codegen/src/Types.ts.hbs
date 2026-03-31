@@ -3,7 +3,7 @@
 // Use @genType.import to link the types back to ReScript code
 
 import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter } from "envio";
-import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities } from "../envio.d.ts";
+import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, Enums } from "../envio.d.ts";
 
 // Utility type to check if an object type is empty
 type IsEmptyObject<T> = keyof T extends never ? true : false;
@@ -154,3 +154,15 @@ export type HandlerContext = {
 {{#each entities as | entity |}}
 export type {{entity.name.capitalized}} = Entities["{{entity.name.capitalized}}"];
 {{/each}}
+
+/** Union of all entity names. */
+export type EntityName = keyof Entities;
+
+/** Lookup an entity type by name. */
+export type Entity<TEntityName extends EntityName> = Entities[TEntityName];
+
+/** Union of all enum names. */
+export type EnumName = keyof Enums;
+
+/** Lookup an enum type by name. */
+export type Enum<TEnumName extends EnumName> = Enums[TEnumName];
