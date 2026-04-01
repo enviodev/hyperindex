@@ -99,12 +99,8 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
 
 // ============== Build HyperSync decoder via new Function() ==============
 
-// new Function(arg1, arg2, body) - creates a function at runtime
-// Sanitize param names for safe use in generated Function body.
-// ABI param names originate from contract ABIs but could contain special characters.
-let sanitizeParamName = (name: string): string =>
-  name->Js.String2.replaceByRe(%re("/[^a-zA-Z0-9_$]/g"), "_")
-
+// Param names from ABI are valid Solidity identifiers ([a-zA-Z_$][a-zA-Z0-9_$]*),
+// so they're safe to use in quoted property names within new Function() body.
 @new @variadic
 external makeFunction: array<string> => 'a = "Function"
 
@@ -119,12 +115,10 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
 
     let fields = []
     indexedParams->Array.forEachWithIndex((i, p) => {
-      let safeName = sanitizeParamName(p.name)
-      fields->Js.Array2.push(`"${safeName}": t(d.indexed[${i->Int.toString}])`)->ignore
+      fields->Js.Array2.push(`"${p.name}": t(d.indexed[${i->Int.toString}])`)->ignore
     })
     bodyParams->Array.forEachWithIndex((i, p) => {
-      let safeName = sanitizeParamName(p.name)
-      fields->Js.Array2.push(`"${safeName}": t(d.body[${i->Int.toString}])`)->ignore
+      fields->Js.Array2.push(`"${p.name}": t(d.body[${i->Int.toString}])`)->ignore
     })
     // Generate: function(t) { return function(d) { return { ... } } }
     let body = `return function(d) { return {${fields->Js.Array2.joinWith(", ")}} }`
