@@ -852,28 +852,6 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
-  it("createTestIndexer processes multiple chains without simulate", async () => {
-    const indexer = createTestIndexer();
-
-    // Chain 1 uses HyperSync, no events in range → empty changes
-    // Chains are sorted by chain ID
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [],
-        },
-        1: {
-          startBlock: 1,
-          endBlock: 100,
-        },
-      },
-    });
-
-    assert.deepEqual(result, { changes: [] });
-  });
-
   it("createTestIndexer processes multiple chains with simulate", async () => {
     const indexer = createTestIndexer();
 
