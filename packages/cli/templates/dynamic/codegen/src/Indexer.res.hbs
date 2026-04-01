@@ -114,40 +114,7 @@ type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
 
 module Generated = {
 let makeGeneratedConfig = () => {
-  // Source config is now in internal.config.json, sources created lazily by ChainFetcher
-  let codegenChains = [
-    {{#each chain_configs as | chain_config |}}
-    {
-      let contracts = [
-        {{#each chain_config.codegen_contracts as | contract |}}
-        {
-          Config.name: "{{contract.name.capitalized}}",
-          addresses: [
-            {{#each contract.addresses as | address |}}
-            "{{address}}",
-            {{/each}}
-          ],
-          events: [
-            {{#each contract.events as | event |}}
-            ({{contract.name.capitalized}}.{{event.name}}.register() :> Internal.eventConfig),
-            {{/each}}
-          ],
-          startBlock: {{#if contract.start_block}}Some({{contract.start_block}}){{else}}None{{/if}},
-        },
-        {{/each}}
-      ]
-      {
-        Config.id: {{chain_config.network_config.id}},
-        contracts,
-      }
-    },
-    {{/each}}
-  ]
-
-  Config.fromPublic(
-    %raw(`internalConfigJson`),
-    ~codegenChains,
-  )
+  Config.fromPublic(%raw(`internalConfigJson`))
 }
 
 // Config without handler registration - used by tests, migrations, etc.

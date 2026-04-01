@@ -497,6 +497,8 @@ let fuelTransferParamsSchema = S.schema(s => {
   amount: s.matches(BigInt.schema),
 })
 
+type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
+
 type entity = private {id: string}
 type genericEntityConfig<'entity> = {
   name: string,

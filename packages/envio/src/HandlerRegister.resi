@@ -1,6 +1,6 @@
 type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
 
-let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Config.multichain) => unit
+let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Internal.multichain) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: unit => registrations
 

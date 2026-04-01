@@ -29,7 +29,7 @@ type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
 
 type activeRegistration = {
   ecosystem: Ecosystem.t,
-  multichain: Config.multichain,
+  multichain: Internal.multichain,
   registrations: registrations,
   mutable finished: bool,
 }
