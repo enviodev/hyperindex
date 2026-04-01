@@ -592,20 +592,20 @@ type FuelSimulateItem<Config extends IndexerConfigTypes> =
 
 /** Configuration for a single EVM chain in the test indexer. */
 type EvmTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
-  /** The block number to start processing from. */
-  startBlock: number;
-  /** The block number to stop processing at. */
-  endBlock: number;
+  /** The block number to start processing from. Defaults to config startBlock or progressBlock+1. */
+  startBlock?: number;
+  /** The block number to stop processing at. Defaults to max simulate block number when simulate is provided. */
+  endBlock?: number;
   /** Simulate items to process instead of fetching from real sources. */
   simulate?: EvmSimulateItem<Config>[];
 };
 
 /** Configuration for a single Fuel chain in the test indexer. */
 type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
-  /** The block number to start processing from. */
-  startBlock: number;
-  /** The block number to stop processing at. */
-  endBlock: number;
+  /** The block number to start processing from. Defaults to config startBlock or progressBlock+1. */
+  startBlock?: number;
+  /** The block number to stop processing at. Defaults to max simulate block height when simulate is provided. */
+  endBlock?: number;
   /** Simulate items to process instead of fetching from real sources. */
   simulate?: FuelSimulateItem<Config>[];
 };
