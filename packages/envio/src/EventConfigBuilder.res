@@ -279,13 +279,15 @@ let buildFuelEventConfig = (
   ~eventName: string,
   ~kind: string,
   ~sighash: string,
-  ~abi: EvmTypes.Abi.t,
+  ~rawAbi: Js.Json.t,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
 ): Internal.fuelEventConfig => {
   let fuelKind = switch kind {
   | "logData" =>
+    // Transpile raw Fuel ABI to the format expected by the vendored ABI coder
+    let abi = FuelSDK.transpileAbi(rawAbi)
     Internal.LogData({
       logId: sighash,
       decode: FuelSDK.Receipt.getLogDataDecoder(~abi, ~logId=sighash),

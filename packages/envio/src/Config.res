@@ -540,7 +540,7 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
               ~eventName,
               ~kind=fuelKind,
               ~sighash,
-              ~abi,
+              ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => Js.Json.t),
               ~isWildcard,
               ~handler,
               ~contractRegister,
