@@ -108,7 +108,7 @@ module EnvioAddresses = {
     name,
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-      Table.mkField("chain_id", Int32, ~isPrimaryKey=true, ~fieldSchema=S.int),
+      Table.mkField("chain_id", Int32, ~isPrimaryKey=true, ~isIndex=true, ~fieldSchema=S.int),
       Table.mkField("registering_event_block", Int32, ~fieldSchema=S.int),
       Table.mkField(
         "registering_event_log_index",
@@ -117,7 +117,7 @@ module EnvioAddresses = {
         ~fieldSchema=S.null(S.int),
       ),
       Table.mkField("contract_name", String, ~fieldSchema=S.string),
-      Table.mkField("envio_checkpoint_id", Table.UInt64, ~fieldSchema=S.bigint),
+      Table.mkField("envio_checkpoint_id", Table.UInt64, ~isIndex=true, ~fieldSchema=S.bigint),
     ],
   )
 }

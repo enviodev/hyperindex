@@ -436,7 +436,27 @@ module Indexer = {
             ~tableName=InternalTable.EnvioAddresses.table.tableName,
           ),
         )
-        ->(Utils.magic: promise<array<unknown>> => promise<array<Config.EnvioAddresses.t>>)
+        ->Promise.thenResolve(rows => {
+          let schema: S.t<Config.EnvioAddresses.t> = S.object(
+            s =>
+              (
+                {
+                  id: s.field("id", S.string),
+                  chainId: s.field("chain_id", S.int),
+                  registeringEventBlock: s.field("registering_event_block", S.int),
+                  registeringEventLogIndex: s.field(
+                    "registering_event_log_index",
+                    S.null(S.int),
+                  ),
+                  contractName: s.field("contract_name", S.string),
+                  checkpointId: s.field("envio_checkpoint_id", BigInt.schema),
+                }: Config.EnvioAddresses.t
+              ),
+          )
+          rows
+          ->(Utils.magic: array<unknown> => array<unknown>)
+          ->Js.Array2.map(row => row->S.convertOrThrow(schema))
+        })
       },
       queryCheckpoints: () => {
         sql

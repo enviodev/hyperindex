@@ -242,13 +242,21 @@ let handleWriteBatch = (
     | None => ()
     }
 
-    // Add address changes for this checkpoint
-    let addressSets =
-      addressesToWrite->Array.keepMap(addr =>
-        addr.checkpointId === checkpointId
-          ? Some({"address": addr->Config.EnvioAddresses.getAddress, "contract": addr.contractName})
-          : None
-      )
+    // Add address changes for this checkpoint (skip already-stored addresses to match ON CONFLICT DO NOTHING)
+    let addressSets = addressesToWrite->Array.keepMap(addr => {
+      if addr.checkpointId !== checkpointId {
+        None
+      } else {
+        let chainIdStr = addr.chainId->Int.toString
+        let alreadyExists = switch state.addressesByChain->Js.Dict.get(chainIdStr) {
+        | Some(chainDict) => chainDict->Js.Dict.get(addr.id) !== None
+        | None => false
+        }
+        alreadyExists
+          ? None
+          : Some({"address": addr->Config.EnvioAddresses.getAddress, "contract": addr.contractName})
+      }
+    })
     if addressSets->Array.length > 0 {
       let entityObj: dict<unknown> = Js.Dict.empty()
       entityObj->Js.Dict.set("sets", addressSets->Utils.magic)
@@ -258,7 +266,7 @@ let handleWriteBatch = (
     state.processChanges->Array.push(change->Utils.magic)->ignore
   }
 
-  // Store addresses into per-chain structure
+  // Store addresses into per-chain structure (first-write-wins to match ON CONFLICT DO NOTHING)
   addressesToWrite->Array.forEach(addr => {
     let chainIdStr = addr.chainId->Int.toString
     let chainDict = switch state.addressesByChain->Js.Dict.get(chainIdStr) {
@@ -268,7 +276,10 @@ let handleWriteBatch = (
       state.addressesByChain->Js.Dict.set(chainIdStr, dict)
       dict
     }
-    chainDict->Js.Dict.set(addr.id, addr)
+    switch chainDict->Js.Dict.get(addr.id) {
+    | Some(_) => ()
+    | None => chainDict->Js.Dict.set(addr.id, addr)
+    }
   })
 }
 
