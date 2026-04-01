@@ -5,7 +5,7 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module DynamicContractRegistry = Config.DynamicContractRegistry
+module EnvioAddresses = Config.EnvioAddresses
 
 module Chains = {
   type progressFields = [
@@ -188,12 +188,12 @@ WHERE "${(#id: field :> string)}" = $1;`
 "${(#source_block: field :> string)}" as "sourceBlockNumber",
 (
   SELECT COALESCE(json_agg(json_build_object(
-    'address', "contract_address",
+    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', "registering_event_block_number",
-    'registrationBlock', "registering_event_block_number"
+    'startBlock', "registering_event_block",
+    'registrationBlock', "registering_event_block"
   )), '[]'::json)
-  FROM "${pgSchema}"."${DynamicContractRegistry.table.tableName}"
+  FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
   WHERE "chain_id" = chains."${(#id: field :> string)}"
 ) as "dynamicContracts"
 FROM "${pgSchema}"."${table.tableName}" as chains;`
@@ -330,7 +330,10 @@ module Checkpoints = {
     blockNumber: s.field("block_number", S.int),
     blockHash: s.field(
       "block_hash",
-      S.union([S.string->(Utils.magic: S.t<string> => S.t<Js.null<string>>), S.literal(%raw(`null`))]),
+      S.union([
+        S.string->(Utils.magic: S.t<string> => S.t<Js.null<string>>),
+        S.literal(%raw(`null`)),
+      ]),
     ),
     eventsProcessed: s.field("events_processed", S.int),
   })

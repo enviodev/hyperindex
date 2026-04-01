@@ -7,16 +7,11 @@ import type {Json_t as Js_Json_t} from '../../src/Js.shim.js';
 
 import type {t as Address_t} from '../../src/Address.gen.js';
 
-export type DynamicContractRegistry_t = {
+export type EnvioAddresses_t = {
   readonly id: string; 
   readonly chain_id: number; 
-  readonly registering_event_block_number: number; 
-  readonly registering_event_log_index: number; 
-  readonly registering_event_block_timestamp: number; 
-  readonly registering_event_contract_name: string; 
-  readonly registering_event_name: string; 
-  readonly registering_event_src_address: Address_t; 
-  readonly contract_address: Address_t; 
+  readonly registering_event_block: number; 
+  readonly registering_event_log_index: (undefined | number); 
   readonly contract_name: string
 };
 

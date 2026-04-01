@@ -36,18 +36,15 @@ type testIndexerState = {
   mutable processChanges: array<unknown>,
 }
 
-// Cast Internal.entity back to DynamicContractRegistry.t
-external castFromDcRegistry: Internal.entity => InternalTable.DynamicContractRegistry.t =
-  "%identity"
+// Cast Internal.entity back to EnvioAddresses.t
+external castFromDcRegistry: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
 
-// Convert DynamicContractRegistry.t to Internal.indexingContract
-let toIndexingContract = (
-  dc: InternalTable.DynamicContractRegistry.t,
-): Internal.indexingContract => {
-  address: dc.contractAddress,
+// Convert EnvioAddresses.t to Internal.indexingContract
+let toIndexingContract = (dc: InternalTable.EnvioAddresses.t): Internal.indexingContract => {
+  address: dc->Config.EnvioAddresses.getAddress,
   contractName: dc.contractName,
-  startBlock: dc.registeringEventBlockNumber,
-  registrationBlock: Some(dc.registeringEventBlockNumber),
+  startBlock: dc.registeringEventBlock,
+  registrationBlock: Some(dc.registeringEventBlock),
 }
 
 let handleLoadByIds = (
@@ -234,14 +231,14 @@ let handleWriteBatch = (
       entityChanges
       ->Js.Dict.entries
       ->Array.forEach(((entityName, {sets, deleted})) => {
-        // Transform dynamic_contract_registry to addresses with simplified structure
-        if entityName === InternalTable.DynamicContractRegistry.name {
+        // Transform envio_addresses to addresses with simplified structure
+        if entityName === InternalTable.EnvioAddresses.name {
           let entityObj: dict<unknown> = Js.Dict.empty()
           if sets->Array.length > 0 {
             // Transform sets to simplified {address, contract} objects
             let simplifiedSets = sets->Array.map(entity => {
               let dc = entity->Utils.magic->castFromDcRegistry
-              {"address": dc.contractAddress, "contract": dc.contractName}
+              {"address": dc->Config.EnvioAddresses.getAddress, "contract": dc.contractName}
             })
             entityObj->Js.Dict.set("sets", simplifiedSets->Utils.magic)
           }
@@ -532,8 +529,8 @@ let makeCreateTestIndexer = (
     // Build entity operations for each user entity
     let entityOpsDict: Js.Dict.t<entityOperations> = Js.Dict.empty()
     allEntities->Array.forEach(entityConfig => {
-      // Only create ops for user entities (not internal tables like dynamic_contract_registry)
-      if entityConfig.name !== InternalTable.DynamicContractRegistry.name {
+      // Only create ops for user entities (not internal tables like envio_addresses)
+      if entityConfig.name !== InternalTable.EnvioAddresses.name {
         entityOpsDict->Js.Dict.set(
           entityConfig.name,
           {
@@ -589,7 +586,7 @@ let makeCreateTestIndexer = (
               // Start with static config addresses
               let addresses = contract.addresses->Array.copy
               // Add accumulated dynamic contract addresses
-              switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+              switch state.entities->Js.Dict.get(InternalTable.EnvioAddresses.name) {
               | Some(dcDict) =>
                 dcDict
                 ->Js.Dict.values
@@ -597,7 +594,7 @@ let makeCreateTestIndexer = (
                   entity => {
                     let dc = entity->castFromDcRegistry
                     if dc.contractName === contract.name && dc.chainId === chainConfig.id {
-                      addresses->Array.push(dc.contractAddress)->ignore
+                      addresses->Array.push(dc->Config.EnvioAddresses.getAddress)->ignore
                     }
                   },
                 )
@@ -697,7 +694,7 @@ let makeCreateTestIndexer = (
 
           // Extract dynamic contracts from state.entities for each chain
           let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Js.Dict.empty()
-          switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+          switch state.entities->Js.Dict.get(InternalTable.EnvioAddresses.name) {
           | Some(dcDict) =>
             dcDict
             ->Js.Dict.values
