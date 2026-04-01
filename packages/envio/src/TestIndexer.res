@@ -3,13 +3,13 @@ open Belt
 type evmChainConfig = {
   startBlock?: int,
   endBlock?: int,
-  simulate?: array<Envio.evmSimulateEventItem>,
+  simulate?: array<Envio.evmSimulateItem>,
 }
 
 type fuelChainConfig = {
   startBlock?: int,
   endBlock?: int,
-  simulate?: array<Envio.fuelSimulateEventItem>,
+  simulate?: array<Envio.fuelSimulateItem>,
 }
 
 // Internal type used for block range validation and state management

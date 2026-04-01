@@ -154,7 +154,7 @@ type fuelBlockInput = {
 
 type fuelTransactionInput = {id?: string}
 
-type evmSimulateEventItem = {
+type evmSimulateItem = {
   contract: string,
   event: string,
   params?: Js.Json.t,
@@ -164,7 +164,7 @@ type evmSimulateEventItem = {
   transaction?: Internal.evmTransactionInput,
 }
 
-type fuelSimulateEventItem = {
+type fuelSimulateItem = {
   contract: string,
   event: string,
   params: Js.Json.t,

@@ -227,7 +227,7 @@ let parse = (
       }
 
       // Parse event item fields
-      let item = rawJson->(Utils.magic: Js.Json.t => Envio.evmSimulateEventItem)
+      let item = rawJson->(Utils.magic: Js.Json.t => Envio.evmSimulateItem)
 
       // Parse params using the event's schema
       // Use undefined for events with no params (e.g. EmptyEvent()) to match codegen behavior

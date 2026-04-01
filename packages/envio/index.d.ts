@@ -548,8 +548,8 @@ type SimulateContractEvent<Contracts extends Record<string, { events: string }>>
   };
 }[keyof Contracts];
 
-/** Shared fields for all simulate event items (excluding params). */
-type SimulateEventItemBase = {
+/** Shared fields for all simulate items (excluding params). */
+type SimulateItemBase = {
   /** Override the source address. Defaults to the first contract address. */
   srcAddress?: Address;
   /** Override the log index. Auto-increments by default. */
@@ -560,25 +560,14 @@ type SimulateEventItemBase = {
   transaction?: Record<string, unknown>;
 };
 
-/** A typesafe simulate event item for EVM (params optional). */
-type EvmSimulateEventItem<Contracts extends Record<string, { events: string }>> =
-  SimulateContractEvent<Contracts> & SimulateEventItemBase & {
-    /** Event parameters. Keys match the event's parameter names. */
-    params?: Record<string, unknown>;
-  };
-
-/** A typesafe simulate event item for Fuel (params required). */
-type FuelSimulateEventItem<Contracts extends Record<string, { events: string }>> =
-  SimulateContractEvent<Contracts> & SimulateEventItemBase & {
-    /** Event parameters. Keys match the event's parameter names. */
-    params: Record<string, unknown>;
-  };
-
 /** Simulate item type for EVM ecosystem. */
 type EvmSimulateItem<Config extends IndexerConfigTypes> =
   Config["evm"] extends { contracts?: Record<string, { events: string }> }
     ? Config["evm"]["contracts"] extends Record<string, { events: string }>
-      ? EvmSimulateEventItem<Config["evm"]["contracts"]>
+      ? SimulateContractEvent<Config["evm"]["contracts"]> & SimulateItemBase & {
+          /** Event parameters. Keys match the event's parameter names. */
+          params?: Record<string, unknown>;
+        }
       : never
     : never;
 
@@ -586,7 +575,10 @@ type EvmSimulateItem<Config extends IndexerConfigTypes> =
 type FuelSimulateItem<Config extends IndexerConfigTypes> =
   Config["fuel"] extends { contracts?: Record<string, { events: string }> }
     ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
-      ? FuelSimulateEventItem<Config["fuel"]["contracts"]>
+      ? SimulateContractEvent<Config["fuel"]["contracts"]> & SimulateItemBase & {
+          /** Event parameters. Keys match the event's parameter names. */
+          params: Record<string, unknown>;
+        }
       : never
     : never;
 

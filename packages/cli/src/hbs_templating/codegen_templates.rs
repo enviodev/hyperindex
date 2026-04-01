@@ -1707,13 +1707,13 @@ type handlerContext = {{
             ) = match cfg.get_ecosystem() {
                 Ecosystem::Fuel => (
                     "",
-                    "Envio.fuelSimulateEventItem",
+                    "Envio.fuelSimulateItem",
                     "Envio.fuelBlockInput",
                     "Envio.fuelTransactionInput",
                 ),
                 _ => (
                     "?",
-                    "Envio.evmSimulateEventItem",
+                    "Envio.evmSimulateItem",
                     "Internal.evmBlockInput",
                     "Internal.evmTransactionInput",
                 ),
