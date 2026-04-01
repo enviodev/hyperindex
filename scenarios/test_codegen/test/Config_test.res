@@ -72,6 +72,76 @@ let transactionFieldToInt = (field: Internal.evmTransactionField) =>
   | AuthorizationList => 32
   }
 
+// Compile-time exhaustiveness check: evmBlockConstructor must have a field for every evmBlockField variant.
+// If a new variant is added to evmBlockField, this function will fail to compile until the constructor type is updated.
+let _assertBlockConstructorCoversAllFields = (b: Internal.evmBlockInput, field: Internal.evmBlockField) =>
+  switch field {
+  | Number => b.number->ignore
+  | Timestamp => b.timestamp->ignore
+  | Hash => b.hash->ignore
+  | ParentHash => b.parentHash->ignore
+  | Nonce => b.nonce->ignore
+  | Sha3Uncles => b.sha3Uncles->ignore
+  | LogsBloom => b.logsBloom->ignore
+  | TransactionsRoot => b.transactionsRoot->ignore
+  | StateRoot => b.stateRoot->ignore
+  | ReceiptsRoot => b.receiptsRoot->ignore
+  | Miner => b.miner->ignore
+  | Difficulty => b.difficulty->ignore
+  | TotalDifficulty => b.totalDifficulty->ignore
+  | ExtraData => b.extraData->ignore
+  | Size => b.size->ignore
+  | GasLimit => b.gasLimit->ignore
+  | GasUsed => b.gasUsed->ignore
+  | Uncles => b.uncles->ignore
+  | BaseFeePerGas => b.baseFeePerGas->ignore
+  | BlobGasUsed => b.blobGasUsed->ignore
+  | ExcessBlobGas => b.excessBlobGas->ignore
+  | ParentBeaconBlockRoot => b.parentBeaconBlockRoot->ignore
+  | WithdrawalsRoot => b.withdrawalsRoot->ignore
+  | L1BlockNumber => b.l1BlockNumber->ignore
+  | SendCount => b.sendCount->ignore
+  | SendRoot => b.sendRoot->ignore
+  | MixHash => b.mixHash->ignore
+  }
+
+// Compile-time exhaustiveness check: evmTransactionConstructor must have a field for every evmTransactionField variant.
+let _assertTransactionConstructorCoversAllFields = (tx: Internal.evmTransactionInput, field: Internal.evmTransactionField) =>
+  switch field {
+  | TransactionIndex => tx.transactionIndex->ignore
+  | Hash => tx.hash->ignore
+  | From => tx.from->ignore
+  | To => tx.to->ignore
+  | Gas => tx.gas->ignore
+  | GasPrice => tx.gasPrice->ignore
+  | MaxPriorityFeePerGas => tx.maxPriorityFeePerGas->ignore
+  | MaxFeePerGas => tx.maxFeePerGas->ignore
+  | CumulativeGasUsed => tx.cumulativeGasUsed->ignore
+  | EffectiveGasPrice => tx.effectiveGasPrice->ignore
+  | GasUsed => tx.gasUsed->ignore
+  | Input => tx.input->ignore
+  | Nonce => tx.nonce->ignore
+  | Value => tx.value->ignore
+  | V => tx.v->ignore
+  | R => tx.r->ignore
+  | S => tx.s->ignore
+  | ContractAddress => tx.contractAddress->ignore
+  | LogsBloom => tx.logsBloom->ignore
+  | Root => tx.root->ignore
+  | Status => tx.status->ignore
+  | YParity => tx.yParity->ignore
+  | AccessList => tx.accessList->ignore
+  | MaxFeePerBlobGas => tx.maxFeePerBlobGas->ignore
+  | BlobVersionedHashes => tx.blobVersionedHashes->ignore
+  | Type => tx.type_->ignore
+  | L1Fee => tx.l1Fee->ignore
+  | L1GasPrice => tx.l1GasPrice->ignore
+  | L1GasUsed => tx.l1GasUsed->ignore
+  | L1FeeScalar => tx.l1FeeScalar->ignore
+  | GasUsedForL1 => tx.gasUsedForL1->ignore
+  | AuthorizationList => tx.authorizationList->ignore
+  }
+
 describe("Field selection enum schemas", () => {
   it("evmBlockFieldSchema covers all block field variants", t => {
     let sum = ref(0)

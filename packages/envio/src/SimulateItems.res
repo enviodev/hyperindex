@@ -227,7 +227,7 @@ let parse = (
       }
 
       // Parse event item fields
-      let item = rawJson->(Utils.magic: Js.Json.t => Envio.evmSimulateEventItem)
+      let item = rawJson->(Utils.magic: Js.Json.t => Envio.evmSimulateItem)
 
       // Parse params using the event's schema
       // Use undefined for events with no params (e.g. EmptyEvent()) to match codegen behavior
@@ -260,25 +260,26 @@ let parse = (
         addr.contents
       }
 
+      let rawItem = rawJson->(Utils.magic: Js.Json.t => {..})
+      let blockJson: option<Js.Json.t> =
+        rawItem["block"]->(Utils.magic: 'a => Js.Nullable.t<Js.Json.t>)->Js.Nullable.toOption
+      let transactionJson: option<Js.Json.t> =
+        rawItem["transaction"]->(Utils.magic: 'a => Js.Nullable.t<Js.Json.t>)->Js.Nullable.toOption
       let (block, blockNumber, timestamp) = switch config.ecosystem.name {
       | Fuel =>
-        let block = parseFuelSimulateBlock(
-          ~defaultBlockNumber=currentBlock.contents,
-          ~blockJson=item.block,
-        )
+        let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
         (block, blockFields.height, blockFields.time)
-      | _ =>
-        let block = parseEvmSimulateBlock(
-          ~defaultBlockNumber=currentBlock.contents,
-          ~blockJson=item.block,
-        )
+      | Evm =>
+        let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
         (block, blockFields.number, blockFields.timestamp)
+      | Svm => Js.Exn.raiseError("simulate is not supported for SVM ecosystem")
       }
       let transaction = switch config.ecosystem.name {
-      | Fuel => parseFuelSimulateTransaction(~transactionJson=item.transaction)
-      | _ => parseEvmSimulateTransaction(~transactionJson=item.transaction)
+      | Fuel => parseFuelSimulateTransaction(~transactionJson)
+      | Evm => parseEvmSimulateTransaction(~transactionJson)
+      | Svm => Js.Exn.raiseError("simulate is not supported for SVM ecosystem")
       }
 
       // Update currentBlock for subsequent items

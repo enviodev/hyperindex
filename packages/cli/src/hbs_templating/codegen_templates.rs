@@ -1657,9 +1657,24 @@ type handlerContext = {{
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            let (params_optional, simulate_item_type) = match cfg.get_ecosystem() {
-                Ecosystem::Fuel => ("", "Envio.fuelSimulateEventItem"),
-                _ => ("?", "Envio.evmSimulateEventItem"),
+            let (
+                params_optional,
+                simulate_item_type,
+                block_constructor_type,
+                transaction_constructor_type,
+            ) = match cfg.get_ecosystem() {
+                Ecosystem::Fuel => (
+                    "",
+                    "Envio.fuelSimulateItem",
+                    "Envio.fuelBlockInput",
+                    "Envio.fuelTransactionInput",
+                ),
+                _ => (
+                    "?",
+                    "Envio.evmSimulateItem",
+                    "Internal.evmBlockInput",
+                    "Internal.evmTransactionInput",
+                ),
             };
 
             format!(
@@ -1671,6 +1686,8 @@ type handlerContext = {{
                  \x20 | OnEvent({{\n\
                  \x20     event: eventIdentity<'event, 'paramsConstructor, 'filters>,\n\
                  \x20     params{params_optional}: 'paramsConstructor,\n\
+                 \x20     block?: {block_constructor_type},\n\
+                 \x20     transaction?: {transaction_constructor_type},\n\
                  \x20   }})\n\n\
                  let makeSimulateItem = (\n\
                  \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,\n\
@@ -1678,6 +1695,8 @@ type handlerContext = {{
                  \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
                  \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
                  \x20 params: (constructor->Utils.magic)[\"params\"],\n\
+                 \x20 block: (constructor->Utils.magic)[\"block\"],\n\
+                 \x20 transaction: (constructor->Utils.magic)[\"transaction\"],\n\
                  }}"
             )
         };

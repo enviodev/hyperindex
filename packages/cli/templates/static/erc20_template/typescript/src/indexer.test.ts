@@ -101,8 +101,6 @@ describe("Transfers", () => {
     await indexer.process({
       chains: {
         1: {
-          startBlock: 10_861_674,
-          endBlock: 10_861_674,
           simulate: [
             {
               contract: "ERC20",

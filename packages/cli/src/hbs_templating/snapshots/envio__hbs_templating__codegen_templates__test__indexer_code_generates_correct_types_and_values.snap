@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3042
 expression: project_template.indexer_code
 ---
 module Enums = {
@@ -277,14 +278,18 @@ type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
   | OnEvent({
       event: eventIdentity<'event, 'paramsConstructor, 'filters>,
       params?: 'paramsConstructor,
+      block?: Internal.evmBlockInput,
+      transaction?: Internal.evmTransactionInput,
     })
 
 let makeSimulateItem = (
   constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,
-): Envio.evmSimulateEventItem => {
+): Envio.evmSimulateItem => {
   event: (constructor->Utils.magic)["event"]["_0"],
   contract: (constructor->Utils.magic)["event"]["contract"],
   params: (constructor->Utils.magic)["params"],
+  block: (constructor->Utils.magic)["block"],
+  transaction: (constructor->Utils.magic)["transaction"],
 }
 
 type testIndexerProcessConfigChains = {

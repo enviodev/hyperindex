@@ -183,9 +183,37 @@ let evmNullableTransactionFields = Utils.Set.fromArray(
   ),
 )
 
-// Shared EVM transaction fields type used by both RPC and HyperSync sources
-// Field names match HyperSyncClient.ResponseTypes.transaction for consistency
-type evmTransactionFields = {
+type evmBlockInput = {
+  number?: int,
+  timestamp?: int,
+  hash?: string,
+  parentHash?: string,
+  nonce?: bigint,
+  sha3Uncles?: string,
+  logsBloom?: string,
+  transactionsRoot?: string,
+  stateRoot?: string,
+  receiptsRoot?: string,
+  miner?: Address.t,
+  difficulty?: bigint,
+  totalDifficulty?: bigint,
+  extraData?: string,
+  size?: bigint,
+  gasLimit?: bigint,
+  gasUsed?: bigint,
+  uncles?: array<string>,
+  baseFeePerGas?: bigint,
+  blobGasUsed?: bigint,
+  excessBlobGas?: bigint,
+  parentBeaconBlockRoot?: string,
+  withdrawalsRoot?: string,
+  l1BlockNumber?: int,
+  sendCount?: string,
+  sendRoot?: string,
+  mixHash?: string,
+}
+
+type evmTransactionInput = {
   from?: Address.t,
   to?: Address.t,
   gas?: bigint,
@@ -216,12 +244,14 @@ type evmTransactionFields = {
   type_?: int,
   root?: string,
   status?: int,
+  accessList?: Js.Json.t,
   // L2 specific fields (Optimism, Arbitrum, etc.)
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
   l1FeeScalar?: float,
   gasUsedForL1?: bigint,
+  authorizationList?: Js.Json.t,
 }
 
 @genType

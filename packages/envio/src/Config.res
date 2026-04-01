@@ -205,8 +205,8 @@ let contractEventItemSchema = S.schema(s =>
     "sighash": s.matches(S.string),
     "params": s.matches(S.option(S.array(EventConfigBuilder.eventParamSchema))),
     "kind": s.matches(S.option(S.string)),
-    "blockFields": s.matches(S.option(S.array(S.string))),
-    "transactionFields": s.matches(S.option(S.array(S.string))),
+    "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
+    "transactionFields": s.matches(S.option(S.array(Internal.evmTransactionFieldSchema))),
   }
 )
 
@@ -531,18 +531,25 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
         let handler = HandlerRegister.getHandler(~contractName, ~eventName)
         let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
 
-        switch (ecosystemName, kind) {
-        | (Ecosystem.Fuel, Some(fuelKind)) =>
-          (EventConfigBuilder.buildFuelEventConfig(
-            ~contractName,
-            ~eventName,
-            ~kind=fuelKind,
-            ~sighash,
-            ~abi,
-            ~isWildcard,
-            ~handler,
-            ~contractRegister,
-          ) :> Internal.eventConfig)
+        switch ecosystemName {
+        | Ecosystem.Fuel =>
+          switch kind {
+          | Some(fuelKind) =>
+            (EventConfigBuilder.buildFuelEventConfig(
+              ~contractName,
+              ~eventName,
+              ~kind=fuelKind,
+              ~sighash,
+              ~abi,
+              ~isWildcard,
+              ~handler,
+              ~contractRegister,
+            ) :> Internal.eventConfig)
+          | None =>
+            Js.Exn.raiseError(
+              `Fuel event ${contractName}.${eventName} is missing "kind" in internal config`,
+            )
+          }
         | _ =>
           (EventConfigBuilder.buildEvmEventConfig(
             ~contractName,

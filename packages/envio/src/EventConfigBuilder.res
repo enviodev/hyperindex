@@ -100,6 +100,11 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
 // ============== Build HyperSync decoder via new Function() ==============
 
 // new Function(arg1, arg2, body) - creates a function at runtime
+// Sanitize param names for safe use in generated Function body.
+// ABI param names originate from contract ABIs but could contain special characters.
+let sanitizeParamName = (name: string): string =>
+  name->Js.String2.replaceByRe(%re("/[^a-zA-Z0-9_$]/g"), "_")
+
 @new @variadic
 external makeFunction: array<string> => 'a = "Function"
 
@@ -112,21 +117,26 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
     let indexedParams = params->Js.Array2.filter(p => p.indexed)
     let bodyParams = params->Js.Array2.filter(p => !p.indexed)
 
-    // Generate function body:
-    // "return { from: t(d.indexed[0]), to: t(d.indexed[1]), value: t(d.body[0]) }"
     let fields = []
     indexedParams->Array.forEachWithIndex((i, p) => {
-      fields->Js.Array2.push(`"${p.name}": t(d.indexed[${i->Int.toString}])`)->ignore
+      let safeName = sanitizeParamName(p.name)
+      fields->Js.Array2.push(`"${safeName}": t(d.indexed[${i->Int.toString}])`)->ignore
     })
     bodyParams->Array.forEachWithIndex((i, p) => {
-      fields->Js.Array2.push(`"${p.name}": t(d.body[${i->Int.toString}])`)->ignore
+      let safeName = sanitizeParamName(p.name)
+      fields->Js.Array2.push(`"${safeName}": t(d.body[${i->Int.toString}])`)->ignore
     })
-    let body = `return {${fields->Js.Array2.joinWith(", ")}}`
+    // Generate: function(t) { return function(d) { return { ... } } }
+    let body = `return function(d) { return {${fields->Js.Array2.joinWith(", ")}} }`
 
     let factory: (
       HyperSyncClient.Decoder.decodedRaw => HyperSyncClient.Decoder.decodedUnderlying
     ) => HyperSyncClient.Decoder.decodedEvent => Internal.eventParams =
-      makeFunction(["t", "d", body])->Utils.magic
+      makeFunction(["t", body])->(
+        Utils.magic: 'a => (
+          HyperSyncClient.Decoder.decodedRaw => HyperSyncClient.Decoder.decodedUnderlying
+        ) => HyperSyncClient.Decoder.decodedEvent => Internal.eventParams
+      )
 
     factory(HyperSyncClient.Decoder.toUnderlying)
   }
@@ -137,7 +147,7 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
 let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
   // Handle array/tuple types - these get keccak256'd
   if abiType->Js.String2.endsWith("]") || abiType->Js.String2.startsWith("(") {
-    TopicFilter.castToHexUnsafe->Utils.magic
+    TopicFilter.castToHexUnsafe->(Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
   } else {
     switch abiType {
     | "address" =>
@@ -181,9 +191,9 @@ let buildTopicGetter = (p: eventParam) => {
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
     ->Option.mapWithDefault([], topicFilters =>
       topicFilters
-      ->Obj.magic
+      ->(Utils.magic: Js.Json.t => unknown)
       ->normalizeOrThrow
-      ->Array.map(encoder)
+      ->Js.Array2.map(encoder)
     )
 }
 
@@ -194,24 +204,17 @@ let buildTopicGetter = (p: eventParam) => {
 let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
 
 let resolveFieldSelection = (
-  ~blockFields: option<array<string>>,
-  ~transactionFields: option<array<string>>,
+  ~blockFields: option<array<Internal.evmBlockField>>,
+  ~transactionFields: option<array<Internal.evmTransactionField>>,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>,
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>,
 ) => {
   let selectedBlockFields = switch blockFields {
-  | Some(fields) =>
-    Utils.Set.fromArray(
-      Array.concat(
-        alwaysIncludedBlockFields,
-        fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
-      ),
-    )
+  | Some(fields) => Utils.Set.fromArray(Array.concat(alwaysIncludedBlockFields, fields))
   | None => globalBlockFieldsSet
   }
   let selectedTransactionFields = switch transactionFields {
-  | Some(fields) =>
-    Utils.Set.fromArray(fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>))
+  | Some(fields) => Utils.Set.fromArray(fields)
   | None => globalTransactionFieldsSet
   }
   (selectedBlockFields, selectedTransactionFields)
@@ -228,8 +231,8 @@ let buildEvmEventConfig = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~eventFilters: option<Js.Json.t>,
-  ~blockFields: option<array<string>>=?,
-  ~transactionFields: option<array<string>>=?,
+  ~blockFields: option<array<Internal.evmBlockField>>=?,
+  ~transactionFields: option<array<Internal.evmTransactionField>>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
