@@ -200,6 +200,9 @@ let handleWriteBatch = (
     })
   })
 
+  // Track addresses accepted in this batch to avoid emitting duplicates
+  let seenInBatch: dict<bool> = Js.Dict.empty()
+
   // Build combined checkpoint + entity changes objects
   for i in 0 to checkpointIds->Array.length - 1 {
     let checkpointId = checkpointIds->Array.getUnsafe(i)
@@ -248,13 +251,21 @@ let handleWriteBatch = (
         None
       } else {
         let chainIdStr = addr.chainId->Int.toString
+        let batchKey = chainIdStr ++ "-" ++ addr.id
         let alreadyExists = switch state.addressesByChain->Js.Dict.get(chainIdStr) {
         | Some(chainDict) => chainDict->Js.Dict.get(addr.id) !== None
         | None => false
         }
-        alreadyExists
+        let alreadyInBatch = seenInBatch->Js.Dict.get(batchKey) !== None
+        alreadyExists || alreadyInBatch
           ? None
-          : Some({"address": addr->Config.EnvioAddresses.getAddress, "contract": addr.contractName})
+          : {
+              seenInBatch->Js.Dict.set(batchKey, true)
+              Some({
+                "address": addr->Config.EnvioAddresses.getAddress,
+                "contract": addr.contractName,
+              })
+            }
       }
     })
     if addressSets->Array.length > 0 {

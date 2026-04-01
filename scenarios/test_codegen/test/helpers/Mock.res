@@ -454,7 +454,7 @@ module Indexer = {
               ),
           )
           rows
-          ->(Utils.magic: array<unknown> => array<unknown>)
+          ->(Utils.magic: unknown => array<unknown>)
           ->Js.Array2.map(row => row->S.convertOrThrow(schema))
         })
       },
