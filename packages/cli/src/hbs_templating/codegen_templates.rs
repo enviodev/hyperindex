@@ -1070,35 +1070,6 @@ impl FieldSelection {
             block_fields: cfg.block_fields.clone(),
         })
     }
-
-    fn aggregated_selection(cfg: &system_config::SystemConfig) -> Self {
-        let mut transaction_fields: BTreeSet<_> = cfg
-            .field_selection
-            .transaction_fields
-            .iter()
-            .cloned()
-            .collect();
-        let mut block_fields: BTreeSet<_> =
-            cfg.field_selection.block_fields.iter().cloned().collect();
-
-        cfg.contracts.iter().for_each(|(_name, contract)| {
-            contract.events.iter().for_each(|event| {
-                if let Some(field_selection) = &event.field_selection {
-                    field_selection.transaction_fields.iter().for_each(|field| {
-                        transaction_fields.insert(field.clone());
-                    });
-                    field_selection.block_fields.iter().for_each(|field| {
-                        block_fields.insert(field.clone());
-                    });
-                }
-            });
-        });
-
-        Self::new(FieldSelectionOptions {
-            transaction_fields: transaction_fields.into_iter().collect::<Vec<_>>(),
-            block_fields: block_fields.into_iter().collect::<Vec<_>>(),
-        })
-    }
 }
 
 #[derive(Serialize)]
@@ -1119,7 +1090,6 @@ pub struct ProjectTemplate {
     persisted_state: PersistedStateJsonString,
     has_multiple_events: bool,
     field_selection: FieldSelection,
-    aggregated_field_selection: FieldSelection,
     is_evm_ecosystem: bool,
     is_fuel_ecosystem: bool,
     is_svm_ecosystem: bool,
@@ -1217,8 +1187,6 @@ impl ProjectTemplate {
         .to_string();
 
         let global_field_selection = FieldSelection::global_selection(&cfg.field_selection);
-        // TODO: Remove schemas for aggreaged, since they are not used in runtime
-        let aggregated_field_selection = FieldSelection::aggregated_selection(cfg);
 
         let chain_id_cases = match &cfg.human_config {
             HumanConfig::Svm(hcfg) => hcfg
@@ -2173,7 +2141,6 @@ type testIndexer = {{
             persisted_state,
             has_multiple_events,
             field_selection: global_field_selection,
-            aggregated_field_selection,
             is_evm_ecosystem: cfg.get_ecosystem() == Ecosystem::Evm,
             is_fuel_ecosystem: cfg.get_ecosystem() == Ecosystem::Fuel,
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
