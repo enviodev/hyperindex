@@ -270,14 +270,16 @@ let parse = (
         let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
         (block, blockFields.height, blockFields.time)
-      | _ =>
+      | Evm =>
         let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
         (block, blockFields.number, blockFields.timestamp)
+      | Svm => Js.Exn.raiseError("simulate is not supported for SVM ecosystem")
       }
       let transaction = switch config.ecosystem.name {
       | Fuel => parseFuelSimulateTransaction(~transactionJson)
-      | _ => parseEvmSimulateTransaction(~transactionJson)
+      | Evm => parseEvmSimulateTransaction(~transactionJson)
+      | Svm => Js.Exn.raiseError("simulate is not supported for SVM ecosystem")
       }
 
       // Update currentBlock for subsequent items

@@ -2,6 +2,8 @@ type eventParams
 type eventBlock
 type eventTransaction
 
+// Field name variants for type-safe field selection.
+// @unboxed compiles to plain strings at runtime, matching JS property names.
 @unboxed
 type evmBlockField =
   | @as("number") Number
@@ -134,6 +136,7 @@ let allEvmTransactionFields: array<evmTransactionField> = [
 ]
 let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 
+// Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
     [
@@ -211,33 +214,38 @@ type evmBlockInput = {
 }
 
 type evmTransactionInput = {
-  transactionIndex?: int,
-  hash?: string,
   from?: Address.t,
   to?: Address.t,
   gas?: bigint,
   gasPrice?: bigint,
-  maxPriorityFeePerGas?: bigint,
-  maxFeePerGas?: bigint,
-  cumulativeGasUsed?: bigint,
-  effectiveGasPrice?: bigint,
-  gasUsed?: bigint,
+  hash?: string,
   input?: string,
   nonce?: bigint,
+  transactionIndex?: int,
   value?: bigint,
+  // Signature fields - optional for ZKSync EIP-712 compatibility
   v?: string,
   r?: string,
   s?: string,
   yParity?: string,
+  // EIP-1559 fields
+  maxPriorityFeePerGas?: bigint,
+  maxFeePerGas?: bigint,
+  // EIP-4844 blob fields
+  maxFeePerBlobGas?: bigint,
+  blobVersionedHashes?: array<string>,
+  // Receipt fields (from joined transaction receipts)
+  cumulativeGasUsed?: bigint,
+  effectiveGasPrice?: bigint,
+  gasUsed?: bigint,
   contractAddress?: string,
   logsBloom?: string,
+  @as("type")
+  type_?: int,
   root?: string,
   status?: int,
   accessList?: Js.Json.t,
-  maxFeePerBlobGas?: bigint,
-  blobVersionedHashes?: array<string>,
-  @as("type")
-  type_?: int,
+  // L2 specific fields (Optimism, Arbitrum, etc.)
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
