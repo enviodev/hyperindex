@@ -438,66 +438,6 @@ let publicConfigSchema = S.schema(s =>
   }
 )
 
-// Always-included block fields (number, timestamp, hash) are not in the JSON;
-// they're prepended at runtime so they're always present.
-let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
-
-// Enrich EVM event configs with field selections from the JSON config.
-// Mutates the event configs in-place to set selectedBlockFields/selectedTransactionFields.
-let enrichEvmFieldSelections = (
-  events: array<Internal.eventConfig>,
-  ~jsonEvents: option<array<_>>,
-  ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>,
-  ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>,
-) => {
-  // Build a lookup by event name for events with per-event field overrides
-  let fieldsByName: Js.Dict.t<_> = Js.Dict.empty()
-  switch jsonEvents {
-  | Some(jes) =>
-    jes->Array.forEach(je => {
-      let name = je["name"]
-      if je["blockFields"] != None || je["transactionFields"] != None {
-        fieldsByName->Js.Dict.set(name, je)
-      }
-    })
-  | None => ()
-  }
-  events->Js.Array2.forEachi((event, i) => {
-    let evmEvent = event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    let (selectedBlockFields, selectedTransactionFields) = switch fieldsByName->Js.Dict.get(
-      evmEvent.name,
-    ) {
-    | Some(je) => (
-        switch je["blockFields"] {
-        | Some(fields) =>
-          // Prepend always-included block fields for per-event overrides too
-          Utils.Set.fromArray(
-            Array.concat(
-              alwaysIncludedBlockFields,
-              fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
-            ),
-          )
-        | None => globalBlockFieldsSet
-        },
-        switch je["transactionFields"] {
-        | Some(fields) =>
-          Utils.Set.fromArray(
-            fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>),
-          )
-        | None => globalTransactionFieldsSet
-        },
-      )
-    | None => (globalBlockFieldsSet, globalTransactionFieldsSet)
-    }
-    events->Js.Array2.unsafe_set(
-      i,
-      {...evmEvent, selectedBlockFields, selectedTransactionFields}->(
-        Utils.magic: Internal.evmEventConfig => Internal.eventConfig
-      ),
-    )
-  })
-}
-
 let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
@@ -542,13 +482,13 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
   | Some(evm) => (
       Utils.Set.fromArray(
         Array.concat(
-          alwaysIncludedBlockFields,
+          EventConfigBuilder.alwaysIncludedBlockFields,
           evm["globalBlockFields"]->Option.getWithDefault([]),
         ),
       ),
       Utils.Set.fromArray(evm["globalTransactionFields"]->Option.getWithDefault([])),
     )
-  | None => (Utils.Set.fromArray(alwaysIncludedBlockFields), Utils.Set.make())
+  | None => (Utils.Set.fromArray(EventConfigBuilder.alwaysIncludedBlockFields), Utils.Set.make())
   }
 
   // Build contract data lookup: ABI, event signatures, event configs (keyed by capitalized name)
@@ -613,6 +553,10 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
             ~handler,
             ~contractRegister,
             ~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName),
+            ~blockFields=?eventItem["blockFields"],
+            ~transactionFields=?eventItem["transactionFields"],
+            ~globalBlockFieldsSet,
+            ~globalTransactionFieldsSet,
           ) :> Internal.eventConfig)
         }
       })
@@ -664,22 +608,12 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
             ->Array.map(parseAddress)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
-          // Build event configs from JSON
+          // Build event configs from JSON (field selections resolved inline)
           let events = buildContractEvents(
             ~contractName=capitalizedName,
             ~events=contractData["events"],
             ~abi=contractData["abi"],
           )
-
-          // Enrich EVM event configs with field selections
-          if ecosystemName == Ecosystem.Evm {
-            enrichEvmFieldSelections(
-              events,
-              ~jsonEvents=contractData["events"],
-              ~globalBlockFieldsSet,
-              ~globalTransactionFieldsSet,
-            )
-          }
 
           {
             name: capitalizedName,

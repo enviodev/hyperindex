@@ -29,7 +29,7 @@ module Gravatar = {
   module NewGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=Indexer.Generated.configWithoutRegistrations->Config.getEventConfig(~contractName="Gravatar", ~eventName="NewGravatar")->Belt.Option.getExn->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
+        ~eventConfig=MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="NewGravatar"),
         ~params=params->(Utils.magic: Indexer.Gravatar.NewGravatar.eventArgs => Internal.eventParams),
         ...
       )
@@ -38,7 +38,7 @@ module Gravatar = {
   module UpdatedGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=Indexer.Generated.configWithoutRegistrations->Config.getEventConfig(~contractName="Gravatar", ~eventName="UpdatedGravatar")->Belt.Option.getExn->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
+        ~eventConfig=MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="UpdatedGravatar"),
         ~params=params->(
           Utils.magic: Indexer.Gravatar.UpdatedGravatar.eventArgs => Internal.eventParams
         ),

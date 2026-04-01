@@ -4,10 +4,9 @@ let _ = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.config
 // Rebuild config after handler registration to pick up event filters
 let configWithRegistrations = Indexer.Generated.makeGeneratedConfig()
 
+// Uses config with registrations (event filters are set during handler loading)
 let getEvmEventConfig = (~contractName, ~eventName) =>
-  configWithRegistrations
-  ->Config.getEventConfig(~contractName, ~eventName)
-  ->Belt.Option.getExn
+  configWithRegistrations->Config.getEventConfig(~contractName, ~eventName)->Belt.Option.getExn
   ->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
 
 // Test types:

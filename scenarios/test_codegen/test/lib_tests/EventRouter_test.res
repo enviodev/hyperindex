@@ -185,7 +185,7 @@ describe("EventRouter", () => {
   )
 
   it("fromEvmEventModsOrThrow works", t => {
-    let item = Indexer.Generated.configWithoutRegistrations->Config.getEventConfig(~contractName="Gravatar", ~eventName="NewGravatar")->Belt.Option.getExn->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    let item = MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="NewGravatar")
     let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
 
     t.expect(

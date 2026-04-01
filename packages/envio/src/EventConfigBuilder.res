@@ -187,6 +187,36 @@ let buildTopicGetter = (p: eventParam) => {
     )
 }
 
+// ============== Field selection ==============
+
+// Always-included block fields (number, timestamp, hash) are prepended
+// at runtime so they're always present regardless of config.
+let alwaysIncludedBlockFields: array<Internal.evmBlockField> = [Number, Timestamp, Hash]
+
+let resolveFieldSelection = (
+  ~blockFields: option<array<string>>,
+  ~transactionFields: option<array<string>>,
+  ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>,
+  ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>,
+) => {
+  let selectedBlockFields = switch blockFields {
+  | Some(fields) =>
+    Utils.Set.fromArray(
+      Array.concat(
+        alwaysIncludedBlockFields,
+        fields->(Utils.magic: array<string> => array<Internal.evmBlockField>),
+      ),
+    )
+  | None => globalBlockFieldsSet
+  }
+  let selectedTransactionFields = switch transactionFields {
+  | Some(fields) =>
+    Utils.Set.fromArray(fields->(Utils.magic: array<string> => array<Internal.evmTransactionField>))
+  | None => globalTransactionFieldsSet
+  }
+  (selectedBlockFields, selectedTransactionFields)
+}
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (
@@ -198,6 +228,10 @@ let buildEvmEventConfig = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~eventFilters: option<Js.Json.t>,
+  ~blockFields: option<array<string>>=?,
+  ~transactionFields: option<array<string>>=?,
+  ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
+  ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
   let indexedParams = params->Js.Array2.filter(p => p.indexed)
@@ -210,6 +244,14 @@ let buildEvmEventConfig = (
     ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
     ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),
   )
+
+  let (selectedBlockFields, selectedTransactionFields) = resolveFieldSelection(
+    ~blockFields,
+    ~transactionFields,
+    ~globalBlockFieldsSet,
+    ~globalTransactionFieldsSet,
+  )
+
   {
     id: sighash ++ "_" ++ topicCount->Int.toString,
     name: eventName,
@@ -222,8 +264,8 @@ let buildEvmEventConfig = (
     filterByAddresses,
     dependsOnAddresses: !isWildcard || filterByAddresses,
     convertHyperSyncEventArgs: buildHyperSyncDecoder(params),
-    selectedBlockFields: Utils.Set.make(),
-    selectedTransactionFields: Utils.Set.make(),
+    selectedBlockFields,
+    selectedTransactionFields,
   }
 }
 
