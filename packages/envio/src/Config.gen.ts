@@ -8,5 +8,6 @@ export type EnvioAddresses_t = {
   readonly chain_id: number; 
   readonly registering_event_block: number; 
   readonly registering_event_log_index: (undefined | number); 
-  readonly contract_name: string
+  readonly contract_name: string; 
+  readonly envio_checkpoint_id: bigint
 };

@@ -52,6 +52,8 @@ type t = {
   entities: dict<InMemoryTable.Entity.t<Internal.entity>>,
   effects: dict<effectCacheInMemTable>,
   rollbackTargetCheckpointId: option<Internal.checkpointId>,
+  // Addresses accumulated during this batch, to be written to DB
+  addressesToWrite: array<Config.EnvioAddresses.t>,
 }
 
 let make = (~entities: array<Internal.entityConfig>, ~rollbackTargetCheckpointId=?): t => {
@@ -59,6 +61,7 @@ let make = (~entities: array<Internal.entityConfig>, ~rollbackTargetCheckpointId
   entities: EntityTables.make(entities),
   effects: Js.Dict.empty(),
   rollbackTargetCheckpointId,
+  addressesToWrite: [],
 }
 
 let clone = (self: t) => {
@@ -71,6 +74,7 @@ let clone = (self: t) => {
     effect: table.effect,
   }, self.effects),
   rollbackTargetCheckpointId: self.rollbackTargetCheckpointId,
+  addressesToWrite: self.addressesToWrite->Array.copy,
 }
 
 let getEffectInMemTable = (inMemoryStore: t, ~effect: Internal.effect) => {
@@ -98,10 +102,7 @@ let getInMemTable = (
 
 let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpointId !== None
 
-let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
-  let inMemTable =
-    inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
-
+let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory as _) => {
   let itemIdx = ref(0)
 
   for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
@@ -119,22 +120,15 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
         let eventItem = item->Internal.castUnsafeEventItem
         for dcIdx in 0 to dcs->Array.length - 1 {
           let dc = dcs->Js.Array2.unsafe_get(dcIdx)
-          let entity: InternalTable.EnvioAddresses.t = {
-            id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
+          let entry: Config.EnvioAddresses.t = {
+            id: dc.address->Address.toString,
             chainId,
             contractName: dc.contractName,
             registeringEventBlock: eventItem.blockNumber,
             registeringEventLogIndex: Some(eventItem.logIndex),
+            checkpointId,
           }
-
-          inMemTable->InMemoryTable.Entity.set(
-            Set({
-              entityId: entity.id,
-              checkpointId,
-              entity: entity->InternalTable.EnvioAddresses.castToInternal,
-            }),
-            ~shouldSaveHistory,
-          )
+          inMemoryStore.addressesToWrite->Js.Array2.push(entry)->ignore
         }
       }
     }

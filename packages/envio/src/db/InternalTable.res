@@ -188,7 +188,7 @@ WHERE "${(#id: field :> string)}" = $1;`
 "${(#source_block: field :> string)}" as "sourceBlockNumber",
 (
   SELECT COALESCE(json_agg(json_build_object(
-    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
+    'address', "id",
     'contractName', "contract_name",
     'startBlock', "registering_event_block",
     'registrationBlock', "registering_event_block"

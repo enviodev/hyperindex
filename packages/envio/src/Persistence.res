@@ -118,6 +118,7 @@ type storage = {
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
+    ~addressesToWrite: array<Config.EnvioAddresses.t>,
   ) => promise<unit>,
 }
 
@@ -142,7 +143,7 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Js.Array2.concat([InternalTable.EnvioAddresses.entityConfig])
+  let allEntities = userEntities
   let allEnums =
     allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
@@ -257,6 +258,7 @@ let writeBatch = (
       ~config,
       ~allEntities=persistence.allEntities,
       ~updatedEntities,
+      ~addressesToWrite=inMemoryStore.addressesToWrite,
       ~updatedEffectsCache={
         inMemoryStore.effects
         ->Js.Dict.keys
@@ -316,45 +318,46 @@ let prepareRollbackDiff = async (
   let deletedEntities = Js.Dict.empty()
   let setEntities = Js.Dict.empty()
 
-  let _ = await persistence.allEntities
-  ->Belt.Array.map(async entityConfig => {
-    let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
+  let _ =
+    await persistence.allEntities
+    ->Belt.Array.map(async entityConfig => {
+      let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
 
-    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
-      ~entityConfig,
-      ~rollbackTargetCheckpointId,
-    )
-
-    // Process removed IDs
-    removedIdsResult->Js.Array2.forEach(data => {
-      deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-      entityTable->InMemoryTable.Entity.set(
-        Delete({
-          entityId: data["id"],
-          checkpointId: rollbackDiffCheckpointId,
-        }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
+      let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+        ~entityConfig,
+        ~rollbackTargetCheckpointId,
       )
-    })
 
-    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+      // Process removed IDs
+      removedIdsResult->Js.Array2.forEach(data => {
+        deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+        entityTable->InMemoryTable.Entity.set(
+          Delete({
+            entityId: data["id"],
+            checkpointId: rollbackDiffCheckpointId,
+          }),
+          ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
+        )
+      })
 
-    // Process restored entities
-    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-      setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-      entityTable->InMemoryTable.Entity.set(
-        Set({
-          entityId: entity.id,
-          checkpointId: rollbackDiffCheckpointId,
-          entity,
-        }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
-      )
+      let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
+
+      // Process restored entities
+      restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
+        setEntities->Utils.Dict.push(entityConfig.name, entity.id)
+        entityTable->InMemoryTable.Entity.set(
+          Set({
+            entityId: entity.id,
+            checkpointId: rollbackDiffCheckpointId,
+            entity,
+          }),
+          ~shouldSaveHistory=false,
+          ~containsRollbackDiffChange=true,
+        )
+      })
     })
-  })
-  ->Promise.all
+    ->Promise.all
 
   {
     "inMemStore": inMemStore,

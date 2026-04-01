@@ -194,6 +194,7 @@ let makeInitializeTransaction = (
     InternalTable.PersistedState.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
+    InternalTable.EnvioAddresses.table,
   ]
 
   let allTables = generalTables->Array.copy
@@ -512,9 +513,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
-          let params = data["convertOrThrow"](
-            chunk->(Utils.magic: array<'item> => array<unknown>),
-          )
+          let params = data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>))
           // Use prepared query only for full batches where the cached query is reused.
           // Partial chunks generate unique SQL each time, so preparation has no benefit.
           let response = isFullChunk
@@ -739,6 +738,7 @@ let rec writeBatch = async (
   ~setEffectCacheOrThrow,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
+  ~addressesToWrite: array<Config.EnvioAddresses.t>,
   ~sinkPromise: option<promise<option<exn>>>,
   ~escapeTables=?,
 ) => {
@@ -828,7 +828,10 @@ let rec writeBatch = async (
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
+                  (
+                    batchDeleteEntityIds,
+                    batchDeleteCheckpointIds->BigInt.arrayToStringArray,
+                  )->Obj.magic,
                 )
                 ->Promise.ignoreValue,
               )
@@ -945,6 +948,19 @@ let rec writeBatch = async (
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
           )
           ->ignore
+          // Rollback addresses: delete entries created after the rollback target
+          promises
+          ->Js.Array2.push(
+            sql
+            ->Postgres.preparedUnsafe(
+              `DELETE FROM "${pgSchema}"."${InternalTable.EnvioAddresses.table.tableName}" WHERE "envio_checkpoint_id" > $1;`,
+              [rollbackTargetCheckpointId->BigInt.toString]->(
+                Utils.magic: array<string> => unknown
+              ),
+            )
+            ->Promise.ignoreValue,
+          )
+          ->ignore
           Promise.all(promises)
         },
       )
@@ -976,6 +992,42 @@ let rec writeBatch = async (
               ),
             setRawEvents,
           ]->Belt.Array.concat(setEntities)
+
+          // Insert new addresses
+          if addressesToWrite->Array.length > 0 {
+            setOperations->Belt.Array.push(sql => {
+              sql
+              ->Postgres.preparedUnsafe(
+                `INSERT INTO "${pgSchema}"."${InternalTable.EnvioAddresses.table.tableName}" ("id", "chain_id", "registering_event_block", "registering_event_log_index", "contract_name", "envio_checkpoint_id")
+SELECT * FROM UNNEST($1::text[], $2::${(Postgres.Integer :> string)}[], $3::${(Postgres.Integer :> string)}[], $4::${(Postgres.Integer :> string)}[], $5::text[], $6::${(Postgres.BigInt :> string)}[])
+ON CONFLICT ("id", "chain_id") DO NOTHING;`,
+                {
+                  let ids = []
+                  let chainIds = []
+                  let blocks = []
+                  let logIndices = []
+                  let contractNames = []
+                  let checkpointIds = []
+                  addressesToWrite->Js.Array2.forEach(
+                    addr => {
+                      ids->Js.Array2.push(addr.id)->ignore
+                      chainIds->Js.Array2.push(addr.chainId)->ignore
+                      blocks->Js.Array2.push(addr.registeringEventBlock)->ignore
+                      logIndices
+                      ->Js.Array2.push(
+                        addr.registeringEventLogIndex->(Utils.magic: option<int> => Js.Null.t<int>),
+                      )
+                      ->ignore
+                      contractNames->Js.Array2.push(addr.contractName)->ignore
+                      checkpointIds->Js.Array2.push(addr.checkpointId->BigInt.toString)->ignore
+                    },
+                  )
+                  (ids, chainIds, blocks, logIndices, contractNames, checkpointIds)->Obj.magic
+                },
+              )
+              ->Promise.ignoreValue
+            })
+          }
 
           if shouldSaveHistory {
             setOperations->Belt.Array.push(sql =>
@@ -1048,6 +1100,7 @@ let rec writeBatch = async (
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
+      ~addressesToWrite,
       ~sinkPromise,
     )
   }
@@ -1500,7 +1553,12 @@ let make = (
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(
         Utils.magic: promise<array<unknown>> => promise<
-          array<{"id": string, "chain_id": int, "block_number": int, "block_hash": string}>,
+          array<{
+            "id": string,
+            "chain_id": int,
+            "block_number": int,
+            "block_hash": string,
+          }>,
         >
       ),
     ))
@@ -1594,6 +1652,7 @@ let make = (
     ~allEntities,
     ~updatedEffectsCache,
     ~updatedEntities,
+    ~addressesToWrite,
   ) => {
     // Initialize sink if configured
     let sinkPromise = switch sink {
@@ -1627,6 +1686,7 @@ let make = (
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities,
+      ~addressesToWrite,
       ~sinkPromise,
     )
   }

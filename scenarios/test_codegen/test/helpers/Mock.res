@@ -197,6 +197,7 @@ module Storage = {
           ~allEntities as _,
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
+          ~addressesToWrite as _,
         ) => Js.Exn.raiseError("Not implemented"),
       },
     }
@@ -235,6 +236,7 @@ module Indexer = {
     query: 'entity. Indexer.Entities.name<'entity> => promise<array<'entity>>,
     queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
+    queryAddresses: unit => promise<array<Config.EnvioAddresses.t>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
@@ -425,6 +427,16 @@ module Indexer = {
           items->S.parseOrThrow(entityConfig.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
+      },
+      queryAddresses: () => {
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=InternalTable.EnvioAddresses.table.tableName,
+          ),
+        )
+        ->(Utils.magic: promise<array<unknown>> => promise<array<Config.EnvioAddresses.t>>)
       },
       queryCheckpoints: () => {
         sql
