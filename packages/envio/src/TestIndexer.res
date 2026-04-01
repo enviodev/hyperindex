@@ -826,7 +826,7 @@ let makeCreateTestIndexer = (
 
           runChains(0)->Promise.catch(err => {
             state.processInProgress = false
-            Promise.reject(err->(Utils.magic: exn => exn))
+            Promise.reject(err->Utils.prettifyExn)
           })
         }
       )->(Utils.magic: ('a => promise<processResult>) => unknown),
