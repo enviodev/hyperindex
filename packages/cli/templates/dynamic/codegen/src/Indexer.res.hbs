@@ -29,17 +29,6 @@ module Block = {
   type t = {{field_selection.block_type}}
 }
 
-{{!-- For internal usage. The type and schema which agreage
-  all possible event-specific and global field selection --}}
-module AggregatedBlock = {
-  @genType
-  type t = {{aggregated_field_selection.block_type}}
-}
-module AggregatedTransaction = {
-  @genType
-  type t = {{aggregated_field_selection.transaction_type}}
-}
-
 @genType.as("EventLog")
 type eventLog<'params> = Internal.genericEvent<'params, Block.t, Transaction.t>
 
