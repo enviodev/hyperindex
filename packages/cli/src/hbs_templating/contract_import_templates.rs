@@ -446,8 +446,6 @@ impl Contract {
         content.push_str("\n    await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str(&format!("        {}: {{\n", chain_id));
-        content.push_str("          startBlock: 0,\n");
-        content.push_str("          endBlock: 0,\n");
         content.push_str("          simulate: [event],\n");
         content.push_str("        },\n");
         content.push_str("      },\n");
@@ -523,8 +521,6 @@ impl Contract {
         content.push_str("\n    let _ = await indexer.process({\n");
         content.push_str("      chains: {\n");
         content.push_str(&format!("        \\\"{}\": {{\n", chain_id));
-        content.push_str("          startBlock: 0,\n");
-        content.push_str("          endBlock: 0,\n");
 
         // Generate makeSimulateItem call using GADT-based eventIdentity
         if first_event.params.is_empty() {

@@ -147,6 +147,7 @@ let createEffect = (
 }
 
 type fuelBlockInput = {
+  id?: string,
   height?: int,
   time?: int,
 }
