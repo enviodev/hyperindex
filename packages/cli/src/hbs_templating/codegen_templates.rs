@@ -10,7 +10,7 @@ use crate::{
     config_parsing::{
         chain_helpers::Network,
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField, IndexFieldDirection},
-        event_parsing::{abi_to_rescript_type, EvmEventParam},
+        event_parsing::abi_to_rescript_type,
         field_types,
         human_config::{evm::For, HumanConfig},
         system_config::{
@@ -532,17 +532,10 @@ impl EntityRecordTypeTemplate {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EventMod {
-    pub sighash: String,
-    pub topic_count: usize,
     pub event_name: String,
     pub data_type: String,
-    pub parse_event_filters_code: String,
-    pub params_raw_event_schema: String,
-    pub convert_hyper_sync_event_args_code: String,
     pub event_filter_type: String,
     pub custom_field_selection: Option<system_config::FieldSelection>,
-    pub global_field_selection: Option<system_config::FieldSelection>,
-    pub fuel_event_kind: Option<FuelEventKind>,
     pub params_constructor_type: String,
 }
 
@@ -671,10 +664,6 @@ pub struct EventTemplate {
 
 impl EventTemplate {
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
-    const CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP: &'static str =
-        "_ => ()->(Utils.magic: eventArgs => Internal.eventParams)";
-    const CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER: &'static str =
-        "_ => Js.Exn.raiseError(\"Not implemented\")";
 
     pub fn generate_event_filter_type(params: &[EventParam]) -> String {
         let field_rows = params
@@ -694,110 +683,13 @@ impl EventTemplate {
         format!("{{{field_rows}}}")
     }
 
-    pub fn generate_parse_event_filters_code(params: &[EventParam]) -> String {
-        let indexed_params = params.iter().filter(|param| param.indexed);
-
-        //Prefixed with underscore for cases where it is not used to avoid compiler warnings
-        let event_filter_arg = "_eventFilter";
-        let mut params_code = "".to_string();
-
-        let topic_filter_calls =
-            indexed_params
-                .enumerate()
-                .fold(String::new(), |mut output, (i, param)| {
-                    let param = EvmEventParam::from(param);
-                    let topic_number = i + 1;
-                    let param_name = RecordField::to_valid_rescript_name(param.name);
-                    let topic_encoder = param.get_topic_encoder();
-                    let nested_type_flags = match param.get_nested_type_depth() {
-                        depth if depth > 0 => format!("(~nestedArrayDepth={depth})"),
-                        _ => "".to_string(),
-                    };
-                    params_code = format!("{params_code}\"{param_name}\",");
-                    let _ = write!(
-                        output,
-                        ", ~topic{topic_number}=({event_filter_arg}) => \
-                       {event_filter_arg}->Utils.Dict.dangerouslyGetNonOption(\"{param_name}\"\
-                       )->Belt.Option.mapWithDefault([], topicFilters => \
-                       topicFilters->Obj.magic->SingleOrMultiple.\
-                       normalizeOrThrow{nested_type_flags}->Belt.Array.map({topic_encoder}))"
-                    );
-                    output
-                });
-
-        format!(
-            "LogSelection.parseEventFiltersOrThrow(~eventFilters=HandlerRegister.\
-           getEventFilters(~contractName, ~eventName=name), ~sighash, ~params=[{params_code}]{topic_filter_calls})"
-        )
-    }
-
-    pub fn generate_convert_hyper_sync_event_args_code(params: &[EventParam]) -> String {
-        if params.is_empty() {
-            return Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NOOP.to_string();
-        }
-        let indexed_params = params
-            .iter()
-            .filter(|param| param.indexed)
-            .collect::<Vec<_>>();
-
-        let body_params = params
-            .iter()
-            .filter(|param| !param.indexed)
-            .collect::<Vec<_>>();
-
-        let mut code = String::from("(decodedEvent: HyperSyncClient.Decoder.decodedEvent) => {");
-
-        for (index, param) in indexed_params.into_iter().enumerate() {
-            let array_access = if index == 0 {
-                "Utils.Array.firstUnsafe".to_string()
-            } else {
-                format!("Js.Array2.unsafe_get({})", index)
-            };
-            code.push_str(&format!(
-                "{}: decodedEvent.indexed->{}->HyperSyncClient.Decoder.\
-               toUnderlying->Utils.magic, ",
-                RecordField::to_valid_rescript_name(&param.name),
-                array_access
-            ));
-        }
-
-        for (index, param) in body_params.into_iter().enumerate() {
-            let array_access = if index == 0 {
-                "Utils.Array.firstUnsafe".to_string()
-            } else {
-                format!("Js.Array2.unsafe_get({})", index)
-            };
-            code.push_str(&format!(
-                "{}: decodedEvent.body->{}->HyperSyncClient.Decoder.\
-               toUnderlying->Utils.magic, ",
-                RecordField::to_valid_rescript_name(&param.name),
-                array_access
-            ));
-        }
-
-        code.push_str("}->(Utils.magic: eventArgs => Internal.eventParams)");
-
-        code
-    }
-
-    pub fn from_fuel_supply_event(
-        config_event: &system_config::Event,
-        fuel_event_kind: FuelEventKind,
-    ) -> Self {
+    pub fn from_fuel_supply_event(config_event: &system_config::Event) -> Self {
         let event_name = config_event.name.capitalize();
         let event_mod = EventMod {
-            sighash: config_event.sighash.to_string(),
-            topic_count: 0,
             event_name: event_name.clone(),
-            parse_event_filters_code: "".to_string(),
             data_type: "Internal.fuelSupplyParams".to_string(),
-            params_raw_event_schema: "Internal.fuelSupplyParamsSchema".to_string(),
-            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
-                .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
-            global_field_selection: None,
-            fuel_event_kind: Some(fuel_event_kind),
             params_constructor_type: "Internal.fuelSupplyParams".to_string(),
         };
         EventTemplate {
@@ -807,25 +699,13 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_fuel_transfer_event(
-        config_event: &system_config::Event,
-
-        fuel_event_kind: FuelEventKind,
-    ) -> Self {
+    pub fn from_fuel_transfer_event(config_event: &system_config::Event) -> Self {
         let event_name = config_event.name.capitalize();
         let event_mod = EventMod {
-            sighash: config_event.sighash.to_string(),
-            topic_count: 0,
             event_name: event_name.clone(),
-            parse_event_filters_code: "".to_string(),
             data_type: "Internal.fuelTransferParams".to_string(),
-            params_raw_event_schema: "Internal.fuelTransferParamsSchema".to_string(),
-            convert_hyper_sync_event_args_code: Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER
-                .to_string(),
             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
             custom_field_selection: config_event.field_selection.clone(),
-            global_field_selection: None,
-            fuel_event_kind: Some(fuel_event_kind),
             params_constructor_type: "Internal.fuelTransferParams".to_string(),
         };
         EventTemplate {
@@ -835,10 +715,7 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_config_event(
-        config_event: &system_config::Event,
-        global_field_selection: &system_config::FieldSelection,
-    ) -> Result<Self> {
+    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
@@ -897,21 +774,10 @@ impl EventTemplate {
                 };
 
                 let event_mod = EventMod {
-                    sighash: config_event.sighash.to_string(),
-                    topic_count: params
-                        .iter()
-                        .fold(1, |acc, param| if param.indexed { acc + 1 } else { acc }),
                     event_name: event_name.clone(),
                     data_type: data_type_expr.to_string(),
-                    parse_event_filters_code: Self::generate_parse_event_filters_code(params),
-                    params_raw_event_schema: data_type_expr
-                        .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-                    convert_hyper_sync_event_args_code:
-                        Self::generate_convert_hyper_sync_event_args_code(params),
                     event_filter_type: Self::generate_event_filter_type(params),
                     custom_field_selection: config_event.field_selection.clone(),
-                    global_field_selection: Some(global_field_selection.clone()),
-                    fuel_event_kind: None,
                     params_constructor_type,
                 };
 
@@ -926,23 +792,11 @@ impl EventTemplate {
                 match &fuel_event_kind {
                     FuelEventKind::LogData(type_indent) => {
                         let data_type_str = type_indent.to_string();
-                        let params_raw_event_schema_str = format!(
-                            "{}->Utils.Schema.coerceToJsonPgType",
-                            type_indent.to_rescript_schema(&SchemaMode::ForDb)
-                        );
                         let event_mod = EventMod {
-                            sighash: config_event.sighash.to_string(),
-                            topic_count: 0,
                             event_name: event_name.clone(),
-                            parse_event_filters_code: "".to_string(),
                             data_type: data_type_str.clone(),
-                            params_raw_event_schema: params_raw_event_schema_str,
-                            convert_hyper_sync_event_args_code:
-                                Self::CONVERT_HYPER_SYNC_EVENT_ARGS_NEVER.to_string(),
                             event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
                             custom_field_selection: config_event.field_selection.clone(),
-                            global_field_selection: None,
-                            fuel_event_kind: Some(fuel_event_kind),
                             params_constructor_type: data_type_str,
                         };
 
@@ -953,11 +807,11 @@ impl EventTemplate {
                         })
                     }
                     FuelEventKind::Mint | FuelEventKind::Burn => {
-                        Ok(Self::from_fuel_supply_event(config_event, fuel_event_kind))
+                        Ok(Self::from_fuel_supply_event(config_event))
                     }
-                    FuelEventKind::Call | FuelEventKind::Transfer => Ok(
-                        Self::from_fuel_transfer_event(config_event, fuel_event_kind),
-                    ),
+                    FuelEventKind::Call | FuelEventKind::Transfer => {
+                        Ok(Self::from_fuel_transfer_event(config_event))
+                    }
                 }
             }
         }
@@ -973,17 +827,13 @@ pub struct ContractTemplate {
 }
 
 impl ContractTemplate {
-    fn from_config_contract(
-        contract: &system_config::Contract,
-        config: &SystemConfig,
-    ) -> Result<Self> {
+    fn from_config_contract(contract: &system_config::Contract) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = contract.handler_path.clone();
-        let global_field_selection = &config.field_selection;
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, global_field_selection))
+            .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
 
         let module_code = match &contract.abi {
@@ -1304,7 +1154,7 @@ impl ProjectTemplate {
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
-            .map(|cfg_contract| ContractTemplate::from_config_contract(cfg_contract, cfg))
+            .map(|cfg_contract| ContractTemplate::from_config_contract(cfg_contract))
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;
 
@@ -2584,38 +2434,16 @@ mod test {
         get_project_template_helper("config5.yaml");
     }
 
-    const RESCRIPT_BIG_INT_TYPE: TypeIdent = TypeIdent::BigInt;
-    const RESCRIPT_ADDRESS_TYPE: TypeIdent = TypeIdent::Address;
-    const RESCRIPT_STRING_TYPE: TypeIdent = TypeIdent::String;
-
-    impl EventParamTypeTemplate {
-        fn new(name: &str, res_type: TypeIdent) -> Self {
-            let js_name = name.to_string();
-            Self {
-                res_name: RecordField::to_valid_rescript_name(&js_name),
-                js_name,
-                res_type: res_type.to_string(),
-                default_value_rescript: res_type.get_default_value_rescript(),
-                default_value_non_rescript: res_type.get_default_value_non_rescript(),
-                is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,
-            }
-        }
-    }
-
     #[test]
     fn event_template_with_empty_params() {
-        let global_field_selection = FieldSelection::empty();
-        let event_template = EventTemplate::from_config_event(
-            &system_config::Event {
-                name: "NewGravatar".to_string(),
-                kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
-                event_signature: String::new(),
-                field_selection: None,
-            },
-            &global_field_selection,
-        )
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            kind: system_config::EventKind::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+            event_signature: String::new(),
+            field_selection: None,
+        })
         .unwrap();
 
         assert_eq!(event_template.name, "NewGravatar");
@@ -2625,24 +2453,20 @@ mod test {
 
     #[test]
     fn event_template_with_custom_field_selection() {
-        let global_field_selection = FieldSelection::empty();
-        let event_template = EventTemplate::from_config_event(
-            &system_config::Event {
-                name: "NewGravatar".to_string(),
-                kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
-                event_signature: String::new(),
-                field_selection: Some(FieldSelection {
-                    block_fields: vec![],
-                    transaction_fields: vec![SelectedField {
-                        name: "from".to_string(),
-                        data_type: TypeIdent::option(TypeIdent::Address),
-                    }],
-                }),
-            },
-            &global_field_selection,
-        )
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            kind: system_config::EventKind::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+            event_signature: String::new(),
+            field_selection: Some(FieldSelection {
+                block_fields: vec![],
+                transaction_fields: vec![SelectedField {
+                    name: "from".to_string(),
+                    data_type: TypeIdent::option(TypeIdent::Address),
+                }],
+            }),
+        })
         .unwrap();
 
         insta::assert_snapshot!(event_template.module_code);
