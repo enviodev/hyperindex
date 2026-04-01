@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
+assertion_line: 1072
 expression: content
 ---
 open Vitest
@@ -12,8 +13,6 @@ describe("Greeter contract NewGreeting event tests", () => {
     let _ = await indexer.process({
       chains: {
         \"0": {
-          startBlock: 0,
-          endBlock: 0,
           simulate: [makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
         },
       },

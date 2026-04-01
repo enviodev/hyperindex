@@ -146,24 +146,32 @@ let createEffect = (
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
 }
 
-type evmSimulateEventItem = {
+type fuelBlockInput = {
+  id?: string,
+  height?: int,
+  time?: int,
+}
+
+type fuelTransactionInput = {id?: string}
+
+type evmSimulateItem = {
   contract: string,
   event: string,
   params?: Js.Json.t,
   srcAddress?: Address.t,
   logIndex?: int,
-  block?: Js.Json.t,
-  transaction?: Js.Json.t,
+  block?: Internal.evmBlockInput,
+  transaction?: Internal.evmTransactionInput,
 }
 
-type fuelSimulateEventItem = {
+type fuelSimulateItem = {
   contract: string,
   event: string,
   params: Js.Json.t,
   srcAddress?: Address.t,
   logIndex?: int,
-  block?: Js.Json.t,
-  transaction?: Js.Json.t,
+  block?: fuelBlockInput,
+  transaction?: fuelTransactionInput,
 }
 
 module TestHelpers = {

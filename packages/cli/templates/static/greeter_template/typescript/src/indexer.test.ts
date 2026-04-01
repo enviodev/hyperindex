@@ -12,8 +12,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         137: {
-          startBlock: 45336336,
-          endBlock: 45336336,
           simulate: [
             {
               contract: "Greeter",
@@ -45,8 +43,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         137: {
-          startBlock: 45336336,
-          endBlock: 45336336,
           simulate: [
             {
               contract: "Greeter",
@@ -76,8 +72,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         137: {
-          startBlock: 45336336,
-          endBlock: 45336336,
           simulate: [
             {
               contract: "Greeter",

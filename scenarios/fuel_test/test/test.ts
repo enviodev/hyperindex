@@ -12,8 +12,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         0: {
-          startBlock: 0,
-          endBlock: 100,
           simulate: [
             {
               contract: "Greeter",
@@ -47,8 +45,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         0: {
-          startBlock: 0,
-          endBlock: 100,
           simulate: [
             {
               contract: "Greeter",
@@ -84,8 +80,6 @@ describe("Greeter template tests", () => {
     await indexer.process({
       chains: {
         0: {
-          startBlock: 0,
-          endBlock: 100,
           simulate: [
             {
               contract: "Greeter",
@@ -110,5 +104,35 @@ describe("Greeter template tests", () => {
 
     const actualUserEntity = await indexer.User.getOrThrow(userAddress);
     expect(actualUserEntity.latestGreeting).toBe(greetingAgain);
+  });
+
+  it("endBlock defaults to max simulate block height when omitted", async () => {
+    const indexer = createTestIndexer();
+    const userAddress = Addresses.defaultAddress;
+    const greeting = "Hi there";
+
+    // Omit endBlock — should default to block height 50 from the simulate item
+    const result = await indexer.process({
+      chains: {
+        0: {
+          simulate: [
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greeting },
+                user: { bits: userAddress },
+              },
+              block: { height: 50 },
+            },
+          ],
+        },
+      },
+    });
+
+    // Verify the event at block 50 was processed (endBlock inferred from block height)
+    expect(result.changes).toEqual([
+      expect.objectContaining({ block: 50, chainId: 0, eventsProcessed: 1 }),
+    ]);
   });
 });
