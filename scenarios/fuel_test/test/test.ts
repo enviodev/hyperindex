@@ -112,7 +112,7 @@ describe("Greeter template tests", () => {
     const greeting = "Hi there";
 
     // Omit endBlock — should default to block height 50 from the simulate item
-    await indexer.process({
+    const result = await indexer.process({
       chains: {
         0: {
           simulate: [
@@ -130,7 +130,9 @@ describe("Greeter template tests", () => {
       },
     });
 
-    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
-    expect(actualUserEntity.latestGreeting).toBe(greeting);
+    // Verify the event at block 50 was processed (endBlock inferred from block height)
+    expect(result.changes).toEqual([
+      expect.objectContaining({ block: 50, chainId: 0, eventsProcessed: 1 }),
+    ]);
   });
 });
