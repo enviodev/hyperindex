@@ -794,11 +794,15 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
 let getEventConfig = (config: t, ~contractName, ~eventName) => {
   config.chainMap
   ->ChainMap.values
-  ->Js.Array2.find(chain =>
-    chain.contracts->Js.Array2.find(c => c.name == contractName)->Belt.Option.isSome
-  )
-  ->Belt.Option.flatMap(chain => chain.contracts->Js.Array2.find(c => c.name == contractName))
-  ->Belt.Option.flatMap(contract => contract.events->Js.Array2.find(e => e.name == eventName))
+  ->Js.Array2.reduce((acc, chain) => {
+    switch acc {
+    | Some(_) => acc
+    | None =>
+      chain.contracts
+      ->Js.Array2.find(c => c.name == contractName)
+      ->Belt.Option.flatMap(contract => contract.events->Js.Array2.find(e => e.name == eventName))
+    }
+  }, None)
 }
 
 let shouldSaveHistory = (config, ~isInReorgThreshold) =>
