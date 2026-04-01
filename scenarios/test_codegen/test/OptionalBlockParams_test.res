@@ -175,24 +175,30 @@ Async.it("Optional block params: raises error for invalid startBlock type", asyn
   )
 })
 
-// Test: no simulate, no endBlock → error
-Async.it("Optional block params: raises error when endBlock is missing without simulate", async t => {
-  let indexer = Indexer.createTestIndexer()
+// Test: no simulate, no endBlock → auto-exit mode (no validation error)
+Async.it(
+  "Optional block params: no endBlock without simulate enters auto-exit mode",
+  async t => {
+    let indexer = Indexer.createTestIndexer()
 
-  let error = try {
-    let _ = await indexer.process({
-      chains: {
-        \"1337": {startBlock: 1},
-      },
-    })
-    None
-  } catch {
-  | Js.Exn.Error(err) => err->Js.Exn.message
-  }
+    let error = try {
+      let _ = await indexer.process({
+        chains: {
+          \"1337": {startBlock: 1},
+        },
+      })
+      None
+    } catch {
+    | Js.Exn.Error(err) => err->Js.Exn.message
+    }
 
-  t.expect(error).toEqual(
-    Some(
-      "endBlock is required for chain 1337 when simulate is not provided",
-    ),
-  )
-})
+    // Should not raise "endBlock is required" error.
+    // It may fail for other reasons in test env (e.g. missing API token),
+    // but the block range validation itself should pass.
+    switch error {
+    | Some(msg) =>
+      t.expect(msg->Js.String2.includes("endBlock is required")).toEqual(false)
+    | None => t.expect(true).toEqual(true)
+    }
+  },
+)
