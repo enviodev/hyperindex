@@ -847,27 +847,92 @@ describe("Use Envio test framework to test event handlers", () => {
           chains: {},
         }),
       {
-        message: "createTestIndexer requires exactly one chain to be defined",
+        message: "createTestIndexer requires at least one chain to be defined",
       }
     );
   });
 
-  it("createTestIndexer throws when multiple chains are defined", () => {
+  it("createTestIndexer processes multiple chains without simulate", async () => {
     const indexer = createTestIndexer();
 
-    assert.throws(
-      () =>
-        indexer.process({
-          chains: {
-            1: { startBlock: 1, endBlock: 100 },
-            137: { startBlock: 1, endBlock: 100 },
+    // Chain 1 uses HyperSync, no events in range → empty changes
+    // Chains are sorted by chain ID
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [],
+        },
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+        },
+      },
+    });
+
+    assert.deepEqual(result, { changes: [] });
+  });
+
+  it("createTestIndexer processes multiple chains with simulate", async () => {
+    const indexer = createTestIndexer();
+
+    // Chain 1337 is listed first but has higher ID - should be processed second
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Chain 1337",
+                imageUrl: "https://example.com/1337.png",
+              },
+            },
+          ],
+        },
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Noop", event: "EmptyEvent" },
+          ],
+        },
+      },
+    });
+
+    // Chains are sorted by chain ID: chain 1 first, then chain 1337
+    assert.deepEqual(result, {
+      changes: [
+        {
+          block: 1,
+          chainId: 1,
+          eventsProcessed: 1,
+        },
+        {
+          block: 1,
+          chainId: 1337,
+          eventsProcessed: 1,
+          Gravatar: {
+            sets: [
+              {
+                id: "1",
+                owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                displayName: "Chain 1337",
+                imageUrl: "https://example.com/1337.png",
+                updatesCount: 1n,
+                size: "SMALL",
+              },
+            ],
           },
-        }),
-      {
-        message:
-          "createTestIndexer does not support processing multiple chains at once. Found 2 chains defined",
-      }
-    );
+        },
+      ],
+    });
   });
 
   it("createTestIndexer throws when process is called while already running", async () => {
