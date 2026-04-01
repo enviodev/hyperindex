@@ -6,29 +6,29 @@ expression: event_template.module_code
 let name = "NewGravatar"
 let contractName = contractName
 
-@genType
-type eventArgs = unit
+type params = unit
 /** Event params with all fields optional. Missing fields use default values. */
 type paramsConstructor = unit
-@genType
 type block = {number: int, timestamp: int, hash: string}
-@genType
 type transaction = {from: option<Address.t>}
 
-@genType
 type event = {
-/** The parameters or arguments associated with this event. */
-params: eventArgs,
-/** The unique identifier of the blockchain network where this event occurred. */
-chainId: chainId,
-/** The address of the contract that emitted this event. */
-srcAddress: Address.t,
-/** The index of this event's log within the block. */
-logIndex: int,
-/** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
-transaction: transaction,
-/** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
-block: block,
+  /** The name of the contract that emitted this event. */
+  contractName: string,
+  /** The name of the event. */
+  eventName: string,
+  /** The parameters or arguments associated with this event. */
+  params: params,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
 }
 
 @genType

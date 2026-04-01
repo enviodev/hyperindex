@@ -24,6 +24,16 @@ let noopEffect = Envio.createEffect(
 Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let () = await context.effect(noopEffect, ())
 
+  // Compile-time type check: contractName and eventName fields are accessible as strings
+  // Runtime check: verify the discriminant fields have correct values
+  let contractName: string = event.contractName
+  let eventName: string = event.eventName
+  if contractName !== "Gravatar" || eventName !== "NewGravatar" {
+    Js.Exn.raiseError(
+      `Expected contractName="Gravatar" eventName="NewGravatar", got contractName="${contractName}" eventName="${eventName}"`,
+    )
+  }
+
   let gravatarSize: Indexer.Enums.GravatarSize.t = SMALL
   let gravatarObject: Indexer.Entities.Gravatar.t = {
     id: event.params.id->BigInt.toString,

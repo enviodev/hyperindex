@@ -769,6 +769,8 @@ module Source = {
                           blockNumber: item.blockNumber,
                           logIndex: item.logIndex,
                           event: {
+                            contractName: "MockContract",
+                            eventName: "MockEvent",
                             params: %raw(`{}`),
                             chainId: chain->ChainMap.Chain.toChainId,
                             srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,

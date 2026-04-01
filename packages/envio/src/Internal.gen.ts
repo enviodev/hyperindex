@@ -10,6 +10,8 @@ import type {Invalid as $$noEventFilters} from './Types.ts';
 import type {t as Address_t} from './Address.gen.js';
 
 export type genericEvent<params,block,transaction> = {
+  readonly contractName: string; 
+  readonly eventName: string; 
   readonly params: params; 
   readonly chainId: number; 
   readonly srcAddress: Address_t; 

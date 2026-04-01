@@ -229,6 +229,8 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       blockNumber: block.number->Belt.Option.getUnsafe,
       logIndex: log.logIndex,
       event: {
+        contractName: eventConfig.contractName,
+        eventName: eventConfig.name,
         chainId,
         params,
         transaction,
