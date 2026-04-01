@@ -99,22 +99,6 @@ Async.it("Optional block params: endBlock defaults to max simulate block number"
   t.expect(entities).toEqual([{id: "50_0", blockNumber: 50, logIndex: 0, timestamp: 0}])
 })
 
-// Test: Fuel-style block height field is recognized for endBlock default
-Async.it("Optional block params: endBlock defaults to max simulate block height (Fuel)", async t => {
-  // getSimulateEndBlock uses config.ecosystem.blockNumberName to read the field.
-  // For EVM it's "number", for Fuel it's "height". This test verifies the "height"
-  // field path works by testing the function directly.
-  let config = Indexer.Generated.makeGeneratedConfig()
-  let result = TestIndexer.getSimulateEndBlock(
-    ~simulateItems=[
-      {"block": {"height": 50}}->(Utils.magic: 'a => Js.Json.t),
-    ],
-    ~config={...config, ecosystem: {...config.ecosystem, blockNumberName: "height"}},
-    ~startBlock=1,
-  )
-  t.expect(result).toEqual(50)
-})
-
 // Test: non-numeric chain ID → error
 Async.it("Optional block params: raises error for non-numeric chain ID", async t => {
   let indexer = Indexer.createTestIndexer()
@@ -184,9 +168,11 @@ Async.it("Optional block params: raises error for invalid startBlock type", asyn
   | Js.Exn.Error(err) => err->Js.Exn.message
   }
 
-  t.expect(
-    error->Option.map(msg => msg->Js.String2.startsWith("Invalid processConfig:")),
-  ).toEqual(Some(true))
+  t.expect(error).toEqual(
+    Some(
+      "Invalid processConfig: RescriptSchemaError: Failed parsing at [\"chains\"][\"1337\"][\"startBlock\"]. Reason: Expected int32 | undefined, received \"not_a_number\"",
+    ),
+  )
 })
 
 // Test: no simulate, no endBlock → error

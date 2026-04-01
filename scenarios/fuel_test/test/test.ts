@@ -105,4 +105,32 @@ describe("Greeter template tests", () => {
     const actualUserEntity = await indexer.User.getOrThrow(userAddress);
     expect(actualUserEntity.latestGreeting).toBe(greetingAgain);
   });
+
+  it("endBlock defaults to max simulate block height when omitted", async () => {
+    const indexer = createTestIndexer();
+    const userAddress = Addresses.defaultAddress;
+    const greeting = "Hi there";
+
+    // Omit endBlock — should default to block height 50 from the simulate item
+    await indexer.process({
+      chains: {
+        0: {
+          simulate: [
+            {
+              contract: "Greeter",
+              event: "NewGreeting",
+              params: {
+                greeting: { value: greeting },
+                user: { bits: userAddress },
+              },
+              block: { height: 50 },
+            },
+          ],
+        },
+      },
+    });
+
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
+    expect(actualUserEntity.latestGreeting).toBe(greeting);
+  });
 });
