@@ -14,7 +14,6 @@ describe("Indexer smoke test", () => {
       const change = result.changes[0];
       t.expect(change).toEqual({
         block: expect.any(Number),
-        blockHash: expect.any(String),
         chainId: 1,
         eventsProcessed: expect.any(Number),
         Transfer: {
