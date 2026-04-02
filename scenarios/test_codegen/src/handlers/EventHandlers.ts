@@ -15,11 +15,9 @@ import {
   NftFactory,
   SimpleNft,
   type EvmChainId,
+  type EvmEvent,
   type NftCollection,
   type User,
-  type eventLog,
-  type NftFactory_SimpleNftCreated_eventArgs,
-  type NftFactory_SimpleNftCreated_event,
   onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -160,30 +158,7 @@ Gravatar.CustomSelection.handler(async ({ event, context }) => {
   S.assertOrThrow(event.block, blockSchema)!;
   deepEqual(context.chain.id, event.chainId);
 
-  // We already do type checking in the tests,
-  // but double-check that we receive correct types
-  // in the handler args as well
-  expectType<
-    TypeEqual<
-      typeof event.transaction,
-      {
-        readonly to: `0x${string}` | undefined;
-        readonly from: `0x${string}` | undefined;
-        readonly hash: string;
-      }
-    >
-  >(true);
-  expectType<
-    TypeEqual<
-      typeof event.block,
-      {
-        readonly number: number;
-        readonly timestamp: number;
-        readonly hash: string;
-        readonly parentHash: string;
-      }
-    >
-  >(true);
+  // Type checking for custom field selection is done in CustomSelection.test.ts
 
   // Test chain field accessibility in TypeScript
   expectType<
@@ -206,8 +181,13 @@ NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
 });
 
 NftFactory.SimpleNftCreated.handler(async ({ event, context }) => {
-  const testType: NftFactory_SimpleNftCreated_event =
-    event satisfies eventLog<NftFactory_SimpleNftCreated_eventArgs>;
+  // Type validation: EvmEvent params match handler event params
+  expectType<
+    TypeEqual<
+      typeof event.params,
+      EvmEvent<"NftFactory", "SimpleNftCreated">["params"]
+    >
+  >(true);
 
   let nftCollection: NftCollection = {
     id: event.params.contractAddress,

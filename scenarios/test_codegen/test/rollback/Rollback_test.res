@@ -619,7 +619,7 @@ describe("E2E rollback tests", () => {
 
     let calls = []
     let handler = async (
-      {event}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+      {event}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
     ) => {
       calls->Array.push(event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString)
     }
@@ -906,7 +906,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+      {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
     ) => {
       context.\"SimpleEntity".set({
         id: "1",
@@ -1367,7 +1367,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
       ) => {
         context.\"SimpleEntity".set({
           id: "1",
@@ -1811,7 +1811,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
       ) => {
         context.\"SimpleEntity".set({
           id: "1",

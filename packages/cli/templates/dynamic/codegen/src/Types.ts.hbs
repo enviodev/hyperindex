@@ -2,8 +2,9 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter } from "envio";
+import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter, Address } from "envio";
 import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, Enums } from "../envio.d.ts";
+export type { EvmChainId, FuelChainId, SvmChainId } from "../envio.d.ts";
 
 // Utility type to check if an object type is empty
 type IsEmptyObject<T> = keyof T extends never ? true : false;
@@ -12,11 +13,6 @@ type IsEmptyObject<T> = keyof T extends never ? true : false;
 export type EvmChainName = IsEmptyObject<EvmChains> extends true
   ? "EvmChainName is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
   : keyof EvmChains;
-
-/** Union of all configured EVM chain IDs. */
-export type EvmChainId = IsEmptyObject<EvmChains> extends true
-  ? "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'"
-  : EvmChains[keyof EvmChains]["id"];
 
 /** Union of all configured EVM contract names. */
 export type EvmContractName = IsEmptyObject<EvmContracts> extends true
@@ -28,25 +24,35 @@ export type FuelChainName = IsEmptyObject<FuelChains> extends true
   ? "FuelChainName is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
   : keyof FuelChains;
 
-/** Union of all configured Fuel chain IDs. */
-export type FuelChainId = IsEmptyObject<FuelChains> extends true
-  ? "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'"
-  : FuelChains[keyof FuelChains]["id"];
-
 /** Union of all configured Fuel contract names. */
 export type FuelContractName = IsEmptyObject<FuelContracts> extends true
   ? "FuelContractName is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
   : keyof FuelContracts;
 
+/** Lookup an EVM event type by contract and event name. Without generics, returns a discriminated union of all EVM events. */
+export type EvmEvent<
+  TContractName extends keyof EvmContracts = keyof EvmContracts,
+  TEventName extends string = string
+> = IsEmptyObject<EvmContracts> extends true
+  ? "EvmEvent is not available. Configure EVM contracts in config.yaml and run 'pnpm envio codegen'"
+  : {
+    [C in TContractName]: EvmContracts[C][TEventName & keyof EvmContracts[C]]
+  }[TContractName];
+
+/** Lookup a Fuel event type by contract and event name. Without generics, returns a discriminated union of all Fuel events. */
+export type FuelEvent<
+  TContractName extends keyof FuelContracts = keyof FuelContracts,
+  TEventName extends string = string
+> = IsEmptyObject<FuelContracts> extends true
+  ? "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+  : {
+    [C in TContractName]: FuelContracts[C][TEventName & keyof FuelContracts[C]]
+  }[TContractName];
+
 /** Union of all configured SVM chain names. */
 export type SvmChainName = IsEmptyObject<SvmChains> extends true
   ? "SvmChainName is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
   : keyof SvmChains;
-
-/** Union of all configured SVM chain IDs. */
-export type SvmChainId = IsEmptyObject<SvmChains> extends true
-  ? "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'"
-  : SvmChains[keyof SvmChains]["id"];
 
 // Construct config type from generated types
 type IndexerConfigTypes = (IsEmptyObject<EvmChains> extends true

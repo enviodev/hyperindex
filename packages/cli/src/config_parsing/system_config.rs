@@ -1675,6 +1675,99 @@ impl FieldSelection {
         )
     }
 
+    /// Returns a FieldSelection containing ALL available EVM block and transaction fields.
+    /// Used for generating complete TypeScript types where unselected fields are typed as `never`.
+    pub fn all_evm() -> Self {
+        use human_config::evm::{BlockField, TransactionField};
+        use strum::IntoEnumIterator;
+
+        let block_fields: Vec<SelectedField> = BlockField::iter()
+            .map(|field| {
+                let data_type = match field {
+                    BlockField::ParentHash => TypeIdent::String,
+                    BlockField::Nonce => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::Sha3Uncles => TypeIdent::String,
+                    BlockField::LogsBloom => TypeIdent::String,
+                    BlockField::TransactionsRoot => TypeIdent::String,
+                    BlockField::StateRoot => TypeIdent::String,
+                    BlockField::ReceiptsRoot => TypeIdent::String,
+                    BlockField::Miner => TypeIdent::Address,
+                    BlockField::Difficulty => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::TotalDifficulty => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::ExtraData => TypeIdent::String,
+                    BlockField::Size => TypeIdent::BigInt,
+                    BlockField::GasLimit => TypeIdent::BigInt,
+                    BlockField::GasUsed => TypeIdent::BigInt,
+                    BlockField::Uncles => TypeIdent::option(TypeIdent::array(TypeIdent::String)),
+                    BlockField::BaseFeePerGas => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::BlobGasUsed => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::ExcessBlobGas => TypeIdent::option(TypeIdent::BigInt),
+                    BlockField::ParentBeaconBlockRoot => TypeIdent::option(TypeIdent::String),
+                    BlockField::WithdrawalsRoot => TypeIdent::option(TypeIdent::String),
+                    BlockField::L1BlockNumber => TypeIdent::option(TypeIdent::Int),
+                    BlockField::SendCount => TypeIdent::option(TypeIdent::String),
+                    BlockField::SendRoot => TypeIdent::option(TypeIdent::String),
+                    BlockField::MixHash => TypeIdent::option(TypeIdent::String),
+                };
+                SelectedField {
+                    name: field.to_string(),
+                    data_type,
+                }
+            })
+            .collect();
+
+        let transaction_fields: Vec<SelectedField> = TransactionField::iter()
+            .map(|field| {
+                let data_type = match field {
+                    TransactionField::TransactionIndex => TypeIdent::Int,
+                    TransactionField::Hash => TypeIdent::String,
+                    TransactionField::From => TypeIdent::option(TypeIdent::Address),
+                    TransactionField::To => TypeIdent::option(TypeIdent::Address),
+                    TransactionField::Gas => TypeIdent::BigInt,
+                    TransactionField::GasPrice => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::MaxPriorityFeePerGas => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::MaxFeePerGas => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::CumulativeGasUsed => TypeIdent::BigInt,
+                    TransactionField::EffectiveGasPrice => TypeIdent::BigInt,
+                    TransactionField::GasUsed => TypeIdent::BigInt,
+                    TransactionField::Input => TypeIdent::String,
+                    TransactionField::Nonce => TypeIdent::BigInt,
+                    TransactionField::Value => TypeIdent::BigInt,
+                    TransactionField::V => TypeIdent::option(TypeIdent::String),
+                    TransactionField::R => TypeIdent::option(TypeIdent::String),
+                    TransactionField::S => TypeIdent::option(TypeIdent::String),
+                    TransactionField::ContractAddress => TypeIdent::option(TypeIdent::Address),
+                    TransactionField::LogsBloom => TypeIdent::String,
+                    TransactionField::Root => TypeIdent::option(TypeIdent::String),
+                    TransactionField::Status => TypeIdent::option(TypeIdent::Int),
+                    TransactionField::YParity => TypeIdent::option(TypeIdent::String),
+                    TransactionField::MaxFeePerBlobGas => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::BlobVersionedHashes => {
+                        TypeIdent::option(TypeIdent::array(TypeIdent::String))
+                    }
+                    TransactionField::Type => TypeIdent::option(TypeIdent::Int),
+                    TransactionField::L1Fee => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::L1GasPrice => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::L1GasUsed => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::L1FeeScalar => TypeIdent::option(TypeIdent::Float),
+                    TransactionField::GasUsedForL1 => TypeIdent::option(TypeIdent::BigInt),
+                    TransactionField::AccessList => {
+                        TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
+                    }
+                    TransactionField::AuthorizationList => {
+                        TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
+                    }
+                };
+                SelectedField {
+                    name: field.to_string(),
+                    data_type,
+                }
+            })
+            .collect();
+
+        Self::new(transaction_fields, block_fields)
+    }
+
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
         // For validating transaction field selection with rpc

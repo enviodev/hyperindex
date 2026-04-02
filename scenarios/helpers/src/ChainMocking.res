@@ -88,6 +88,8 @@ module Make = () => {
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
+        contractName: eventConfig.contractName,
+        eventName: eventConfig.name,
         params,
         srcAddress,
         chainId,

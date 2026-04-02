@@ -294,6 +294,8 @@ let parse = (
           blockNumber,
           logIndex,
           event: {
+            contractName: eventConfig.contractName,
+            eventName: eventConfig.name,
             params,
             chainId,
             srcAddress,

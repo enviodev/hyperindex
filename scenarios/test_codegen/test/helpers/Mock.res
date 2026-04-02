@@ -218,7 +218,7 @@ module Storage = {
 }
 
 // Aliases to access the generated Indexer module after the local `module Indexer` shadows it
-type eventLog<'a> = Indexer.eventLog<'a>
+type eventLog<'a> = Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>
 type handlerContext = Indexer.handlerContext
 type contractRegister<'a> = Indexer.HandlerTypes.contractRegister<'a>
 module Transaction = Indexer.Transaction
@@ -769,6 +769,8 @@ module Source = {
                           blockNumber: item.blockNumber,
                           logIndex: item.logIndex,
                           event: {
+                            contractName: "MockContract",
+                            eventName: "MockEvent",
                             params: %raw(`{}`),
                             chainId: chain->ChainMap.Chain.toChainId,
                             srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
