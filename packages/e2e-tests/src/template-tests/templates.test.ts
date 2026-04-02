@@ -37,6 +37,11 @@ const TEMPLATES: TemplateConfig[] = [
     initArgs: ["template", "-t", "feature-factory", "-l", "typescript"],
     hasTests: true,
   },
+  {
+    name: "evm-external-calls",
+    initArgs: ["template", "-t", "feature-external-calls", "-l", "typescript"],
+    hasTests: true,
+  },
   // Fuel Templates
   {
     name: "fuel-greeter",
