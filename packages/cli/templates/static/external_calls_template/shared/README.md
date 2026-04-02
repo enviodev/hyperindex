@@ -84,7 +84,7 @@ const fetchTokenDetails = createEffect(
 
 Before running the indexer locally, make sure you have the following installed:
 
-- **[Node.js 18+](https://nodejs.org/en/download/)**
+- **[Node.js 22+](https://nodejs.org/en/download/)**
 - **[pnpm](https://pnpm.io/installation)**
 - **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**
 
