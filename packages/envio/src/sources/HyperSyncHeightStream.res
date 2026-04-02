@@ -18,6 +18,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     let newTimeoutId = Js.Global.setTimeout(() => {
       Logging.trace({
         "msg": "Timeout fired for height stream",
+        "chainId": chainId,
         "url": hyperSyncUrl,
         "staleTimeMillis": staleTimeMillis,
       })
@@ -61,13 +62,20 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     updateTimeoutId()
 
     es->EventSource.onopen(_ => {
-      Logging.trace({"msg": "SSE connection opened for height stream", "url": hyperSyncUrl})
+      Logging.trace({
+        "msg": "SSE connection opened for height stream",
+        "chainId": chainId,
+        "url": hyperSyncUrl,
+      })
     })
 
     es->EventSource.onerror(error => {
-      Logging.trace({
-        "msg": "EventSource error",
-        "error": error->Js.Exn.message,
+      Logging.warn({
+        "msg": "EventSource error on height stream",
+        "chainId": chainId,
+        "url": hyperSyncUrl,
+        "status": error.status,
+        "error": error.message,
       })
     })
 
@@ -91,7 +99,12 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
         updateTimeoutId()
         // Call the callback with the new height
         onHeight(height)
-      | None => Logging.trace({"msg": "Height was not a number in event.data", "data": event.data})
+      | None =>
+        Logging.warn({
+          "msg": "Height was not a number in event.data",
+          "chainId": chainId,
+          "data": event.data,
+        })
       }
     })
   }
