@@ -46,13 +46,13 @@ describe("Contract1 contract NewGravatar event tests", () => {
   })
 })
 
-describe("Contract1 contract (integration)", () => {
+describe("Indexer smoke test", () => {
   Async.it("processes the first block with events on chain 1", async t => {
     let indexer = createTestIndexer()
 
     t.expect(
       await indexer.process({chains: {\"1": {}}}),
       ~message="Should find the first block with an event on chain 1 and process it.",
-    ).toMatchInlineSnapshot(%raw("``"))
+    ).toMatchSnapshot()
   })
 })

@@ -46,7 +46,7 @@ describe("Contract1 contract NewGravatar event tests", () => {
   });
 });
 
-describe("Contract1 contract (integration)", () => {
+describe("Indexer smoke test", () => {
   it("processes the first block with events on chain 1", async (t) => {
     const indexer = createTestIndexer();
 

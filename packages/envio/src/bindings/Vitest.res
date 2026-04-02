@@ -35,6 +35,8 @@ type rec expectation<'a> = {
   // Exception matchers
   toThrow: unit => unit,
   toThrowError: string => unit,
+  // Snapshot matchers
+  toMatchSnapshot: unit => unit,
   // Negation
   not: expectation<'a>,
 }

@@ -490,10 +490,7 @@ impl Contract {
 
         // Auto-exit snapshot test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
         if !_is_fuel {
-            content.push_str(&format!(
-                "\ndescribe(\"{} contract (integration)\", () => {{\n",
-                contract_name
-            ));
+            content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
             content.push_str(&format!(
                 "  it(\"processes the first block with events on chain {}\", async (t) => {{\n",
                 chain_id
@@ -613,10 +610,7 @@ impl Contract {
 
         // Auto-exit snapshot test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
         if !_is_fuel {
-            content.push_str(&format!(
-                "\ndescribe(\"{} contract (integration)\", () => {{\n",
-                contract_name
-            ));
+            content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
             content.push_str(&format!(
                 "  Async.it(\"processes the first block with events on chain {}\", async t => {{\n",
                 chain_id
@@ -631,7 +625,7 @@ impl Contract {
                 "      ~message=\"Should find the first block with an event on chain {} and process it.\",\n",
                 chain_id
             ));
-            content.push_str("    ).toMatchInlineSnapshot(%raw(\"``\"))\n");
+            content.push_str("    ).toMatchSnapshot()\n");
             content.push_str("  })\n");
             content.push_str("})\n");
         }
