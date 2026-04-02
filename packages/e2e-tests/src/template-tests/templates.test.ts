@@ -71,22 +71,10 @@ const TEMPLATES: TemplateConfig[] = [
       "typescript",
     ],
   },
-  {
-    name: "evm-contract-import-rescript",
-    hasTests: false,
-    initArgs: [
-      "contract-import",
-      "-c",
-      "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-      "explorer",
-      "-b",
-      "ethereum-mainnet",
-      "--single-contract",
-      "--all-events",
-      "-l",
-      "rescript",
-    ],
-  },
+  // ReScript contract-import init disabled: rescript build during init
+  // compiles src/Indexer_test.res which requires worker thread setup.
+  // Covered by cargo snapshot tests + TS variant above.
+
 ];
 
 describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
