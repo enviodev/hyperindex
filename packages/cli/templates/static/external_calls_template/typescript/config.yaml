@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: external-call-example
+description: Example showing how to use HyperIndex's Effect API for external calls like RPC or API.
+contracts:
+  - name: UniswapV3Factory
+    events:
+      - event: PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
+
+chains:
+  - id: 1 # Ethereum Mainnet
+    start_block: 12369621
+    contracts:
+      - name: UniswapV3Factory
+        address:
+          - 0x1F98431c8aD98523631AE4a59f267346ea31F984
+  - id: 42161 # Arbitrum
+    start_block: 165
+    contracts:
+      - name: UniswapV3Factory
+        address:
+          - 0x1F98431c8aD98523631AE4a59f267346ea31F984

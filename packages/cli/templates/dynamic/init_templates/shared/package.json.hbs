@@ -24,7 +24,9 @@
     "vitest": "4.0.18"
   },
   "dependencies": {
-    "envio": "{{envio_version}}"
+    "envio": "{{envio_version}}"{{#if extra_dependencies}},
+    {{#each extra_dependencies}}"{{this.[0]}}": "{{this.[1]}}"{{#unless @last}},
+    {{/unless}}{{/each}}{{/if}}
   },
   "optionalDependencies": {
     "generated": "{{relative_path_from_root_to_generated}}"
