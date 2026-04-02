@@ -95,7 +95,7 @@ const ERC20_ABI = parseAbi([
 ]);
 
 const client = createPublicClient({
-  transport: http(process.env.RPC_URL),
+  transport: http(process.env.ENVIO_RPC_URL),
 });
 
 export const getTokenMetadata = createEffect(
