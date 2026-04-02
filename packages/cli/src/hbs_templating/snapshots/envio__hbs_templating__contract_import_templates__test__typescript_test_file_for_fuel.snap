@@ -1,13 +1,12 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
-assertion_line: 1064
 expression: content
 ---
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer, type Greeter_NewGreeting } from "generated";
 
 describe("Greeter contract NewGreeting event tests", () => {
-  it("Greeter_NewGreeting is created correctly", async () => {
+  it("Greeter_NewGreeting is created correctly", async (t) => {
     const indexer = createTestIndexer();
 
     // Creating mock for Greeter contract NewGreeting event
@@ -32,6 +31,6 @@ describe("Greeter contract NewGreeting event tests", () => {
       id: "0_0_0",
     };
     // Asserting that the entity in the mock database is the same as the expected entity
-    expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);
+    t.expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);
   });
 });
