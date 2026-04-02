@@ -400,7 +400,7 @@ impl Contract {
         let mut content = String::new();
 
         // Imports
-        content.push_str("import { describe, it, expect } from \"vitest\";\n");
+        content.push_str("import { describe, it } from \"vitest\";\n");
         content.push_str(&format!(
             "import {{ createTestIndexer, type {} }} from \"generated\";\n",
             entity_name
@@ -414,7 +414,7 @@ impl Contract {
             contract_name, event_name
         ));
         content.push_str(&format!(
-            "  it(\"{}_{} is created correctly\", async () => {{\n",
+            "  it(\"{}_{} is created correctly\", async (t) => {{\n",
             contract_name, event_name
         ));
         content.push_str("    const indexer = createTestIndexer();\n");
@@ -478,7 +478,7 @@ impl Contract {
             "    // Asserting that the entity in the mock database is the same as the expected entity\n",
         );
         content.push_str(&format!(
-            "    expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
+            "    t.expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
             contract_name, event_name,
             contract_name, event_name,
             contract_name, event_name,
@@ -487,6 +487,31 @@ impl Contract {
 
         content.push_str("  });\n");
         content.push_str("});\n");
+
+        // Auto-exit snapshot test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
+        if !_is_fuel {
+            content.push_str(&format!(
+                "\ndescribe(\"{} contract (integration)\", () => {{\n",
+                contract_name
+            ));
+            content.push_str(&format!(
+                "  it(\"processes the first block with events on chain {}\", async (t) => {{\n",
+                chain_id
+            ));
+            content.push_str("    const indexer = createTestIndexer();\n\n");
+            content.push_str("    t.expect(\n");
+            content.push_str(&format!(
+                "      await indexer.process({{ chains: {{ {}: {{}} }} }}),\n",
+                chain_id
+            ));
+            content.push_str(&format!(
+                "      \"Should find the first block with an event on chain {} and process it.\"\n",
+                chain_id
+            ));
+            content.push_str("    ).toMatchInlineSnapshot(``);\n");
+            content.push_str("  });\n");
+            content.push_str("});\n");
+        }
 
         content
     }
@@ -585,6 +610,31 @@ impl Contract {
 
         content.push_str("  })\n");
         content.push_str("})\n");
+
+        // Auto-exit snapshot test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
+        if !_is_fuel {
+            content.push_str(&format!(
+                "\ndescribe(\"{} contract (integration)\", () => {{\n",
+                contract_name
+            ));
+            content.push_str(&format!(
+                "  Async.it(\"processes the first block with events on chain {}\", async t => {{\n",
+                chain_id
+            ));
+            content.push_str("    let indexer = createTestIndexer()\n\n");
+            content.push_str("    t.expect(\n");
+            content.push_str(&format!(
+                "      await indexer.process({{chains: {{\\\"{}\": {{}}}}}}),\n",
+                chain_id
+            ));
+            content.push_str(&format!(
+                "      ~message=\"Should find the first block with an event on chain {} and process it.\",\n",
+                chain_id
+            ));
+            content.push_str("    ).toMatchInlineSnapshot(%raw(\"``\"))\n");
+            content.push_str("  })\n");
+            content.push_str("})\n");
+        }
 
         content
     }

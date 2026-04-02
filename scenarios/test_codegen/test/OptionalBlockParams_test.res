@@ -176,25 +176,35 @@ Async.it("Optional block params: raises error for invalid startBlock type", asyn
 })
 
 // Test: no simulate, no endBlock → auto-exit mode (no validation error)
+// Validation passes synchronously before worker spawn, so we only need to check
+// parseBlockRange doesn't throw. The worker may hang without API token, so we
+// race with a short timeout.
 Async.it(
   "Optional block params: no endBlock without simulate enters auto-exit mode",
   async t => {
     let indexer = Indexer.createTestIndexer()
 
     let error = try {
-      let _ = await indexer.process({
-        chains: {
-          \"1337": {startBlock: 1},
-        },
-      })
+      let _ = await Promise.race([
+        indexer.process({
+          chains: {
+            \"1337": {startBlock: 1},
+          },
+        }),
+        Promise.make((_, reject) =>
+          Js.Global.setTimeout(
+            () => reject(Utils.Error.make("timeout")),
+            3000,
+          )->ignore
+        ),
+      ])
       None
     } catch {
     | Js.Exn.Error(err) => err->Js.Exn.message
     }
 
     // Should not raise "endBlock is required" error.
-    // It may fail for other reasons in test env (e.g. missing API token),
-    // but the block range validation itself should pass.
+    // May fail with timeout or missing API token — both are acceptable.
     switch error {
     | Some(msg) =>
       t.expect(msg->Js.String2.includes("endBlock is required")).toEqual(false)
