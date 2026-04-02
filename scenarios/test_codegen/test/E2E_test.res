@@ -258,7 +258,7 @@ describe("E2E tests", () => {
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+      {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
     ) => {
       context.\"SimpleEntity".set({
         id: "1",

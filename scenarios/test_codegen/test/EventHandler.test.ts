@@ -6,7 +6,9 @@ import {
   type Indexer,
   type EvmChainId,
   type EvmChainName,
+  type EvmEvent,
   type FuelChainId,
+  type FuelEvent,
   type SvmChainId,
   type TestIndexer,
 } from "generated";
@@ -1280,5 +1282,64 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.strictEqual(result.changes.length, 1);
     assert.strictEqual(result.changes[0]!.eventsProcessed, 2);
     assert.strictEqual(result.changes[0]!.Gravatar?.sets?.length, 2);
+  });
+
+  it("EvmEvent type", () => {
+    // EvmEvent without generics is a union of all events
+    type AllEvents = EvmEvent;
+
+    // contractName and eventName are discriminant fields with literal types
+    expectType<
+      TypeEqual<
+        AllEvents["contractName"],
+        | "Gravatar"
+        | "NftFactory"
+        | "SimpleNft"
+        | "TestEvents"
+        | "Noop"
+        | "EventFiltersTest"
+      >
+    >(true);
+
+    // Narrowing to a specific contract's events
+    type GravatarEvent = EvmEvent<"Gravatar">;
+    expectType<
+      TypeEqual<
+        GravatarEvent["contractName"],
+        "Gravatar"
+      >
+    >(true);
+
+    // Narrowing to a specific event
+    type NewGravatarEvent = EvmEvent<"Gravatar", "NewGravatar">;
+    expectType<TypeEqual<NewGravatarEvent["contractName"], "Gravatar">>(true);
+    expectType<TypeEqual<NewGravatarEvent["eventName"], "NewGravatar">>(true);
+    expectType<TypeEqual<NewGravatarEvent["chainId"], EvmChainId>>(true);
+    expectType<TypeEqual<NewGravatarEvent["logIndex"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["srcAddress"], `0x${string}`>>(true);
+    expectType<
+      TypeEqual<
+        NewGravatarEvent["params"],
+        {
+          readonly id: bigint;
+          readonly owner: `0x${string}`;
+          readonly displayName: string;
+          readonly imageUrl: string;
+        }
+      >
+    >(true);
+
+    // Block and transaction have proper types
+    expectType<TypeEqual<NewGravatarEvent["block"]["number"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["block"]["timestamp"], number>>(true);
+    expectType<TypeEqual<NewGravatarEvent["block"]["hash"], string>>(true);
+
+    // Non-configured ecosystem event types return error string
+    expectType<
+      TypeEqual<
+        FuelEvent,
+        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+      >
+    >(true);
   });
 });

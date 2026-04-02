@@ -448,6 +448,8 @@ let make = ({chain, endpointUrl}: options): t => {
         blockNumber: block.height,
         logIndex: receiptIndex,
         event: {
+          contractName: eventConfig.contractName,
+          eventName: eventConfig.name,
           chainId,
           params,
           transaction: {

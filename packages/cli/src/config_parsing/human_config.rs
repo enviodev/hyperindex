@@ -269,7 +269,18 @@ pub mod evm {
     }
 
     #[subenum(RpcTransactionField)]
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        PartialEq,
+        Eq,
+        Hash,
+        Clone,
+        Display,
+        JsonSchema,
+        strum::EnumIter,
+    )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum TransactionField {
@@ -324,7 +335,18 @@ pub mod evm {
     }
 
     #[subenum(RpcBlockField)]
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        PartialEq,
+        Eq,
+        Hash,
+        Clone,
+        Display,
+        JsonSchema,
+        strum::EnumIter,
+    )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum BlockField {

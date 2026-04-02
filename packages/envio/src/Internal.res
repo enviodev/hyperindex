@@ -256,6 +256,8 @@ type evmTransactionInput = {
 
 @genType
 type genericEvent<'params, 'block, 'transaction> = {
+  contractName: string,
+  eventName: string,
   params: 'params,
   chainId: int,
   srcAddress: Address.t,

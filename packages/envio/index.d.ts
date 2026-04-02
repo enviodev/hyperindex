@@ -390,11 +390,11 @@ type SvmChain<Id extends number = number> = {
 type IndexerConfigTypes = {
   evm?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, { events: string }>;
+    contracts?: Record<string, Record<string, { eventName: string }>>;
   };
   fuel?: {
     chains: Record<string, { id: number }>;
-    contracts?: Record<string, { events: string }>;
+    contracts?: Record<string, Record<string, { eventName: string }>>;
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
@@ -539,13 +539,15 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
 // ============== Test Indexer Types ==============
 
 // Helper: Build a union of {contract, event} pairs from a contracts record
-type SimulateContractEvent<Contracts extends Record<string, { events: string }>> = {
+type SimulateContractEvent<Contracts extends Record<string, Record<string, any>>> = {
   [C in keyof Contracts]: {
-    /** The contract name as defined in config.yaml. */
-    contract: C;
-    /** The event name as defined in the contract ABI. */
-    event: Contracts[C]["events"];
-  };
+    [E in keyof Contracts[C]]: {
+      /** The contract name as defined in config.yaml. */
+      contract: C;
+      /** The event name as defined in the contract ABI. */
+      event: E;
+    };
+  }[keyof Contracts[C]];
 }[keyof Contracts];
 
 /** Shared fields for all simulate items (excluding params). */
@@ -562,8 +564,8 @@ type SimulateItemBase = {
 
 /** Simulate item type for EVM ecosystem. */
 type EvmSimulateItem<Config extends IndexerConfigTypes> =
-  Config["evm"] extends { contracts?: Record<string, { events: string }> }
-    ? Config["evm"]["contracts"] extends Record<string, { events: string }>
+  Config["evm"] extends { contracts?: Record<string, Record<string, any>> }
+    ? Config["evm"]["contracts"] extends Record<string, Record<string, any>>
       ? SimulateContractEvent<Config["evm"]["contracts"]> & SimulateItemBase & {
           /** Event parameters. Keys match the event's parameter names. */
           params?: Record<string, unknown>;
@@ -573,8 +575,8 @@ type EvmSimulateItem<Config extends IndexerConfigTypes> =
 
 /** Simulate item type for Fuel ecosystem. */
 type FuelSimulateItem<Config extends IndexerConfigTypes> =
-  Config["fuel"] extends { contracts?: Record<string, { events: string }> }
-    ? Config["fuel"]["contracts"] extends Record<string, { events: string }>
+  Config["fuel"] extends { contracts?: Record<string, Record<string, any>> }
+    ? Config["fuel"]["contracts"] extends Record<string, Record<string, any>>
       ? SimulateContractEvent<Config["fuel"]["contracts"]> & SimulateItemBase & {
           /** Event parameters. Keys match the event's parameter names. */
           params: Record<string, unknown>;

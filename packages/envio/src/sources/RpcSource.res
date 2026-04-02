@@ -1155,6 +1155,8 @@ let make = (
                     chain,
                     logIndex: log.logIndex,
                     event: {
+                      contractName: eventConfig.contractName,
+                      eventName: eventConfig.name,
                       chainId: chain->ChainMap.Chain.toChainId,
                       params: decoded->eventConfig.convertHyperSyncEventArgs,
                       transaction,

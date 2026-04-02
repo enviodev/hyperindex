@@ -40,7 +40,6 @@ const TEMPLATES: TemplateConfig[] = [
   {
     name: "evm-external-calls",
     initArgs: ["template", "-t", "feature-external-calls", "-l", "typescript"],
-    hasTests: true,
   },
   // Fuel Templates
   {
