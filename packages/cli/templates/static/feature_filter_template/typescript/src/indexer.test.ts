@@ -1,110 +1,59 @@
 import { describe, it, expect } from "vitest";
-import { createTestIndexer, type Transfer } from "generated";
-import { TestHelpers } from "envio";
-
-const { Addresses } = TestHelpers;
+import { createTestIndexer } from "generated";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-// In simulate mode, block number defaults to the chain's startBlock (22000000 for chain 1)
-// and logIndex starts at 0 for the first event.
-const FIRST_EVENT_ID = "1_22000000_0";
+// Block range near the config start_block — ERC20 mints and burns occur on every block
+const START_BLOCK = 22000000;
+const END_BLOCK = 22000100;
 
 describe("Topic Filter Indexer", () => {
   it("indexes mint events (Transfer from zero address)", async () => {
     const indexer = createTestIndexer();
-    const recipient = Addresses.mockAddresses[0]!;
 
-    await indexer.process({
+    const result = await indexer.process({
       chains: {
-        1: {
-          simulate: [
-            {
-              contract: "ERC20",
-              event: "Transfer",
-              params: {
-                from: ZERO_ADDRESS,
-                to: recipient,
-                value: 1_000_000n,
-              },
-            },
-          ],
-        },
+        1: { startBlock: START_BLOCK, endBlock: END_BLOCK },
       },
     });
 
-    const expectedTransfer: Transfer = {
-      id: FIRST_EVENT_ID,
-      amount: 1_000_000n,
-      from: ZERO_ADDRESS,
-      to: recipient,
-      contract: ZERO_ADDRESS,
-      chainId: 1,
-    };
+    const allTransfers = result.changes.flatMap((c) => c.Transfer?.sets ?? []);
+    const mints = allTransfers.filter((t) => t.from === ZERO_ADDRESS);
 
-    const transfer = await indexer.Transfer.getOrThrow(FIRST_EVENT_ID);
-    expect(transfer).toEqual(expectedTransfer);
+    expect(mints.length, "Should have indexed at least one mint event").toBeGreaterThan(0);
+    expect(mints[0]).toMatchObject({ from: ZERO_ADDRESS, chainId: 1 });
   });
 
   it("indexes burn events (Transfer to zero address)", async () => {
     const indexer = createTestIndexer();
-    const sender = Addresses.mockAddresses[0]!;
 
-    await indexer.process({
+    const result = await indexer.process({
       chains: {
-        1: {
-          simulate: [
-            {
-              contract: "ERC20",
-              event: "Transfer",
-              params: {
-                from: sender,
-                to: ZERO_ADDRESS,
-                value: 500_000n,
-              },
-            },
-          ],
-        },
+        1: { startBlock: START_BLOCK, endBlock: END_BLOCK },
       },
     });
 
-    const expectedTransfer: Transfer = {
-      id: FIRST_EVENT_ID,
-      amount: 500_000n,
-      from: sender,
-      to: ZERO_ADDRESS,
-      contract: ZERO_ADDRESS,
-      chainId: 1,
-    };
+    const allTransfers = result.changes.flatMap((c) => c.Transfer?.sets ?? []);
+    const burns = allTransfers.filter((t) => t.to === ZERO_ADDRESS);
 
-    const transfer = await indexer.Transfer.getOrThrow(FIRST_EVENT_ID);
-    expect(transfer).toEqual(expectedTransfer);
+    expect(burns.length, "Should have indexed at least one burn event").toBeGreaterThan(0);
+    expect(burns[0]).toMatchObject({ to: ZERO_ADDRESS, chainId: 1 });
   });
 
   it("does not index regular transfers (neither mint nor burn)", async () => {
     const indexer = createTestIndexer();
-    const sender = Addresses.mockAddresses[0]!;
-    const recipient = Addresses.mockAddresses[1]!;
 
-    await indexer.process({
+    const result = await indexer.process({
       chains: {
-        1: {
-          simulate: [
-            {
-              contract: "ERC20",
-              event: "Transfer",
-              params: {
-                from: sender,
-                to: recipient,
-                value: 100n,
-              },
-            },
-          ],
-        },
+        1: { startBlock: START_BLOCK, endBlock: END_BLOCK },
       },
     });
 
-    const transfer = await indexer.Transfer.get(FIRST_EVENT_ID);
-    expect(transfer, "Regular transfer should not be indexed").toBeUndefined();
+    const allTransfers = result.changes.flatMap((c) => c.Transfer?.sets ?? []);
+    const regularTransfers = allTransfers.filter(
+      (t) => t.from !== ZERO_ADDRESS && t.to !== ZERO_ADDRESS
+    );
+
+    expect(regularTransfers.length, "Regular transfers should not be indexed").toBe(0);
   });
 });

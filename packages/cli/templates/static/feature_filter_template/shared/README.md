@@ -78,4 +78,4 @@ pnpm codegen
 
 ## GraphQL Playground
 
-While the indexer is running, visit the Envio Console([https://envio.dev/console](https://envio.dev/console)) to open the GraphQL Playground and query your indexed data.
+While the indexer is running, visit the Envio Console ([https://envio.dev/console](https://envio.dev/console)) to open the GraphQL Playground and query your indexed data.
