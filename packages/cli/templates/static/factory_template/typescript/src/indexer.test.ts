@@ -1,11 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer } from "generated";
 
 describe("Indexer Testing", () => {
-  it("Should register pool and handle swap events", async () => {
+  it("Should register pool and handle swap events", async (t) => {
     const indexer = createTestIndexer();
 
-    expect(
+    t.expect(
       await indexer.process({
         chains: { 1: { startBlock: 12_369_739, endBlock: 12_369_739 } },
       }),
@@ -31,7 +31,7 @@ describe("Indexer Testing", () => {
       }
     `);
 
-    expect(
+    t.expect(
       await indexer.process({
         chains: { 1: { startBlock: 12_373_187, endBlock: 12_373_187 } },
       }),

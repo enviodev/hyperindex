@@ -1,13 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer, type Account } from "generated";
 import { TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 
 describe("Indexer Testing", () => {
-  it("Should create accounts from ERC20 Transfer events", async () => {
+  it("Should create accounts from ERC20 Transfer events", async (t) => {
     const indexer = createTestIndexer();
 
-    expect(
+    t.expect(
       await indexer.process({
         chains: {
           1: {
@@ -42,7 +42,7 @@ describe("Indexer Testing", () => {
       }
     `);
 
-    expect(
+    t.expect(
       await indexer.process({
         chains: {
           1: {
@@ -80,7 +80,7 @@ describe("Indexer Testing", () => {
 });
 
 describe("Transfers", () => {
-  it("Transfer subtracts the from account balance and adds to the to account balance", async () => {
+  it("Transfer subtracts the from account balance and adds to the to account balance", async (t) => {
     const indexer = createTestIndexer();
 
     // Get mock addresses from helpers
@@ -119,7 +119,7 @@ describe("Transfers", () => {
     // Get the balance of userAddress1 after the transfer
     const account1 = await indexer.Account.getOrThrow(userAddress1);
     // Assert the expected balance
-    expect(
+    t.expect(
       account1.balance,
       "Should have subtracted transfer amount 3 from userAddress1 balance 5"
     ).toBe(2n);
@@ -127,7 +127,7 @@ describe("Transfers", () => {
     // Get the balance of userAddress2 after the transfer
     const account2 = await indexer.Account.getOrThrow(userAddress2);
     // Assert the expected balance
-    expect(
+    t.expect(
       account2.balance,
       "Should have added transfer amount 3 to userAddress2 balance 0"
     ).toBe(3n);
