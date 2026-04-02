@@ -23,130 +23,128 @@ type contractRegistrations = {
 
 module Transaction = {
   type t = {
-  @deprecated("Enable by adding transactionIndex to field_selection.transaction_fields in config.yaml")
-  transactionIndex?: unit,
-  @deprecated("Enable by adding hash to field_selection.transaction_fields in config.yaml")
-  hash?: unit,
-  @deprecated("Enable by adding from to field_selection.transaction_fields in config.yaml")
-  from?: unit,
-  @deprecated("Enable by adding to to field_selection.transaction_fields in config.yaml")
-  to?: unit,
-  @deprecated("Enable by adding gas to field_selection.transaction_fields in config.yaml")
-  gas?: unit,
-  @deprecated("Enable by adding gasPrice to field_selection.transaction_fields in config.yaml")
-  gasPrice?: unit,
-  @deprecated("Enable by adding maxPriorityFeePerGas to field_selection.transaction_fields in config.yaml")
-  maxPriorityFeePerGas?: unit,
-  @deprecated("Enable by adding maxFeePerGas to field_selection.transaction_fields in config.yaml")
-  maxFeePerGas?: unit,
-  @deprecated("Enable by adding cumulativeGasUsed to field_selection.transaction_fields in config.yaml")
-  cumulativeGasUsed?: unit,
-  @deprecated("Enable by adding effectiveGasPrice to field_selection.transaction_fields in config.yaml")
-  effectiveGasPrice?: unit,
-  @deprecated("Enable by adding gasUsed to field_selection.transaction_fields in config.yaml")
-  gasUsed?: unit,
-  @deprecated("Enable by adding input to field_selection.transaction_fields in config.yaml")
-  input?: unit,
-  @deprecated("Enable by adding nonce to field_selection.transaction_fields in config.yaml")
-  nonce?: unit,
-  @deprecated("Enable by adding value to field_selection.transaction_fields in config.yaml")
-  value?: unit,
-  @deprecated("Enable by adding v to field_selection.transaction_fields in config.yaml")
-  v?: unit,
-  @deprecated("Enable by adding r to field_selection.transaction_fields in config.yaml")
-  r?: unit,
-  @deprecated("Enable by adding s to field_selection.transaction_fields in config.yaml")
-  s?: unit,
-  @deprecated("Enable by adding contractAddress to field_selection.transaction_fields in config.yaml")
-  contractAddress?: unit,
-  @deprecated("Enable by adding logsBloom to field_selection.transaction_fields in config.yaml")
-  logsBloom?: unit,
-  @deprecated("Enable by adding root to field_selection.transaction_fields in config.yaml")
-  root?: unit,
-  @deprecated("Enable by adding status to field_selection.transaction_fields in config.yaml")
-  status?: unit,
-  @deprecated("Enable by adding yParity to field_selection.transaction_fields in config.yaml")
-  yParity?: unit,
-  @deprecated("Enable by adding accessList to field_selection.transaction_fields in config.yaml")
-  accessList?: unit,
-  @deprecated("Enable by adding maxFeePerBlobGas to field_selection.transaction_fields in config.yaml")
-  maxFeePerBlobGas?: unit,
-  @deprecated("Enable by adding blobVersionedHashes to field_selection.transaction_fields in config.yaml")
-  blobVersionedHashes?: unit,
-  @deprecated("Enable by adding type to field_selection.transaction_fields in config.yaml")
-  type_?: unit,
-  @deprecated("Enable by adding l1Fee to field_selection.transaction_fields in config.yaml")
-  l1Fee?: unit,
-  @deprecated("Enable by adding l1GasPrice to field_selection.transaction_fields in config.yaml")
-  l1GasPrice?: unit,
-  @deprecated("Enable by adding l1GasUsed to field_selection.transaction_fields in config.yaml")
-  l1GasUsed?: unit,
-  @deprecated("Enable by adding l1FeeScalar to field_selection.transaction_fields in config.yaml")
-  l1FeeScalar?: unit,
-  @deprecated("Enable by adding gasUsedForL1 to field_selection.transaction_fields in config.yaml")
-  gasUsedForL1?: unit,
-  @deprecated("Enable by adding authorizationList to field_selection.transaction_fields in config.yaml")
-  authorizationList?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - transactionIndex")
+    transactionIndex?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - hash")
+    hash?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - from")
+    from?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - to")
+    to?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gas")
+    gas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gasPrice")
+    gasPrice?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - maxPriorityFeePerGas")
+    maxPriorityFeePerGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - maxFeePerGas")
+    maxFeePerGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - cumulativeGasUsed")
+    cumulativeGasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - effectiveGasPrice")
+    effectiveGasPrice?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gasUsed")
+    gasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - input")
+    input?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - nonce")
+    nonce?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - value")
+    value?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - v")
+    v?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - r")
+    r?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - s")
+    s?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - contractAddress")
+    contractAddress?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - logsBloom")
+    logsBloom?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - root")
+    root?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - status")
+    status?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - yParity")
+    yParity?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - accessList")
+    accessList?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - maxFeePerBlobGas")
+    maxFeePerBlobGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - blobVersionedHashes")
+    blobVersionedHashes?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - type")
+    type_?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1Fee")
+    l1Fee?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1GasPrice")
+    l1GasPrice?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1GasUsed")
+    l1GasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1FeeScalar")
+    l1FeeScalar?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gasUsedForL1")
+    gasUsedForL1?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - authorizationList")
+    authorizationList?: unit,
 }
 }
 
 module Block = {
   type t = {
-  number: int,
-  timestamp: int,
-  hash: string,
-  @deprecated("Enable by adding parentHash to field_selection.block_fields in config.yaml")
-  parentHash?: unit,
-  @deprecated("Enable by adding nonce to field_selection.block_fields in config.yaml")
-  nonce?: unit,
-  @deprecated("Enable by adding sha3Uncles to field_selection.block_fields in config.yaml")
-  sha3Uncles?: unit,
-  @deprecated("Enable by adding logsBloom to field_selection.block_fields in config.yaml")
-  logsBloom?: unit,
-  @deprecated("Enable by adding transactionsRoot to field_selection.block_fields in config.yaml")
-  transactionsRoot?: unit,
-  @deprecated("Enable by adding stateRoot to field_selection.block_fields in config.yaml")
-  stateRoot?: unit,
-  @deprecated("Enable by adding receiptsRoot to field_selection.block_fields in config.yaml")
-  receiptsRoot?: unit,
-  @deprecated("Enable by adding miner to field_selection.block_fields in config.yaml")
-  miner?: unit,
-  @deprecated("Enable by adding difficulty to field_selection.block_fields in config.yaml")
-  difficulty?: unit,
-  @deprecated("Enable by adding totalDifficulty to field_selection.block_fields in config.yaml")
-  totalDifficulty?: unit,
-  @deprecated("Enable by adding extraData to field_selection.block_fields in config.yaml")
-  extraData?: unit,
-  @deprecated("Enable by adding size to field_selection.block_fields in config.yaml")
-  size?: unit,
-  @deprecated("Enable by adding gasLimit to field_selection.block_fields in config.yaml")
-  gasLimit?: unit,
-  @deprecated("Enable by adding gasUsed to field_selection.block_fields in config.yaml")
-  gasUsed?: unit,
-  @deprecated("Enable by adding uncles to field_selection.block_fields in config.yaml")
-  uncles?: unit,
-  @deprecated("Enable by adding baseFeePerGas to field_selection.block_fields in config.yaml")
-  baseFeePerGas?: unit,
-  @deprecated("Enable by adding blobGasUsed to field_selection.block_fields in config.yaml")
-  blobGasUsed?: unit,
-  @deprecated("Enable by adding excessBlobGas to field_selection.block_fields in config.yaml")
-  excessBlobGas?: unit,
-  @deprecated("Enable by adding parentBeaconBlockRoot to field_selection.block_fields in config.yaml")
-  parentBeaconBlockRoot?: unit,
-  @deprecated("Enable by adding withdrawalsRoot to field_selection.block_fields in config.yaml")
-  withdrawalsRoot?: unit,
-  @deprecated("Enable by adding l1BlockNumber to field_selection.block_fields in config.yaml")
-  l1BlockNumber?: unit,
-  @deprecated("Enable by adding sendCount to field_selection.block_fields in config.yaml")
-  sendCount?: unit,
-  @deprecated("Enable by adding sendRoot to field_selection.block_fields in config.yaml")
-  sendRoot?: unit,
-  @deprecated("Enable by adding mixHash to field_selection.block_fields in config.yaml")
-  mixHash?: unit,
+    number: int,
+    timestamp: int,
+    hash: string,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - parentHash")
+    parentHash?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - nonce")
+    nonce?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - sha3Uncles")
+    sha3Uncles?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - logsBloom")
+    logsBloom?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - transactionsRoot")
+    transactionsRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - stateRoot")
+    stateRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - receiptsRoot")
+    receiptsRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - miner")
+    miner?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - difficulty")
+    difficulty?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - totalDifficulty")
+    totalDifficulty?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - extraData")
+    extraData?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - size")
+    size?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - gasLimit")
+    gasLimit?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - gasUsed")
+    gasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - uncles")
+    uncles?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - baseFeePerGas")
+    baseFeePerGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - blobGasUsed")
+    blobGasUsed?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - excessBlobGas")
+    excessBlobGas?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - parentBeaconBlockRoot")
+    parentBeaconBlockRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - withdrawalsRoot")
+    withdrawalsRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - l1BlockNumber")
+    l1BlockNumber?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - sendCount")
+    sendCount?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - sendRoot")
+    sendRoot?: unit,
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - mixHash")
+    mixHash?: unit,
 }
 }
-
-type eventLog<'params> = Internal.genericEvent<'params, Block.t, Transaction.t>
 
 module SingleOrMultiple: {
   @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
@@ -188,12 +186,12 @@ module SingleOrMultiple: {
 module HandlerTypes = {
   @genType
   type args<'eventArgs, 'context> = {
-    event: eventLog<'eventArgs>,
+    event: Internal.genericEvent<'eventArgs, Block.t, Transaction.t>,
     context: 'context,
   }
 
   @genType
-  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<eventLog<'eventArgs>, contractRegistrations>
+  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<Internal.genericEvent<'eventArgs, Block.t, Transaction.t>, contractRegistrations>
   @genType
   type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
 

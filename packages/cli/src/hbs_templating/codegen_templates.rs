@@ -579,13 +579,15 @@ impl EventMod {
                             &selected.block_fields,
                             &all_fields.block_fields,
                             "block_fields",
-                            "  ",
+                            &event_name,
+                            "    ",
                         ),
                         ProjectTemplate::generate_rescript_all_fields_record(
                             &selected.transaction_fields,
                             &all_fields.transaction_fields,
                             "transaction_fields",
-                            "  ",
+                            &event_name,
+                            "    ",
                         ),
                     )
                 }
@@ -1183,6 +1185,7 @@ impl ProjectTemplate {
         selected: &[SelectedFieldTemplate],
         all_fields: &[SelectedFieldTemplate],
         field_kind: &str,
+        event_name: &str,
         indent: &str,
     ) -> String {
         let selected_names: std::collections::HashSet<&str> =
@@ -1195,8 +1198,12 @@ impl ProjectTemplate {
                     format!("{}{}: {},", indent, f.res_name, f.res_type)
                 } else {
                     format!(
-                        "{}@deprecated(\"Enable by adding {} to field_selection.{} in config.yaml\")\n{}{}?: unit,",
-                        indent, f.name.camel, field_kind, indent, f.res_name
+                        "{i}@deprecated(\"Not selected for this event. To enable, add to config.yaml:\\nevents:\\n  - event: {event}\\n    field_selection:\\n      {kind}:\\n        - {field}\")\n{i}{res_name}?: unit,",
+                        i = indent,
+                        event = event_name,
+                        kind = field_kind,
+                        field = f.name.camel,
+                        res_name = f.res_name,
                     )
                 }
             })
@@ -1809,7 +1816,8 @@ type handlerContext = {{
                 &global_field_selection.block_fields,
                 &all_fs.block_fields,
                 "block_fields",
-                "  ",
+                "global",
+                "    ",
             )
         } else {
             global_field_selection.block_type.clone()
@@ -1820,7 +1828,8 @@ type handlerContext = {{
                 &global_field_selection.transaction_fields,
                 &all_fs.transaction_fields,
                 "transaction_fields",
-                "  ",
+                "global",
+                "    ",
             )
         } else {
             global_field_selection.transaction_type.clone()
@@ -1854,8 +1863,6 @@ module Transaction = {{
 module Block = {{
   type t = {block_module_type}
 }}
-
-type eventLog<'params> = Internal.genericEvent<'params, Block.t, Transaction.t>
 
 module SingleOrMultiple: {{
   @genType.import(("./bindings/OpaqueTypes", "SingleOrMultiple"))
@@ -1897,12 +1904,12 @@ module SingleOrMultiple: {{
 module HandlerTypes = {{
   @genType
   type args<'eventArgs, 'context> = {{
-    event: eventLog<'eventArgs>,
+    event: Internal.genericEvent<'eventArgs, Block.t, Transaction.t>,
     context: 'context,
   }}
 
   @genType
-  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<eventLog<'eventArgs>, contractRegistrations>
+  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<Internal.genericEvent<'eventArgs, Block.t, Transaction.t>, contractRegistrations>
   @genType
   type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
 
@@ -3058,6 +3065,11 @@ mod test {
 
     #[test]
     fn event_template_with_custom_field_selection() {
+        let all_evm = system_config::FieldSelection::all_evm();
+        let all_ecosystem_fields = Some(super::FieldSelection::new(super::FieldSelectionOptions {
+            block_fields: all_evm.block_fields,
+            transaction_fields: all_evm.transaction_fields,
+        }));
         let event_template = EventTemplate::from_config_event(
             &system_config::Event {
                 name: "NewGravatar".to_string(),
@@ -3073,7 +3085,7 @@ mod test {
                     }],
                 }),
             },
-            None,
+            all_ecosystem_fields,
         )
         .unwrap();
 
