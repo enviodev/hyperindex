@@ -64,7 +64,7 @@ let tx1: Indexer.Transaction.t = {
   transactionIndex: 1,
 }
 
-let newGravatarLog1: Indexer.Gravatar.NewGravatar.event = {
+let newGravatarLog1: Internal.genericEvent<Indexer.Gravatar.NewGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "NewGravatar",
   params: newGravatar1,
@@ -76,7 +76,7 @@ let newGravatarLog1: Indexer.Gravatar.NewGravatar.event = {
   block: block1,
 }
 
-let newGravatarLog2: Indexer.Gravatar.NewGravatar.event = {
+let newGravatarLog2: Internal.genericEvent<Indexer.Gravatar.NewGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "NewGravatar",
   params: newGravatar2,
@@ -87,7 +87,7 @@ let newGravatarLog2: Indexer.Gravatar.NewGravatar.event = {
   logIndex: 12,
 }
 
-let newGravatarLog3: Indexer.Gravatar.NewGravatar.event = {
+let newGravatarLog3: Internal.genericEvent<Indexer.Gravatar.NewGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "NewGravatar",
   params: newGravatar3,
@@ -98,7 +98,7 @@ let newGravatarLog3: Indexer.Gravatar.NewGravatar.event = {
   block: block1,
 }
 
-let newGravatarLog4: Indexer.Gravatar.NewGravatar.event = {
+let newGravatarLog4: Internal.genericEvent<Indexer.Gravatar.NewGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "NewGravatar",
   params: newGravatar4_deleted,
@@ -109,7 +109,7 @@ let newGravatarLog4: Indexer.Gravatar.NewGravatar.event = {
   block: block1,
 }
 
-let setGravatarLog1: Indexer.Gravatar.UpdatedGravatar.event = {
+let setGravatarLog1: Internal.genericEvent<Indexer.Gravatar.UpdatedGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "UpdatedGravatar",
   params: setGravatar1,
@@ -120,7 +120,7 @@ let setGravatarLog1: Indexer.Gravatar.UpdatedGravatar.event = {
   block: block1,
 }
 
-let setGravatarLog2: Indexer.Gravatar.UpdatedGravatar.event = {
+let setGravatarLog2: Internal.genericEvent<Indexer.Gravatar.UpdatedGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "UpdatedGravatar",
   params: setGravatar2,
@@ -131,7 +131,7 @@ let setGravatarLog2: Indexer.Gravatar.UpdatedGravatar.event = {
   block: block1,
 }
 
-let setGravatarLog3: Indexer.Gravatar.UpdatedGravatar.event = {
+let setGravatarLog3: Internal.genericEvent<Indexer.Gravatar.UpdatedGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "UpdatedGravatar",
   params: setGravatar3,
@@ -141,7 +141,7 @@ let setGravatarLog3: Indexer.Gravatar.UpdatedGravatar.event = {
   transaction: tx1,
   block: block1,
 }
-let setGravatarLog4: Indexer.Gravatar.UpdatedGravatar.event = {
+let setGravatarLog4: Internal.genericEvent<Indexer.Gravatar.UpdatedGravatar.params, Indexer.Block.t, Indexer.Transaction.t> = {
   contractName: "Gravatar",
   eventName: "UpdatedGravatar",
   params: setGravatar4,
@@ -153,7 +153,7 @@ let setGravatarLog4: Indexer.Gravatar.UpdatedGravatar.event = {
 }
 
 let newGravatarEventToBatchItem = (
-  event: Indexer.Gravatar.NewGravatar.event,
+  event: Internal.genericEvent<Indexer.Gravatar.NewGravatar.params, Indexer.Block.t, Indexer.Transaction.t>,
 ): Internal.item => Internal.Event({
   timestamp: event.block.timestamp,
   chain: MockConfig.chain1337,
@@ -164,7 +164,7 @@ let newGravatarEventToBatchItem = (
 })
 
 let updatedGravatarEventToBatchItem = (
-  event: Indexer.Gravatar.UpdatedGravatar.event,
+  event: Internal.genericEvent<Indexer.Gravatar.UpdatedGravatar.params, Indexer.Block.t, Indexer.Transaction.t>,
 ): Internal.item => Internal.Event({
   timestamp: event.block.timestamp,
   chain: MockConfig.chain1337,
