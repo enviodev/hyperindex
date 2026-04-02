@@ -235,12 +235,12 @@ let handleWriteBatch = (
       ->Array.forEach(((entityName, {sets, deleted})) => {
         let entityObj: dict<unknown> = Js.Dict.empty()
         if sets->Array.length > 0 {
-          entityObj->Js.Dict.set("sets", sets->Utils.magic)
+          entityObj->Js.Dict.set("sets", sets->(Utils.magic: array<unknown> => unknown))
         }
         if deleted->Array.length > 0 {
-          entityObj->Js.Dict.set("deleted", deleted->Utils.magic)
+          entityObj->Js.Dict.set("deleted", deleted->(Utils.magic: array<string> => unknown))
         }
-        change->Js.Dict.set(entityName, entityObj->Utils.magic)
+        change->Js.Dict.set(entityName, entityObj->(Utils.magic: dict<unknown> => unknown))
       })
     | None => ()
     }
@@ -270,11 +270,16 @@ let handleWriteBatch = (
     })
     if addressSets->Array.length > 0 {
       let entityObj: dict<unknown> = Js.Dict.empty()
-      entityObj->Js.Dict.set("sets", addressSets->Utils.magic)
-      change->Js.Dict.set("addresses", entityObj->Utils.magic)
+      entityObj->Js.Dict.set(
+        "sets",
+        addressSets->(Utils.magic: array<{"address": Address.t, "contract": string}> => unknown),
+      )
+      change->Js.Dict.set("addresses", entityObj->(Utils.magic: dict<unknown> => unknown))
     }
 
-    state.processChanges->Array.push(change->Utils.magic)->ignore
+    state.processChanges
+    ->Array.push(change->(Utils.magic: dict<unknown> => unknown))
+    ->ignore
   }
 
   // Store addresses into per-chain structure (first-write-wins to match ON CONFLICT DO NOTHING)
