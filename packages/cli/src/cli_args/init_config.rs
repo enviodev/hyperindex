@@ -34,7 +34,7 @@ pub mod evm {
         FeatureExternalCalls,
         #[strum(serialize = "Feature: Factory Contract")]
         FeatureFactory,
-        #[strum(serialize = "Feature: Topic Filter")]
+        #[strum(serialize = "Feature: Topic Filtering")]
         FeatureTopicFilter,
     }
 
