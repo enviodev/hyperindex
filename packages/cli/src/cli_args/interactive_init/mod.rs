@@ -42,6 +42,8 @@ enum EvmInitOption {
     TemplateGreeter,
     #[strum(serialize = "Feature: Factory Contract")]
     FeatureFactory,
+    #[strum(serialize = "Feature: Topic Filter")]
+    FeatureTopicFilter,
 }
 
 impl EvmInitOption {
@@ -55,6 +57,7 @@ impl EvmInitOption {
                 Self::TemplateErc20,
                 Self::TemplateGreeter,
                 Self::FeatureFactory,
+                Self::FeatureTopicFilter,
             ],
         }
     }
@@ -231,6 +234,9 @@ async fn prompt_evm_init_option(language: &Language) -> Result<Ecosystem> {
         EvmInitOption::TemplateErc20 => evm::InitFlow::Template(evm::Template::Erc20),
         EvmInitOption::TemplateGreeter => evm::InitFlow::Template(evm::Template::Greeter),
         EvmInitOption::FeatureFactory => evm::InitFlow::Template(evm::Template::FeatureFactory),
+        EvmInitOption::FeatureTopicFilter => {
+            evm::InitFlow::Template(evm::Template::FeatureTopicFilter)
+        }
     };
 
     Ok(Ecosystem::Evm { init_flow })

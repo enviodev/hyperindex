@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: erc20-topic-filter
+description: Index ERC20 mint and burn events across multiple chains using wildcard mode and topic filtering
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1 # Ethereum Mainnet
+    start_block: 22000000
+    contracts:
+      - name: ERC20
+        # No address = wildcard mode (indexes all ERC20 contracts on this chain)
+  - id: 137 # Polygon
+    start_block: 65000000
+    contracts:
+      - name: ERC20
+        # No address = wildcard mode (indexes all ERC20 contracts on this chain)

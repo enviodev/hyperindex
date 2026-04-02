@@ -32,6 +32,8 @@ pub mod evm {
         Erc20,
         #[strum(serialize = "Feature: Factory Contract")]
         FeatureFactory,
+        #[strum(serialize = "Feature: Topic Filter")]
+        FeatureTopicFilter,
     }
 
     ///A an object that holds all the values a user can select during
