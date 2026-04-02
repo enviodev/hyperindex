@@ -83,77 +83,39 @@ await indexer.process({
 });
 ```
 
-## result.changes Structure
+## Entity State API
 
-`result.changes` is an array of block-level change objects:
+Preset state before processing and read entities after.
 
 ```ts
-[
-  {
-    block: 12369739,
-    blockHash: "0xe8228e3e736a42c7357d2ce6882a1662c588ce608897dd53c3053bcbefb4309a",
-    chainId: 1,
-    eventsProcessed: 1,
-    Token: {
-      sets: [
-        { id: "1-0x...", symbol: "UNI", decimals: 18n },
-      ],
-    },
-    Pair: {
-      sets: [
-        { id: "1-0x...", token0_id: "0x...", token1_id: "0x..." },
-      ],
-    },
-  },
-]
+// Preset state before processing
+indexer.EntityName.set({ id: "...", field: value });
+
+// Read state after processing
+await indexer.EntityName.get("id");        // returns entity | undefined
+await indexer.EntityName.getOrThrow("id"); // throws if not found
+await indexer.EntityName.getAll();         // returns all entities of this type
 ```
 
-Each block entry includes `block`, `blockHash`, `chainId`, `eventsProcessed`, plus entity names as keys with `sets` arrays showing entities that were created or updated. Dynamic contract registrations appear under `addresses.sets`.
+## result.changes
 
-## Assertion Patterns
+`result.changes` is an array of per-block change objects. Each entry has `block`, `blockHash`, `chainId`, `eventsProcessed`, plus entity names as keys with `sets` arrays of created/updated entities. Dynamic contract registrations appear under `addresses.sets`.
 
-### Snapshot Testing (recommended for full verification)
+## Assertions
 
 ```ts
+// Snapshot (recommended — captures full output, auto-filled on first run)
 t.expect(result.changes).toMatchInlineSnapshot(`...`);
-```
 
-Run `pnpm test` — Vitest auto-fills the snapshot on first run. Review the snapshot, then commit.
+// Entity assertions
+const pool = await indexer.Pool.getOrThrow(poolId);
+t.expect(pool).toEqual({ id: poolId, token0_id: "0xabc..." });
 
-### Partial Matching (for specific checks)
+// Count
+t.expect(result.changes[0]?.Pair?.sets).toHaveLength(1);
 
-```ts
-t.expect(result.changes).toContainEqual(
-  expect.objectContaining({
-    Pair: {
-      sets: expect.arrayContaining([
-        expect.objectContaining({
-          id: "1-0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
-          token0_id: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-        }),
-      ]),
-    },
-  })
-);
-```
-
-### Count Assertions
-
-```ts
-t.expect(result.changes[0].Pair?.sets).toHaveLength(1);
-```
-
-### Asserting Contract Addresses
-
-```ts
+// Contract addresses (after dynamic registration)
 t.expect(indexer.chains[1].MyContract.addresses).toContain("0x1234...");
-```
-
-### Reading Entities After Processing
-
-```ts
-const pool = await indexer.Pool.get(poolId);
-t.expect(pool?.token0_id).toBe("0xabc...");
 ```
 
 ## TDD Workflow
@@ -162,13 +124,11 @@ t.expect(pool?.token0_id).toBe("0xabc...");
 2. **Implement the handler** until the test passes
 3. **Capture the snapshot** — run `pnpm test` to fill `toMatchInlineSnapshot`
 4. **Review and commit** the snapshot for regression testing
-5. **Repeat** for each handler/event type
 
 ## Running Tests
 
 ```bash
 pnpm test              # Run all tests
-pnpm test -- --watch   # Watch mode
 pnpm test -- -u        # Update snapshots
 ```
 
@@ -176,18 +136,9 @@ pnpm test -- -u        # Update snapshots
 
 Auto-exit mode eliminates the need for manual block discovery in most cases. Use this when you need specific block ranges for pinned snapshots.
 
-**Do NOT web-search for block ranges.** Use HyperSync directly to find blocks where your contracts/events actually occur. The HyperSync API key from `.env` (`ENVIO_API_TOKEN`) works for these queries.
-
-### Step 1: Identify What to Query
-
-From `config.yaml`, extract:
-- Contract addresses
-- Event signatures (topic0 hashes)
-- Chain ID → HyperSync endpoint: `https://{chainId}.hypersync.xyz` (e.g., chain 1 → `https://1.hypersync.xyz`)
+**Do NOT web-search for block ranges.** Query HyperSync directly. Endpoint pattern: `https://{chainId}.hypersync.xyz` (e.g., chain 1 → `https://1.hypersync.xyz`).
 
 Common chain IDs: 1 (Ethereum), 8453 (Base), 42161 (Arbitrum), 10 (Optimism), 137 (Polygon), 56 (BSC), 43114 (Avalanche), 100 (Gnosis), 59144 (Linea), 534352 (Scroll), 81457 (Blast), 42220 (Celo).
-
-### Step 2: Query HyperSync for Matching Blocks
 
 ```bash
 curl --request POST \
@@ -210,11 +161,7 @@ curl --request POST \
   }'
 ```
 
-This returns the earliest blocks matching your filter. Use `from_block` to paginate forward.
-
-### Step 3: Pick a Tight Block Range
-
-From the response, pick a small range (50–200 blocks) around the first few matching blocks. This keeps tests fast and deterministic.
+Returns the earliest matching blocks. Use `from_block` to paginate forward. Pick a tight range (50–200 blocks) for fast, deterministic tests.
 
 Full HyperSync query reference: https://docs.envio.dev/docs/HyperSync-LLM/hypersync-complete
 
