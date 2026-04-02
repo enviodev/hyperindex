@@ -68,7 +68,6 @@ const TEMPLATES: TemplateConfig[] = [
       "-l",
       "typescript",
     ],
-    hasTests: true,
   },
   {
     name: "evm-contract-import-rescript",
@@ -84,7 +83,6 @@ const TEMPLATES: TemplateConfig[] = [
       "-l",
       "rescript",
     ],
-    hasTests: true,
   },
 ];
 
