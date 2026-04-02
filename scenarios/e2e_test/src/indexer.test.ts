@@ -4,15 +4,15 @@ import { createTestIndexer } from "generated";
 describe("Indexer smoke test", () => {
   it(
     "processes the first block with events on chain 1",
-    async () => {
+    async (t) => {
       const indexer = createTestIndexer();
 
       const result = await indexer.process({ chains: { 1: {} } });
 
-      expect(result.changes.length).toBeGreaterThan(0);
+      t.expect(result.changes.length).toBeGreaterThan(0);
 
       const change = result.changes[0];
-      expect(change).toEqual({
+      t.expect(change).toEqual({
         block: expect.any(Number),
         blockHash: expect.any(String),
         chainId: 1,
