@@ -1,11 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer } from "generated";
 import { TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
 describe("UniswapV3Factory PoolCreated (integration)", () => {
-  it("processes first PoolCreated event on Ethereum mainnet (block 12369739)", async () => {
+  it("processes first PoolCreated event on Ethereum mainnet (block 12369739)", async (t) => {
     const indexer = createTestIndexer();
 
     const result = await indexer.process({
@@ -17,7 +17,7 @@ describe("UniswapV3Factory PoolCreated (integration)", () => {
       },
     });
 
-    expect(result.changes).toMatchInlineSnapshot(`
+    t.expect(result.changes).toMatchInlineSnapshot(`
       [
         {
           "UniswapV3Factory_PoolCreated": {
@@ -45,7 +45,7 @@ describe("UniswapV3Factory PoolCreated (integration)", () => {
 });
 
 describe("UniswapV3Factory PoolCreated (unit)", () => {
-  it("creates an entity with the correct pool fields from a mock event", async () => {
+  it("creates an entity with the correct pool fields from a mock event", async (t) => {
     const indexer = createTestIndexer();
     const token0 = Addresses.mockAddresses[0];
     const token1 = Addresses.mockAddresses[1];
@@ -67,7 +67,7 @@ describe("UniswapV3Factory PoolCreated (unit)", () => {
 
     const entityId = `1_${pool}`;
     // Effect falls back to 18 when RPC is not configured
-    expect(await indexer.UniswapV3Factory_PoolCreated.get(entityId)).toEqual({
+    t.expect(await indexer.UniswapV3Factory_PoolCreated.get(entityId)).toEqual({
       id: entityId,
       token0,
       token1,
@@ -79,7 +79,7 @@ describe("UniswapV3Factory PoolCreated (unit)", () => {
     });
   });
 
-  it("uses pool address as part of the entity ID", async () => {
+  it("uses pool address as part of the entity ID", async (t) => {
     const indexer = createTestIndexer();
     const pool = Addresses.mockAddresses[3];
     const token0 = Addresses.mockAddresses[4];
@@ -99,6 +99,6 @@ describe("UniswapV3Factory PoolCreated (unit)", () => {
       },
     });
 
-    expect(await indexer.UniswapV3Factory_PoolCreated.get(`1_${pool}`)).toBeDefined();
+    t.expect(await indexer.UniswapV3Factory_PoolCreated.get(`1_${pool}`)).toBeDefined();
   });
 });
