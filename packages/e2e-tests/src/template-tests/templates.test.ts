@@ -57,6 +57,7 @@ const TEMPLATES: TemplateConfig[] = [
   // covered by e2e-test job instead.
   {
     name: "evm-contract-import-ts",
+    hasTests: false,
     initArgs: [
       "contract-import",
       "-c",
@@ -72,6 +73,7 @@ const TEMPLATES: TemplateConfig[] = [
   },
   {
     name: "evm-contract-import-rescript",
+    hasTests: false,
     initArgs: [
       "contract-import",
       "-c",
