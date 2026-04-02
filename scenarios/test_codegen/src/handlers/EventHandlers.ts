@@ -18,7 +18,6 @@ import {
   type EvmEvent,
   type NftCollection,
   type User,
-  type eventLog,
   onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
