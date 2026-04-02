@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { TestHelpers, createTestIndexer } from "generated";
+import { createTestIndexer } from "generated";
+import { TestHelpers } from "envio";
 
-const { MockDb, UniswapV3Factory, Addresses } = TestHelpers;
+const { Addresses } = TestHelpers;
 
 describe("UniswapV3Factory PoolCreated (integration)", () => {
   it("processes first PoolCreated event on Ethereum mainnet (block 12369739)", async () => {
@@ -45,51 +46,59 @@ describe("UniswapV3Factory PoolCreated (integration)", () => {
 
 describe("UniswapV3Factory PoolCreated (unit)", () => {
   it("creates an entity with the correct pool fields from a mock event", async () => {
-    const mockDb = MockDb.createMockDb();
-    const token0 = Addresses.mockAddresses[0]!;
-    const token1 = Addresses.mockAddresses[1]!;
-    const pool = Addresses.mockAddresses[2]!;
+    const indexer = createTestIndexer();
+    const token0 = Addresses.mockAddresses[0];
+    const token1 = Addresses.mockAddresses[1];
+    const pool = Addresses.mockAddresses[2];
 
-    const mockEvent = UniswapV3Factory.PoolCreated.createMockEvent({
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            {
+              contract: "UniswapV3Factory",
+              event: "PoolCreated",
+              params: { token0, token1, fee: 500n, tickSpacing: 10n, pool },
+            },
+          ],
+        },
+      },
+    });
+
+    const entityId = `1_${pool}`;
+    // Effect falls back to 18 when RPC is not configured
+    expect(await indexer.UniswapV3Factory_PoolCreated.get(entityId)).toEqual({
+      id: entityId,
       token0,
       token1,
       fee: 500n,
       tickSpacing: 10n,
       pool,
+      token0Decimals: 18,
+      token1Decimals: 18,
     });
-
-    const mockDbAfter = await UniswapV3Factory.PoolCreated.processEvent({
-      event: mockEvent,
-      mockDb,
-    });
-
-    const entityId = `${mockEvent.chainId}_${pool}`;
-    const entity = mockDbAfter.entities.UniswapV3Factory_PoolCreated.get(entityId);
-
-    expect(entity).toBeDefined();
-    expect(entity?.token0).toBe(token0);
-    expect(entity?.token1).toBe(token1);
-    expect(entity?.fee).toBe(500n);
-    expect(entity?.tickSpacing).toBe(10n);
-    expect(entity?.pool).toBe(pool);
-    // Effect falls back to 18 when RPC is not configured
-    expect(entity?.token0Decimals).toBe(18);
-    expect(entity?.token1Decimals).toBe(18);
   });
 
   it("uses pool address as part of the entity ID", async () => {
-    const mockDb = MockDb.createMockDb();
-    const pool = Addresses.mockAddresses[3]!;
+    const indexer = createTestIndexer();
+    const pool = Addresses.mockAddresses[3];
+    const token0 = Addresses.mockAddresses[4];
+    const token1 = Addresses.mockAddresses[5];
 
-    const mockEvent = UniswapV3Factory.PoolCreated.createMockEvent({ pool });
-    const mockDbAfter = await UniswapV3Factory.PoolCreated.processEvent({
-      event: mockEvent,
-      mockDb,
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            {
+              contract: "UniswapV3Factory",
+              event: "PoolCreated",
+              params: { token0, token1, fee: 100n, tickSpacing: 1n, pool },
+            },
+          ],
+        },
+      },
     });
 
-    const expectedId = `${mockEvent.chainId}_${pool}`;
-    expect(
-      mockDbAfter.entities.UniswapV3Factory_PoolCreated.get(expectedId)
-    ).toBeDefined();
+    expect(await indexer.UniswapV3Factory_PoolCreated.get(`1_${pool}`)).toBeDefined();
   });
 });
