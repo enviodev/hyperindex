@@ -103,7 +103,7 @@ type options = {retry?: int}
 
 module Async = {
   @module("vitest")
-  external it: (string, testContext => promise<unit>) => unit = "it"
+  external it: (string, testContext => promise<unit>, ~timeout: int=?) => unit = "it"
 
   @module("vitest")
   external itWithOptions: (string, options, testContext => promise<unit>) => unit = "it"

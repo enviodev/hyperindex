@@ -488,7 +488,7 @@ impl Contract {
         content.push_str("  });\n");
         content.push_str("});\n");
 
-        // Auto-exit snapshot test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
+        // Auto-exit smoke test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
         if !_is_fuel {
             content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
             content.push_str(&format!(
@@ -496,17 +496,19 @@ impl Contract {
                 chain_id
             ));
             content.push_str("    const indexer = createTestIndexer();\n\n");
-            content.push_str("    t.expect(\n");
             content.push_str(&format!(
-                "      await indexer.process({{ chains: {{ {}: {{}} }} }}),\n",
+                "    const result = await indexer.process({{ chains: {{ {}: {{}} }} }});\n\n",
+                chain_id
+            ));
+            content.push_str("    t.expect(result.changes.length).toBeGreaterThan(0);\n");
+            content.push_str(&format!(
+                "    t.expect(result.changes[0].chainId).toBe({});\n",
                 chain_id
             ));
             content.push_str(&format!(
-                "      \"Should find the first block with an event on chain {} and process it.\"\n",
-                chain_id
+                "    t.expect(result.changes[0].eventsProcessed).toBeGreaterThan(0);\n",
             ));
-            content.push_str("    ).toMatchInlineSnapshot(``);\n");
-            content.push_str("  });\n");
+            content.push_str("  }, 60_000);\n");
             content.push_str("});\n");
         }
 
@@ -608,7 +610,7 @@ impl Contract {
         content.push_str("  })\n");
         content.push_str("})\n");
 
-        // Auto-exit snapshot test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
+        // Auto-exit smoke test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
         if !_is_fuel {
             content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
             content.push_str(&format!(
@@ -616,17 +618,15 @@ impl Contract {
                 chain_id
             ));
             content.push_str("    let indexer = createTestIndexer()\n\n");
+            content.push_str(&format!(
+                "    let result = await indexer.process({{chains: {{\"{}\": {{}}}}}})\n\n",
+                chain_id
+            ));
             content.push_str("    t.expect(\n");
-            content.push_str(&format!(
-                "      await indexer.process({{chains: {{\\\"{}\": {{}}}}}}),\n",
-                chain_id
-            ));
-            content.push_str(&format!(
-                "      ~message=\"Should find the first block with an event on chain {} and process it.\",\n",
-                chain_id
-            ));
-            content.push_str("    ).toMatchSnapshot()\n");
-            content.push_str("  })\n");
+            content.push_str("      result.changes->Array.length,\n");
+            content.push_str("      ~message=\"Should have at least one change\",\n");
+            content.push_str("    ).toBeGreaterThan(0)\n");
+            content.push_str("  }, ~timeout=60_000)\n");
             content.push_str("})\n");
         }
 

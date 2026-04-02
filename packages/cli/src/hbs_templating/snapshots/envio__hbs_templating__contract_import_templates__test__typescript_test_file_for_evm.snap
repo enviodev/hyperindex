@@ -50,9 +50,10 @@ describe("Indexer smoke test", () => {
   it("processes the first block with events on chain 1", async (t) => {
     const indexer = createTestIndexer();
 
-    t.expect(
-      await indexer.process({ chains: { 1: {} } }),
-      "Should find the first block with an event on chain 1 and process it."
-    ).toMatchInlineSnapshot(``);
-  });
+    const result = await indexer.process({ chains: { 1: {} } });
+
+    t.expect(result.changes.length).toBeGreaterThan(0);
+    t.expect(result.changes[0].chainId).toBe(1);
+    t.expect(result.changes[0].eventsProcessed).toBeGreaterThan(0);
+  }, 60_000);
 });
