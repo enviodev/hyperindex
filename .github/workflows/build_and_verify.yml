@@ -201,12 +201,6 @@ jobs:
           pnpm exec envio codegen
           pnpm test
 
-      - name: e2e_test
-        working-directory: scenarios/e2e_test
-        run: |
-          pnpm exec envio codegen
-          pnpm test
-
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
         if: failure() && github.ref == 'refs/heads/main'
@@ -272,6 +266,12 @@ jobs:
             if curl -sSf http://localhost:8080/healthz >/dev/null; then
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
+
+      - name: Run smoke test
+        working-directory: scenarios/e2e_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
 
       - name: Run E2E test
         working-directory: packages/e2e-tests
