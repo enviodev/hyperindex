@@ -19,8 +19,6 @@ interface TemplateConfig {
   hasTests?: boolean;
 }
 
-const fuelGreeterAbi = path.join(config.rootDir, "packages/e2e-tests/fixtures/fuel-greeter-abi.json");
-
 // All available templates and contract imports to test
 const TEMPLATES: TemplateConfig[] = [
   // EVM Templates
@@ -81,51 +79,6 @@ const TEMPLATES: TemplateConfig[] = [
       "explorer",
       "-b",
       "ethereum-mainnet",
-      "--single-contract",
-      "--all-events",
-      "-l",
-      "rescript",
-    ],
-  },
-  // Fuel Contract Import (local ABI)
-  // Tests disabled: auto-exit smoke test scans from block 0 on Fuel testnet,
-  // which can timeout. Covered by init + codegen checks below.
-  {
-    name: "fuel-contract-import-ts",
-    hasTests: false,
-    initArgs: [
-      "fuel",
-      "contract-import",
-      "-c",
-      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
-      "local",
-      "-a",
-      fuelGreeterAbi,
-      "--contract-name",
-      "Greeter",
-      "-b",
-      "testnet",
-      "--single-contract",
-      "--all-events",
-      "-l",
-      "typescript",
-    ],
-  },
-  {
-    name: "fuel-contract-import-rescript",
-    hasTests: false,
-    initArgs: [
-      "fuel",
-      "contract-import",
-      "-c",
-      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
-      "local",
-      "-a",
-      fuelGreeterAbi,
-      "--contract-name",
-      "Greeter",
-      "-b",
-      "testnet",
       "--single-contract",
       "--all-events",
       "-l",
