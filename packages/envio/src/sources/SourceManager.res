@@ -288,7 +288,7 @@ let getSourceNewHeight = async (
               resolvers->Array.forEach(resolve => resolve(newHeight))
             })
             sourceState.unsubscribe = Some(unsubscribe)
-          | None =>
+          | _ =>
             // Slowdown polling when the chain isn't progressing
             let pollingInterval = if status.contents === Stalled {
               sourceManager.stalledPollingInterval

@@ -34,6 +34,8 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
   // Add the necessary event listeners, handle errors
   // and update the timeout.
   and scheduleReconnect = () => {
+    // Clear stale timeout to avoid double reconnect
+    timeoutIdRef.contents->Js.Global.clearTimeout
     let delay =
       baseDuration *
       Js.Math.pow_float(~base=2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
@@ -80,8 +82,6 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
 
     es->EventSource.onerror(error => {
       errorCount := errorCount.contents + 1
-      // Clear stale timeout to avoid double reconnect
-      timeoutIdRef.contents->Js.Global.clearTimeout
       Logging.trace({
         "msg": "EventSource error on height stream, reconnecting",
         "chainId": chainId,
