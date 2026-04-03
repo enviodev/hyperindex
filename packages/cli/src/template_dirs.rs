@@ -245,11 +245,6 @@ impl<'a> TemplateDirs<'a> {
         self.get_contract_import_dynamic_dir("shared")
     }
 
-    ///Gets template from templates/dynamic/contract_import_templates/{language} ie
-    ///(rescript, javascript or typescript)
-    pub fn get_contract_import_lang_dir(&self, lang: &Language) -> Result<RelativeDir<'a>> {
-        self.get_contract_import_dynamic_dir(lang.to_string().to_lowercase())
-    }
     ///Gets template from templates/dynamic/subgraph_migration_templates/{template}
     fn get_subgraph_migration_dynamic_dir<T: Display>(
         &self,
