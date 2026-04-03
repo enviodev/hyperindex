@@ -70,7 +70,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     })
 
     es->EventSource.onerror(error => {
-      Logging.warn({
+      Logging.trace({
         "msg": "EventSource error on height stream",
         "chainId": chainId,
         "url": hyperSyncUrl,
@@ -100,7 +100,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
         // Call the callback with the new height
         onHeight(height)
       | None =>
-        Logging.warn({
+        Logging.trace({
           "msg": "Height was not a number in event.data",
           "chainId": chainId,
           "data": event.data,
