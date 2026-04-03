@@ -4,6 +4,8 @@ Pure subscription-based implementation of the HyperSync height stream.
 
 let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let eventsourceRef = ref(None)
+  let errorCount = ref(0)
+  let baseDuration = 125
   // Timeout doesn't do anything for initialization
   let timeoutIdRef = ref(Js.Global.setTimeout(() => (), 0))
 
@@ -11,6 +13,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
   // If the timeout lapses, close and reconnect the EventSource.
   let rec updateTimeoutId = () => {
     timeoutIdRef.contents->Js.Global.clearTimeout
+    errorCount := 0
 
     // Should receive a ping at least every 5s, so 15s is a safe margin
     // for staleness to restart the EventSource connection
@@ -30,6 +33,12 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
   // Instantiate a new EventSource and set it to the shared refs.
   // Add the necessary event listeners, handle errors
   // and update the timeout.
+  and scheduleReconnect = () => {
+    let delay =
+      baseDuration *
+      Js.Math.pow_float(~base=2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
+    let _ = Js.Global.setTimeout(() => refreshEventSource(), Pervasives.min(delay, 60_000))
+  }
   and refreshEventSource = () => {
     // Close the old EventSource if it exists (on a new connection after timeout)
     switch eventsourceRef.contents {
@@ -70,13 +79,21 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     })
 
     es->EventSource.onerror(error => {
-      Logging.trace({
-        "msg": "EventSource error on height stream",
-        "chainId": chainId,
-        "url": hyperSyncUrl,
-        "status": error.status,
-        "error": error.message,
-      })
+      errorCount := errorCount.contents + 1
+      // Clear stale timeout to avoid double reconnect
+      timeoutIdRef.contents->Js.Global.clearTimeout
+      Logging.childWarn(
+        Logging.createChild(~params={"chainId": chainId}),
+        {
+          "msg": "EventSource error on height stream, reconnecting",
+          "chainId": chainId,
+          "url": hyperSyncUrl,
+          "status": error.status,
+          "error": error.message,
+          "errorCount": errorCount.contents,
+        },
+      )
+      scheduleReconnect()
     })
 
     es->EventSource.addEventListener("ping", _event => {

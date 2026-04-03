@@ -229,6 +229,7 @@ let getSourceNewHeight = async (
   sourceManager,
   ~sourceState: sourceState,
   ~knownHeight,
+  ~stallTimeout,
   ~status: ref<status>,
   ~logger,
 ) => {
@@ -241,9 +242,25 @@ let getSourceNewHeight = async (
     // If subscription exists, wait for next height event
     switch sourceState.unsubscribe {
     | Some(_) =>
-      let height = await Promise.make((resolve, _reject) => {
+      let subscriptionPromise = Promise.make((resolve, _reject) => {
         sourceState.pendingHeightResolvers->Array.push(resolve)
       })
+      // If subscription goes quiet for half the stall timeout, fall back to REST polling
+      let pollingFallback = Utils.delay(stallTimeout / 2)->Promise.then(async () => {
+        let h = ref(initialHeight)
+        while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
+          try {
+            h := (await source.getHeightOrThrow())
+          } catch {
+          | _ => ()
+          }
+          if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
+            await Utils.delay(source.pollingInterval)
+          }
+        }
+        h.contents
+      })
+      let height = await Promise.race([subscriptionPromise, pollingFallback])
 
       // Only accept heights greater than initialHeight
       if height > initialHeight {
@@ -400,7 +417,13 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
     ->Array.map(async sourceState => {
       (
         sourceState.source,
-        await sourceManager->getSourceNewHeight(~sourceState, ~knownHeight, ~status, ~logger),
+        await sourceManager->getSourceNewHeight(
+          ~sourceState,
+          ~knownHeight,
+          ~stallTimeout,
+          ~status,
+          ~logger,
+        ),
       )
     })
     ->Array.concat([
@@ -442,7 +465,13 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
           fallbackSources->Array.map(async sourceState => {
             (
               sourceState.source,
-              await sourceManager->getSourceNewHeight(~sourceState, ~knownHeight, ~status, ~logger),
+              await sourceManager->getSourceNewHeight(
+                ~sourceState,
+                ~knownHeight,
+                ~stallTimeout,
+                ~status,
+                ~logger,
+              ),
             )
           }),
         )
