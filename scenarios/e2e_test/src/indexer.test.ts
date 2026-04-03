@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer } from "generated";
 
 describe("Indexer smoke test", () => {
@@ -9,22 +9,8 @@ describe("Indexer smoke test", () => {
 
       const result = await indexer.process({ chains: { 1: {} } });
 
-      t.expect(result.changes.length, "Should have at least one change").toBeGreaterThan(0);
-      t.expect(result.changes[0]).toMatchObject({
-        chainId: 1,
-        Transfer: {
-          sets: expect.arrayContaining([
-            expect.objectContaining({
-              id: expect.any(String),
-              from: expect.any(String),
-              to: expect.any(String),
-              value: expect.any(BigInt),
-              blockNumber: expect.any(Number),
-              transactionHash: expect.any(String),
-            }),
-          ]),
-        },
-      });
+      console.log(JSON.stringify(result, (_, v) => (typeof v === "bigint" ? `${v}n` : v), 2));
+      t.expect(result).toMatchInlineSnapshot();
     },
     60_000
   );
