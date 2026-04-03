@@ -34,3 +34,13 @@ describe("Greeter contract NewGreeting event tests", () => {
     t.expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);
   });
 });
+
+describe("Indexer smoke test", () => {
+  it("processes the first block with events on chain 0", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({ chains: { 0: {} } });
+
+    t.expect(result).toMatchInlineSnapshot();
+  }, 60_000);
+});

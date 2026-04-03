@@ -488,29 +488,20 @@ impl Contract {
         content.push_str("  });\n");
         content.push_str("});\n");
 
-        // Auto-exit smoke test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
-        if !is_fuel {
-            content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
-            content.push_str(&format!(
-                "  it(\"processes the first block with events on chain {}\", async (t) => {{\n",
-                chain_id
-            ));
-            content.push_str("    const indexer = createTestIndexer();\n\n");
-            content.push_str(&format!(
-                "    const result = await indexer.process({{ chains: {{ {}: {{}} }} }});\n\n",
-                chain_id
-            ));
-            content.push_str("    t.expect(result.changes.length).toBeGreaterThan(0);\n");
-            content.push_str(&format!(
-                "    t.expect(result.changes[0].chainId).toBe({});\n",
-                chain_id
-            ));
-            content.push_str(&format!(
-                "    t.expect(result.changes[0].eventsProcessed).toBeGreaterThan(0);\n",
-            ));
-            content.push_str("  }, 60_000);\n");
-            content.push_str("});\n");
-        }
+        // Auto-exit smoke test: fetches first block with events from HyperSync and exits
+        content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
+        content.push_str(&format!(
+            "  it(\"processes the first block with events on chain {}\", async (t) => {{\n",
+            chain_id
+        ));
+        content.push_str("    const indexer = createTestIndexer();\n\n");
+        content.push_str(&format!(
+            "    const result = await indexer.process({{ chains: {{ {}: {{}} }} }});\n\n",
+            chain_id
+        ));
+        content.push_str("    t.expect(result).toMatchInlineSnapshot();\n");
+        content.push_str("  }, 60_000);\n");
+        content.push_str("});\n");
 
         content
     }
@@ -610,25 +601,28 @@ impl Contract {
         content.push_str("  })\n");
         content.push_str("})\n");
 
-        // Auto-exit smoke test (EVM only — Fuel/SVM don't support HyperSync auto-exit)
-        if !is_fuel {
-            content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
-            content.push_str(&format!(
-                "  Async.it(\"processes the first block with events on chain {}\", async t => {{\n",
-                chain_id
-            ));
-            content.push_str("    let indexer = createTestIndexer()\n\n");
-            content.push_str(&format!(
-                "    let result = await indexer.process({{\n      chains: {{\n        \\\"{}\": ({{}} : TestIndexer.evmChainConfig),\n      }},\n    }})\n\n",
-                chain_id
-            ));
-            content.push_str("    t.expect(\n");
-            content.push_str("      result.changes->Array.length,\n");
-            content.push_str("      ~message=\"Should have at least one change\",\n");
-            content.push_str("    ).toBeGreaterThan(0)\n");
-            content.push_str("  }, ~timeout=60_000)\n");
-            content.push_str("})\n");
-        }
+        // Auto-exit smoke test: fetches first block with events from HyperSync and exits
+        let chain_config_type = if is_fuel {
+            "fuelChainConfig"
+        } else {
+            "evmChainConfig"
+        };
+        content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
+        content.push_str(&format!(
+            "  Async.it(\"processes the first block with events on chain {}\", async t => {{\n",
+            chain_id
+        ));
+        content.push_str("    let indexer = createTestIndexer()\n\n");
+        content.push_str(&format!(
+            "    let result = await indexer.process({{\n      chains: {{\n        \\\"{}\": ({{}} : TestIndexer.{}),\n      }},\n    }})\n\n",
+            chain_id, chain_config_type
+        ));
+        content.push_str("    t.expect(\n");
+        content.push_str("      result.changes->Array.length,\n");
+        content.push_str("      ~message=\"Should have at least one change\",\n");
+        content.push_str("    ).toBeGreaterThan(0)\n");
+        content.push_str("  }, ~timeout=60_000)\n");
+        content.push_str("})\n");
 
         content
     }

@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
-assertion_line: 1072
 expression: content
 ---
 open Vitest
@@ -29,4 +28,21 @@ describe("Greeter contract NewGreeting event tests", () => {
       ~message="Actual Greeter_NewGreeting should be the same as the expected Greeter_NewGreeting",
     ).toEqual(expectedGreeterNewGreeting)
   })
+})
+
+describe("Indexer smoke test", () => {
+  Async.it("processes the first block with events on chain 0", async t => {
+    let indexer = createTestIndexer()
+
+    let result = await indexer.process({
+      chains: {
+        \"0": ({} : TestIndexer.fuelChainConfig),
+      },
+    })
+
+    t.expect(
+      result.changes->Array.length,
+      ~message="Should have at least one change",
+    ).toBeGreaterThan(0)
+  }, ~timeout=60_000)
 })

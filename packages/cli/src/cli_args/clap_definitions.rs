@@ -376,6 +376,9 @@ pub mod fuel {
         ///The name of the contract
         #[arg(long)]
         pub contract_name: Option<String>,
+        ///Which Fuel network to use
+        #[arg(short, long)]
+        pub blockchain: Option<crate::init_config::fuel::Network>,
     }
 
     #[derive(Args, Debug, Default, Clone)]

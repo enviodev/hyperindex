@@ -38,6 +38,7 @@ fn get_local_or_explorer_import(args: &ContractImportArgs) -> LocalOrExplorerImp
         None => LocalOrExplorerImport::Local(LocalImportArgs {
             abi_file: None,
             contract_name: None,
+            blockchain: None,
         }),
     }
 }
@@ -143,12 +144,17 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
     let name = get_contract_name(&local_import_args).context("Failed getting contract name")?;
 
-    let choose_from_networks =
-        Select::new("Choose network:", vec![Network::Mainnet, Network::Testnet])
+    let choose_from_networks = match local_import_args.blockchain {
+        Some(network) => network,
+        None => Select::new("Choose network:", vec![Network::Mainnet, Network::Testnet])
             .prompt()
-            .context("Failed during prompt for network")?;
+            .context("Failed during prompt for network")?,
+    };
 
-    let addresses = vec![prompt_contract_address(None)?];
+    let addresses = vec![match args.contract_address {
+        Some(ref addr) => addr.clone(),
+        None => prompt_contract_address(None)?,
+    }];
 
     Ok(SelectedContract {
         name: normalize_contract_name(name),

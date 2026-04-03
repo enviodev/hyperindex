@@ -15,7 +15,7 @@ import os from "os";
 
 interface TemplateConfig {
   name: string;
-  initArgs: string[];
+  initArgs: string[] | ((ctx: { rootDir: string }) => string[]);
   hasTests?: boolean;
 }
 
@@ -85,7 +85,54 @@ const TEMPLATES: TemplateConfig[] = [
       "rescript",
     ],
   },
+  // Fuel Contract Import (local ABI)
+  {
+    name: "fuel-contract-import-ts",
+    hasTests: true,
+    initArgs: ({ rootDir }) => [
+      "fuel",
+      "contract-import",
+      "-c",
+      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
+      "local",
+      "-a",
+      path.join(rootDir, "packages/e2e-tests/fixtures/fuel-greeter-abi.json"),
+      "--contract-name",
+      "Greeter",
+      "-b",
+      "testnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "typescript",
+    ],
+  },
+  {
+    name: "fuel-contract-import-rescript",
+    hasTests: true,
+    initArgs: ({ rootDir }) => [
+      "fuel",
+      "contract-import",
+      "-c",
+      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
+      "local",
+      "-a",
+      path.join(rootDir, "packages/e2e-tests/fixtures/fuel-greeter-abi.json"),
+      "--contract-name",
+      "Greeter",
+      "-b",
+      "testnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "rescript",
+    ],
+  },
 ];
+
+function resolveInitArgs(initArgs: TemplateConfig["initArgs"]): string[] {
+  return typeof initArgs === "function" ? initArgs({ rootDir: config.rootDir }) : initArgs;
+}
 
 describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
   let projectDir: string;
@@ -109,7 +156,7 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
     const apiToken = process.env.ENVIO_API_TOKEN ?? "";
     const result = await runCommand(
       config.envioCommand,
-      [...config.envioArgs, "init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...initArgs],
+      [...config.envioArgs, "init", "-n", name, "-d", projectDir, "--api-token", apiToken, ...resolveInitArgs(initArgs)],
       {
         cwd: projectDir,
         timeout: config.timeouts.install,
