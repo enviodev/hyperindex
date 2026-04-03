@@ -62,6 +62,11 @@ module ChildProcess = {
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
 }
 
+module Immediate = {
+  type t
+  @val external setImmediate: (unit => unit) => t = "setImmediate"
+}
+
 module Url = {
   type t
   @module("url") external fileURLToPath: t => string = "fileURLToPath"

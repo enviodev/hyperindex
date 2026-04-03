@@ -40,7 +40,7 @@ module MakeManager = (S: State) => {
   }
   and dispatchTask = (self, task: S.task) => {
     let stateId = self.state->S.getId
-    Js.Global.setTimeout(() => {
+    NodeJs.Immediate.setImmediate(() => {
       if stateId !== self.state->S.getId {
         Logging.info("Invalidated task discarded")
       } else {
@@ -57,7 +57,7 @@ module MakeManager = (S: State) => {
         | e => e->self.onError
         }
       }
-    }, 0)->ignore
+    })->ignore
   }
 
   let getState = self => self.state
