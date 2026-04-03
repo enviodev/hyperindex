@@ -9,6 +9,7 @@ describe("Indexer smoke test", () => {
 
       const result = await indexer.process({ chains: { 1: {} } });
 
+      console.log(result);
       t.expect(result).toMatchInlineSnapshot();
     },
     60_000
