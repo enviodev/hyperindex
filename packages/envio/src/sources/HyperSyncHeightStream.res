@@ -5,7 +5,7 @@ Pure subscription-based implementation of the HyperSync height stream.
 let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let eventsourceRef = ref(None)
   let errorCount = ref(0)
-  let baseDuration = 125
+  let baseDuration = 50
   // Timeout doesn't do anything for initialization
   let timeoutIdRef = ref(Js.Global.setTimeout(() => (), 0))
 
@@ -82,17 +82,14 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
       errorCount := errorCount.contents + 1
       // Clear stale timeout to avoid double reconnect
       timeoutIdRef.contents->Js.Global.clearTimeout
-      Logging.childWarn(
-        Logging.createChild(~params={"chainId": chainId}),
-        {
-          "msg": "EventSource error on height stream, reconnecting",
-          "chainId": chainId,
-          "url": hyperSyncUrl,
-          "status": error.status,
-          "error": error.message,
-          "errorCount": errorCount.contents,
-        },
-      )
+      Logging.trace({
+        "msg": "EventSource error on height stream, reconnecting",
+        "chainId": chainId,
+        "url": hyperSyncUrl,
+        "status": error.status,
+        "error": error.message,
+        "errorCount": errorCount.contents,
+      })
       scheduleReconnect()
     })
 

@@ -230,6 +230,7 @@ let getSourceNewHeight = async (
   ~sourceState: sourceState,
   ~knownHeight,
   ~stallTimeout,
+  ~isLive,
   ~status: ref<status>,
   ~logger,
 ) => {
@@ -278,7 +279,7 @@ let getSourceNewHeight = async (
           // If createHeightSubscription is available and height hasn't changed,
           // create subscription instead of polling
           switch source.createHeightSubscription {
-          | Some(createSubscription) =>
+          | Some(createSubscription) if isLive =>
             let unsubscribe = createSubscription(~onHeight=newHeight => {
               sourceState.knownHeight = newHeight
               // Resolve all pending height resolvers
@@ -421,6 +422,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
           ~sourceState,
           ~knownHeight,
           ~stallTimeout,
+          ~isLive,
           ~status,
           ~logger,
         ),
@@ -469,6 +471,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
                 ~sourceState,
                 ~knownHeight,
                 ~stallTimeout,
+                ~isLive,
                 ~status,
                 ~logger,
               ),
