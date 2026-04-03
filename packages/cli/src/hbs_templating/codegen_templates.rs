@@ -579,14 +579,14 @@ impl EventMod {
                             &selected.block_fields,
                             &all_fields.block_fields,
                             "block_fields",
-                            &event_name,
+                            event_name,
                             "    ",
                         ),
                         ProjectTemplate::generate_rescript_all_fields_record(
                             &selected.transaction_fields,
                             &all_fields.transaction_fields,
                             "transaction_fields",
-                            &event_name,
+                            event_name,
                             "    ",
                         ),
                     )
@@ -1029,7 +1029,7 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
-struct FieldSelection {
+pub(crate) struct FieldSelection {
     transaction_fields: Vec<SelectedFieldTemplate>,
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
@@ -1308,14 +1308,7 @@ impl ProjectTemplate {
 
         // For events without custom field_selection, use global type alias
         // For events with custom field_selection, generate inline type with all fields
-        let (block_ts, tx_ts) = if event.field_selection.is_none() {
-            (
-                global_block_type_name.to_string(),
-                global_transaction_type_name.to_string(),
-            )
-        } else {
-            let event_fs = event.field_selection.as_ref().unwrap();
-
+        let (block_ts, tx_ts) = if let Some(event_fs) = &event.field_selection {
             let block_ts = Self::generate_ts_all_fields_record(
                 &FieldSelection::new(FieldSelectionOptions {
                     block_fields: event_fs.block_fields.clone(),
@@ -1339,6 +1332,11 @@ impl ProjectTemplate {
                 "        ",
             );
             (block_ts, tx_ts)
+        } else {
+            (
+                global_block_type_name.to_string(),
+                global_transaction_type_name.to_string(),
+            )
         };
 
         format!(

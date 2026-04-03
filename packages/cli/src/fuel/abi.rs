@@ -177,7 +177,7 @@ impl FuelAbi {
                                         ),
                                         //if the type_id is in the generic_param_name_map
                                         //it is a generic param
-                                        |generic_name| TypeIdent::GenericParam(generic_name),
+                                        TypeIdent::GenericParam,
                                     )
                                 })
                                 .collect();
