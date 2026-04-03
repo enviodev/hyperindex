@@ -1,37 +1,18 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
-assertion_line: 1064
 expression: content
 ---
-import { describe, it, expect } from "vitest";
-import { createTestIndexer, type Greeter_NewGreeting } from "generated";
+import { describe, it } from "vitest";
+import { createTestIndexer } from "generated";
 
-describe("Greeter contract NewGreeting event tests", () => {
-  it("Greeter_NewGreeting is created correctly", async () => {
+describe("Indexer smoke test", () => {
+  it("processes the first block with events on chain 0", async (t) => {
     const indexer = createTestIndexer();
 
-    // Creating mock for Greeter contract NewGreeting event
-    const event = {
-      contract: "Greeter" as const,
-      event: "NewGreeting" as const,
-    };
+    const result = await indexer.process({ chains: { 0: {} } });
 
-    await indexer.process({
-      chains: {
-        0: {
-          simulate: [event],
-        },
-      },
-    });
-
-    // Getting the actual entity from the test indexer
-    let actualGreeterNewGreeting = await indexer.Greeter_NewGreeting.getOrThrow("0_0_0");
-
-    // Creating the expected entity
-    const expectedGreeterNewGreeting: Greeter_NewGreeting = {
-      id: "0_0_0",
-    };
-    // Asserting that the entity in the mock database is the same as the expected entity
-    expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);
-  });
+    t.expect(result.changes.length, "Should have at least one change").toBeGreaterThan(0);
+    t.expect(result.changes[0].chainId).toBe(0);
+    t.expect(result.changes[0].eventsProcessed).toBeGreaterThan(0);
+  }, 60_000);
 });

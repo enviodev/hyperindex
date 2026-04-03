@@ -267,6 +267,12 @@ jobs:
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
 
+      - name: Run smoke test
+        working-directory: scenarios/e2e_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
+
       - name: Run E2E test
         working-directory: packages/e2e-tests
         run: pnpm test:e2e

@@ -270,6 +270,7 @@ let start = async (
   ~makeGeneratedConfig: unit => Config.t,
   ~persistence: Persistence.t,
   ~isTest=false,
+  ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
@@ -366,7 +367,13 @@ let start = async (
     ~config=ctx.config,
     ~registrations=ctx.registrations,
   )
-  let globalState = GlobalState.make(~ctx, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
+  let globalState = GlobalState.make(
+    ~ctx,
+    ~chainManager,
+    ~isDevelopmentMode,
+    ~shouldUseTui,
+    ~exitAfterFirstEventBlock,
+  )
   let gsManager = globalState->GlobalStateManager.make
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)

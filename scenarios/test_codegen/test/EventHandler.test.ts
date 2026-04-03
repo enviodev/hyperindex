@@ -1015,7 +1015,6 @@ describe("Use Envio test framework to test event handlers", () => {
       expectType<TypeEqual<typeof change.block, number>>(true);
       expectType<TypeEqual<typeof change.chainId, number>>(true);
       expectType<TypeEqual<typeof change.eventsProcessed, number>>(true);
-      expectType<TypeEqual<typeof change.blockHash, string | undefined>>(true);
 
       // Verify entity changes have expected structure
       const userChange = change.User;
