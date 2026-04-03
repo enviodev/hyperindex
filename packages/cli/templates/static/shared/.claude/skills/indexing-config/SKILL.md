@@ -116,11 +116,13 @@ Global `field_selection` is at the root level (sibling to `contracts` and `chain
 
 ```yaml
 rpc:
-  - url: ${RPC_URL}                    # required — errors if missing
-  - url: ${RPC_URL:-http://localhost:8545}  # with default value
+  - url: ${ENVIO_RPC_URL}                    # required — errors if missing
+  - url: ${ENVIO_RPC_URL:-http://localhost:8545}  # with default value
 ```
 
 Works in any string value in config. Set via `.env` file or shell environment.
+
+**IMPORTANT:** All environment variables MUST use the `ENVIO_` prefix (e.g., `ENVIO_RPC_URL`, not `RPC_URL`). The hosted service requires the `ENVIO_` prefix — variables without it will not be available at runtime.
 
 ## YAML Validation
 
