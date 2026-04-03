@@ -35,7 +35,6 @@ describe("UniswapV3Factory PoolCreated (integration)", () => {
             ],
           },
           "block": 12369739,
-          "blockHash": "0xe8228e3e736a42c7357d2ce6882a1662c588ce608897dd53c3053bcbefb4309a",
           "chainId": 1,
           "eventsProcessed": 1,
         },

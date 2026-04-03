@@ -99,7 +99,7 @@ await indexer.EntityName.getAll();         // returns all entities of this type
 
 ## result.changes
 
-`result.changes` is an array of per-block change objects. Each entry has `block`, `blockHash`, `chainId`, `eventsProcessed`, plus entity names as keys with `sets` arrays of created/updated entities. Dynamic contract registrations appear under `addresses.sets`.
+`result.changes` is an array of per-block change objects. Each entry has `block`, `chainId`, `eventsProcessed`, plus entity names as keys with `sets` arrays of created/updated entities. Dynamic contract registrations appear under `addresses.sets`.
 
 ## Assertions
 

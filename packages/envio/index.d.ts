@@ -640,8 +640,6 @@ type TestIndexerEntityOperations<Entity> = {
 type EntityChange<Config extends IndexerConfigTypes> = {
   /** The block where the changes occurred. */
   readonly block: number;
-  /** The block hash (if available). */
-  readonly blockHash?: string;
   /** The chain ID. */
   readonly chainId: number;
   /** Number of events processed in this block. */

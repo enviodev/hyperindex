@@ -123,7 +123,6 @@ let handleWriteBatch = (
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
-  ~checkpointBlockHashes: array<Js.Null.t<string>>,
   ~checkpointEventsProcessed: array<int>,
 ): unit => {
   // Group entity changes by checkpointId
@@ -217,10 +216,6 @@ let handleWriteBatch = (
 
     // Add checkpoint metadata
     change->Js.Dict.set("block", checkpointBlockNumbers->Array.getUnsafe(i)->Utils.magic)
-    switch checkpointBlockHashes->Array.getUnsafe(i)->Js.Null.toOption {
-    | Some(hash) => change->Js.Dict.set("blockHash", hash->Utils.magic)
-    | None => () // Skip blockHash when null
-    }
     change->Js.Dict.set("chainId", checkpointChainIds->Array.getUnsafe(i)->Utils.magic)
     change->Js.Dict.set(
       "eventsProcessed",
@@ -784,7 +779,7 @@ let makeCreateTestIndexer = (
                     checkpointIds,
                     checkpointChainIds,
                     checkpointBlockNumbers,
-                    checkpointBlockHashes,
+                    checkpointBlockHashes: _,
                     checkpointEventsProcessed,
                   }) =>
                   state->handleWriteBatch(
@@ -792,7 +787,6 @@ let makeCreateTestIndexer = (
                     ~checkpointIds,
                     ~checkpointChainIds,
                     ~checkpointBlockNumbers,
-                    ~checkpointBlockHashes,
                     ~checkpointEventsProcessed,
                   )
                   Js.Json.null->respond
