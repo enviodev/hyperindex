@@ -95,6 +95,24 @@ jobs:
 
   # ── Verify ──────────────────────────────────────────────────────────
 
+  # Clippy lint check - fail on any warnings
+  clippy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: ./.github/actions/cargo-cache
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
   # Cargo unit tests - no artifacts needed, independent compilation
   cargo-test:
     runs-on: ubuntu-latest
