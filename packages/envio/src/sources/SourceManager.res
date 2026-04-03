@@ -248,6 +248,12 @@ let getSourceNewHeight = async (
       })
       // If subscription goes quiet for half the stall timeout, fall back to REST polling
       let pollingFallback = Utils.delay(stallTimeout / 2)->Promise.then(async () => {
+        logger->Logging.childTrace({
+          "msg": "onHeight subscription stale, switching to polling fallback",
+          "source": source.name,
+          "stallTimeout": stallTimeout / 2,
+          "knownHeight": knownHeight,
+        })
         let h = ref(initialHeight)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
           try {
