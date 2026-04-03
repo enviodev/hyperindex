@@ -384,7 +384,7 @@ impl Contract {
         content
     }
     /// Generates TypeScript test file content for this contract
-    pub fn generate_typescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
+    pub fn generate_typescript_test_content(&self, _is_fuel: bool, chain_id: u64) -> String {
         let first_event = match self.imported_events.first() {
             Some(event) => event,
             None => return String::new(),

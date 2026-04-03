@@ -216,6 +216,10 @@ Initialize from a local json ABI file
 
 * `-a`, `--abi-file <ABI_FILE>` — The path to a json abi file
 * `--contract-name <CONTRACT_NAME>` — The name of the contract
+* `-b`, `--blockchain <BLOCKCHAIN>` — Which Fuel network to use
+
+  Possible values: `mainnet`, `testnet`
+
 
 
 
