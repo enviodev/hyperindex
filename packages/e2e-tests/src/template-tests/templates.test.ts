@@ -53,11 +53,9 @@ const TEMPLATES: TemplateConfig[] = [
     initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
   },
   // EVM Contract Import (explorer)
-  // Tests disabled: auto-exit smoke test requires live HyperSync,
-  // covered by e2e-test job instead.
   {
     name: "evm-contract-import-ts",
-    hasTests: false,
+    hasTests: true,
     initArgs: [
       "contract-import",
       "-c",
@@ -73,7 +71,7 @@ const TEMPLATES: TemplateConfig[] = [
   },
   {
     name: "evm-contract-import-rescript",
-    hasTests: false,
+    hasTests: true,
     initArgs: [
       "contract-import",
       "-c",
