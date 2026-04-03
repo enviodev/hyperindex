@@ -579,14 +579,14 @@ impl EventMod {
                             &selected.block_fields,
                             &all_fields.block_fields,
                             "block_fields",
-                            &event_name,
+                            event_name,
                             "    ",
                         ),
                         ProjectTemplate::generate_rescript_all_fields_record(
                             &selected.transaction_fields,
                             &all_fields.transaction_fields,
                             "transaction_fields",
-                            &event_name,
+                            event_name,
                             "    ",
                         ),
                     )
@@ -1029,7 +1029,7 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
-struct FieldSelection {
+pub(crate) struct FieldSelection {
     transaction_fields: Vec<SelectedFieldTemplate>,
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
@@ -1271,14 +1271,11 @@ impl ProjectTemplate {
     fn generate_contract_event_ts_type(
         contract_name: &str,
         event: &system_config::Event,
-        global_field_selection: &system_config::FieldSelection,
         aggregated: &FieldSelection,
         chain_id_type_name: &str,
         global_block_type_name: &str,
         global_transaction_type_name: &str,
     ) -> String {
-        // Event name for field_selection YAML examples
-        let event_yaml_ref = &event.name;
         // Build params TS type
         let params_ts = match &event.kind {
             system_config::EventKind::Params(params) if !params.is_empty() => {
@@ -1311,25 +1308,7 @@ impl ProjectTemplate {
 
         // For events without custom field_selection, use global type alias
         // For events with custom field_selection, generate inline type with all fields
-        let (block_ts, tx_ts) = if event.field_selection.is_none() {
-            (
-                global_block_type_name.to_string(),
-                global_transaction_type_name.to_string(),
-            )
-        } else {
-            let event_fs = event.field_selection.as_ref().unwrap();
-            let default_block_fields = FieldSelection::default_block_fields();
-            let selected_block_names: std::collections::HashSet<&str> = default_block_fields
-                .iter()
-                .map(|f| f.name.as_str())
-                .chain(event_fs.block_fields.iter().map(|f| f.name.as_str()))
-                .collect();
-            let selected_tx_names: std::collections::HashSet<&str> = event_fs
-                .transaction_fields
-                .iter()
-                .map(|f| f.name.as_str())
-                .collect();
-
+        let (block_ts, tx_ts) = if let Some(event_fs) = &event.field_selection {
             let block_ts = Self::generate_ts_all_fields_record(
                 &FieldSelection::new(FieldSelectionOptions {
                     block_fields: event_fs.block_fields.clone(),
@@ -1353,6 +1332,11 @@ impl ProjectTemplate {
                 "        ",
             );
             (block_ts, tx_ts)
+        } else {
+            (
+                global_block_type_name.to_string(),
+                global_transaction_type_name.to_string(),
+            )
         };
 
         format!(
@@ -2530,7 +2514,6 @@ let codegenPersistence = Persistence.make(
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &cfg.field_selection,
                                     &all_fields,
                                     "EvmChainId",
                                     "EvmBlock",
@@ -2616,7 +2599,6 @@ let codegenPersistence = Persistence.make(
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &cfg.field_selection,
                                     &aggregated,
                                     "FuelChainId",
                                     "FuelBlock",

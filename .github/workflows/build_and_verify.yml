@@ -95,7 +95,7 @@ jobs:
 
   # ── Verify ──────────────────────────────────────────────────────────
 
-  # Cargo unit tests - no artifacts needed, independent compilation
+  # Cargo lint and unit tests - no artifacts needed, independent compilation
   cargo-test:
     runs-on: ubuntu-latest
     timeout-minutes: 9
@@ -105,8 +105,13 @@ jobs:
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: ./.github/actions/cargo-cache
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
 
       - name: Cargo Test
         run: cargo test --no-default-features
