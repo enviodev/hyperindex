@@ -50,7 +50,11 @@ describe("Indexer smoke test", () => {
   Async.it("processes the first block with events on chain 1", async t => {
     let indexer = createTestIndexer()
 
-    let result = await indexer.process({chains: {"1": {}}})
+    let result = await indexer.process({
+      chains: {
+        \"1": ({} : TestIndexer.evmChainConfig),
+      },
+    })
 
     t.expect(
       result.changes->Array.length,

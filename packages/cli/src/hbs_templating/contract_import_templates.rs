@@ -619,7 +619,7 @@ impl Contract {
             ));
             content.push_str("    let indexer = createTestIndexer()\n\n");
             content.push_str(&format!(
-                "    let result = await indexer.process({{chains: {{\"{}\": {{}}}}}})\n\n",
+                "    let result = await indexer.process({{\n      chains: {{\n        \\\"{}\": ({{}} : TestIndexer.evmChainConfig),\n      }},\n    }})\n\n",
                 chain_id
             ));
             content.push_str("    t.expect(\n");
