@@ -499,7 +499,14 @@ impl Contract {
             "    const result = await indexer.process({{ chains: {{ {}: {{}} }} }});\n\n",
             chain_id
         ));
-        content.push_str("    t.expect(result).toMatchInlineSnapshot();\n");
+        content.push_str(
+            "    t.expect(result.changes.length, \"Should have at least one change\").toBeGreaterThan(0);\n",
+        );
+        content.push_str(&format!(
+            "    t.expect(result.changes[0].chainId).toBe({});\n",
+            chain_id
+        ));
+        content.push_str("    t.expect(result.changes[0].eventsProcessed).toBeGreaterThan(0);\n");
         content.push_str("  }, 60_000);\n");
         content.push_str("});\n");
 

@@ -52,6 +52,8 @@ describe("Indexer smoke test", () => {
 
     const result = await indexer.process({ chains: { 1: {} } });
 
-    t.expect(result).toMatchInlineSnapshot();
+    t.expect(result.changes.length, "Should have at least one change").toBeGreaterThan(0);
+    t.expect(result.changes[0].chainId).toBe(1);
+    t.expect(result.changes[0].eventsProcessed).toBeGreaterThan(0);
   }, 60_000);
 });
