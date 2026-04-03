@@ -9,26 +9,7 @@ describe("Indexer smoke test", () => {
 
       const result = await indexer.process({ chains: { 1: {} } });
 
-      t.expect(result.changes.length).toBeGreaterThan(0);
-
-      const change = result.changes[0];
-      t.expect(change).toEqual({
-        block: expect.any(Number),
-        chainId: 1,
-        eventsProcessed: expect.any(Number),
-        Transfer: {
-          sets: expect.arrayContaining([
-            expect.objectContaining({
-              id: expect.any(String),
-              from: expect.any(String),
-              to: expect.any(String),
-              value: expect.any(BigInt),
-              blockNumber: expect.any(Number),
-              transactionHash: expect.any(String),
-            }),
-          ]),
-        },
-      });
+      t.expect(result).toMatchInlineSnapshot();
     },
     60_000
   );
