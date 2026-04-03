@@ -5,31 +5,6 @@ expression: content
 open Vitest
 open Indexer
 
-describe("Greeter contract NewGreeting event tests", () => {
-  Async.it("NewGreeting handler creates Greeter_NewGreeting entity", async t => {
-    let indexer = createTestIndexer()
-
-    let _ = await indexer.process({
-      chains: {
-        \"0": {
-          simulate: [makeSimulateItem(OnEvent({event: Greeter(NewGreeting)}))],
-        },
-      },
-    })
-
-    let actualGreeterNewGreeting = await indexer.\"Greeter_NewGreeting".getOrThrow("0_0_0")
-
-    let expectedGreeterNewGreeting: Entities.Greeter_NewGreeting.t = {
-      id: "0_0_0",
-    }
-
-    t.expect(
-      actualGreeterNewGreeting,
-      ~message="Actual Greeter_NewGreeting should be the same as the expected Greeter_NewGreeting",
-    ).toEqual(expectedGreeterNewGreeting)
-  })
-})
-
 describe("Indexer smoke test", () => {
   Async.it("processes the first block with events on chain 0", async t => {
     let indexer = createTestIndexer()

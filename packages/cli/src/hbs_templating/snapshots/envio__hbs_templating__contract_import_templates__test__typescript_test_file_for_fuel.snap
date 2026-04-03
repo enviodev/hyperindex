@@ -3,37 +3,7 @@ source: packages/cli/src/hbs_templating/contract_import_templates.rs
 expression: content
 ---
 import { describe, it } from "vitest";
-import { createTestIndexer, type Greeter_NewGreeting } from "generated";
-
-describe("Greeter contract NewGreeting event tests", () => {
-  it("Greeter_NewGreeting is created correctly", async (t) => {
-    const indexer = createTestIndexer();
-
-    // Creating mock for Greeter contract NewGreeting event
-    const event = {
-      contract: "Greeter" as const,
-      event: "NewGreeting" as const,
-    };
-
-    await indexer.process({
-      chains: {
-        0: {
-          simulate: [event],
-        },
-      },
-    });
-
-    // Getting the actual entity from the test indexer
-    let actualGreeterNewGreeting = await indexer.Greeter_NewGreeting.getOrThrow("0_0_0");
-
-    // Creating the expected entity
-    const expectedGreeterNewGreeting: Greeter_NewGreeting = {
-      id: "0_0_0",
-    };
-    // Asserting that the entity in the mock database is the same as the expected entity
-    t.expect(actualGreeterNewGreeting, "Actual GreeterNewGreeting should be the same as the expected GreeterNewGreeting").toEqual(expectedGreeterNewGreeting);
-  });
-});
+import { createTestIndexer } from "generated";
 
 describe("Indexer smoke test", () => {
   it("processes the first block with events on chain 0", async (t) => {
