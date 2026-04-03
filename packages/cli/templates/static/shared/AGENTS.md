@@ -8,6 +8,7 @@ Blockchain event indexer built with [Envio HyperIndex](https://docs.envio.dev). 
 
 - Node.js v22+ (v24 recommended), pnpm, Docker
 - `ENVIO_API_TOKEN` env var (required for HyperSync data source)
+- **All environment variables MUST use the `ENVIO_` prefix** (e.g., `ENVIO_RPC_URL`, `ENVIO_API_KEY`). The hosted service only exposes variables with this prefix at runtime.
 
 ## Commands
 
