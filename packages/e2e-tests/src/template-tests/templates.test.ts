@@ -86,9 +86,11 @@ const TEMPLATES: TemplateConfig[] = [
     ],
   },
   // Fuel Contract Import (local ABI)
+  // Tests disabled: auto-exit smoke test scans from block 0 on Fuel testnet,
+  // which can timeout. Covered by init + codegen checks below.
   {
     name: "fuel-contract-import-ts",
-    hasTests: true,
+    hasTests: false,
     initArgs: ({ rootDir }) => [
       "fuel",
       "contract-import",
@@ -109,7 +111,7 @@ const TEMPLATES: TemplateConfig[] = [
   },
   {
     name: "fuel-contract-import-rescript",
-    hasTests: true,
+    hasTests: false,
     initArgs: ({ rootDir }) => [
       "fuel",
       "contract-import",
