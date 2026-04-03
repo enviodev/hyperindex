@@ -1271,14 +1271,11 @@ impl ProjectTemplate {
     fn generate_contract_event_ts_type(
         contract_name: &str,
         event: &system_config::Event,
-        _global_field_selection: &system_config::FieldSelection,
         aggregated: &FieldSelection,
         chain_id_type_name: &str,
         global_block_type_name: &str,
         global_transaction_type_name: &str,
     ) -> String {
-        // Event name for field_selection YAML examples
-        let _event_yaml_ref = &event.name;
         // Build params TS type
         let params_ts = match &event.kind {
             system_config::EventKind::Params(params) if !params.is_empty() => {
@@ -1318,17 +1315,6 @@ impl ProjectTemplate {
             )
         } else {
             let event_fs = event.field_selection.as_ref().unwrap();
-            let default_block_fields = FieldSelection::default_block_fields();
-            let _selected_block_names: std::collections::HashSet<&str> = default_block_fields
-                .iter()
-                .map(|f| f.name.as_str())
-                .chain(event_fs.block_fields.iter().map(|f| f.name.as_str()))
-                .collect();
-            let _selected_tx_names: std::collections::HashSet<&str> = event_fs
-                .transaction_fields
-                .iter()
-                .map(|f| f.name.as_str())
-                .collect();
 
             let block_ts = Self::generate_ts_all_fields_record(
                 &FieldSelection::new(FieldSelectionOptions {
@@ -2530,7 +2516,6 @@ let codegenPersistence = Persistence.make(
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &cfg.field_selection,
                                     &all_fields,
                                     "EvmChainId",
                                     "EvmBlock",
@@ -2616,7 +2601,6 @@ let codegenPersistence = Persistence.make(
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &cfg.field_selection,
                                     &aggregated,
                                     "FuelChainId",
                                     "FuelBlock",
