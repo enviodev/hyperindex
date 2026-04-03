@@ -1283,6 +1283,59 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.strictEqual(result.changes[0]!.Gravatar?.sets?.length, 2);
   });
 
+  it("simulate with missing params passes undefined to handler", async () => {
+    const indexer = createTestIndexer();
+
+    await assert.rejects(
+      () => indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              // @ts-expect-error - omitting params to test runtime behavior
+              { contract: "Gravatar", event: "NewGravatar" },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
+  it("simulate with partial params passes missing fields as undefined", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              // @ts-expect-error - partial params to test runtime behavior
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Process succeeds but handler errors are swallowed -
+    // check that no entity was created because the handler threw
+    assert.deepEqual(result.changes, [{
+      block: 1,
+      chainId: 1337,
+      eventsProcessed: 1,
+    }]);
+    const entities = await indexer.Gravatar.getAll();
+    assert.deepEqual(entities, []);
+  });
+
   it("EvmEvent type", () => {
     // EvmEvent without generics is a union of all events
     type AllEvents = EvmEvent;
