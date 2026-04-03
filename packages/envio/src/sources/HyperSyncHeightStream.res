@@ -13,7 +13,6 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
   // If the timeout lapses, close and reconnect the EventSource.
   let rec updateTimeoutId = () => {
     timeoutIdRef.contents->Js.Global.clearTimeout
-    errorCount := 0
 
     // Should receive a ping at least every 5s, so 15s is a safe margin
     // for staleness to restart the EventSource connection
@@ -34,12 +33,12 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
   // Add the necessary event listeners, handle errors
   // and update the timeout.
   and scheduleReconnect = () => {
-    // Clear stale timeout to avoid double reconnect
+    // Clear any pending stale/reconnect timeout to avoid double reconnect
     timeoutIdRef.contents->Js.Global.clearTimeout
     let delay =
       baseDuration *
       Js.Math.pow_float(~base=2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
-    let _ = Js.Global.setTimeout(() => refreshEventSource(), Pervasives.min(delay, 60_000))
+    timeoutIdRef := Js.Global.setTimeout(() => refreshEventSource(), Pervasives.min(delay, 60_000))
   }
   and refreshEventSource = () => {
     // Close the old EventSource if it exists (on a new connection after timeout)
@@ -73,6 +72,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     updateTimeoutId()
 
     es->EventSource.onopen(_ => {
+      errorCount := 0
       Logging.trace({
         "msg": "SSE connection opened for height stream",
         "chainId": chainId,
