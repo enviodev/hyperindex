@@ -39,6 +39,8 @@ fn get_local_or_explorer_import(args: &ContractImportArgs) -> LocalOrExplorerImp
             abi_file: None,
             contract_name: None,
             blockchain: None,
+            single_contract: false,
+            all_events: false,
         }),
     }
 }
@@ -108,9 +110,13 @@ impl Contract for SelectedContract {
 
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
-async fn get_contract_import_selection(args: ContractImportArgs) -> Result<SelectedContract> {
+async fn get_contract_import_selection(mut args: ContractImportArgs) -> Result<SelectedContract> {
     let local_or_explorer_import = get_local_or_explorer_import(&args);
     let LocalOrExplorerImport::Local(local_import_args) = local_or_explorer_import;
+
+    // Merge flags from subcommand into parent (flags can appear on either level)
+    args.all_events = args.all_events || local_import_args.all_events;
+    args.single_contract = args.single_contract || local_import_args.single_contract;
 
     let abi_path_string =
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
@@ -167,7 +173,12 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
-async fn prompt_selected_contracts(args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
+async fn prompt_selected_contracts(mut args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
+    // Merge flags from subcommand into parent (flags can appear on either level)
+    if let Some(LocalOrExplorerImport::Local(ref local_args)) = args.local_or_explorer {
+        args.single_contract = args.single_contract || local_args.single_contract;
+        args.all_events = args.all_events || local_args.all_events;
+    }
     let should_prompt_to_continue_adding = !args.single_contract;
     let first_contract = get_contract_import_selection(args).await?;
     let mut contracts = vec![first_contract];

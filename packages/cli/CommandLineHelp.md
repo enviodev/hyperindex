@@ -220,6 +220,8 @@ Initialize from a local json ABI file
 
   Possible values: `mainnet`, `testnet`
 
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/chains
+* `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
 
 
 
