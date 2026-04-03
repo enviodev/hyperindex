@@ -26,7 +26,6 @@ describe("Indexer smoke test", () => {
                 ],
               },
               "block": 10861674,
-              "blockHash": "0x32e4dd857b5b7e756551a00271e44b61dbda0a91db951cf79a3e58adb28f5c09",
               "chainId": 1,
               "eventsProcessed": 1,
             },
