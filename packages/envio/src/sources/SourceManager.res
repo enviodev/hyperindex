@@ -251,8 +251,7 @@ let getSourceNewHeight = async (
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
-          "stallTimeout": stallTimeout / 2,
-          "knownHeight": knownHeight,
+          "chainId": source.chain->ChainMap.Chain.toChainId,
         })
         let h = ref(initialHeight)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
