@@ -62,6 +62,9 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
+    ///Profile the running indexer by fetching and analyzing /metrics
+    Profile(ProfileArgs),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
@@ -97,6 +100,17 @@ pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ProfileArgs {
+    ///Full URL of the indexer (e.g. http://localhost:9898). Overrides host/port env vars.
+    #[arg(short, long)]
+    pub url: Option<String>,
+
+    ///Sample metrics over this many seconds for rate-based insights (e.g. events/sec, effect RPS). Without this flag, a single snapshot is taken.
+    #[arg(long)]
+    pub duration: Option<u64>,
 }
 
 #[derive(Debug, Subcommand)]

@@ -13,6 +13,7 @@ mod codegen;
 mod dev;
 pub mod init;
 mod local;
+mod profile;
 
 use anyhow::{Context, Result};
 use schemars::schema_for;
@@ -75,6 +76,10 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
             }
             commands::start::start_indexer(&config).await?;
+        }
+
+        CommandType::Profile(profile_args) => {
+            profile::run_profile(profile_args).await?;
         }
 
         CommandType::Local(local_commands) => {

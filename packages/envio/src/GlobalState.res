@@ -347,12 +347,8 @@ let validatePartitionQueryResponse = (
 ) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
-    parsedQueueItems,
-    latestFetchedBlockNumber,
-    stats,
     knownHeight,
     reorgGuard,
-    fromBlockQueried,
   } = response
 
   if knownHeight > chainFetcher.fetchState.knownHeight {
@@ -368,10 +364,10 @@ let validatePartitionQueryResponse = (
 
   Prometheus.FetchingBlockRange.increment(
     ~chainId=chain->ChainMap.Chain.toChainId,
-    ~totalTimeElapsed=stats.totalTimeElapsed,
-    ~parsingTimeElapsed=stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
-    ~numEvents=parsedQueueItems->Array.length,
-    ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
+    ~totalTimeElapsed=response.stats.totalTimeElapsed,
+    ~parsingTimeElapsed=response.stats.parsingTimeElapsed->Belt.Option.getWithDefault(0.),
+    ~numEvents=response.parsedQueueItems->Array.length,
+    ~blockRangeSize=response.latestFetchedBlockNumber - response.fromBlockQueried + 1,
   )
 
   let (updatedReorgDetection, reorgResult: ReorgDetection.reorgResult) =
