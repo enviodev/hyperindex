@@ -148,44 +148,6 @@ type event = {
 }
 
 @genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
-@genType
-type handler = Internal.genericHandler<handlerArgs>
-@genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>
-
-@genType
 type eventFilter = {}
 
 @genType type eventFilters = Internal.noEventFilters
-
-let contractRegister: fnWithEventConfig<
-  Internal.genericContractRegister<
-    Internal.genericContractRegisterArgs<event, contractRegistrations>,
-  >,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (contractRegister, ~eventConfig=?) =>
-  HandlerRegister.setContractRegister(
-    ~contractName,
-    ~eventName=name,
-    contractRegister,
-    ~eventOptions=eventConfig,
-  )
-
-let handler: fnWithEventConfig<
-  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (handler, ~eventConfig=?) => {
-  HandlerRegister.setHandler(
-    ~contractName,
-    ~eventName=name,
-    handler->(
-      Utils.magic: Internal.genericHandler<
-        Internal.genericHandlerArgs<event, handlerContext>,
-      > => Internal.genericHandler<
-        Internal.genericHandlerArgs<event, Internal.handlerContext>,
-      >
-    ),
-    ~eventOptions=eventConfig,
-  )
-}

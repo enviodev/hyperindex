@@ -1,5 +1,5 @@
 import { createEffect, S } from "envio";
-import { UniswapV3Factory } from "generated";
+import { indexer } from "generated";
 import { createPublicClient, http, parseAbi } from "viem";
 import { arbitrum, mainnet } from "viem/chains";
 
@@ -62,7 +62,7 @@ const fetchTokenDetails = createEffect(
 );
 
 // Handle Uniswap V3 PoolCreated event
-UniswapV3Factory.PoolCreated.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "UniswapV3Factory", event: "PoolCreated" }, async ({ event, context }) => {
   // Run both token decimal fetches in parallel
   const [token0Details, token1Details] = await Promise.all([
     context.effect(fetchTokenDetails, {

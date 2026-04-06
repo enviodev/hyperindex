@@ -1798,20 +1798,6 @@ type handlerContext = {{
 @genType.as("Id")
 type id = string
 
-type contractRegisterContract = {{ add: Address.t => unit }}
-
-type contractRegisterChainInfo = {{
-  id: chainId,
-  isLive: bool,
-{contract_register_chain_fields}
-}}
-
-@genType
-type contractRegisterContext = {{
-  log: Envio.logger,
-  chain: contractRegisterChainInfo,
-}}
-
 //*************
 //**CONTRACTS**
 //*************
@@ -1879,6 +1865,20 @@ module Entities = {{
 
 {chain_id_type}
 
+type contractRegisterContract = {{ add: Address.t => unit }}
+
+type contractRegisterChainInfo = {{
+  id: chainId,
+  isLive: bool,
+{contract_register_chain_fields}
+}}
+
+@genType
+type contractRegisterContext = {{
+  log: Envio.logger,
+  chain: contractRegisterChainInfo,
+}}
+
 {contract_modules_code}
 
 {indexer_contract_type}
@@ -1887,13 +1887,13 @@ module Entities = {{
 
 {indexer_chains_type}
 
+{simulate_types_code}
+
 {indexer_type}
 
 {get_chain_by_id}
 
-{on_block_code}
-
-{simulate_types_code}"#
+{on_block_code}"#
         );
 
         // Generate testIndexer types and createTestIndexer

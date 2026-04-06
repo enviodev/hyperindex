@@ -167,7 +167,7 @@ describe("E2E tests", () => {
           let _ = Js.Global.setTimeout(
             () => {
               try {
-                context.addGravatar(
+                context.chain.\"Gravatar".add(
                   "0x1234567890123456789012345678901234567890"->Address.Evm.fromStringOrThrow,
                 )
               } catch {
@@ -212,7 +212,7 @@ describe("E2E tests", () => {
       {Indexer.Entities.SimpleEntity.id: "1", value: "value-2"},
     ])
     t.expect(errors, ~message="should have an error thrown during set").toEqual([
-      Utils.Error.make(`Impossible to access context.addGravatar after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
+      Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
       Utils.Error.make(`Impossible to access context.SimpleEntity after the handler is resolved. Make sure you didn't miss an await in the handler.`)->Utils.prettifyExn,
     ])
   })
@@ -1387,7 +1387,7 @@ describe("E2E tests", () => {
           blockNumber: 5000,
           logIndex: 0,
           contractRegister: async ({context}) => {
-            context.addGravatar(
+            context.chain.\"Gravatar".add(
               "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
             )
           },
@@ -1396,7 +1396,7 @@ describe("E2E tests", () => {
           blockNumber: 25100,
           logIndex: 0,
           contractRegister: async ({context}) => {
-            context.addGravatar(
+            context.chain.\"Gravatar".add(
               "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
             )
           },

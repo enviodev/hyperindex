@@ -399,15 +399,20 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
     switch prop {
     | "id" =>
       let eventItem = params.item->Internal.castUnsafeEventItem
-      eventItem.chainId->(Utils.magic: int => unknown)
+      eventItem.chain->ChainMap.Chain.toChainId->(Utils.magic: int => unknown)
     | "isLive" => false->(Utils.magic: bool => unknown)
     | _ =>
-      // Look up contract name directly (new API uses contract name as key)
-      let allContracts = params.config.chainMap->ChainMap.values
-      let contractExists =
-        allContracts->Array.some(chain => chain.contracts->Array.some(c => c.name === prop))
-      if contractExists {
-        let addFn = makeAddFunction(~params, ~contractName=prop)
+      // Check if it's a valid contract name by looking up in config contracts
+      // The addContractNameToContractNameMapping maps "addX" -> "X",
+      // but we want to look up "X" directly as a contract name
+      let contractName = prop
+      // Check if this contract name exists in any chain's contracts
+      let isValidContract =
+        params.config.chainMap
+        ->ChainMap.values
+        ->Js.Array2.some(chain => chain.contracts->Js.Array2.some(c => c.name === contractName))
+      if isValidContract {
+        let addFn = makeAddFunction(~params, ~contractName)
         {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
       } else {
         Js.Exn.raiseError(`Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`)

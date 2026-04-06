@@ -174,24 +174,24 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   // At runtime: the identity config has { contract, event, wildcard?, eventFilters? }
   // The `event` field is the eventIdentity GADT which with @tag("contract") compiles to
   // { contract: "ContractName", _0: "EventName" }
-  type identityConfigRaw = {
-    event: {"contract": string, "_0": string},
-    wildcard: option<bool>,
-    eventFilters: option<Js.Json.t>,
-  }
-
   let parseIdentityConfig = (identityConfig: 'a) => {
-    let raw = identityConfig->(Utils.magic: 'a => identityConfigRaw)
-    let contractName = raw.event["contract"]
-    let eventName = raw.event["_0"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch (
-      raw.wildcard,
-      raw.eventFilters,
-    ) {
+    let raw =
+      identityConfig->(
+        Utils.magic: 'a => {
+          "event": {"contract": string, "_0": string},
+          "wildcard": option<bool>,
+          "eventFilters": option<Js.Json.t>,
+        }
+      )
+    let contractName = raw["event"]["contract"]
+    let eventName = raw["event"]["_0"]
+    let wildcard = raw["wildcard"]
+    let eventFilters = raw["eventFilters"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, eventFilters) {
     | (None, None) => None
     | (wildcard, eventFilters) =>
       Some({
-        wildcard: ?wildcard,
+        ?wildcard,
         eventFilters: ?eventFilters->(Utils.magic: option<Js.Json.t> => option<_>),
       })
     }
@@ -204,7 +204,11 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     HandlerRegister.setHandler(
       ~contractName,
       ~eventName,
-      handler->(Utils.magic: 'b => Internal.handler),
+      handler->(
+        Utils.magic: 'b => Internal.genericHandler<
+          Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>,
+        >
+      ),
       ~eventOptions,
     )
   }
@@ -215,7 +219,11 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     HandlerRegister.setContractRegister(
       ~contractName,
       ~eventName,
-      handler->(Utils.magic: 'b => Internal.contractRegister),
+      handler->(
+        Utils.magic: 'b => Internal.genericContractRegister<
+          Internal.genericContractRegisterArgs<Internal.event, Internal.contractRegisterContext>,
+        >
+      ),
       ~eventOptions,
     )
   }

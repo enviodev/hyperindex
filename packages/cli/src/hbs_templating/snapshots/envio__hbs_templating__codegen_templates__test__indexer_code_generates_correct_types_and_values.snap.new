@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3081
 expression: project_template.indexer_code
 ---
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
@@ -9,6 +10,20 @@ expression: project_template.indexer_code
 //*************
 @genType.as("Id")
 type id = string
+
+type contractRegisterContract = { add: Address.t => unit }
+
+type contractRegisterChainInfo = {
+  id: chainId,
+  isLive: bool,
+  \"Contract1": contractRegisterContract,
+}
+
+@genType
+type contractRegisterContext = {
+  log: Envio.logger,
+  chain: contractRegisterChainInfo,
+}
 
 //*************
 //**CONTRACTS**
@@ -233,20 +248,6 @@ type handlerContext = {
 @genType.import(("./Types.ts", "EvmChainId"))
 type chainId = [#1]
 
-type contractRegisterContract = { add: Address.t => unit }
-
-type contractRegisterChainInfo = {
-  id: chainId,
-  isLive: bool,
-  \"Contract1": contractRegisterContract,
-}
-
-@genType
-type contractRegisterContext = {
-  log: Envio.logger,
-  chain: contractRegisterChainInfo,
-}
-
 @genType
 module Contract1 = {
 let contractName = "Contract1"
@@ -359,29 +360,6 @@ type indexerChains = {
   ethereumMainnet: indexerChain,
 }
 
-@tag("contract")
-type eventIdentity<'event, 'paramsConstructor, 'filters> =
-  | Contract1(Contract1.eventIdentity<'event, 'paramsConstructor, 'filters>)
-
-@tag("kind")
-type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
-  | OnEvent({
-      event: eventIdentity<'event, 'paramsConstructor, 'filters>,
-      params?: 'paramsConstructor,
-      block?: Internal.evmBlockInput,
-      transaction?: Internal.evmTransactionInput,
-    })
-
-let makeSimulateItem = (
-  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,
-): Envio.evmSimulateItem => {
-  event: (constructor->Utils.magic)["event"]["_0"],
-  contract: (constructor->Utils.magic)["event"]["contract"],
-  params: (constructor->Utils.magic)["params"],
-  block: (constructor->Utils.magic)["block"],
-  transaction: (constructor->Utils.magic)["transaction"],
-}
-
 /** Metadata and configuration for the indexer. */
 type indexer = {
   /** The name of the indexer from config.yaml. */
@@ -418,6 +396,29 @@ Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
 ) => unit = (
 HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
 )->Utils.magic
+
+@tag("contract")
+type eventIdentity<'event, 'paramsConstructor, 'filters> =
+  | Contract1(Contract1.eventIdentity<'event, 'paramsConstructor, 'filters>)
+
+@tag("kind")
+type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
+  | OnEvent({
+      event: eventIdentity<'event, 'paramsConstructor, 'filters>,
+      params?: 'paramsConstructor,
+      block?: Internal.evmBlockInput,
+      transaction?: Internal.evmTransactionInput,
+    })
+
+let makeSimulateItem = (
+  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,
+): Envio.evmSimulateItem => {
+  event: (constructor->Utils.magic)["event"]["_0"],
+  contract: (constructor->Utils.magic)["event"]["contract"],
+  params: (constructor->Utils.magic)["params"],
+  block: (constructor->Utils.magic)["block"],
+  transaction: (constructor->Utils.magic)["transaction"],
+}
 
 type testIndexerProcessConfigChains = {
   \"1"?: TestIndexer.evmChainConfig,

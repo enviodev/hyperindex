@@ -1,6 +1,6 @@
-import { ERC20 } from "generated";
+import { indexer } from "generated";
 
-ERC20.Transfer.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
   context.Transfer.set({
     id: `${event.chainId}-${event.block.number}-${event.logIndex}`,
     from: event.params.from,
