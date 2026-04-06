@@ -79,6 +79,60 @@ let rec abiTypeToSchema = (abiType: string): S.t<unknown> => {
   }
 }
 
+// ABI type → schema for simulate items (accepts native JS values, not string-encoded)
+let rec abiTypeToSimulateSchema = (abiType: string): S.t<unknown> => {
+  if abiType->Js.String2.endsWith("]") {
+    let bracketIdx = abiType->Js.String2.lastIndexOf("[")
+    let baseType = abiType->Js.String2.slice(~from=0, ~to_=bracketIdx)
+    S.array(abiTypeToSimulateSchema(baseType))->S.toUnknown
+  } else if abiType->Js.String2.startsWith("(") && abiType->Js.String2.endsWith(")") {
+    let inner = abiType->Js.String2.slice(~from=1, ~to_=abiType->Js.String2.length - 1)
+    let components = splitTupleComponents(inner)
+    let schemas = components->Array.map(c => abiTypeToSimulateSchema(c->Js.String2.trim))
+    S.tuple(s => {
+      schemas->Array.mapWithIndex((i, schema) => s.item(i, schema))
+    })->S.toUnknown
+  } else {
+    switch abiType {
+    | "address" => S.string->S.toUnknown
+    | "bool" => S.bool->S.toUnknown
+    | "string" | "bytes" => S.string->S.toUnknown
+    | t if t->Js.String2.startsWith("uint") => S.bigint->S.toUnknown
+    | t if t->Js.String2.startsWith("int") => S.bigint->S.toUnknown
+    | t if t->Js.String2.startsWith("bytes") => S.string->S.toUnknown
+    | other => Js.Exn.raiseError(`Unsupported ABI type: ${other}`)
+    }
+  }
+}
+
+// ============== ABI type → default value for simulate ==============
+
+let rec abiTypeToDefaultValue = (abiType: string): unknown => {
+  if abiType->Js.String2.endsWith("]") {
+    []->(Utils.magic: array<unknown> => unknown)
+  } else if abiType->Js.String2.startsWith("(") && abiType->Js.String2.endsWith(")") {
+    let inner = abiType->Js.String2.slice(~from=1, ~to_=abiType->Js.String2.length - 1)
+    let components = splitTupleComponents(inner)
+    components
+    ->Array.map(c => abiTypeToDefaultValue(c->Js.String2.trim))
+    ->(Utils.magic: array<unknown> => unknown)
+  } else {
+    switch abiType {
+    | "address" =>
+      Address.unsafeFromString("0x0000000000000000000000000000000000000000")->(
+        Utils.magic: Address.t => unknown
+      )
+
+    | "bool" => false->(Utils.magic: bool => unknown)
+    | "string" | "bytes" => ""->(Utils.magic: string => unknown)
+    | t if t->Js.String2.startsWith("uint") => 0n->(Utils.magic: bigint => unknown)
+    | t if t->Js.String2.startsWith("int") => 0n->(Utils.magic: bigint => unknown)
+    | t if t->Js.String2.startsWith("bytes") => ""->(Utils.magic: string => unknown)
+    | _ => %raw(`undefined`)->(Utils.magic: 'a => unknown)
+    }
+  }
+}
+
 // ============== Build paramsRawEventSchema ==============
 
 let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
@@ -91,6 +145,31 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
       let dict = Js.Dict.empty()
       params->Array.forEach(p => {
         dict->Js.Dict.set(p.name, s.field(p.name, abiTypeToSchema(p.abiType)))
+      })
+      dict
+    })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.eventParams>)
+  }
+}
+
+// Build a lenient params schema for simulate items.
+// Uses S.schema + s.matches with S.null->S.Option.getOr to fill missing fields with defaults.
+let buildSimulateParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
+  if params->Array.length == 0 {
+    S.unknown
+    ->S.shape(_ => ())
+    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>)
+  } else {
+    S.schema(s => {
+      let dict = Js.Dict.empty()
+      params->Array.forEach(p => {
+        dict->Js.Dict.set(
+          p.name,
+          s.matches(
+            S.null(abiTypeToSimulateSchema(p.abiType))->S.Option.getOr(
+              abiTypeToDefaultValue(p.abiType),
+            ),
+          ),
+        )
       })
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.eventParams>)
@@ -257,6 +336,7 @@ let buildEvmEventConfig = (
     handler,
     contractRegister,
     paramsRawEventSchema: buildParamsSchema(params),
+    simulateParamsSchema: buildSimulateParamsSchema(params),
     getEventFiltersOrThrow,
     filterByAddresses,
     dependsOnAddresses: !isWildcard || filterByAddresses,
@@ -320,6 +400,7 @@ let buildFuelEventConfig = (
     handler,
     contractRegister,
     paramsRawEventSchema: paramsSchema,
+    simulateParamsSchema: paramsSchema,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
     kind: fuelKind,
