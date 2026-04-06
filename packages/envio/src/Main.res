@@ -280,8 +280,14 @@ let start = async (
   // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
   let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
-  // Register all handlers first, then get the config with registrations
+  // Initialize persistence first so the exported indexer value contains state from the database
+  // when handler files are loaded (they may access the indexer at module top level).
   let configWithoutRegistrations = makeGeneratedConfig()
+  await persistence->Persistence.init(
+    ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
+  )
+
+  // Register all handlers, then get the config with registrations
   let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
   let config = makeGeneratedConfig()
   let config = if isTest {
@@ -359,8 +365,6 @@ let start = async (
       }
     )
   }
-
-  await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
 
   let chainManager = await ChainManager.makeFromDbState(
     ~initialState=ctx.persistence->Persistence.getInitializedState,
