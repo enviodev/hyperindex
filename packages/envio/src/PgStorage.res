@@ -512,9 +512,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
-          let params = data["convertOrThrow"](
-            chunk->(Utils.magic: array<'item> => array<unknown>),
-          )
+          let params = data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>))
           // Use prepared query only for full batches where the cached query is reused.
           // Partial chunks generate unique SQL each time, so preparation has no benefit.
           let response = isFullChunk
@@ -828,7 +826,10 @@ let rec writeBatch = async (
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (batchDeleteEntityIds, batchDeleteCheckpointIds->BigInt.arrayToStringArray)->Obj.magic,
+                  (
+                    batchDeleteEntityIds,
+                    batchDeleteCheckpointIds->BigInt.arrayToStringArray,
+                  )->Obj.magic,
                 )
                 ->Promise.ignoreValue,
               )
@@ -1500,7 +1501,12 @@ let make = (
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(
         Utils.magic: promise<array<unknown>> => promise<
-          array<{"id": string, "chain_id": int, "block_number": int, "block_hash": string}>,
+          array<{
+            "id": string,
+            "chain_id": int,
+            "block_number": int,
+            "block_hash": string,
+          }>,
         >
       ),
     ))
@@ -1647,4 +1653,88 @@ let make = (
     getRollbackData,
     writeBatch: writeBatchMethod,
   }
+}
+
+let makeStorageFromEnv = (
+  ~config: Config.t,
+  ~sql=makeClient(),
+  ~pgSchema=Env.Db.publicSchema,
+  ~isHasuraEnabled=Env.Hasura.enabled,
+) => {
+  make(
+    ~sql,
+    ~pgSchema,
+    ~pgHost=Env.Db.host,
+    ~pgUser=Env.Db.user,
+    ~pgPort=Env.Db.port,
+    ~pgDatabase=Env.Db.database,
+    ~pgPassword=Env.Db.password,
+    ~sink=?{
+      switch Env.ClickHouseSink.host {
+      | Some(host) =>
+        Some(
+          Sink.makeClickHouse(
+            ~host,
+            ~database=Env.ClickHouseSink.database,
+            ~username=Env.ClickHouseSink.username,
+            ~password=Env.ClickHouseSink.password,
+          ),
+        )
+      | None => None
+      }
+    },
+    ~onInitialize=?{
+      if isHasuraEnabled {
+        Some(
+          () => {
+            Hasura.trackDatabase(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema,
+              ~userEntities=config.userEntities,
+              ~responseLimit=Env.Hasura.responseLimit,
+              ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
+              ~aggregateEntities=Env.Hasura.aggregateEntities,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
+            })
+          },
+        )
+      } else {
+        None
+      }
+    },
+    ~onNewTables=?{
+      if isHasuraEnabled {
+        Some(
+          (~tableNames) => {
+            Hasura.trackTables(
+              ~endpoint=Env.Hasura.graphqlEndpoint,
+              ~auth={
+                role: Env.Hasura.role,
+                secret: Env.Hasura.secret,
+              },
+              ~pgSchema,
+              ~tableNames,
+            )->Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Utils.prettifyExn,
+                `Error tracking new tables`,
+              )->Promise.resolve
+            })
+          },
+        )
+      } else {
+        None
+      }
+    },
+    ~isHasuraEnabled,
+  )
+}
+
+let makePersistenceFromConfig = (~config: Config.t, ~storage=makeStorageFromEnv(~config)) => {
+  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage)
 }
