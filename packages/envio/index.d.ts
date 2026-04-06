@@ -557,7 +557,7 @@ type EvmSimulateItem<Config extends IndexerConfigTypes> =
             /** Override transaction fields. */
             transaction?: Partial<Contracts[C][E]["transaction"]>;
             /** Event parameters. Keys match the event's parameter names. */
-            params?: Contracts[C][E]["params"];
+            params?: Partial<Contracts[C][E]["params"]>;
           };
         }[keyof Contracts[C]];
       }[keyof Contracts]

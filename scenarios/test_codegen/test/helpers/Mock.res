@@ -759,6 +759,9 @@ module Source = {
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+                            simulateParamsSchema: S.unknown
+                            ->S.shape(_ => ())
+                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
@@ -885,6 +888,9 @@ let evmEventConfig = (
     handler: None,
     contractRegister: None,
     paramsRawEventSchema: S.literal(%raw(`null`))
+    ->S.shape(_ => ())
+    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+    simulateParamsSchema: S.unknown
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
     getEventFiltersOrThrow: _ =>

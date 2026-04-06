@@ -229,12 +229,12 @@ let parse = (
       // Parse event item fields
       let item = rawJson->(Utils.magic: Js.Json.t => Envio.evmSimulateItem)
 
-      // Parse params using the event's schema
-      // Use undefined for events with no params (e.g. EmptyEvent()) to match codegen behavior
-      let params = switch item.params {
-      | Some(paramsJson) => paramsJson->S.convertOrThrow(eventConfig.paramsRawEventSchema)
-      | None => %raw(`undefined`)->(Utils.magic: 'a => Internal.eventParams)
+      // Parse params using the simulate schema — fills missing fields with defaults
+      let paramsJson: Js.Json.t = switch item.params {
+      | Some(json) => json
+      | None => Js.Dict.empty()->(Utils.magic: dict<unit> => Js.Json.t)
       }
+      let params = paramsJson->S.convertOrThrow(eventConfig.simulateParamsSchema)
 
       let logIndex = switch item.logIndex {
       | Some(li) => li
