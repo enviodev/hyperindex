@@ -601,14 +601,6 @@ impl EventMod {
                 _ => ("Block.t".to_string(), "Transaction.t".to_string()),
             };
 
-        let types_code =
-          r#"@genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
-@genType
-type handler = Internal.genericHandler<handlerArgs>
-@genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string();
-
         let params_constructor_type = &self.params_constructor_type;
 
         format!(
@@ -641,43 +633,10 @@ type event = {{
   block: block,
 }}
 
-{types_code}
-
 @genType
 type eventFilter = {event_filter_type}
 
-{event_filters_type_code}
-
-let contractRegister: fnWithEventConfig<
-  Internal.genericContractRegister<
-    Internal.genericContractRegisterArgs<event, contractRegistrations>,
-  >,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (contractRegister, ~eventConfig=?) =>
-  HandlerRegister.setContractRegister(
-    ~contractName,
-    ~eventName=name,
-    contractRegister,
-    ~eventOptions=eventConfig,
-  )
-
-let handler: fnWithEventConfig<
-  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (handler, ~eventConfig=?) => {{
-  HandlerRegister.setHandler(
-    ~contractName,
-    ~eventName=name,
-    handler->(
-      Utils.magic: Internal.genericHandler<
-        Internal.genericHandlerArgs<event, handlerContext>,
-      > => Internal.genericHandler<
-        Internal.genericHandlerArgs<event, Internal.handlerContext>,
-      >
-    ),
-    ~eventOptions=eventConfig,
-  )
-}}"#
+{event_filters_type_code}"#
         )
     }
 }
@@ -1595,6 +1554,16 @@ type indexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+  /** Register an event handler. */
+  onEvent: 'event 'paramsConstructor 'filters. (
+    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>>,
+    Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
+  ) => unit,
+  /** Register a contract register handler for dynamic contract indexing. */
+  contractRegister: 'event 'paramsConstructor 'filters. (
+    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>>,
+    Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
+  ) => unit,
 }"#;
 
         // Generate getChainById function
@@ -1787,10 +1756,10 @@ type handlerContext = {{
             )
         };
 
-        // Generate contractRegistrations type
-        let contract_registration_fields: String = codegen_contracts
+        // Generate contractRegisterContext type with chain.ContractName.add() pattern
+        let contract_register_chain_fields: String = codegen_contracts
             .iter()
-            .map(|c| format!("  add{}: (Address.t) => unit,", c.name.capitalized))
+            .map(|c| format!("  \\\"{}\": contractRegisterContract,", c.name.capitalized))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -1829,11 +1798,18 @@ type handlerContext = {{
 @genType.as("Id")
 type id = string
 
+type contractRegisterContract = {{ add: Address.t => unit }}
+
+type contractRegisterChainInfo = {{
+  id: chainId,
+  isLive: bool,
+{contract_register_chain_fields}
+}}
+
 @genType
-type contractRegistrations = {{
+type contractRegisterContext = {{
   log: Envio.logger,
-  // TODO: only add contracts we've registered for the event in the config
-{contract_registration_fields}
+  chain: contractRegisterChainInfo,
 }}
 
 //*************
@@ -1885,35 +1861,11 @@ module SingleOrMultiple: {{
   }}
 }}
 
-module HandlerTypes = {{
-  @genType
-  type args<'eventArgs, 'context> = {{
-    event: Internal.genericEvent<'eventArgs, Block.t, Transaction.t>,
-    context: 'context,
-  }}
-
-  @genType
-  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<Internal.genericEvent<'eventArgs, Block.t, Transaction.t>, contractRegistrations>
-  @genType
-  type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
-
-  @genType
-  type eventConfig<'eventFilters> = Internal.eventOptions<'eventFilters>
+/** Event identity configuration for onEvent/contractRegister. */
+type eventIdentityConfig<'eventIdentity> = {{
+  event: 'eventIdentity,
+  wildcard?: bool,
 }}
-
-@genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
-type fnWithEventConfig<'fn, 'eventConfig> = ('fn, ~eventConfig: 'eventConfig=?) => unit
-
-type handlerWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
-  Internal.genericHandler<'eventArgs>,
-  HandlerTypes.eventConfig<'eventFilters>,
->
-
-@genType
-type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
-  HandlerTypes.contractRegister<'eventArgs>,
-  HandlerTypes.eventConfig<'eventFilters>,
->
 
 module Enums = {{
 {enums_module_code}

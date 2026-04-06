@@ -170,6 +170,64 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->ignore
   indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
 
+  // Parse eventIdentity runtime representation to extract contractName, eventName, and options
+  // At runtime: the identity config has { contract, event, wildcard?, eventFilters? }
+  // The `event` field is the eventIdentity GADT which with @tag("contract") compiles to
+  // { contract: "ContractName", _0: "EventName" }
+  type identityConfigRaw = {
+    event: {"contract": string, "_0": string},
+    wildcard: option<bool>,
+    eventFilters: option<Js.Json.t>,
+  }
+
+  let parseIdentityConfig = (identityConfig: 'a) => {
+    let raw = identityConfig->(Utils.magic: 'a => identityConfigRaw)
+    let contractName = raw.event["contract"]
+    let eventName = raw.event["_0"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (
+      raw.wildcard,
+      raw.eventFilters,
+    ) {
+    | (None, None) => None
+    | (wildcard, eventFilters) =>
+      Some({
+        wildcard: ?wildcard,
+        eventFilters: ?eventFilters->(Utils.magic: option<Js.Json.t> => option<_>),
+      })
+    }
+    (contractName, eventName, eventOptions)
+  }
+
+  // onEvent: delegates to HandlerRegister.setHandler
+  let onEventFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setHandler(
+      ~contractName,
+      ~eventName,
+      handler->(Utils.magic: 'b => Internal.handler),
+      ~eventOptions,
+    )
+  }
+
+  // contractRegister: delegates to HandlerRegister.setContractRegister
+  let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setContractRegister(
+      ~contractName,
+      ~eventName,
+      handler->(Utils.magic: 'b => Internal.contractRegister),
+      ~eventOptions,
+    )
+  }
+
+  indexer
+  ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
+  ->Utils.Object.definePropertyWithValue(
+    "contractRegister",
+    {enumerable: true, value: contractRegisterFn},
+  )
+  ->ignore
+
   indexer->(Utils.magic: 'a => 'indexer)
 }
 

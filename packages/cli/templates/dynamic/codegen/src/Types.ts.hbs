@@ -2,7 +2,7 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter, Address } from "envio";
+import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter, Address, EvmOnEventContext, EvmContractRegisterContext, FuelOnEventContext, FuelContractRegisterContext } from "envio";
 import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, Enums } from "../envio.d.ts";
 export type { EvmChainId, FuelChainId, SvmChainId } from "../envio.d.ts";
 
@@ -90,6 +90,12 @@ import type {
 
 /** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
 export type TestIndexer = TestIndexerFromConfig<IndexerConfigTypes>;
+
+/** Context for onEvent handlers in EVM ecosystem. */
+export type OnEventContext = EvmOnEventContext<IndexerConfigTypes>;
+
+/** Context for contractRegister handlers in EVM ecosystem. */
+export type ContractRegisterContext = EvmContractRegisterContext<IndexerConfigTypes>;
 
 export type HandlerContext = {
   /**

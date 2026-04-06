@@ -370,6 +370,52 @@ type contractRegisterParams = {
   mutable isResolved: bool,
 }
 
+// Helper to create a validated add function for contract registration
+let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): (
+  Address.t => unit
+) => {
+  (contractAddress: Address.t) => {
+    let validatedAddress = if params.config.ecosystem.name === Evm {
+      // The value is passed from the user-land,
+      // so we need to validate and checksum/lowercase the address.
+      if params.config.lowercaseAddresses {
+        contractAddress->Address.Evm.fromAddressLowercaseOrThrow
+      } else {
+        contractAddress->Address.Evm.fromAddressOrThrow
+      }
+    } else {
+      // TODO: Ideally we should do the same for other ecosystems
+      contractAddress
+    }
+
+    params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
+  }
+}
+
+// Chain proxy for contractRegister context: context.chain.ContractName.add(address)
+let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
+  get: (~target as params, ~prop: unknown) => {
+    let prop = prop->(Utils.magic: unknown => string)
+    switch prop {
+    | "id" =>
+      let eventItem = params.item->Internal.castUnsafeEventItem
+      eventItem.chainId->(Utils.magic: int => unknown)
+    | "isLive" => false->(Utils.magic: bool => unknown)
+    | _ =>
+      // Look up contract name directly (new API uses contract name as key)
+      let allContracts = params.config.chainMap->ChainMap.values
+      let contractExists =
+        allContracts->Array.some(chain => chain.contracts->Array.some(c => c.name === prop))
+      if contractExists {
+        let addFn = makeAddFunction(~params, ~contractName=prop)
+        {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
+      } else {
+        Js.Exn.raiseError(`Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`)
+      }
+    }
+  },
+}
+
 let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
@@ -380,34 +426,14 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
     }
     switch prop {
     | "log" => params.item->Logging.getUserLogger->(Utils.magic: Envio.logger => unknown)
+    | "chain" =>
+      params
+      ->Utils.Proxy.make(contractRegisterChainTraps)
+      ->(Utils.magic: contractRegisterParams => unknown)
     | _ =>
-      // Use the pre-built mapping for efficient lookup
-      switch params.config.addContractNameToContractNameMapping->Utils.Dict.dangerouslyGetNonOption(
-        prop,
-      ) {
-      | Some(contractName) => {
-          let addFunction = (contractAddress: Address.t) => {
-            let validatedAddress = if params.config.ecosystem.name === Evm {
-              // The value is passed from the user-land,
-              // so we need to validate and checksum/lowercase the address.
-              if params.config.lowercaseAddresses {
-                contractAddress->Address.Evm.fromAddressLowercaseOrThrow
-              } else {
-                contractAddress->Address.Evm.fromAddressOrThrow
-              }
-            } else {
-              // TODO: Ideally we should do the same for other ecosystems
-              contractAddress
-            }
-
-            params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
-          }
-
-          addFunction->(Utils.magic: (Address.t => unit) => unknown)
-        }
-      | None =>
-        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
-      }
+      Js.Exn.raiseError(
+        `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${codegenHelpMessage}`,
+      )
     }
   },
 }

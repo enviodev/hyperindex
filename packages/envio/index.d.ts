@@ -400,6 +400,170 @@ type IndexerConfigTypes = {
   entities?: Record<string, object>;
 };
 
+// ============== onEvent / contractRegister Types ==============
+
+// Extract contracts type from config
+type EvmContracts<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts: infer C extends Record<string, Record<string, any>> }
+    ? C : {};
+
+type FuelContracts<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts: infer C extends Record<string, Record<string, any>> }
+    ? C : {};
+
+// Extract contract names for contract registration
+type EvmContractNames<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts: Record<infer N, any> } ? N & string : never;
+
+type FuelContractNames<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts: Record<infer N, any> } ? N & string : never;
+
+/** Event identity for onEvent/contractRegister calls. */
+type EventIdentity<
+  Contracts extends Record<string, Record<string, any>>,
+  C extends keyof Contracts = keyof Contracts,
+  E extends keyof Contracts[C] & string = keyof Contracts[C] & string
+> = {
+  /** The contract name as defined in config.yaml. */
+  readonly contract: C;
+  /** The event name as defined in the contract ABI. */
+  readonly event: E;
+  /** Whether to process all events (wildcard mode). */
+  readonly wildcard?: boolean;
+};
+
+/** Context for onEvent handlers. Includes entity operations, logging, and chain info. */
+export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
+  /** Access the logger instance. */
+  readonly log: Logger;
+  /** Call an Effect with the given input. */
+  readonly effect: EffectCaller;
+  /** True when running in preload mode (parallel pre-run for cache population). */
+  readonly isPreload: boolean;
+  /** Chain state for the current event's chain. */
+  readonly chain: {
+    readonly id: EvmChainIds<Config>;
+    readonly isLive: boolean;
+  };
+} & {
+  readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
+}>;
+
+/** Context for onEvent handlers in Fuel ecosystem. */
+export type FuelOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
+  readonly log: Logger;
+  readonly effect: EffectCaller;
+  readonly isPreload: boolean;
+  readonly chain: {
+    readonly id: FuelChainIds<Config>;
+    readonly isLive: boolean;
+  };
+} & {
+  readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
+}>;
+
+/** Entity operations available in handler contexts. */
+type EntityOperations<Entity> = {
+  readonly get: (id: string) => Promise<Entity | undefined>;
+  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly getWhere: (filter: GetWhereFilter<Entity>) => Promise<Entity[]>;
+  readonly getOrCreate: (entity: Entity) => Promise<Entity>;
+  readonly set: (entity: Entity) => void;
+  readonly deleteUnsafe: (id: string) => void;
+};
+
+/** Contract registration handle. */
+type ContractRegistration = {
+  /** Register a new contract address for dynamic indexing. */
+  readonly add: (address: Address) => void;
+};
+
+/** Context for contractRegister handlers. Chain object includes contract registration methods. */
+export type EvmContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
+  readonly log: Logger;
+  readonly chain: {
+    readonly id: EvmChainIds<Config>;
+    readonly isLive: boolean;
+  } & {
+    readonly [K in EvmContractNames<Config>]: ContractRegistration;
+  };
+}>;
+
+/** Context for contractRegister handlers in Fuel ecosystem. */
+export type FuelContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
+  readonly log: Logger;
+  readonly chain: {
+    readonly id: FuelChainIds<Config>;
+    readonly isLive: boolean;
+  } & {
+    readonly [K in FuelContractNames<Config>]: ContractRegistration;
+  };
+}>;
+
+// onEvent/contractRegister methods for EVM ecosystem
+type EvmHandlerMethods<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
+    ? {
+        /** Register an event handler. */
+        readonly onEvent: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean; readonly eventFilters?: unknown },
+          handler: (args: {
+            event: Contracts[C][E];
+            context: EvmOnEventContext<Config>;
+          }) => Promise<void>
+        ) => void;
+        /** Register a contract register handler for dynamic contract indexing. */
+        readonly contractRegister: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean; readonly eventFilters?: unknown },
+          handler: (args: {
+            event: Contracts[C][E];
+            context: EvmContractRegisterContext<Config>;
+          }) => Promise<void>
+        ) => void;
+      }
+    : {};
+
+// onEvent/contractRegister methods for Fuel ecosystem
+type FuelHandlerMethods<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
+    ? {
+        readonly onEvent: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean },
+          handler: (args: {
+            event: Contracts[C][E];
+            context: FuelOnEventContext<Config>;
+          }) => Promise<void>
+        ) => void;
+        readonly contractRegister: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean },
+          handler: (args: {
+            event: Contracts[C][E];
+            context: FuelContractRegisterContext<Config>;
+          }) => Promise<void>
+        ) => void;
+      }
+    : {};
+
+// Single ecosystem handler methods (flattened)
+type SingleEcosystemHandlerMethods<Config extends IndexerConfigTypes> =
+  HasEvm<Config> extends true
+    ? EvmHandlerMethods<Config>
+    : HasFuel<Config> extends true
+    ? FuelHandlerMethods<Config>
+    : {};
+
 // Helper: Check if ecosystem is configured in a given config
 type HasEvm<Config> = "evm" extends keyof Config ? true : false;
 type HasFuel<Config> = "fuel" extends keyof Config ? true : false;
@@ -532,7 +696,7 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
     /** The indexer description from config.yaml. */
     readonly description: string | undefined;
   } & (EcosystemCount<Config> extends 1
-    ? SingleEcosystemChains<Config>
+    ? SingleEcosystemChains<Config> & SingleEcosystemHandlerMethods<Config>
     : MultiEcosystemChains<Config>)
 >;
 
