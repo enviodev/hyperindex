@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2542
 expression: project_template.indexer_code
 ---
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
@@ -544,6 +545,8 @@ let makeGeneratedConfig = () => {
 // Config without handler registration - used by tests, migrations, etc.
 let configWithoutRegistrations = makeGeneratedConfig()
 let allEntities = configWithoutRegistrations.allEntities
+
+let internalConfigJson: Js.Json.t = %raw(`internalConfigJson`)
 
 }
 

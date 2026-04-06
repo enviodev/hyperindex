@@ -228,27 +228,35 @@ pub mod db_migrate {
 
     use std::process::ExitStatus;
 
-    use super::{execute_command, to_js_path};
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
-    use pathdiff::diff_paths;
+
+    async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<ExitStatus> {
+        let config_json = config
+            .to_public_config_json()
+            .context("Failed to serialize config to JSON")?;
+        let current_dir = &config.parsed_project_paths.project_root;
+        tokio::process::Command::new("node")
+            .args(["-e", script])
+            .env("ENVIO_CONFIG", &config_json)
+            .current_dir(current_dir)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Failed to spawn node process for migration")?
+            .wait()
+            .await
+            .context("Failed to wait for migration process")
+    }
 
     pub async fn run_up_migrations(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
+        let exit = execute_migration(
+            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true))",
+            config,
         )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true))",
-            to_js_path(&relative_generated)
-        );
-        let args = vec!["-e", &migration_script];
-        let current_dir = &config.parsed_project_paths.project_root;
-        let exit = execute_command("node", args, current_dir).await?;
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
@@ -262,38 +270,22 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
+        execute_migration(
+            "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(true))",
+            config,
         )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runDownMigrations(true))",
-            to_js_path(&relative_generated)
-        );
-        let args = vec!["-e", &migration_script];
-        let current_dir = &config.parsed_project_paths.project_root;
-        execute_command("node", args, current_dir).await
+        .await
     }
 
     pub async fn run_db_setup(
         config: &SystemConfig,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let relative_generated = diff_paths(
-            &config.parsed_project_paths.generated,
-            &config.parsed_project_paths.project_root,
+        let exit = execute_migration(
+            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true, true))",
+            config,
         )
-        .ok_or_else(|| anyhow!("Failed to compute relative path to generated directory"))?;
-
-        let migration_script = format!(
-            "import(\"./{}/src/db/Migrations.res.mjs\").then(m => m.runUpMigrations(true, true))",
-            to_js_path(&relative_generated)
-        );
-        let args = vec!["-e", &migration_script];
-        let current_dir = &config.parsed_project_paths.project_root;
-        let exit = execute_command("node", args, current_dir).await?;
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!("Failed to run db migrations"));
