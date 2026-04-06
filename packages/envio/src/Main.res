@@ -170,21 +170,32 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->ignore
   indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
 
-  // Parse eventIdentity runtime representation to extract contractName, eventName, and options
-  // At runtime: the identity config has { contract, event, wildcard?, eventFilters? }
-  // The `event` field is the eventIdentity GADT which with @tag("contract") compiles to
-  // { contract: "ContractName", _0: "EventName" }
+  // Parse eventIdentity config to extract contractName, eventName, and options.
+  // Supports two runtime formats:
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, eventFilters? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, eventFilters? }
   let parseIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
         Utils.magic: 'a => {
-          "event": {"contract": string, "_0": string},
+          "contract": unknown,
+          "event": unknown,
           "wildcard": option<bool>,
           "eventFilters": option<Js.Json.t>,
         }
       )
-    let contractName = raw["event"]["contract"]
-    let eventName = raw["event"]["_0"]
+    // Detect format: if "contract" is a string, it's the TS format
+    let (contractName, eventName) = if Js.typeof(raw["contract"]) === "string" {
+      // TS format: { contract: "X", event: "Y" }
+      (
+        raw["contract"]->(Utils.magic: unknown => string),
+        raw["event"]->(Utils.magic: unknown => string),
+      )
+    } else {
+      // ReScript GADT format: { event: { contract: "X", _0: "Y" } }
+      let event = raw["event"]->(Utils.magic: unknown => {"contract": string, "_0": string})
+      (event["contract"], event["_0"])
+    }
     let wildcard = raw["wildcard"]
     let eventFilters = raw["eventFilters"]
     let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, eventFilters) {

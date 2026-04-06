@@ -12,7 +12,8 @@ export type {
   onBlockArgs as OnBlockArgs,
   onBlockOptions as OnBlockOptions,
 } from "./src/Envio.gen.ts";
-import type { Address } from "./src/Types.ts";
+import type { logger as Logger } from "./src/Envio.gen.ts";
+import type { Address, EffectCaller } from "./src/Types.ts";
 export type { EffectCaller, Address } from "./src/Types.ts";
 
 export const TestHelpers: {
