@@ -501,6 +501,92 @@ export type FuelContractRegisterContext<Config extends IndexerConfigTypes> = Pre
   };
 }>;
 
+// ============== onEvent / contractRegister Named Types ==============
+
+/** EVM event type resolved by contract and event name. Union of all events when no generics provided. */
+export type EvmOnEvent<
+  Config extends IndexerConfigTypes,
+  C extends keyof EvmContracts<Config> = keyof EvmContracts<Config>,
+  E extends keyof EvmContracts<Config>[C] & string = keyof EvmContracts<Config>[C] & string
+> = EvmContracts<Config>[C][E];
+
+/** Options for registering an EVM onEvent handler. */
+export type EvmOnEventOptions<
+  Config extends IndexerConfigTypes,
+  C extends keyof EvmContracts<Config> & string = keyof EvmContracts<Config> & string,
+  E extends keyof EvmContracts<Config>[C] & string = keyof EvmContracts<Config>[C] & string
+> = { readonly contract: C; readonly event: E; readonly wildcard?: boolean; readonly eventFilters?: unknown };
+
+/** Handler function for an EVM onEvent registration. */
+export type EvmOnEventHandler<
+  Config extends IndexerConfigTypes,
+  C extends keyof EvmContracts<Config> = keyof EvmContracts<Config>,
+  E extends keyof EvmContracts<Config>[C] & string = keyof EvmContracts<Config>[C] & string
+> = (args: {
+  event: EvmContracts<Config>[C][E];
+  context: EvmOnEventContext<Config>;
+}) => Promise<void>;
+
+/** Options for registering an EVM contractRegister handler. */
+export type EvmContractRegisterOptions<
+  Config extends IndexerConfigTypes,
+  C extends keyof EvmContracts<Config> & string = keyof EvmContracts<Config> & string,
+  E extends keyof EvmContracts<Config>[C] & string = keyof EvmContracts<Config>[C] & string
+> = { readonly contract: C; readonly event: E; readonly wildcard?: boolean; readonly eventFilters?: unknown };
+
+/** Handler function for an EVM contractRegister registration. */
+export type EvmContractRegisterHandler<
+  Config extends IndexerConfigTypes,
+  C extends keyof EvmContracts<Config> = keyof EvmContracts<Config>,
+  E extends keyof EvmContracts<Config>[C] & string = keyof EvmContracts<Config>[C] & string
+> = (args: {
+  event: EvmContracts<Config>[C][E];
+  context: EvmContractRegisterContext<Config>;
+}) => Promise<void>;
+
+/** Fuel event type resolved by contract and event name. */
+export type FuelOnEvent<
+  Config extends IndexerConfigTypes,
+  C extends keyof FuelContracts<Config> = keyof FuelContracts<Config>,
+  E extends keyof FuelContracts<Config>[C] & string = keyof FuelContracts<Config>[C] & string
+> = FuelContracts<Config>[C][E];
+
+/** Options for registering a Fuel onEvent handler. */
+export type FuelOnEventOptions<
+  Config extends IndexerConfigTypes,
+  C extends keyof FuelContracts<Config> & string = keyof FuelContracts<Config> & string,
+  E extends keyof FuelContracts<Config>[C] & string = keyof FuelContracts<Config>[C] & string
+> = { readonly contract: C; readonly event: E; readonly wildcard?: boolean };
+
+/** Handler function for a Fuel onEvent registration. */
+export type FuelOnEventHandler<
+  Config extends IndexerConfigTypes,
+  C extends keyof FuelContracts<Config> = keyof FuelContracts<Config>,
+  E extends keyof FuelContracts<Config>[C] & string = keyof FuelContracts<Config>[C] & string
+> = (args: {
+  event: FuelContracts<Config>[C][E];
+  context: FuelOnEventContext<Config>;
+}) => Promise<void>;
+
+/** Options for registering a Fuel contractRegister handler. */
+export type FuelContractRegisterOptions<
+  Config extends IndexerConfigTypes,
+  C extends keyof FuelContracts<Config> & string = keyof FuelContracts<Config> & string,
+  E extends keyof FuelContracts<Config>[C] & string = keyof FuelContracts<Config>[C] & string
+> = { readonly contract: C; readonly event: E; readonly wildcard?: boolean };
+
+/** Handler function for a Fuel contractRegister registration. */
+export type FuelContractRegisterHandler<
+  Config extends IndexerConfigTypes,
+  C extends keyof FuelContracts<Config> = keyof FuelContracts<Config>,
+  E extends keyof FuelContracts<Config>[C] & string = keyof FuelContracts<Config>[C] & string
+> = (args: {
+  event: FuelContracts<Config>[C][E];
+  context: FuelContractRegisterContext<Config>;
+}) => Promise<void>;
+
+// ============== Indexer Handler Methods ==============
+
 // onEvent/contractRegister methods for EVM ecosystem
 type EvmHandlerMethods<Config extends IndexerConfigTypes> =
   Config["evm"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
@@ -510,22 +596,16 @@ type EvmHandlerMethods<Config extends IndexerConfigTypes> =
           C extends keyof Contracts & string,
           E extends keyof Contracts[C] & string
         >(
-          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean; readonly eventFilters?: unknown },
-          handler: (args: {
-            event: Contracts[C][E];
-            context: EvmOnEventContext<Config>;
-          }) => Promise<void>
+          options: EvmOnEventOptions<Config, C, E>,
+          handler: EvmOnEventHandler<Config, C, E>
         ) => void;
         /** Register a contract register handler for dynamic contract indexing. */
         readonly contractRegister: <
           C extends keyof Contracts & string,
           E extends keyof Contracts[C] & string
         >(
-          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean; readonly eventFilters?: unknown },
-          handler: (args: {
-            event: Contracts[C][E];
-            context: EvmContractRegisterContext<Config>;
-          }) => Promise<void>
+          options: EvmContractRegisterOptions<Config, C, E>,
+          handler: EvmContractRegisterHandler<Config, C, E>
         ) => void;
       }
     : {};
@@ -538,21 +618,15 @@ type FuelHandlerMethods<Config extends IndexerConfigTypes> =
           C extends keyof Contracts & string,
           E extends keyof Contracts[C] & string
         >(
-          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean },
-          handler: (args: {
-            event: Contracts[C][E];
-            context: FuelOnEventContext<Config>;
-          }) => Promise<void>
+          options: FuelOnEventOptions<Config, C, E>,
+          handler: FuelOnEventHandler<Config, C, E>
         ) => void;
         readonly contractRegister: <
           C extends keyof Contracts & string,
           E extends keyof Contracts[C] & string
         >(
-          identity: { readonly contract: C; readonly event: E; readonly wildcard?: boolean },
-          handler: (args: {
-            event: Contracts[C][E];
-            context: FuelContractRegisterContext<Config>;
-          }) => Promise<void>
+          options: FuelContractRegisterOptions<Config, C, E>,
+          handler: FuelContractRegisterHandler<Config, C, E>
         ) => void;
       }
     : {};

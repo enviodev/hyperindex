@@ -2,7 +2,7 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter, Address, EvmOnEventContext, EvmContractRegisterContext, FuelOnEventContext, FuelContractRegisterContext } from "envio";
+import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter, Address, EvmOnEventContext, EvmContractRegisterContext, FuelOnEventContext, FuelContractRegisterContext, EvmOnEvent, EvmOnEventOptions, EvmOnEventHandler, EvmContractRegisterOptions, EvmContractRegisterHandler, FuelOnEvent, FuelOnEventOptions, FuelOnEventHandler, FuelContractRegisterOptions, FuelContractRegisterHandler } from "envio";
 import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, Enums } from "../envio.d.ts";
 export type { EvmChainId, FuelChainId, SvmChainId } from "../envio.d.ts";
 
@@ -91,11 +91,41 @@ import type {
 /** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
 export type TestIndexer = TestIndexerFromConfig<IndexerConfigTypes>;
 
-/** Context for onEvent handlers in EVM ecosystem. */
+/** Context for onEvent handlers. */
 export type OnEventContext = EvmOnEventContext<IndexerConfigTypes>;
 
-/** Context for contractRegister handlers in EVM ecosystem. */
+/** Context for contractRegister handlers. */
 export type ContractRegisterContext = EvmContractRegisterContext<IndexerConfigTypes>;
+
+/** Event type for onEvent handlers. Lookup by contract and event name, or union of all events. */
+export type OnEvent<
+  TContractName extends keyof EvmContracts = keyof EvmContracts,
+  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
+> = EvmOnEvent<IndexerConfigTypes, TContractName, TEventName>;
+
+/** Options for onEvent registration. */
+export type OnEventOptions<
+  TContractName extends keyof EvmContracts & string = keyof EvmContracts & string,
+  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
+> = EvmOnEventOptions<IndexerConfigTypes, TContractName, TEventName>;
+
+/** Handler function type for onEvent. */
+export type OnEventHandler<
+  TContractName extends keyof EvmContracts = keyof EvmContracts,
+  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
+> = EvmOnEventHandler<IndexerConfigTypes, TContractName, TEventName>;
+
+/** Options for contractRegister registration. */
+export type ContractRegisterOptions<
+  TContractName extends keyof EvmContracts & string = keyof EvmContracts & string,
+  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
+> = EvmContractRegisterOptions<IndexerConfigTypes, TContractName, TEventName>;
+
+/** Handler function type for contractRegister. */
+export type ContractRegisterHandler<
+  TContractName extends keyof EvmContracts = keyof EvmContracts,
+  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
+> = EvmContractRegisterHandler<IndexerConfigTypes, TContractName, TEventName>;
 
 export type HandlerContext = {
   /**
