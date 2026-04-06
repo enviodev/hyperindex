@@ -550,6 +550,7 @@
 // describe("Entity history rollbacks", () => {
 //   Async.beforeEach(async () => {
 //     try {
+//       let _ = DbHelpers.resetPostgresClient()
 //       let storage = PgStorage.make(
 //         ~sql=Db.sql,
 //         ~pgSchema=Env.Db.publicSchema,
@@ -733,6 +734,7 @@
 // describe("Entity history rollbacks", () => {
 //   Async.beforeEach(async () => {
 //     try {
+//       let _ = DbHelpers.resetPostgresClient()
 //       let storage = PgStorage.make(
 //         ~sql=Db.sql,
 //         ~pgSchema=Env.Db.publicSchema,
@@ -975,6 +977,7 @@
 
 // describe_skip("Prune performance test", () => {
 //   Async.it("Print benchmark of prune function", async () => {
+//     let _ = DbHelpers.resetPostgresClient()
 //     let storage = PgStorage.make(
 //       ~sql=Db.sql,
 //       ~pgSchema=Env.Db.publicSchema,
