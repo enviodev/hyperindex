@@ -7,12 +7,6 @@ contracts:
       - event: "Transfer(address indexed from, address indexed to, uint256 value)"
 chains:
   - id: 1 # Ethereum Mainnet
-    start_block: 22000000
-    contracts:
-      - name: ERC20
-        # No address = wildcard mode (indexes all ERC20 contracts on this chain)
+    start_block: 0
   - id: 137 # Polygon
-    start_block: 65000000
-    contracts:
-      - name: ERC20
-        # No address = wildcard mode (indexes all ERC20 contracts on this chain)
+    start_block: 0

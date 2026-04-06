@@ -20,7 +20,7 @@ describe("Topic Filter Indexer", () => {
     const allTransfers = result.changes.flatMap((c) => c.Transfer?.sets ?? []);
     const mints = allTransfers.filter((t) => t.from === ZERO_ADDRESS);
 
-    expect(mints.length, "Should have indexed at least one mint event").toBeGreaterThan(0);
+    expect(mints.length).toBe(328);
     expect(mints[0]).toMatchObject({ from: ZERO_ADDRESS, chainId: 1 });
   });
 
@@ -36,7 +36,7 @@ describe("Topic Filter Indexer", () => {
     const allTransfers = result.changes.flatMap((c) => c.Transfer?.sets ?? []);
     const burns = allTransfers.filter((t) => t.to === ZERO_ADDRESS);
 
-    expect(burns.length, "Should have indexed at least one burn event").toBeGreaterThan(0);
+    expect(burns.length).toBe(199);
     expect(burns[0]).toMatchObject({ to: ZERO_ADDRESS, chainId: 1 });
   });
 

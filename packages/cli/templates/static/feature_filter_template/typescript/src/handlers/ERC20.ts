@@ -18,11 +18,7 @@ ERC20.Transfer.handler(
   },
   {
     wildcard: true,
-    // Function form allows per-chain filter configuration.
-    // Return false to skip a chain entirely, or an array of filter objects (OR'd together).
-    eventFilters: ({ chainId }) => {
-      // Only process chains defined in the config
-      if (chainId !== 1 && chainId !== 137) return false;
+    eventFilters: () => {
       // Mint: transfer FROM zero address; Burn: transfer TO zero address
       return [{ from: ZERO_ADDRESS }, { to: ZERO_ADDRESS }];
     },
