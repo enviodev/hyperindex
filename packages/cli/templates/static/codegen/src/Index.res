@@ -9,7 +9,6 @@ let main = async () => {
   try {
     await Main.start(
       ~makeGeneratedConfig=Indexer.Generated.makeGeneratedConfig,
-      ~persistence=Indexer.Generated.codegenPersistence,
     )
   } catch {
   | e => {

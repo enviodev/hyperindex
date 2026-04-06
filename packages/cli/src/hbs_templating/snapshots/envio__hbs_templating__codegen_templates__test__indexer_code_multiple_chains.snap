@@ -695,86 +695,8 @@ let makeGeneratedConfig = () => {
 let configWithoutRegistrations = makeGeneratedConfig()
 let allEntities = configWithoutRegistrations.allEntities
 
-let initialSql = PgStorage.makeClient()
-let storagePgSchema = Env.Db.publicSchema
-let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
-  PgStorage.make(
-    ~sql,
-    ~pgSchema,
-    ~pgHost=Env.Db.host,
-    ~pgUser=Env.Db.user,
-    ~pgPort=Env.Db.port,
-    ~pgDatabase=Env.Db.database,
-    ~pgPassword=Env.Db.password,
-    ~sink=?{
-      switch Env.ClickHouseSink.host {
-      | Some(host) => Some(Sink.makeClickHouse(~host, ~database=Env.ClickHouseSink.database, ~username=Env.ClickHouseSink.username, ~password=Env.ClickHouseSink.password))
-      | None => None
-      }
-    },
-    ~onInitialize=?{
-      if isHasuraEnabled {
-        Some(
-          () => {
-            Hasura.trackDatabase(
-              ~endpoint=Env.Hasura.graphqlEndpoint,
-              ~auth={
-                role: Env.Hasura.role,
-                secret: Env.Hasura.secret,
-              },
-              ~pgSchema=storagePgSchema,
-              ~userEntities=configWithoutRegistrations.userEntities,
-              ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(allEntities->Belt.Array.map(e => e.table)),
-              ~aggregateEntities=Env.Hasura.aggregateEntities,
-            )->Promise.catch(err => {
-              Logging.errorWithExn(
-                err->Utils.prettifyExn,
-                `Error tracking tables`,
-              )->Promise.resolve
-            })
-          },
-        )
-      } else {
-        None
-      }
-    },
-    ~onNewTables=?{
-      if isHasuraEnabled {
-        Some(
-          (~tableNames) => {
-            Hasura.trackTables(
-              ~endpoint=Env.Hasura.graphqlEndpoint,
-              ~auth={
-                role: Env.Hasura.role,
-                secret: Env.Hasura.secret,
-              },
-              ~pgSchema=storagePgSchema,
-              ~tableNames,
-            )->Promise.catch(err => {
-              Logging.errorWithExn(
-                err->Utils.prettifyExn,
-                `Error tracking new tables`,
-              )->Promise.resolve
-            })
-          },
-        )
-      } else {
-        None
-      }
-    },
-    ~isHasuraEnabled,
-  )
-}
-
-let codegenPersistence = Persistence.make(
-  ~userEntities=configWithoutRegistrations.userEntities,
-  ~allEnums=configWithoutRegistrations.allEnums,
-  ~storage=makeStorage(~sql=initialSql),
-)
-
 }
 
 let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)
 
-let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))
+let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.configWithoutRegistrations.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))
