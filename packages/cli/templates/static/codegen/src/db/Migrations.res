@@ -1,6 +1,8 @@
+let persistence = PgStorage.makePersistenceFromConfig(~config=Indexer.Generated.configWithoutRegistrations)
+
 let resetStorage = async () => {
   Logging.trace("Resetting storage")
-  await Indexer.Generated.codegenPersistence.storage.reset()
+  await persistence.storage.reset()
 }
 
 type t
@@ -16,7 +18,7 @@ let runUpMigrations = async (
 ) => {
   let config = Indexer.Generated.configWithoutRegistrations
   let exitCode = try {
-    await Indexer.Generated.codegenPersistence->Persistence.init(
+    await persistence->Persistence.init(
       ~reset,
       ~chainConfigs=config.chainMap->ChainMap.values,
     )

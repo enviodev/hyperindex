@@ -509,12 +509,11 @@ type workerData = {
   initialState: Persistence.initialState,
 }
 
-let makeCreateTestIndexer = (
-  ~config: Config.t,
-  ~workerPath: string,
-  ~allEntities: array<Internal.entityConfig>,
-): (unit => t<'processConfig>) => {
+let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
+  unit => t<'processConfig>
+) => {
   () => {
+    let allEntities = config.allEntities
     let entities = Js.Dict.empty()
     let entityConfigs = Js.Dict.empty()
     allEntities->Array.forEach(entityConfig => {
