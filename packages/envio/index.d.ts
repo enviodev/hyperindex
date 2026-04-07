@@ -513,13 +513,17 @@ export type EvmOnEvent<
   E extends keyof EvmContracts<Config>[C] & string = keyof EvmContracts<Config>[C] & string
 > = EvmContracts<Config>[C][E];
 
-/** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type. */
-export type EvmOnEventOptions<Event extends EventLike> = {
-  readonly contract: Event["contractName"];
-  readonly event: Event["eventName"];
-  readonly wildcard?: boolean;
-  readonly eventFilters?: unknown;
-};
+/** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type.
+ * The conditional `Event extends EventLike` distributes over union members so that each member's
+ * contractName/eventName pair is constrained together — preventing invalid cross-member pairings. */
+export type EvmOnEventOptions<Event extends EventLike> = Event extends EventLike
+  ? {
+      readonly contract: Event["contractName"];
+      readonly event: Event["eventName"];
+      readonly wildcard?: boolean;
+      readonly eventFilters?: unknown;
+    }
+  : never;
 
 /** Handler function for an EVM onEvent registration. Context is provided as a separate generic so the project alias can bind it. */
 export type EvmOnEventHandler<Event extends EventLike, Context> = (args: {

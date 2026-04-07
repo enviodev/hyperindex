@@ -1692,15 +1692,20 @@ type handlerContext = {{
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        // Generate GADT event identifier types for type-safe simulate items
-        let simulate_types_code = if codegen_contracts.is_empty() {
-            String::new()
-        } else {
-            let contracts_with_events: Vec<_> = codegen_contracts
-                .iter()
-                .filter(|c| !c.codegen_events.is_empty())
-                .collect();
+        // Generate GADT event identifier types for type-safe simulate items.
+        // For configs without any contract events (e.g. SVM-only or empty-contract
+        // configs) we still emit an abstract `eventIdentity` type so the unconditional
+        // `type indexer` definition below — which references it in onEvent /
+        // contractRegister fields — type-checks. Such configs simply have no
+        // constructors to pass in.
+        let contracts_with_events: Vec<_> = codegen_contracts
+            .iter()
+            .filter(|c| !c.codegen_events.is_empty())
+            .collect();
 
+        let simulate_types_code = if contracts_with_events.is_empty() {
+            "type eventIdentity<'event, 'paramsConstructor, 'filters>".to_string()
+        } else {
             let top_constructors = contracts_with_events
                 .iter()
                 .map(|c| {
@@ -1851,6 +1856,7 @@ module SingleOrMultiple: {{
 type eventIdentityConfig<'eventIdentity> = {{
   event: 'eventIdentity,
   wildcard?: bool,
+  eventFilters?: Js.Json.t,
 }}
 
 module Enums = {{
@@ -1869,7 +1875,6 @@ type contractRegisterContract = {{ add: Address.t => unit }}
 
 type contractRegisterChainInfo = {{
   id: chainId,
-  isLive: bool,
 {contract_register_chain_fields}
 }}
 

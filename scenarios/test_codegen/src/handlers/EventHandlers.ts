@@ -706,6 +706,35 @@ indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async 
   }
 });
 
+// Capture the inner add() closure in one contractRegister invocation, then try
+// to invoke the captured closure from a later onEvent handler (after the first
+// handler has resolved and params.isResolved === true). The call must throw —
+// this guards against the captured-add bypass where
+// `const add = context.chain.X.add` survives past handler resolution.
+// We signal success via the CustomSelectionTestPass entity so the test can
+// observe the outcome across the createTestIndexer worker boundary.
+let _capturedCrAdd: ((address: `0x${string}`) => void) | null = null;
+indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
+  if (event.params.testCase === "captureAdd") {
+    _capturedCrAdd = context.chain.SimpleNft.add;
+  }
+});
+indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
+  if (event.params.testCase === "callCapturedAdd" && _capturedCrAdd) {
+    const outcome = (() => {
+      try {
+        _capturedCrAdd!("0x1234567890123456789012345678901234567890");
+        return "captured-add-did-not-throw";
+      } catch {
+        return "captured-add-threw";
+      }
+    })();
+    context.CustomSelectionTestPass.set({
+      id: outcome,
+    });
+  }
+});
+
 // Different options → should throw
 export let mismatchedHandlerOptionsError: Error | undefined;
 try {

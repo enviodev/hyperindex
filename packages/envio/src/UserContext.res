@@ -370,11 +370,19 @@ type contractRegisterParams = {
   mutable isResolved: bool,
 }
 
-// Helper to create a validated add function for contract registration
+// Helper to create a validated add function for contract registration.
+// The isResolved check has to live inside the returned closure (not just in the
+// outer proxy trap) because users can capture `const add = context.chain.X.add`
+// before awaiting — a later call would otherwise bypass the resolved guard.
 let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): (
   Address.t => unit
 ) => {
   (contractAddress: Address.t) => {
+    if params.isResolved {
+      Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->ErrorHandling.mkLogAndRaise(
+        ~logger=params.item->Logging.getItemLogger,
+      )
+    }
     let validatedAddress = if params.config.ecosystem.name === Evm {
       // The value is passed from the user-land,
       // so we need to validate and checksum/lowercase the address.
@@ -400,7 +408,6 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
     | "id" =>
       let eventItem = params.item->Internal.castUnsafeEventItem
       eventItem.chain->ChainMap.Chain.toChainId->(Utils.magic: int => unknown)
-    | "isLive" => false->(Utils.magic: bool => unknown)
     | _ =>
       // Look up the contract name directly in config contracts across all chains.
       let contractName = prop

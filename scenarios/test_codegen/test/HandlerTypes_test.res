@@ -36,11 +36,12 @@ let _checkHandlerContext = (ctx: Indexer.handlerContext) => {
   let _: Envio.logger = ctx.log
 }
 
-// 5. contractRegisterContext has chain.ContractName.add() registration
+// 5. contractRegisterContext has chain.ContractName.add() registration.
+// Note: chain does NOT expose isLive — contract registration runs during sync
+// so the "live" distinction isn't meaningful and the field was dropped.
 let _checkContractRegisterContext = (ctx: Indexer.contractRegisterContext) => {
   let chain: Indexer.contractRegisterChainInfo = ctx.chain
   let _: Indexer.chainId = chain.id
-  let _: bool = chain.isLive
   let _: Envio.logger = ctx.log
   // chain.ContractName.add(address) is available for each configured contract
   let zero = "0x0000000000000000000000000000000000000000"->Address.unsafeFromString
