@@ -21,9 +21,10 @@ export default defineConfig({
     pool: "forks",
     maxWorkers: 1,
     testTimeout: 30_000,
-    // Bumped from 30s: scenario beforeAll/afterAll spawn `envio local db-migrate up`
-    // as a subprocess and CI cold-start of the binary can exceed the previous limit.
-    hookTimeout: 90_000,
+    // Migrations now run once via globalSetup (test/global-setup.ts) instead
+    // of in per-file beforeAll/afterAll hooks, so the default hookTimeout is fine.
+    hookTimeout: 30_000,
+    globalSetup: ["test/global-setup.ts"],
     setupFiles: ["test/setup.ts"],
     passWithNoTests: true,
     server: {
