@@ -2,7 +2,27 @@
 // which we can't get using GenType
 // Use @genType.import to link the types back to ReScript code
 
-import type { Logger, IndexerFromConfig, EffectCaller, GetWhereFilter, Address, EvmOnEventContext, EvmContractRegisterContext, FuelOnEventContext, FuelContractRegisterContext, EvmOnEvent, EvmOnEventOptions, EvmOnEventHandler, EvmContractRegisterOptions, EvmContractRegisterHandler, FuelOnEvent, FuelOnEventOptions, FuelOnEventHandler, FuelContractRegisterOptions, FuelContractRegisterHandler } from "envio";
+import type {
+  Logger,
+  IndexerFromConfig,
+  EffectCaller,
+  GetWhereFilter,
+  Address,
+  EvmOnEventContext as GEvmOnEventContext,
+  EvmContractRegisterContext as GEvmContractRegisterContext,
+  FuelOnEventContext as GFuelOnEventContext,
+  FuelContractRegisterContext as GFuelContractRegisterContext,
+  EvmOnEvent,
+  FuelOnEvent,
+  EvmOnEventOptions as GEvmOnEventOptions,
+  EvmOnEventHandler as GEvmOnEventHandler,
+  EvmContractRegisterOptions as GEvmContractRegisterOptions,
+  EvmContractRegisterHandler as GEvmContractRegisterHandler,
+  FuelOnEventOptions as GFuelOnEventOptions,
+  FuelOnEventHandler as GFuelOnEventHandler,
+  FuelContractRegisterOptions as GFuelContractRegisterOptions,
+  FuelContractRegisterHandler as GFuelContractRegisterHandler,
+} from "envio";
 import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, Enums } from "../envio.d.ts";
 export type { EvmChainId, FuelChainId, SvmChainId } from "../envio.d.ts";
 
@@ -91,41 +111,56 @@ import type {
 /** The test indexer type. Allows running the indexer for specific block ranges and inspecting results. */
 export type TestIndexer = TestIndexerFromConfig<IndexerConfigTypes>;
 
-/** Context for onEvent handlers. */
-export type OnEventContext = EvmOnEventContext<IndexerConfigTypes>;
+// Local EventLike constraint (envio/index.d.ts has the same internal definition).
+// We can't import it because it's not exported there.
+type _EventLike = { readonly contractName: string; readonly eventName: string };
 
-/** Context for contractRegister handlers. */
-export type ContractRegisterContext = EvmContractRegisterContext<IndexerConfigTypes>;
+// When the ecosystem isn't configured, EvmEvent/FuelEvent resolves to an error string.
+// Filter to a structural event type so the project aliases stay usable in non-configured cases.
+type _ProjectEvmEvent = EvmEvent extends _EventLike ? EvmEvent : never;
+type _ProjectFuelEvent = FuelEvent extends _EventLike ? FuelEvent : never;
 
-/** Event type for onEvent handlers. Lookup by contract and event name, or union of all events. */
-export type OnEvent<
-  TContractName extends keyof EvmContracts = keyof EvmContracts,
-  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
-> = EvmOnEvent<IndexerConfigTypes, TContractName, TEventName>;
+/** Context for indexer.onEvent handlers in EVM ecosystem (bound to project config). */
+export type EvmOnEventContext = GEvmOnEventContext<IndexerConfigTypes>;
 
-/** Options for onEvent registration. */
-export type OnEventOptions<
-  TContractName extends keyof EvmContracts & string = keyof EvmContracts & string,
-  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
-> = EvmOnEventOptions<IndexerConfigTypes, TContractName, TEventName>;
+/** Context for indexer.contractRegister handlers in EVM ecosystem (bound to project config). */
+export type EvmContractRegisterContext = GEvmContractRegisterContext<IndexerConfigTypes>;
 
-/** Handler function type for onEvent. */
-export type OnEventHandler<
-  TContractName extends keyof EvmContracts = keyof EvmContracts,
-  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
-> = EvmOnEventHandler<IndexerConfigTypes, TContractName, TEventName>;
+/** Context for indexer.onEvent handlers in Fuel ecosystem (bound to project config). */
+export type FuelOnEventContext = GFuelOnEventContext<IndexerConfigTypes>;
 
-/** Options for contractRegister registration. */
-export type ContractRegisterOptions<
-  TContractName extends keyof EvmContracts & string = keyof EvmContracts & string,
-  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
-> = EvmContractRegisterOptions<IndexerConfigTypes, TContractName, TEventName>;
+/** Context for indexer.contractRegister handlers in Fuel ecosystem (bound to project config). */
+export type FuelContractRegisterContext = GFuelContractRegisterContext<IndexerConfigTypes>;
 
-/** Handler function type for contractRegister. */
-export type ContractRegisterHandler<
-  TContractName extends keyof EvmContracts = keyof EvmContracts,
-  TEventName extends keyof EvmContracts[TContractName] & string = keyof EvmContracts[TContractName] & string
-> = EvmContractRegisterHandler<IndexerConfigTypes, TContractName, TEventName>;
+/** Options for indexer.onEvent in EVM ecosystem. Pass an EvmEvent to type the contract+event. */
+export type EvmOnEventOptions<Event extends _EventLike = _ProjectEvmEvent> = GEvmOnEventOptions<Event>;
+
+/** Handler for indexer.onEvent in EVM ecosystem. Context is bound to the project's EvmOnEventContext. */
+export type EvmOnEventHandler<Event extends _EventLike = _ProjectEvmEvent> =
+  GEvmOnEventHandler<Event, EvmOnEventContext>;
+
+/** Options for indexer.contractRegister in EVM ecosystem. */
+export type EvmContractRegisterOptions<Event extends _EventLike = _ProjectEvmEvent> =
+  GEvmContractRegisterOptions<Event>;
+
+/** Handler for indexer.contractRegister in EVM ecosystem. Context is bound to the project's EvmContractRegisterContext. */
+export type EvmContractRegisterHandler<Event extends _EventLike = _ProjectEvmEvent> =
+  GEvmContractRegisterHandler<Event, EvmContractRegisterContext>;
+
+/** Options for indexer.onEvent in Fuel ecosystem. */
+export type FuelOnEventOptions<Event extends _EventLike = _ProjectFuelEvent> = GFuelOnEventOptions<Event>;
+
+/** Handler for indexer.onEvent in Fuel ecosystem. */
+export type FuelOnEventHandler<Event extends _EventLike = _ProjectFuelEvent> =
+  GFuelOnEventHandler<Event, FuelOnEventContext>;
+
+/** Options for indexer.contractRegister in Fuel ecosystem. */
+export type FuelContractRegisterOptions<Event extends _EventLike = _ProjectFuelEvent> =
+  GFuelContractRegisterOptions<Event>;
+
+/** Handler for indexer.contractRegister in Fuel ecosystem. */
+export type FuelContractRegisterHandler<Event extends _EventLike = _ProjectFuelEvent> =
+  GFuelContractRegisterHandler<Event, FuelContractRegisterContext>;
 
 export type HandlerContext = {
   /**
