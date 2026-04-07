@@ -198,9 +198,7 @@ jobs:
         working-directory: scenarios/test_codegen
         run: |
           pnpm exec envio codegen
-          pnpm rescript
-          pnpm exec tsc --noEmit
-          pnpm exec vitest run --reporter=github-actions --reporter=default
+          pnpm test
 
       - name: fuel_test
         working-directory: scenarios/fuel_test

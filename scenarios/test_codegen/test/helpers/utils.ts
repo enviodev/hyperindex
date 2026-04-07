@@ -1,6 +1,9 @@
-import { makeClient } from "envio/src/PgStorage.gen";
+// Import from the compiled .res.mjs directly. The .gen.ts re-export
+// can't be used here because Node 24 refuses to strip TypeScript types
+// from files inside node_modules.
+import { makeClient } from "envio/src/PgStorage.res.mjs";
 
-export const createSql = makeClient;
+export const createSql = makeClient as () => any;
 
 // Migrations are now run exactly once for the whole test session via
 // vitest's globalSetup (see test/global-setup.ts). These helpers are kept
