@@ -19,6 +19,8 @@ interface TemplateConfig {
   hasTests?: boolean;
 }
 
+const fuelGreeterAbi = path.join(config.rootDir, "packages/e2e-tests/fixtures/fuel-greeter-abi.json");
+
 // All available templates and contract imports to test
 const TEMPLATES: TemplateConfig[] = [
   // EVM Templates
@@ -55,6 +57,7 @@ const TEMPLATES: TemplateConfig[] = [
   // EVM Contract Import (explorer)
   {
     name: "evm-contract-import-ts",
+    hasTests: true,
     initArgs: [
       "contract-import",
       "-c",
@@ -67,10 +70,10 @@ const TEMPLATES: TemplateConfig[] = [
       "-l",
       "typescript",
     ],
-    hasTests: true,
   },
   {
     name: "evm-contract-import-rescript",
+    hasTests: true,
     initArgs: [
       "contract-import",
       "-c",
@@ -83,15 +86,57 @@ const TEMPLATES: TemplateConfig[] = [
       "-l",
       "rescript",
     ],
-    hasTests: true,
+  },
+  // Fuel Contract Import (local ABI)
+  // Smoke tests disabled: scans from block 0 on Fuel testnet, can timeout in CI.
+  {
+    name: "fuel-contract-import-ts",
+    hasTests: false,
+    initArgs: [
+      "fuel",
+      "contract-import",
+      "-c",
+      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
+      "local",
+      "-a",
+      fuelGreeterAbi,
+      "--contract-name",
+      "Greeter",
+      "-b",
+      "testnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "typescript",
+    ],
+  },
+  {
+    name: "fuel-contract-import-rescript",
+    hasTests: false,
+    initArgs: [
+      "fuel",
+      "contract-import",
+      "-c",
+      "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
+      "local",
+      "-a",
+      fuelGreeterAbi,
+      "--contract-name",
+      "Greeter",
+      "-b",
+      "testnet",
+      "--single-contract",
+      "--all-events",
+      "-l",
+      "rescript",
+    ],
   },
 ];
 
-describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
+function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
   let projectDir: string;
 
   beforeAll(async () => {
-    // Create a unique temp directory for this test
     const tempBase = path.join(os.tmpdir(), "envio-template-tests");
     fs.mkdirSync(tempBase, { recursive: true });
     projectDir = path.join(tempBase, `${name}-${Date.now()}`);
@@ -99,7 +144,6 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
   });
 
   afterAll(async () => {
-    // Clean up the temp directory
     if (projectDir && fs.existsSync(projectDir)) {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -159,4 +203,8 @@ describe.each(TEMPLATES)("Template: $name", ({ name, initArgs, hasTests }) => {
     }
     expect(result.exitCode).toBe(0);
   }, config.timeouts.test + 10_000);
-});
+}
+
+for (const template of TEMPLATES) {
+  describe(`Template: '${template.name}'`, () => templateTest(template));
+}

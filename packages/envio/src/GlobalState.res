@@ -49,6 +49,7 @@ type t = {
   writeThrottlers: WriteThrottlers.t,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
+  exitAfterFirstEventBlock: bool,
   //Initialized as 0, increments, when rollbacks occur to invalidate
   //responses based on the wrong stateId
   id: int,
@@ -59,6 +60,7 @@ let make = (
   ~chainManager: ChainManager.t,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
+  ~exitAfterFirstEventBlock=false,
 ) => {
   {
     ctx,
@@ -70,6 +72,7 @@ let make = (
     writeThrottlers: WriteThrottlers.make(),
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
+    exitAfterFirstEventBlock,
     id: 0,
   }
 }
@@ -97,7 +100,7 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
-type shouldExit = ExitWithSuccess | NoExit
+type shouldExit = ExitWithSuccess | ExitWithError(string) | NoExit
 
 // Need to dispatch an action for every async operation
 // to get access to the latest state.
@@ -482,6 +485,25 @@ let submitPartitionQueryResponse = (
       ~knownHeight,
     )
 
+  // In auto-exit mode, set endBlock to the first event's block when events arrive.
+  // Also update if a partition returns events at an earlier block than current endBlock.
+  let updatedChainFetcher = if state.exitAfterFirstEventBlock && newItems->Array.length > 0 {
+    let firstEventBlock = newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber
+    switch updatedChainFetcher.fetchState.endBlock {
+    | None => {
+        ...updatedChainFetcher,
+        fetchState: {...updatedChainFetcher.fetchState, endBlock: Some(firstEventBlock)},
+      }
+    | Some(currentEndBlock) if firstEventBlock < currentEndBlock => {
+        ...updatedChainFetcher,
+        fetchState: {...updatedChainFetcher.fetchState, endBlock: Some(firstEventBlock)},
+      }
+    | Some(_) => updatedChainFetcher
+    }
+  } else {
+    updatedChainFetcher
+  }
+
   if !chainFetcher.isProgressAtHead && updatedChainFetcher.isProgressAtHead {
     updatedChainFetcher.logger->Logging.childInfo("All events have been fetched")
   }
@@ -682,7 +704,19 @@ let actionReducer = (state: t, action: action) => {
             ExitWithSuccess
           }
         }
-      : NoExit
+      : if (
+          // In auto-exit mode, error if all chains reached head with no events found
+          state.exitAfterFirstEventBlock &&
+          state.chainManager.chainFetchers
+          ->ChainMap.values
+          ->Array.every(cf => cf.isProgressAtHead && cf.fetchState.endBlock->Belt.Option.isNone)
+        ) {
+          ExitWithError(
+            "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
+          )
+        } else {
+          NoExit
+        }
 
     (
       state,
@@ -881,6 +915,7 @@ let injectedTaskReducer = (
         ~persistence=state.ctx.persistence,
       )
       dispatchAction(SuccessExit)
+    | ExitWithError(msg) => dispatchAction(ErrorExit(ErrorHandling.make(Js.Exn.raiseError(msg))))
     | NoExit =>
       updateChainMetadataTable(
         chainManager,
@@ -1058,11 +1093,9 @@ let injectedTaskReducer = (
           eventsProcessedDiffByChain->Utils.Dict.setByInt(
             diff["chain_id"],
             {
-              let eventsProcessedDiff = Float.fromString(
-                diff["events_processed_diff"],
-              )->Option.getExn
-              rollbackedProcessedEvents :=
-                rollbackedProcessedEvents.contents +. eventsProcessedDiff
+              let eventsProcessedDiff =
+                Float.fromString(diff["events_processed_diff"])->Option.getExn
+              rollbackedProcessedEvents := rollbackedProcessedEvents.contents +. eventsProcessedDiff
               eventsProcessedDiff
             },
           )
@@ -1085,9 +1118,10 @@ let injectedTaskReducer = (
           let fetchState =
             cf.fetchState->FetchState.rollback(~targetBlockNumber=newProgressBlockNumber)
           let newTotalEventsProcessed =
-            cf.numEventsProcessed -. (eventsProcessedDiffByChain
+            cf.numEventsProcessed -.
+            eventsProcessedDiffByChain
             ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId)
-            ->Option.getUnsafe)
+            ->Option.getUnsafe
 
           if cf.committedProgressBlockNumber !== newProgressBlockNumber {
             Prometheus.ProgressBlockNumber.set(

@@ -1015,7 +1015,6 @@ describe("Use Envio test framework to test event handlers", () => {
       expectType<TypeEqual<typeof change.block, number>>(true);
       expectType<TypeEqual<typeof change.chainId, number>>(true);
       expectType<TypeEqual<typeof change.eventsProcessed, number>>(true);
-      expectType<TypeEqual<typeof change.blockHash, string | undefined>>(true);
 
       // Verify entity changes have expected structure
       const userChange = change.User;
@@ -1282,6 +1281,83 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.strictEqual(result.changes.length, 1);
     assert.strictEqual(result.changes[0]!.eventsProcessed, 2);
     assert.strictEqual(result.changes[0]!.Gravatar?.sets?.length, 2);
+  });
+
+  it("simulate with missing params fills all fields with defaults", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Gravatar", event: "NewGravatar" },
+          ],
+        },
+      },
+    });
+
+    // All param fields get default values: bigint→0n, address→zero, string→""
+    assert.deepEqual(result, {
+      changes: [{
+        block: 1,
+        chainId: 1337,
+        eventsProcessed: 1,
+        Gravatar: {
+          sets: [{
+            id: "0",
+            owner_id: "0x0000000000000000000000000000000000000000",
+            displayName: "",
+            imageUrl: "",
+            updatesCount: 1n,
+            size: "SMALL",
+          }],
+        },
+      }],
+    });
+  });
+
+  it("simulate with partial params fills missing fields with defaults", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "NewGravatar",
+              params: {
+                id: 1n,
+                owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Provided fields are used, missing fields get defaults
+    assert.deepEqual(result, {
+      changes: [{
+        block: 1,
+        chainId: 1337,
+        eventsProcessed: 1,
+        Gravatar: {
+          sets: [{
+            id: "1",
+            owner_id: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            displayName: "",
+            imageUrl: "",
+            updatesCount: 1n,
+            size: "SMALL",
+          }],
+        },
+      }],
+    });
   });
 
   it("EvmEvent type", () => {

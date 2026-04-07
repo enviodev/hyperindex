@@ -5,11 +5,13 @@
   "scripts": {
     "codegen": "envio codegen",
     "dev": "envio dev",
-    "start": "envio start"
+    "start": "envio start",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
   },
   "dependencies": {
     "envio": "file:../../packages/envio"

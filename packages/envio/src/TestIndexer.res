@@ -15,7 +15,7 @@ type fuelChainConfig = {
 // Internal type used for block range validation and state management
 type chainConfig = {
   startBlock: int,
-  endBlock: int,
+  endBlock: option<int>,
 }
 
 type processResult = {changes: array<unknown>}
@@ -123,7 +123,6 @@ let handleWriteBatch = (
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
-  ~checkpointBlockHashes: array<Js.Null.t<string>>,
   ~checkpointEventsProcessed: array<int>,
 ): unit => {
   // Group entity changes by checkpointId
@@ -217,10 +216,6 @@ let handleWriteBatch = (
 
     // Add checkpoint metadata
     change->Js.Dict.set("block", checkpointBlockNumbers->Array.getUnsafe(i)->Utils.magic)
-    switch checkpointBlockHashes->Array.getUnsafe(i)->Js.Null.toOption {
-    | Some(hash) => change->Js.Dict.set("blockHash", hash->Utils.magic)
-    | None => () // Skip blockHash when null
-    }
     change->Js.Dict.set("chainId", checkpointChainIds->Array.getUnsafe(i)->Utils.magic)
     change->Js.Dict.set(
       "eventsProcessed",
@@ -287,8 +282,8 @@ let makeInitialState = (
     {
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,
-      endBlock: Some(processChainConfig.endBlock),
-      sourceBlockNumber: processChainConfig.endBlock,
+      endBlock: processChainConfig.endBlock,
+      sourceBlockNumber: processChainConfig.endBlock->Option.getWithDefault(0),
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
       numEventsProcessed: 0.,
@@ -383,11 +378,16 @@ let parseBlockRange = (
   }
 
   let endBlock = switch rawChainConfig.endBlock {
-  | Some(eb) => eb
+  | Some(eb) => Some(eb)
   | None if rawChainConfig.simulate->Option.isSome =>
-    getSimulateEndBlock(~simulateItems=rawChainConfig.simulate->Option.getExn, ~config, ~startBlock)
-  | None =>
-    Js.Exn.raiseError(`endBlock is required for chain ${chainIdStr} when simulate is not provided`)
+    Some(
+      getSimulateEndBlock(
+        ~simulateItems=rawChainConfig.simulate->Option.getExn,
+        ~config,
+        ~startBlock,
+      ),
+    )
+  | None => None // auto-exit mode: will fetch first block with events and exit
   }
 
   if startBlock < configChain.startBlock {
@@ -397,10 +397,10 @@ let parseBlockRange = (
     )
   }
 
-  switch configChain.endBlock {
-  | Some(configEndBlock) if endBlock > configEndBlock =>
+  switch (endBlock, configChain.endBlock) {
+  | (Some(eb), Some(configEndBlock)) if eb > configEndBlock =>
     Js.Exn.raiseError(
-      `Invalid block range for chain ${chainIdStr}: endBlock (${endBlock->Int.toString}) exceeds config.endBlock (${configEndBlock->Int.toString}). ` ++
+      `Invalid block range for chain ${chainIdStr}: endBlock (${eb->Int.toString}) exceeds config.endBlock (${configEndBlock->Int.toString}). ` ++
       `Either use endBlock <= ${configEndBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   | _ => ()
@@ -504,17 +504,16 @@ type entityOperations = {
 type workerData = {
   chainId: int,
   startBlock: int,
-  endBlock: int,
+  endBlock: option<int>,
   simulate: option<array<Js.Json.t>>,
   initialState: Persistence.initialState,
 }
 
-let makeCreateTestIndexer = (
-  ~config: Config.t,
-  ~workerPath: string,
-  ~allEntities: array<Internal.entityConfig>,
-): (unit => t<'processConfig>) => {
+let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
+  unit => t<'processConfig>
+) => {
   () => {
+    let allEntities = config.allEntities
     let entities = Js.Dict.empty()
     let entityConfigs = Js.Dict.empty()
     allEntities->Array.forEach(entityConfig => {
@@ -779,7 +778,7 @@ let makeCreateTestIndexer = (
                     checkpointIds,
                     checkpointChainIds,
                     checkpointBlockNumbers,
-                    checkpointBlockHashes,
+                    checkpointBlockHashes: _,
                     checkpointEventsProcessed,
                   }) =>
                   state->handleWriteBatch(
@@ -787,7 +786,6 @@ let makeCreateTestIndexer = (
                     ~checkpointIds,
                     ~checkpointChainIds,
                     ~checkpointBlockNumbers,
-                    ~checkpointBlockHashes,
                     ~checkpointEventsProcessed,
                   )
                   Js.Json.null->respond
@@ -851,10 +849,16 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
   | Some({chainId, startBlock, endBlock, simulate, initialState}) =>
     let chainIdStr = chainId->Int.toString
 
+    // auto-exit mode: no endBlock means fetch first block with events and exit
+    let exitAfterFirstEventBlock = endBlock->Option.isNone
+
     // Build processConfig JSON for SimulateItems.patchConfig
     let resolvedChainDict: Js.Dict.t<unknown> = Js.Dict.empty()
     resolvedChainDict->Js.Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
-    resolvedChainDict->Js.Dict.set("endBlock", endBlock->(Utils.magic: int => unknown))
+    switch endBlock {
+    | Some(eb) => resolvedChainDict->Js.Dict.set("endBlock", eb->(Utils.magic: int => unknown))
+    | None => ()
+    }
     switch simulate {
     | Some(s) =>
       resolvedChainDict->Js.Dict.set("simulate", s->(Utils.magic: array<Js.Json.t> => unknown))
@@ -884,8 +888,23 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
     | Some(_) => ()
     }
 
-    let patchConfig = (config, _registrations) => SimulateItems.patchConfig(~config, ~processConfig)
-    Main.start(~makeGeneratedConfig, ~persistence, ~isTest=true, ~patchConfig)->ignore
+    let patchConfig = (config, _registrations) => {
+      let config = SimulateItems.patchConfig(~config, ~processConfig)
+
+      // In auto-exit mode, set batchSize=1 to process one block checkpoint at a time
+      if exitAfterFirstEventBlock {
+        {...config, batchSize: 1}
+      } else {
+        config
+      }
+    }
+    Main.start(
+      ~makeGeneratedConfig,
+      ~persistence,
+      ~isTest=true,
+      ~patchConfig,
+      ~exitAfterFirstEventBlock,
+    )->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

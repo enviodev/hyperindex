@@ -204,8 +204,10 @@ module Storage = {
 
   let toPersistence = (storageMock: t) => {
     {
-      ...Indexer.Generated.codegenPersistence,
-      storage: storageMock.storage,
+      ...PgStorage.makePersistenceFromConfig(
+        ~config=Indexer.Generated.configWithoutRegistrations,
+        ~storage=storageMock.storage,
+      ),
       storageStatus: Ready({
         cleanRun: false,
         cache: Js.Dict.empty(),
@@ -302,12 +304,8 @@ module Indexer = {
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = Indexer.Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
-    let persistence = {
-      ...Indexer.Generated.codegenPersistence,
-      storageStatus: Persistence.Unknown,
-      storage,
-    }
+    let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
     let ctx = {
       Ctx.registrations,
@@ -759,6 +757,9 @@ module Source = {
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+                            simulateParamsSchema: S.unknown
+                            ->S.shape(_ => ())
+                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
@@ -885,6 +886,9 @@ let evmEventConfig = (
     handler: None,
     contractRegister: None,
     paramsRawEventSchema: S.literal(%raw(`null`))
+    ->S.shape(_ => ())
+    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+    simulateParamsSchema: S.unknown
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
     getEventFiltersOrThrow: _ =>

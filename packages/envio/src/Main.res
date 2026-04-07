@@ -268,8 +268,9 @@ type mainArgs = Yargs.parsedArgs<args>
 
 let start = async (
   ~makeGeneratedConfig: unit => Config.t,
-  ~persistence: Persistence.t,
+  ~persistence: option<Persistence.t>=?,
   ~isTest=false,
+  ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
@@ -281,6 +282,10 @@ let start = async (
 
   // Register all handlers first, then get the config with registrations
   let configWithoutRegistrations = makeGeneratedConfig()
+  let persistence = switch persistence {
+  | Some(p) => p
+  | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
+  }
   let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
   let config = makeGeneratedConfig()
   let config = if isTest {
@@ -366,7 +371,13 @@ let start = async (
     ~config=ctx.config,
     ~registrations=ctx.registrations,
   )
-  let globalState = GlobalState.make(~ctx, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
+  let globalState = GlobalState.make(
+    ~ctx,
+    ~chainManager,
+    ~isDevelopmentMode,
+    ~shouldUseTui,
+    ~exitAfterFirstEventBlock,
+  )
   let gsManager = globalState->GlobalStateManager.make
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)

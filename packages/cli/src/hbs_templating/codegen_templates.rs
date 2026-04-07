@@ -579,14 +579,14 @@ impl EventMod {
                             &selected.block_fields,
                             &all_fields.block_fields,
                             "block_fields",
-                            &event_name,
+                            event_name,
                             "    ",
                         ),
                         ProjectTemplate::generate_rescript_all_fields_record(
                             &selected.transaction_fields,
                             &all_fields.transaction_fields,
                             "transaction_fields",
-                            &event_name,
+                            event_name,
                             "    ",
                         ),
                     )
@@ -1029,7 +1029,7 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
-struct FieldSelection {
+pub(crate) struct FieldSelection {
     transaction_fields: Vec<SelectedFieldTemplate>,
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
@@ -1271,14 +1271,11 @@ impl ProjectTemplate {
     fn generate_contract_event_ts_type(
         contract_name: &str,
         event: &system_config::Event,
-        global_field_selection: &system_config::FieldSelection,
         aggregated: &FieldSelection,
         chain_id_type_name: &str,
         global_block_type_name: &str,
         global_transaction_type_name: &str,
     ) -> String {
-        // Event name for field_selection YAML examples
-        let event_yaml_ref = &event.name;
         // Build params TS type
         let params_ts = match &event.kind {
             system_config::EventKind::Params(params) if !params.is_empty() => {
@@ -1311,25 +1308,7 @@ impl ProjectTemplate {
 
         // For events without custom field_selection, use global type alias
         // For events with custom field_selection, generate inline type with all fields
-        let (block_ts, tx_ts) = if event.field_selection.is_none() {
-            (
-                global_block_type_name.to_string(),
-                global_transaction_type_name.to_string(),
-            )
-        } else {
-            let event_fs = event.field_selection.as_ref().unwrap();
-            let default_block_fields = FieldSelection::default_block_fields();
-            let selected_block_names: std::collections::HashSet<&str> = default_block_fields
-                .iter()
-                .map(|f| f.name.as_str())
-                .chain(event_fs.block_fields.iter().map(|f| f.name.as_str()))
-                .collect();
-            let selected_tx_names: std::collections::HashSet<&str> = event_fs
-                .transaction_fields
-                .iter()
-                .map(|f| f.name.as_str())
-                .collect();
-
+        let (block_ts, tx_ts) = if let Some(event_fs) = &event.field_selection {
             let block_ts = Self::generate_ts_all_fields_record(
                 &FieldSelection::new(FieldSelectionOptions {
                     block_fields: event_fs.block_fields.clone(),
@@ -1353,6 +1332,11 @@ impl ProjectTemplate {
                 "        ",
             );
             (block_ts, tx_ts)
+        } else {
+            (
+                global_block_type_name.to_string(),
+                global_transaction_type_name.to_string(),
+            )
         };
 
         format!(
@@ -2044,84 +2028,6 @@ let makeGeneratedConfig = () => {
 let configWithoutRegistrations = makeGeneratedConfig()
 let allEntities = configWithoutRegistrations.allEntities
 
-let initialSql = PgStorage.makeClient()
-let storagePgSchema = Env.Db.publicSchema
-let makeStorage = (~sql, ~pgSchema=storagePgSchema, ~isHasuraEnabled=Env.Hasura.enabled) => {
-  PgStorage.make(
-    ~sql,
-    ~pgSchema,
-    ~pgHost=Env.Db.host,
-    ~pgUser=Env.Db.user,
-    ~pgPort=Env.Db.port,
-    ~pgDatabase=Env.Db.database,
-    ~pgPassword=Env.Db.password,
-    ~sink=?{
-      switch Env.ClickHouseSink.host {
-      | Some(host) => Some(Sink.makeClickHouse(~host, ~database=Env.ClickHouseSink.database, ~username=Env.ClickHouseSink.username, ~password=Env.ClickHouseSink.password))
-      | None => None
-      }
-    },
-    ~onInitialize=?{
-      if isHasuraEnabled {
-        Some(
-          () => {
-            Hasura.trackDatabase(
-              ~endpoint=Env.Hasura.graphqlEndpoint,
-              ~auth={
-                role: Env.Hasura.role,
-                secret: Env.Hasura.secret,
-              },
-              ~pgSchema=storagePgSchema,
-              ~userEntities=configWithoutRegistrations.userEntities,
-              ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(allEntities->Belt.Array.map(e => e.table)),
-              ~aggregateEntities=Env.Hasura.aggregateEntities,
-            )->Promise.catch(err => {
-              Logging.errorWithExn(
-                err->Utils.prettifyExn,
-                `Error tracking tables`,
-              )->Promise.resolve
-            })
-          },
-        )
-      } else {
-        None
-      }
-    },
-    ~onNewTables=?{
-      if isHasuraEnabled {
-        Some(
-          (~tableNames) => {
-            Hasura.trackTables(
-              ~endpoint=Env.Hasura.graphqlEndpoint,
-              ~auth={
-                role: Env.Hasura.role,
-                secret: Env.Hasura.secret,
-              },
-              ~pgSchema=storagePgSchema,
-              ~tableNames,
-            )->Promise.catch(err => {
-              Logging.errorWithExn(
-                err->Utils.prettifyExn,
-                `Error tracking new tables`,
-              )->Promise.resolve
-            })
-          },
-        )
-      } else {
-        None
-      }
-    },
-    ~isHasuraEnabled,
-  )
-}
-
-let codegenPersistence = Persistence.make(
-  ~userEntities=configWithoutRegistrations.userEntities,
-  ~allEnums=configWithoutRegistrations.allEnums,
-  ~storage=makeStorage(~sql=initialSql),
-)
-
 }"#;
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_module);
@@ -2129,7 +2035,7 @@ let codegenPersistence = Persistence.make(
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
             r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
-            r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
+            r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
         );
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_top_level_bindings);
@@ -2530,7 +2436,6 @@ let codegenPersistence = Persistence.make(
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &cfg.field_selection,
                                     &all_fields,
                                     "EvmChainId",
                                     "EvmBlock",
@@ -2616,7 +2521,6 @@ let codegenPersistence = Persistence.make(
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &cfg.field_selection,
                                     &aggregated,
                                     "FuelChainId",
                                     "FuelBlock",

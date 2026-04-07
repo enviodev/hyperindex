@@ -95,7 +95,7 @@ jobs:
 
   # ── Verify ──────────────────────────────────────────────────────────
 
-  # Cargo unit tests - no artifacts needed, independent compilation
+  # Cargo lint and unit tests - no artifacts needed, independent compilation
   cargo-test:
     runs-on: ubuntu-latest
     timeout-minutes: 9
@@ -105,8 +105,13 @@ jobs:
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: ./.github/actions/cargo-cache
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
 
       - name: Cargo Test
         run: cargo test --no-default-features
@@ -266,6 +271,12 @@ jobs:
             if curl -sSf http://localhost:8080/healthz >/dev/null; then
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
+
+      - name: Run smoke test
+        working-directory: scenarios/e2e_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
 
       - name: Run E2E test
         working-directory: packages/e2e-tests

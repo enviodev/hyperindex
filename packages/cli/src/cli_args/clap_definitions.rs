@@ -376,6 +376,15 @@ pub mod fuel {
         ///The name of the contract
         #[arg(long)]
         pub contract_name: Option<String>,
+        ///Which Fuel network to use
+        #[arg(short, long)]
+        pub blockchain: Option<crate::init_config::fuel::Network>,
+        ///If selected, prompt will not ask for additional contracts/addresses/chains
+        #[arg(long, action)]
+        pub single_contract: bool,
+        ///If selected, prompt will not ask to confirm selection of events on a contract
+        #[arg(long, action)]
+        pub all_events: bool,
     }
 
     #[derive(Args, Debug, Default, Clone)]

@@ -538,50 +538,54 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
 
 // ============== Test Indexer Types ==============
 
-// Helper: Build a union of {contract, event} pairs from a contracts record
-type SimulateContractEvent<Contracts extends Record<string, Record<string, any>>> = {
-  [C in keyof Contracts]: {
-    [E in keyof Contracts[C]]: {
-      /** The contract name as defined in config.yaml. */
-      contract: C;
-      /** The event name as defined in the contract ABI. */
-      event: E;
-    };
-  }[keyof Contracts[C]];
-}[keyof Contracts];
-
-/** Shared fields for all simulate items (excluding params). */
-type SimulateItemBase = {
-  /** Override the source address. Defaults to the first contract address. */
-  srcAddress?: Address;
-  /** Override the log index. Auto-increments by default. */
-  logIndex?: number;
-  /** Override block fields. */
-  block?: Record<string, unknown>;
-  /** Override transaction fields. */
-  transaction?: Record<string, unknown>;
-};
-
 /** Simulate item type for EVM ecosystem. */
 type EvmSimulateItem<Config extends IndexerConfigTypes> =
-  Config["evm"] extends { contracts?: Record<string, Record<string, any>> }
-    ? Config["evm"]["contracts"] extends Record<string, Record<string, any>>
-      ? SimulateContractEvent<Config["evm"]["contracts"]> & SimulateItemBase & {
-          /** Event parameters. Keys match the event's parameter names. */
-          params?: Record<string, unknown>;
-        }
-      : never
+  Config["evm"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
+    ? {
+        [C in keyof Contracts]: {
+          [E in keyof Contracts[C]]: {
+            /** The contract name as defined in config.yaml. */
+            contract: C;
+            /** The event name as defined in the contract ABI. */
+            event: E;
+            /** Override the source address. Defaults to the first contract address. */
+            srcAddress?: Address;
+            /** Override the log index. Auto-increments by default. */
+            logIndex?: number;
+            /** Override block fields. */
+            block?: Partial<Contracts[C][E]["block"]>;
+            /** Override transaction fields. */
+            transaction?: Partial<Contracts[C][E]["transaction"]>;
+            /** Event parameters. Keys match the event's parameter names. */
+            params?: Partial<Contracts[C][E]["params"]>;
+          };
+        }[keyof Contracts[C]];
+      }[keyof Contracts]
     : never;
 
 /** Simulate item type for Fuel ecosystem. */
 type FuelSimulateItem<Config extends IndexerConfigTypes> =
-  Config["fuel"] extends { contracts?: Record<string, Record<string, any>> }
-    ? Config["fuel"]["contracts"] extends Record<string, Record<string, any>>
-      ? SimulateContractEvent<Config["fuel"]["contracts"]> & SimulateItemBase & {
-          /** Event parameters. Keys match the event's parameter names. */
-          params: Record<string, unknown>;
-        }
-      : never
+  Config["fuel"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
+    ? {
+        [C in keyof Contracts]: {
+          [E in keyof Contracts[C]]: {
+            /** The contract name as defined in config.yaml. */
+            contract: C;
+            /** The event name as defined in the contract ABI. */
+            event: E;
+            /** Override the source address. Defaults to the first contract address. */
+            srcAddress?: Address;
+            /** Override the log index. Auto-increments by default. */
+            logIndex?: number;
+            /** Override block fields. */
+            block?: Partial<Contracts[C][E]["block"]>;
+            /** Override transaction fields. */
+            transaction?: Partial<Contracts[C][E]["transaction"]>;
+            /** Event parameters. Keys match the event's parameter names. */
+            params: Contracts[C][E]["params"];
+          };
+        }[keyof Contracts[C]];
+      }[keyof Contracts]
     : never;
 
 /** Configuration for a single EVM chain in the test indexer. */
@@ -640,8 +644,6 @@ type TestIndexerEntityOperations<Entity> = {
 type EntityChange<Config extends IndexerConfigTypes> = {
   /** The block where the changes occurred. */
   readonly block: number;
-  /** The block hash (if available). */
-  readonly blockHash?: string;
   /** The chain ID. */
   readonly chainId: number;
   /** Number of events processed in this block. */

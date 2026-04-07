@@ -2684,9 +2684,9 @@ describe("SourceManager height subscription", () => {
     "Creates subscription when getHeightOrThrow returns same height as knownHeight",
     async t => {
       let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
-      let sourceManager = SourceManager.make(~isLive=false, ~sources=[mock.source], ~maxPartitionConcurrency=10)
+      let sourceManager = SourceManager.make(~isLive=true, ~sources=[mock.source], ~maxPartitionConcurrency=10)
 
-      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
 
       // First call to getHeightOrThrow
       t.expect(mock.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -2712,17 +2712,17 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Uses cached height from subscription if higher than knownHeight", async t => {
     let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
-    let sourceManager = SourceManager.make(~isLive=false, ~sources=[mock.source], ~maxPartitionConcurrency=10)
+    let sourceManager = SourceManager.make(~isLive=true, ~sources=[mock.source], ~maxPartitionConcurrency=10)
 
     // First call - create subscription
-    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(105)
     t.expect(await p1).toEqual(105)
 
     // Second call - should use cached height immediately without calling getHeightOrThrow
-    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=101)
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101)
     t.expect(
       mock.getHeightOrThrowCalls->Array.length,
       ~message="Should not call getHeightOrThrow again since subscription exists",
@@ -2736,17 +2736,17 @@ describe("SourceManager height subscription", () => {
     "Waits for next height event when subscription exists but height <= knownHeight",
     async t => {
       let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
-      let sourceManager = SourceManager.make(~isLive=false, ~sources=[mock.source], ~maxPartitionConcurrency=10)
+      let sourceManager = SourceManager.make(~isLive=true, ~sources=[mock.source], ~maxPartitionConcurrency=10)
 
       // First call - create subscription and set initial height
-      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
       mock.resolveGetHeightOrThrow(100)
       await Utils.delay(0)
       mock.triggerHeightSubscription(101)
       t.expect(await p1).toEqual(101)
 
       // Second call with higher knownHeight - should wait for next subscription event
-      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=101)
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101)
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
         ~message="Should not call getHeightOrThrow since subscription exists",
@@ -2786,19 +2786,58 @@ describe("SourceManager height subscription", () => {
     },
   )
 
+  Async.it(
+    "Falls back to REST polling when subscription goes quiet for half the stall timeout",
+    async t => {
+      let stallTimeout = 20
+      let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
+      let sourceManager = SourceManager.make(
+        ~isLive=true,
+        ~sources=[mock.source],
+        ~maxPartitionConcurrency=10,
+        ~newBlockStallTimeoutLive=stallTimeout,
+      )
+
+      // First call - create subscription
+      let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+      mock.triggerHeightSubscription(101)
+      t.expect(await p1).toEqual(101)
+
+      // Second call - subscription exists but won't deliver
+      let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=101)
+
+      // Wait for stallTimeout/2 to trigger REST polling fallback
+      await Utils.delay(stallTimeout / 2 + 5)
+
+      t.expect(
+        mock.getHeightOrThrowCalls->Array.length,
+        ~message="Should have called getHeightOrThrow as polling fallback",
+      ).toBeGreaterThanOrEqual(
+        2,
+      )
+
+      // Resolve the REST polling with a new height
+      mock.resolveGetHeightOrThrow(102)
+
+      t.expect(await p2, ~message="Should resolve via REST polling fallback").toEqual(102)
+    },
+  )
+
   Async.it("Ignores subscription heights lower than or equal to knownHeight", async t => {
     let mock = Mock.Source.make([#getHeightOrThrow, #createHeightSubscription])
-    let sourceManager = SourceManager.make(~isLive=false, ~sources=[mock.source], ~maxPartitionConcurrency=10)
+    let sourceManager = SourceManager.make(~isLive=true, ~sources=[mock.source], ~maxPartitionConcurrency=10)
 
     // First call - create subscription
-    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
+    let p1 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=100)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.triggerHeightSubscription(101)
     t.expect(await p1).toEqual(101)
 
     // Second call with higher knownHeight
-    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=105)
+    let p2 = sourceManager->SourceManager.waitForNewBlock(~isLive=true, ~knownHeight=105)
 
     // Trigger with lower heights - should be ignored
     mock.triggerHeightSubscription(102)
