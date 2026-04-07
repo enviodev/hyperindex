@@ -1,4 +1,4 @@
-import { runMigrationsNoLogs, createSql } from "./helpers/utils";
+import { runMigrationsNoLogs, createSql } from "./helpers/TestHelpers.gen";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 describe("Postgres Numeric Precision Entity Tester Migrations", () => {

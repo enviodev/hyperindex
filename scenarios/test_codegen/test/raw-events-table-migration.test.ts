@@ -1,5 +1,5 @@
 import { mockRawEventRow } from "./helpers/Mock.gen";
-import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
+import { runMigrationsNoLogs, createSql} from "./helpers/TestHelpers.gen";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 describe("Raw Events Table Migrations", () => {
