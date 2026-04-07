@@ -186,6 +186,8 @@ describe("Isolated dependency e2e", () => {
         env: {
           TUI_OFF: "true",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+          // Fresh start: handler check uses config endBlock as the source of truth.
+          E2E_EXPECTED_END_BLOCK: "10861774",
         },
       });
 
