@@ -253,7 +253,7 @@ pub mod db_migrate {
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
         let exit = execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true)).catch(err => { console.error('Migration failed:', err && (err.stack || err)); process.exit(1); })",
+            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true)).catch(err => { const m = (err && (err.stack || err.message || String(err))).toString(); console.error('::error title=Migration failed::' + m.replace(/\\r?\\n/g,'%0A')); console.error('Migration failed:', m); process.exit(1); })",
             config,
         )
         .await?;
@@ -271,7 +271,7 @@ pub mod db_migrate {
 
     pub async fn run_drop_schema(config: &SystemConfig) -> anyhow::Result<ExitStatus> {
         execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(true)).catch(err => { console.error('Migration failed:', err && (err.stack || err)); process.exit(1); })",
+            "import('envio/src/Migrations.res.mjs').then(m => m.runDownMigrations(true)).catch(err => { const m = (err && (err.stack || err.message || String(err))).toString(); console.error('::error title=Migration failed::' + m.replace(/\\r?\\n/g,'%0A')); console.error('Migration failed:', m); process.exit(1); })",
             config,
         )
         .await
@@ -282,7 +282,7 @@ pub mod db_migrate {
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
         let exit = execute_migration(
-            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true, true)).catch(err => { console.error('Migration failed:', err && (err.stack || err)); process.exit(1); })",
+            "import('envio/src/Migrations.res.mjs').then(m => m.runUpMigrations(true, true)).catch(err => { const m = (err && (err.stack || err.message || String(err))).toString(); console.error('::error title=Migration failed::' + m.replace(/\\r?\\n/g,'%0A')); console.error('Migration failed:', m); process.exit(1); })",
             config,
         )
         .await?;
