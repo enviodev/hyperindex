@@ -118,9 +118,12 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       {
         enumerable: true,
         get: () => {
+          // Persistence may store endBlock=None (eg the test indexer's
+          // auto-exit mode where the user didn't specify an endBlock).
+          // Only override the config when persistence has an explicit value.
           switch getInitialChainState(~chainId=chainConfig.id) {
-          | Some(chainState) => chainState.endBlock
-          | None => chainConfig.endBlock
+          | Some({endBlock: Some(_) as eb}) => eb
+          | _ => chainConfig.endBlock
           }
         },
       },
