@@ -115,7 +115,11 @@ module WorkerThreads = {
 
   // Worker class for spawning workers
   type worker
-  type workerOptions = {workerData?: Js.Json.t, execArgv?: array<string>}
+  type workerOptions = {
+    workerData?: Js.Json.t,
+    execArgv?: array<string>,
+    env?: Js.Dict.t<string>,
+  }
 
   @new @module("worker_threads")
   external makeWorker: (string, workerOptions) => worker = "Worker"
