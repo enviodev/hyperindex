@@ -21,10 +21,7 @@ export default defineConfig({
     pool: "forks",
     maxWorkers: 1,
     testTimeout: 30_000,
-    // Migrations now run once via globalSetup (test/global-setup.ts) instead
-    // of in per-file beforeAll/afterAll hooks, so the default hookTimeout is fine.
     hookTimeout: 30_000,
-    globalSetup: ["test/global-setup.ts"],
     setupFiles: ["test/setup.ts"],
     passWithNoTests: true,
     server: {
