@@ -7,21 +7,21 @@ open Belt
 type rec eventParamComponent = {
   name: string,
   abiType: string,
-  components: option<array<eventParamComponent>>,
+  components?: array<eventParamComponent>,
 }
 
 type eventParam = {
   name: string,
   abiType: string,
   indexed: bool,
-  components: option<array<eventParamComponent>>,
+  components?: array<eventParamComponent>,
 }
 
 let eventParamComponentSchema = S.recursive(self =>
   S.object((s): eventParamComponent => {
     name: s.field("name", S.string),
     abiType: s.field("abiType", S.string),
-    components: s.field("components", S.option(S.array(self))),
+    components: ?s.field("components", S.option(S.array(self))),
   })
 )
 
@@ -29,7 +29,7 @@ let eventParamSchema = S.object((s): eventParam => {
   name: s.field("name", S.string),
   abiType: s.field("abiType", S.string),
   indexed: s.fieldOr("indexed", S.bool, false),
-  components: s.field("components", S.option(S.array(eventParamComponentSchema))),
+  components: ?s.field("components", S.option(S.array(eventParamComponentSchema))),
 })
 
 // Normalize a value that could be a single item or an array into an array

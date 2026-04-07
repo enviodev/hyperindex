@@ -121,6 +121,39 @@ pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
     abi_type_to_rescript(param.abi_type)
 }
 
+/// Same as [`abi_to_rescript_type`] but always renders tuples as positional
+/// tuples, discarding component names. Used for contexts like the ReScript
+/// `eventFilter` type where inline records inside generic type arguments
+/// (e.g. `SingleOrMultiple.t<{...}>`) are syntactically disallowed.
+pub fn abi_to_rescript_type_positional(param: &EvmEventParam) -> TypeIdent {
+    abi_type_to_rescript_positional(param.abi_type)
+}
+
+fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
+    match ty {
+        AbiType::Uint(_) => TypeIdent::BigInt,
+        AbiType::Int(_) => TypeIdent::BigInt,
+        AbiType::Bool => TypeIdent::Bool,
+        AbiType::Address => TypeIdent::Address,
+        AbiType::Bytes => TypeIdent::String,
+        AbiType::String => TypeIdent::String,
+        AbiType::FixedBytes(_) => TypeIdent::String,
+        AbiType::Function => {
+            unreachable!("Function type should be filtered out before reaching here")
+        }
+        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript_positional(inner))),
+        AbiType::FixedArray(inner, _) => {
+            TypeIdent::Array(Box::new(abi_type_to_rescript_positional(inner)))
+        }
+        AbiType::Tuple(fields) => TypeIdent::Tuple(
+            fields
+                .iter()
+                .map(|f| abi_type_to_rescript_positional(&f.kind))
+                .collect(),
+        ),
+    }
+}
+
 fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
     match ty {
         AbiType::Uint(_) => TypeIdent::BigInt,

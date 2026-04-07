@@ -325,6 +325,10 @@ pub struct EventMod {
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub all_ecosystem_fields: Option<FieldSelection>,
     pub params_constructor_type: String,
+    /// ReScript type alias declarations for any Solidity structs referenced by
+    /// this event's params. Emitted before `type params` because ReScript
+    /// forbids nested inline record type declarations.
+    pub struct_type_decls: String,
 }
 
 impl Display for EventMod {
@@ -396,12 +400,13 @@ type handler = Internal.genericHandler<handlerArgs>
 type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string();
 
         let params_constructor_type = &self.params_constructor_type;
+        let struct_type_decls = &self.struct_type_decls;
 
         format!(
             r#"
 let name = "{event_name}"
 let contractName = contractName
-
+{struct_type_decls}
 type params = {data_type}
 /** Event params with all fields optional. Missing fields use default values. */
 type paramsConstructor = {params_constructor_type}
@@ -478,16 +483,83 @@ pub struct EventTemplate {
 impl EventTemplate {
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
 
+    /// Walk an `AbiType` and lift every Solidity struct (named tuple) into a
+    /// top-level ReScript type alias. Returns the `TypeIdent` that should be
+    /// used in-place of the struct (either a `TypeApplication` referencing the
+    /// generated alias, or a plain leaf/tuple for non-struct types).
+    ///
+    /// Aliases are pushed into `decls` in post-order so emitting them in order
+    /// yields a topologically-sorted sequence where each alias only references
+    /// previously-declared ones.
+    fn extract_struct_aliases(
+        ty: &crate::config_parsing::abi_compat::AbiType,
+        path: &str,
+        decls: &mut Vec<(String, Vec<RecordField>)>,
+    ) -> TypeIdent {
+        use crate::config_parsing::abi_compat::AbiType;
+        match ty {
+            AbiType::Tuple(fields)
+                if fields
+                    .iter()
+                    .all(|f| f.name.as_ref().is_some_and(|n| !n.is_empty())) =>
+            {
+                let record_fields = fields
+                    .iter()
+                    .map(|f| {
+                        let fname = f.name.clone().unwrap();
+                        let sub_path = format!("{path}_{fname}");
+                        let sub_ty = Self::extract_struct_aliases(&f.kind, &sub_path, decls);
+                        RecordField::new(fname, sub_ty)
+                    })
+                    .collect::<Vec<_>>();
+                decls.push((path.to_string(), record_fields));
+                TypeIdent::TypeApplication {
+                    name: path.to_string(),
+                    type_params: vec![],
+                }
+            }
+            AbiType::Tuple(fields) => TypeIdent::Tuple(
+                fields
+                    .iter()
+                    .map(|f| Self::extract_struct_aliases(&f.kind, path, decls))
+                    .collect(),
+            ),
+            AbiType::Array(inner) => {
+                TypeIdent::Array(Box::new(Self::extract_struct_aliases(inner, path, decls)))
+            }
+            AbiType::FixedArray(inner, _) => {
+                TypeIdent::Array(Box::new(Self::extract_struct_aliases(inner, path, decls)))
+            }
+            AbiType::Uint(_) => TypeIdent::BigInt,
+            AbiType::Int(_) => TypeIdent::BigInt,
+            AbiType::Bool => TypeIdent::Bool,
+            AbiType::Address => TypeIdent::Address,
+            AbiType::Bytes => TypeIdent::String,
+            AbiType::String => TypeIdent::String,
+            AbiType::FixedBytes(_) => TypeIdent::String,
+            AbiType::Function => {
+                unreachable!("Function type should be filtered out before reaching here")
+            }
+        }
+    }
+
     pub fn generate_event_filter_type(params: &[EventParam]) -> String {
         let field_rows = params
             .iter()
             .filter(|param| param.indexed)
             .map(|param| {
+                // ReScript forbids inline records inside generic type arguments
+                // (`SingleOrMultiple.t<{...}>`), so we intentionally render
+                // struct filters as positional tuples here. Indexed structs are
+                // delivered as a keccak256 hash at runtime anyway, so losing the
+                // component names has no runtime impact.
                 format!(
                     "@as(\"{}\") {}?: SingleOrMultiple.t<{}>",
                     param.name,
                     RecordField::to_valid_rescript_name(&param.name),
-                    abi_to_rescript_type(&param.into())
+                    crate::config_parsing::event_parsing::abi_to_rescript_type_positional(
+                        &param.into()
+                    )
                 )
             })
             .collect::<Vec<_>>()
@@ -508,6 +580,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             all_ecosystem_fields: all_ecosystem_fields.clone(),
             params_constructor_type: "Internal.fuelSupplyParams".to_string(),
+            struct_type_decls: String::new(),
         };
         EventTemplate {
             name: event_name,
@@ -528,6 +601,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             all_ecosystem_fields: all_ecosystem_fields.clone(),
             params_constructor_type: "Internal.fuelTransferParams".to_string(),
+            struct_type_decls: String::new(),
         };
         EventTemplate {
             name: event_name,
@@ -560,6 +634,11 @@ impl EventTemplate {
                     })
                     .collect::<Vec<_>>();
 
+                // ReScript does not allow inline record types nested inside
+                // another record's field (`{ x: { a: int } }`), so for every
+                // Solidity struct we lift a top-level type alias and reference
+                // it by name in `type params`. Unnamed tuples stay positional.
+                let mut struct_decls: Vec<(String, Vec<RecordField>)> = vec![];
                 let data_type_expr = if params.is_empty() {
                     TypeExpr::Identifier(TypeIdent::Unit)
                 } else {
@@ -567,16 +646,41 @@ impl EventTemplate {
                         params
                             .iter()
                             .map(|p| {
-                                RecordField::new(
-                                    p.name.to_string(),
-                                    abi_to_rescript_type(&p.into()),
-                                )
+                                let ty = Self::extract_struct_aliases(
+                                    &p.kind,
+                                    &format!("params_{}", p.name),
+                                    &mut struct_decls,
+                                );
+                                RecordField::new(p.name.to_string(), ty)
                             })
                             .collect(),
                     )
                 };
 
-                // Generate params_constructor_type (all fields optional)
+                let struct_type_decls = if struct_decls.is_empty() {
+                    String::new()
+                } else {
+                    // Leaves first so each alias only references already-declared
+                    // aliases (extract_struct_aliases pushes in post-order).
+                    struct_decls
+                        .iter()
+                        .map(|(name, fields)| {
+                            let body = fields
+                                .iter()
+                                .map(|f| f.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!("type {name} = {{{body}}}\n")
+                        })
+                        .collect::<String>()
+                };
+
+                // Generate params_constructor_type (all fields optional).
+                // ReScript forbids inline record types in optional record fields
+                // (`field?: {...}`), so we render struct params as positional
+                // tuples here. Users constructing simulate inputs via the
+                // constructor therefore provide `(a, b, c)` for structs; the
+                // full named-record shape is still exposed on `params` / `event.params`.
                 let params_constructor_type = if params.is_empty() {
                     "unit".to_string()
                 } else {
@@ -585,7 +689,7 @@ impl EventTemplate {
                         .map(|p| {
                             let field = RecordField::new(
                                 p.name.to_string(),
-                                abi_to_rescript_type(&p.into()),
+                                crate::config_parsing::event_parsing::abi_to_rescript_type_positional(&p.into()),
                             );
                             let as_prefix = field
                                 .as_name
@@ -606,6 +710,7 @@ impl EventTemplate {
                     custom_field_selection: config_event.field_selection.clone(),
                     all_ecosystem_fields: all_ecosystem_fields.clone(),
                     params_constructor_type,
+                    struct_type_decls,
                 };
 
                 Ok(EventTemplate {
@@ -626,6 +731,7 @@ impl EventTemplate {
                             custom_field_selection: config_event.field_selection.clone(),
                             all_ecosystem_fields: all_ecosystem_fields.clone(),
                             params_constructor_type: data_type_str,
+                            struct_type_decls: String::new(),
                         };
 
                         Ok(EventTemplate {

@@ -772,3 +772,14 @@ Gravatar.EmptyEvent.handler(async ({ event, context }) => {
     timestamp: event.block.timestamp,
   });
 });
+
+// Regression test for https://github.com/enviodev/hyperindex/issues/538:
+// the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),
+// and the handler must see it as a named record so that `.name` / `.email`
+// field access works — not as a positional tuple that would require indexing.
+Gravatar.TestEvent.handler(async ({ event, context }) => {
+  context.SimpleEntity.set({
+    id: `TestEvent_${event.params.id}`,
+    value: `${event.params.contactDetails.name}:${event.params.contactDetails.email}`,
+  });
+});
