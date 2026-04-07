@@ -402,11 +402,8 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
       eventItem.chain->ChainMap.Chain.toChainId->(Utils.magic: int => unknown)
     | "isLive" => false->(Utils.magic: bool => unknown)
     | _ =>
-      // Check if it's a valid contract name by looking up in config contracts
-      // The addContractNameToContractNameMapping maps "addX" -> "X",
-      // but we want to look up "X" directly as a contract name
+      // Look up the contract name directly in config contracts across all chains.
       let contractName = prop
-      // Check if this contract name exists in any chain's contracts
       let isValidContract =
         params.config.chainMap
         ->ChainMap.values
