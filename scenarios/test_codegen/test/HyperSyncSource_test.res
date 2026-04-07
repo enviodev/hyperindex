@@ -11,7 +11,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     async t => {
       let selectionConfig = {
         dependsOnAddresses: true,
-        eventConfigs: [(Mock.evmEventConfig() :> Internal.eventConfig)],
+        eventConfigs: [(MockIndexer.evmEventConfig() :> Internal.eventConfig)],
       }->HyperSyncSource.getSelectionConfig(~chain)
 
       t.expect(
@@ -48,7 +48,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
             addresses: [mockAddress0],
             topicSelections: [
               {
-                topic0: [Mock.eventId->EvmTypes.Hex.fromStringUnsafe],
+                topic0: [MockIndexer.eventId->EvmTypes.Hex.fromStringUnsafe],
                 topic1: [],
                 topic2: [],
                 topic3: [],
@@ -75,7 +75,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
       let selectionConfig = {
         dependsOnAddresses: true,
         eventConfigs: [
-          (Mock.evmEventConfig(
+          (MockIndexer.evmEventConfig(
             ~blockFieldNames=([Hash, Number, Timestamp, Nonce]: array<Internal.evmBlockField>),
             ~transactionFieldNames=([Hash, GasPrice]: array<Internal.evmTransactionField>),
           ) :> Internal.eventConfig),
@@ -103,12 +103,12 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: true,
       eventConfigs: [
-        (Mock.evmEventConfig(
+        (MockIndexer.evmEventConfig(
           ~contractName="Foo",
           ~blockFieldNames=([Hash, Number, Timestamp]: array<Internal.evmBlockField>),
           ~transactionFieldNames=([Hash]: array<Internal.evmTransactionField>),
         ) :> Internal.eventConfig),
-        (Mock.evmEventConfig(
+        (MockIndexer.evmEventConfig(
           ~contractName="Bar",
           ~blockFieldNames=([Nonce]: array<Internal.evmBlockField>),
           ~transactionFieldNames=([GasPrice]: array<Internal.evmTransactionField>),
@@ -136,8 +136,8 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
-        (Mock.evmEventConfig(~id="wildcard event 1", ~isWildcard=true) :> Internal.eventConfig),
-        (Mock.evmEventConfig(~id="wildcard event 2", ~isWildcard=true) :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="wildcard event 1", ~isWildcard=true) :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="wildcard event 2", ~isWildcard=true) :> Internal.eventConfig),
       ],
     }->HyperSyncSource.getSelectionConfig(~chain)
 
@@ -170,8 +170,8 @@ describe("HyperSyncSource - getSelectionConfig", () => {
       let selectionConfig = {
         dependsOnAddresses: false,
         eventConfigs: [
-          (Mock.evmEventConfig(~id="event 1") :> Internal.eventConfig),
-          (Mock.evmEventConfig(
+          (MockIndexer.evmEventConfig(~id="event 1") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(
             ~id="event 2",
             ~isWildcard=true,
             ~dependsOnAddresses=true,
