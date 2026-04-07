@@ -187,6 +187,55 @@ struct EventParam {
     abi_type: String,
     #[serde(skip_serializing_if = "is_false")]
     indexed: bool,
+    /// Recursive tuple component metadata. Present only when the top-level type is a
+    /// struct / array of structs / nested tuple. Runtime uses this to rebuild named
+    /// record shapes from positional decoder output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    components: Option<Vec<EventParamComponent>>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct EventParamComponent {
+    /// Component name from the ABI. CLI fills in `_0`, `_1`, ... for unnamed slots so
+    /// the runtime always has a valid record key.
+    name: String,
+    abi_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    components: Option<Vec<EventParamComponent>>,
+}
+
+/// Walk an `AbiType` to produce the `components` tree that the runtime needs to
+/// rebuild named records. Returns `None` for leaf types so the runtime can keep its
+/// legacy `abiType`-string-driven decoding path.
+fn abi_type_to_components(
+    ty: &crate::config_parsing::abi_compat::AbiType,
+) -> Option<Vec<EventParamComponent>> {
+    use crate::config_parsing::abi_compat::AbiType;
+    match ty {
+        AbiType::Tuple(fields) => Some(
+            fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    let name = f
+                        .name
+                        .clone()
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| format!("_{i}"));
+                    EventParamComponent {
+                        name,
+                        abi_type: f.kind.to_signature_string(),
+                        components: abi_type_to_components(&f.kind),
+                    }
+                })
+                .collect(),
+        ),
+        // For arrays, descend into the element type so struct arrays still surface
+        // component metadata under the param.
+        AbiType::Array(inner) | AbiType::FixedArray(inner, _) => abi_type_to_components(inner),
+        _ => None,
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -329,8 +378,9 @@ impl SystemConfig {
                                         .iter()
                                         .map(|p| EventParam {
                                             name: p.name.clone(),
-                                            abi_type: p.kind.to_string(),
+                                            abi_type: p.kind.to_signature_string(),
                                             indexed: p.indexed,
+                                            components: abi_type_to_components(&p.kind),
                                         })
                                         .collect();
                                     (params, None)

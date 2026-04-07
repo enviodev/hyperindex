@@ -1,15 +1,35 @@
 open Belt
 
+// Recursive tuple/struct component metadata emitted by the CLI when an event
+// param (or any nested field) is a Solidity struct. `name` is always non-empty —
+// the CLI fills in `_0`, `_1`, ... for anonymous components — so the runtime can
+// always rebuild a keyed object.
+type rec eventParamComponent = {
+  name: string,
+  abiType: string,
+  components: option<array<eventParamComponent>>,
+}
+
 type eventParam = {
   name: string,
   abiType: string,
   indexed: bool,
+  components: option<array<eventParamComponent>>,
 }
 
-let eventParamSchema = S.object(s => {
+let eventParamComponentSchema = S.recursive(self =>
+  S.object((s): eventParamComponent => {
+    name: s.field("name", S.string),
+    abiType: s.field("abiType", S.string),
+    components: s.field("components", S.option(S.array(self))),
+  })
+)
+
+let eventParamSchema = S.object((s): eventParam => {
   name: s.field("name", S.string),
   abiType: s.field("abiType", S.string),
   indexed: s.fieldOr("indexed", S.bool, false),
+  components: s.field("components", S.option(S.array(eventParamComponentSchema))),
 })
 
 // Normalize a value that could be a single item or an array into an array
@@ -133,6 +153,88 @@ let rec abiTypeToDefaultValue = (abiType: string): unknown => {
   }
 }
 
+// ============== Named-tuple (struct) schema helpers ==============
+
+// Build a simulate schema that honours component names: whenever an event param
+// (or nested field) has components, we decode it as an object with named fields
+// rather than a positional tuple. Walks through array wrappers so `struct[]`
+// still produces `array<{...}>`.
+let rec componentsToSimulateSchema = (abiType: string, components: array<eventParamComponent>): S.t<
+  unknown,
+> => {
+  if abiType->Js.String2.endsWith("]") {
+    let bracketIdx = abiType->Js.String2.lastIndexOf("[")
+    let baseType = abiType->Js.String2.slice(~from=0, ~to_=bracketIdx)
+    S.array(componentsToSimulateSchema(baseType, components))->S.toUnknown
+  } else {
+    // Must be a tuple at this level: build a record keyed by component names.
+    S.object(s => {
+      let dict = Js.Dict.empty()
+      components->Array.forEach(c => {
+        let childSchema = switch c.components {
+        | Some(sub) => componentsToSimulateSchema(c.abiType, sub)
+        | None => abiTypeToSimulateSchema(c.abiType)
+        }
+        dict->Js.Dict.set(c.name, s.field(c.name, childSchema))
+      })
+      dict
+    })->S.toUnknown
+  }
+}
+
+// Default simulate value for a component tree — mirrors `abiTypeToDefaultValue`
+// but emits objects with named fields for tuples.
+let rec componentsToDefaultValue = (
+  abiType: string,
+  components: array<eventParamComponent>,
+): unknown => {
+  if abiType->Js.String2.endsWith("]") {
+    []->(Utils.magic: array<unknown> => unknown)
+  } else {
+    let dict = Js.Dict.empty()
+    components->Array.forEach(c => {
+      let v = switch c.components {
+      | Some(sub) => componentsToDefaultValue(c.abiType, sub)
+      | None => abiTypeToDefaultValue(c.abiType)
+      }
+      dict->Js.Dict.set(c.name, v)
+    })
+    dict->(Utils.magic: Js.Dict.t<unknown> => unknown)
+  }
+}
+
+// Build a post-processor that converts the raw positional tuple values
+// produced by the HyperSync decoder into objects with named fields. Walks
+// through array wrappers so `struct[]` becomes `array<{...}>`. Returns `None`
+// for leaf params where no remapping is needed.
+let rec componentsToRemapper = (
+  abiType: string,
+  components: array<eventParamComponent>,
+  value: unknown,
+): unknown => {
+  if abiType->Js.String2.endsWith("]") {
+    let bracketIdx = abiType->Js.String2.lastIndexOf("[")
+    let baseType = abiType->Js.String2.slice(~from=0, ~to_=bracketIdx)
+    let arr = value->(Utils.magic: unknown => array<unknown>)
+    arr
+    ->Array.map(item => componentsToRemapper(baseType, components, item))
+    ->(Utils.magic: array<unknown> => unknown)
+  } else {
+    // Must be a tuple at this level: build an object keyed by component names.
+    let arr = value->(Utils.magic: unknown => array<unknown>)
+    let dict = Js.Dict.empty()
+    components->Array.forEachWithIndex((i, c) => {
+      let raw = arr->Array.getUnsafe(i)
+      let mapped = switch c.components {
+      | Some(sub) => componentsToRemapper(c.abiType, sub, raw)
+      | None => raw
+      }
+      dict->Js.Dict.set(c.name, mapped)
+    })
+    dict->(Utils.magic: Js.Dict.t<unknown> => unknown)
+  }
+}
+
 // ============== Build paramsRawEventSchema ==============
 
 let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
@@ -153,6 +255,8 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
 
 // Build a lenient params schema for simulate items.
 // Uses S.schema + s.matches with S.null->S.Option.getOr to fill missing fields with defaults.
+// When a param carries component metadata (Solidity struct), we accept and emit a
+// record with named fields rather than a positional tuple.
 let buildSimulateParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> => {
   if params->Array.length == 0 {
     S.unknown
@@ -162,14 +266,14 @@ let buildSimulateParamsSchema = (params: array<eventParam>): S.t<Internal.eventP
     S.schema(s => {
       let dict = Js.Dict.empty()
       params->Array.forEach(p => {
-        dict->Js.Dict.set(
-          p.name,
-          s.matches(
-            S.null(abiTypeToSimulateSchema(p.abiType))->S.Option.getOr(
-              abiTypeToDefaultValue(p.abiType),
-            ),
-          ),
-        )
+        let (paramSchema, paramDefault) = switch p.components {
+        | Some(components) => (
+            componentsToSimulateSchema(p.abiType, components),
+            componentsToDefaultValue(p.abiType, components),
+          )
+        | None => (abiTypeToSimulateSchema(p.abiType), abiTypeToDefaultValue(p.abiType))
+        }
+        dict->Js.Dict.set(p.name, s.matches(S.null(paramSchema)->S.Option.getOr(paramDefault)))
       })
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.eventParams>)
@@ -211,7 +315,29 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
         ) => HyperSyncClient.Decoder.decodedEvent => Internal.eventParams
       )
 
-    factory(HyperSyncClient.Decoder.toUnderlying)
+    let baseDecode = factory(HyperSyncClient.Decoder.toUnderlying)
+
+    // For any param that has tuple component metadata, rewrite its value from a
+    // positional array into a named record post-decode. We pre-collect the
+    // params that need remapping so the hot path only walks those.
+    let paramsToRemap = params->Js.Array2.filter(p => p.components->Option.isSome)
+
+    if paramsToRemap->Array.length == 0 {
+      baseDecode
+    } else {
+      decoded => {
+        let result = baseDecode(decoded)
+        let dict = result->(Utils.magic: Internal.eventParams => Js.Dict.t<unknown>)
+        paramsToRemap->Array.forEach(p => {
+          switch (p.components, dict->Js.Dict.get(p.name)) {
+          | (Some(components), Some(raw)) =>
+            dict->Js.Dict.set(p.name, componentsToRemapper(p.abiType, components, raw))
+          | _ => ()
+          }
+        })
+        dict->(Utils.magic: Js.Dict.t<unknown> => Internal.eventParams)
+      }
+    }
   }
 }
 

@@ -2,8 +2,7 @@
 ///tuples in event params
 mod nested_params {
     use super::*;
-    use crate::config_parsing::abi_compat::EventParam;
-    use alloy_dyn_abi::DynSolType;
+    use crate::config_parsing::abi_compat::{AbiType, EventParam};
     pub type ParamIndex = usize;
 
     ///Recursive Representation of param token. With reference to it's own index
@@ -17,18 +16,18 @@ mod nested_params {
     impl NestedEventParam {
         ///Constructs NestedEventParam from an EventParam
         fn from(event_input: EventParam, param_index: usize) -> Self {
-            if let DynSolType::Tuple(param_types) = &event_input.kind {
+            if let AbiType::Tuple(fields) = &event_input.kind {
                 //in the tuple case return a Tuple type with an array of inner
                 //event params
                 Self::Tuple(
-                    param_types
+                    fields
                         .iter()
                         .enumerate()
-                        .map(|(i, p)| {
+                        .map(|(i, f)| {
                             let inner_event_input = EventParam {
                                 // Keep the same name as the event input name
                                 name: event_input.name.clone(),
-                                kind: p.clone(),
+                                kind: f.kind.clone(),
                                 //Tuple fields can't be indexed
                                 indexed: false,
                             };
@@ -151,7 +150,7 @@ mod nested_params {
         #[cfg(test)]
         pub fn new(
             name: &str,
-            kind: DynSolType,
+            kind: AbiType,
             indexed: bool,
             accessor_indexes: Vec<usize>,
             event_param_pos: usize,
@@ -202,7 +201,6 @@ use crate::{
     type_schema::RecordField,
     utils::text::{Capitalize, CapitalizedOptions},
 };
-use alloy_dyn_abi::DynSolType;
 use anyhow::{Context, Result};
 use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
 use serde::Serialize;
@@ -788,12 +786,17 @@ impl Param {
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
-            graphql_type: FieldType::from_dyn_sol_type(&flattened_event_param.event_param.kind)
-                .context(format!(
-                    "Converting eth event param '{}' to gql scalar",
-                    flattened_event_param.event_param.name
-                ))?,
-            is_eth_address: matches!(flattened_event_param.event_param.kind, DynSolType::Address),
+            graphql_type: FieldType::from_dyn_sol_type(
+                &flattened_event_param.event_param.kind.to_dyn_sol_type(),
+            )
+            .context(format!(
+                "Converting eth event param '{}' to gql scalar",
+                flattened_event_param.event_param.name
+            ))?,
+            is_eth_address: matches!(
+                flattened_event_param.event_param.kind,
+                crate::config_parsing::abi_compat::AbiType::Address
+            ),
             default_value_rescript,
             default_value_typescript,
         })
@@ -968,28 +971,32 @@ impl AutoSchemaHandlerTemplate {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::config_parsing::abi_compat::EventParam;
+    use crate::config_parsing::abi_compat::{AbiTupleField, AbiType, EventParam};
     use pretty_assertions::assert_eq;
+
+    fn unnamed(kind: AbiType) -> AbiTupleField {
+        AbiTupleField { name: None, kind }
+    }
 
     #[test]
     fn flatten_event_with_tuple() {
         let event_inputs = vec![
             EventParam {
                 name: "user".to_string(),
-                kind: DynSolType::Address,
+                kind: AbiType::Address,
                 indexed: false,
             },
             EventParam {
                 name: "myTupleParam".to_string(),
-                kind: DynSolType::Tuple(vec![DynSolType::Uint(256), DynSolType::Bool]),
+                kind: AbiType::Tuple(vec![unnamed(AbiType::Uint(256)), unnamed(AbiType::Bool)]),
                 indexed: false,
             },
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("user", DynSolType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(256), false, vec![0], 1),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Bool, false, vec![1], 1),
+            FlattenedEventParam::new("user", AbiType::Address, false, vec![], 0),
+            FlattenedEventParam::new("myTupleParam", AbiType::Uint(256), false, vec![0], 1),
+            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![1], 1),
         ];
 
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
@@ -1014,31 +1021,34 @@ mod test {
             EventParam {
                 //nameless param should compute to "_0"
                 name: "".to_string(),
-                kind: DynSolType::Address,
+                kind: AbiType::Address,
                 indexed: false,
             },
             EventParam {
                 name: "myTupleParam".to_string(),
-                kind: DynSolType::Tuple(vec![
-                    DynSolType::Tuple(vec![DynSolType::Uint(8), DynSolType::Uint(8)]),
-                    DynSolType::Bool,
+                kind: AbiType::Tuple(vec![
+                    unnamed(AbiType::Tuple(vec![
+                        unnamed(AbiType::Uint(8)),
+                        unnamed(AbiType::Uint(8)),
+                    ])),
+                    unnamed(AbiType::Bool),
                 ]),
                 indexed: false,
             },
             EventParam {
                 //param named "id" should compute to "event_id"
                 name: "id".to_string(),
-                kind: DynSolType::String,
+                kind: AbiType::String,
                 indexed: false,
             },
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("", DynSolType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(8), false, vec![0, 0], 1),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Uint(8), false, vec![0, 1], 1),
-            FlattenedEventParam::new("myTupleParam", DynSolType::Bool, false, vec![1], 1),
-            FlattenedEventParam::new("id", DynSolType::String, false, vec![], 2),
+            FlattenedEventParam::new("", AbiType::Address, false, vec![], 0),
+            FlattenedEventParam::new("myTupleParam", AbiType::Uint(8), false, vec![0, 0], 1),
+            FlattenedEventParam::new("myTupleParam", AbiType::Uint(8), false, vec![0, 1], 1),
+            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![1], 1),
+            FlattenedEventParam::new("id", AbiType::String, false, vec![], 2),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
         assert_eq!(expected_flat_inputs, actual_flat_inputs);

@@ -1,11 +1,11 @@
 use alloy_dyn_abi::DynSolType;
 
-use crate::config_parsing::abi_compat::EventParam;
-use crate::type_schema::TypeIdent;
+use crate::config_parsing::abi_compat::{AbiType, EventParam};
+use crate::type_schema::{RecordField, TypeIdent};
 
 pub struct EvmEventParam<'a> {
     pub name: &'a str,
-    abi_type: &'a DynSolType,
+    abi_type: &'a AbiType,
 }
 
 impl<'a> From<&'a EventParam> for EvmEventParam<'a> {
@@ -24,13 +24,13 @@ impl EvmEventParam<'_> {
     /// Tuple depth is only calculated on the first element of the tuple
     /// as this corrisponds with the check on SingleOrMultiple in the rescript code
     pub fn get_nested_type_depth(&self) -> usize {
-        fn rec(param: &DynSolType, accum: usize) -> usize {
+        fn rec(param: &AbiType, accum: usize) -> usize {
             match param {
-                DynSolType::Tuple(params) => match params.first() {
-                    Some(p) => rec(p, accum + 1),
+                AbiType::Tuple(fields) => match fields.first() {
+                    Some(f) => rec(&f.kind, accum + 1),
                     None => accum,
                 },
-                DynSolType::Array(p) | DynSolType::FixedArray(p, _) => rec(p, accum + 1),
+                AbiType::Array(p) | AbiType::FixedArray(p, _) => rec(p, accum + 1),
                 _ => accum,
             }
         }
@@ -38,6 +38,12 @@ impl EvmEventParam<'_> {
     }
 
     pub fn get_topic_encoder(&self) -> String {
+        // Topic encoding is purely structural (no named fields needed), so we reuse
+        // the DynSolType-based implementation by lowering the AbiType.
+        Self::topic_encoder_for_dyn(&self.abi_type.to_dyn_sol_type())
+    }
+
+    fn topic_encoder_for_dyn(abi_type: &DynSolType) -> String {
         struct IsValueEncoder(bool);
         struct IsNestedType(bool);
         fn rec(param: &DynSolType, is_nested_type: IsNestedType) -> (String, IsValueEncoder) {
@@ -102,7 +108,7 @@ impl EvmEventParam<'_> {
                 }
             }
         }
-        match rec(self.abi_type, IsNestedType(false)) {
+        match rec(abi_type, IsNestedType(false)) {
             (encoder, IsValueEncoder(false)) => {
                 format!("(value) => TopicFilter.keccak256(value->{encoder})")
             }
@@ -112,61 +118,53 @@ impl EvmEventParam<'_> {
 }
 
 pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
-    match &param.abi_type {
-        DynSolType::Uint(_) => TypeIdent::BigInt,
-        DynSolType::Int(_) => TypeIdent::BigInt,
-        DynSolType::Bool => TypeIdent::Bool,
-        DynSolType::Address => TypeIdent::Address,
-        DynSolType::Bytes => TypeIdent::String,
-        DynSolType::String => TypeIdent::String,
-        DynSolType::FixedBytes(_) => TypeIdent::String,
-        DynSolType::Function => {
+    abi_type_to_rescript(param.abi_type)
+}
+
+fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
+    match ty {
+        AbiType::Uint(_) => TypeIdent::BigInt,
+        AbiType::Int(_) => TypeIdent::BigInt,
+        AbiType::Bool => TypeIdent::Bool,
+        AbiType::Address => TypeIdent::Address,
+        AbiType::Bytes => TypeIdent::String,
+        AbiType::String => TypeIdent::String,
+        AbiType::FixedBytes(_) => TypeIdent::String,
+        AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
-        DynSolType::Array(abi_type) => {
-            let sub_param = EvmEventParam {
-                abi_type,
-                name: param.name,
-            };
-            TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
-        }
-        DynSolType::FixedArray(abi_type, _) => {
-            let sub_param = EvmEventParam {
-                abi_type,
-                name: param.name,
-            };
-
-            TypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
-        }
-        DynSolType::Tuple(abi_types) => {
-            let rescript_types: Vec<TypeIdent> = abi_types
+        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
+        AbiType::FixedArray(inner, _) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
+        AbiType::Tuple(fields) => {
+            // Tuples (Solidity structs) are always rendered as inline records, with
+            // fallback index-based names (`_0`, `_1`, ...) when the ABI did not
+            // provide component names.
+            let record_fields = fields
                 .iter()
-                .map(|abi_type| {
-                    let ethereum_param = EvmEventParam {
-                        // Note the name doesn't matter since it's creating tuple without keys
-                        //   it is only included so that the type is the same for recursion.
-                        name: "",
-                        abi_type,
-                    };
-
-                    abi_to_rescript_type(&ethereum_param)
+                .enumerate()
+                .map(|(i, f)| {
+                    let raw_name = f
+                        .name
+                        .clone()
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| format!("_{i}"));
+                    RecordField::new(raw_name, abi_type_to_rescript(&f.kind))
                 })
                 .collect();
-
-            TypeIdent::Tuple(rescript_types)
+            TypeIdent::Record(record_fields)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{abi_to_rescript_type, EvmEventParam};
-    use crate::config_parsing::abi_compat;
-    use alloy_dyn_abi::DynSolType;
+    use super::{abi_to_rescript_type, AbiType, EvmEventParam};
+    use crate::config_parsing::abi_compat::{self, AbiTupleField};
+    use crate::type_schema::{RecordField, TypeIdent};
 
     #[test]
     fn test_record_type_array() {
-        let array_string_type = DynSolType::Array(Box::new(DynSolType::String));
+        let array_string_type = AbiType::Array(Box::new(AbiType::String));
         let param = EvmEventParam {
             abi_type: &array_string_type,
             name: "myArray",
@@ -182,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_record_type_fixed_array() {
-        let array_fixed_arr_type = DynSolType::FixedArray(Box::new(DynSolType::String), 1);
+        let array_fixed_arr_type = AbiType::FixedArray(Box::new(AbiType::String), 1);
         let param = EvmEventParam {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
@@ -196,19 +194,66 @@ mod tests {
     }
 
     #[test]
-    fn test_record_type_tuple() {
-        let tuple_type = DynSolType::Tuple(vec![DynSolType::String, DynSolType::Uint(256)]);
+    fn test_record_type_unnamed_tuple_uses_index_keys() {
+        let tuple_type = AbiType::Tuple(vec![
+            AbiTupleField {
+                name: None,
+                kind: AbiType::String,
+            },
+            AbiTupleField {
+                name: None,
+                kind: AbiType::Uint(256),
+            },
+        ]);
         let param = EvmEventParam {
             abi_type: &tuple_type,
-            name: "myArrayFixed",
+            name: "myTuple",
         };
 
-        let parsed_rescript_string = abi_to_rescript_type(&param);
+        let parsed = abi_to_rescript_type(&param);
 
+        assert_eq!(parsed.to_string(), "{_0: string, _1: bigint}".to_string());
         assert_eq!(
-            parsed_rescript_string.to_string(),
-            String::from("(string, bigint)")
-        )
+            parsed.to_ts_type_string(),
+            "{ readonly _0: string; readonly _1: bigint }"
+        );
+    }
+
+    #[test]
+    fn test_record_type_named_tuple_uses_field_names() {
+        let tuple_type = AbiType::Tuple(vec![
+            AbiTupleField {
+                name: Some("funder".to_string()),
+                kind: AbiType::Address,
+            },
+            AbiTupleField {
+                name: Some("amount".to_string()),
+                kind: AbiType::Uint(256),
+            },
+        ]);
+        let param = EvmEventParam {
+            abi_type: &tuple_type,
+            name: "commonParams",
+        };
+
+        let parsed = abi_to_rescript_type(&param);
+
+        match &parsed {
+            TypeIdent::Record(fields) => {
+                assert_eq!(
+                    fields,
+                    &vec![
+                        RecordField::new("funder".to_string(), TypeIdent::Address),
+                        RecordField::new("amount".to_string(), TypeIdent::BigInt),
+                    ]
+                );
+            }
+            _ => panic!("expected Record"),
+        }
+        assert_eq!(
+            parsed.to_ts_type_string(),
+            "{ readonly funder: Address; readonly amount: bigint }"
+        );
     }
 
     #[test]
@@ -231,9 +276,10 @@ mod tests {
 
         assert_eq!(user_address_res_type.to_string(), "Address.t".to_string());
         assert_eq!(amount_uint256_res_type.to_string(), "bigint".to_string());
+        // Bare signature strings have no component names, so fields fall back to _0, _1.
         assert_eq!(
             tuple_bool_string_res_type.to_string(),
-            "(bool, Address.t)".to_string()
+            "{_0: bool, _1: Address.t}".to_string()
         );
         assert_eq!(bytes_arr_res_type.to_string(), "array<string>".to_string());
 
@@ -247,7 +293,7 @@ mod tests {
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),
-            "(false, Envio.TestHelpers.Addresses.defaultAddress)".to_string()
+            "{_0: false, _1: Envio.TestHelpers.Addresses.defaultAddress}".to_string()
         );
         assert_eq!(
             bytes_arr_res_type.get_default_value_rescript(),
