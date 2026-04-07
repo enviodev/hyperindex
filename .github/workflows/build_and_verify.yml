@@ -272,6 +272,18 @@ jobs:
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
 
+      - name: Debug envio node_modules contents
+        run: |
+          echo "=== .envio-artifacts/envio/src ==="
+          ls -la .envio-artifacts/envio/src/ 2>&1 | grep -i Migrations || echo "no Migrations file"
+          ls -la .envio-artifacts/envio/src/ 2>&1 | head -50
+          echo "=== scenarios/e2e_test/node_modules/envio realpath ==="
+          readlink -f scenarios/e2e_test/node_modules/envio 2>&1 || echo "no envio symlink"
+          echo "=== scenarios/e2e_test/node_modules/envio/src Migrations ==="
+          ls -la scenarios/e2e_test/node_modules/envio/src/Migrations* 2>&1 || echo "no Migrations files"
+          echo "=== scenarios/e2e_test/node_modules/envio/src list ==="
+          ls scenarios/e2e_test/node_modules/envio/src/ 2>&1 | head -30
+
       - name: Run smoke test
         working-directory: scenarios/e2e_test
         run: |
