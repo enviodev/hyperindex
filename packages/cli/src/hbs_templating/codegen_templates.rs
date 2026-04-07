@@ -2457,6 +2457,125 @@ mod test {
     }
 
     #[test]
+    fn event_template_with_named_struct_param() {
+        // Mirrors the Sablier-style event from issue #538:
+        //
+        //   event CreateLockupTranchedStream(
+        //     uint256 indexed streamId,
+        //     Lockup.CreateEventCommon commonParams,
+        //     LockupTranched.Tranche[] tranches
+        //   );
+        //
+        // where `commonParams` is a named struct that itself contains a nested
+        // `timestamps` struct, and `tranches` is an array of `Tranche` structs.
+        // After the fix we expect both to render as inline records with named
+        // fields, not positional tuples.
+        use crate::config_parsing::abi_compat::{AbiTupleField, AbiType, EventParam};
+
+        fn named(name: &str, kind: AbiType) -> AbiTupleField {
+            AbiTupleField {
+                name: Some(name.to_string()),
+                kind,
+            }
+        }
+
+        let common_params = AbiType::Tuple(vec![
+            named("funder", AbiType::Address),
+            named("sender", AbiType::Address),
+            named("recipient", AbiType::Address),
+            named(
+                "amounts",
+                AbiType::Tuple(vec![
+                    named("deposit", AbiType::Uint(128)),
+                    named("brokerFee", AbiType::Uint(128)),
+                ]),
+            ),
+            named("token", AbiType::Address),
+            named("cancelable", AbiType::Bool),
+            named("transferable", AbiType::Bool),
+            named(
+                "timestamps",
+                AbiType::Tuple(vec![
+                    named("start", AbiType::Uint(40)),
+                    named("end", AbiType::Uint(40)),
+                ]),
+            ),
+            named("shape", AbiType::String),
+            named("broker", AbiType::Address),
+        ]);
+
+        let tranche = AbiType::Tuple(vec![
+            named("amount", AbiType::Uint(128)),
+            named("timestamp", AbiType::Uint(40)),
+        ]);
+
+        let event = system_config::Event {
+            name: "CreateLockupTranchedStream".to_string(),
+            kind: system_config::EventKind::Params(vec![
+                EventParam {
+                    name: "streamId".to_string(),
+                    kind: AbiType::Uint(256),
+                    indexed: true,
+                },
+                EventParam {
+                    name: "commonParams".to_string(),
+                    kind: common_params,
+                    indexed: false,
+                },
+                EventParam {
+                    name: "tranches".to_string(),
+                    kind: AbiType::Array(Box::new(tranche)),
+                    indexed: false,
+                },
+            ]),
+            sighash: "0x0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            event_signature: String::new(),
+            field_selection: None,
+        };
+
+        let template = EventTemplate::from_config_event(&event, None).unwrap();
+
+        // Per-param TS rendering: commonParams and tranches should be objects,
+        // not positional arrays, and the nested structs (`amounts`, `timestamps`,
+        // tranche) should likewise have named fields.
+        let common_ts = &template.params[1].ts_type;
+        assert!(
+            common_ts.contains("readonly funder: Address")
+                && common_ts.contains("readonly amounts: { readonly deposit: bigint")
+                && common_ts.contains("readonly timestamps: { readonly start: bigint"),
+            "commonParams TS type should be a named record with nested records, got: {}",
+            common_ts
+        );
+
+        let tranches_ts = &template.params[2].ts_type;
+        assert_eq!(
+            tranches_ts, "readonly { readonly amount: bigint; readonly timestamp: bigint }[]",
+            "tranches TS type should be an array of named records"
+        );
+
+        // ReScript rendering of the commonParams type.
+        let common_res = &template.params[1].res_type;
+        assert!(
+            common_res.contains("funder: Address.t")
+                && common_res.contains("amounts: {deposit: bigint, brokerFee: bigint}")
+                && common_res.contains("timestamps: {start: bigint, end: bigint}"),
+            "commonParams ReScript type should be a named record with nested records, got: {}",
+            common_res
+        );
+
+        // Default values for the record should also build a record literal,
+        // not a positional tuple.
+        let common_default = &template.params[1].default_value_rescript;
+        assert!(
+            common_default.starts_with("{")
+                && common_default.contains("funder: Envio.TestHelpers.Addresses.defaultAddress"),
+            "commonParams default should be a record literal, got: {}",
+            common_default
+        );
+    }
+
+    #[test]
     fn event_template_with_custom_field_selection() {
         let all_evm = system_config::FieldSelection::all_evm();
         let all_ecosystem_fields = Some(super::FieldSelection::new(super::FieldSelectionOptions {
