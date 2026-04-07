@@ -26,16 +26,18 @@ let runUpMigrations = async (
 let runDownMigrations = async (~shouldExit) => {
   let config = Config.fromEnv()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
-  let exitCode = ref(Success)
-  await persistence.storage.reset()->Promise.catch(err => {
-    exitCode := Failure
+  let exitCode = try {
+    await persistence.storage.reset()
+    Success
+  } catch {
+  | err =>
     err
     ->ErrorHandling.make(~msg="Error dropping entity tables")
     ->ErrorHandling.log
-    Promise.resolve()
-  })
-  if shouldExit {
-    process->exit(exitCode.contents)
+    Failure
   }
-  exitCode.contents
+  if shouldExit {
+    process->exit(exitCode)
+  }
+  exitCode
 }

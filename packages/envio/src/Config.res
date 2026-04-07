@@ -820,10 +820,11 @@ let getChain = (config, ~chainId) => {
       )
 }
 
+@val external envioConfigEnv: option<string> = "process.env.ENVIO_CONFIG"
+
 let fromEnv = () => {
-  let json = switch %raw(`process.env.ENVIO_CONFIG`) {
-  | Some(configStr) => (configStr: string)->Js.Json.parseExn
+  switch envioConfigEnv {
+  | Some(configStr) => configStr->Js.Json.parseExn->fromPublic
   | None => Js.Exn.raiseError("ENVIO_CONFIG environment variable is not set")
   }
-  fromPublic(json)
 }

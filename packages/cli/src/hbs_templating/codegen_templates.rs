@@ -1814,8 +1814,6 @@ let makeGeneratedConfig = () => {
 let configWithoutRegistrations = makeGeneratedConfig()
 let allEntities = configWithoutRegistrations.allEntities
 
-let internalConfigJson: Js.Json.t = %raw(`internalConfigJson`)
-
 }"#;
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_module);
