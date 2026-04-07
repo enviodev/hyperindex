@@ -3,10 +3,19 @@
 // .envio-artifacts/envio. Also redirect the platform binary package
 // (envio-linux-x64) to its local artifact. In normal dev this is a no-op.
 const fs = require("fs");
+const path = require("path");
+
+// Resolve relative to this file (workspace root) instead of process.cwd()
+// so that pnpm installs invoked from a workspace member (e.g.
+// `envio codegen` running pnpm install in scenarios/e2e_test) still see
+// the artifact and apply the same redirect. Otherwise the second install
+// reinstalls envio from packages/envio without rescript build artifacts,
+// dropping new files like src/Migrations.res.mjs.
+const ARTIFACT_DIR = path.join(__dirname, ".envio-artifacts", "envio");
 
 const hooks = {};
 
-if (fs.existsSync(".envio-artifacts/envio")) {
+if (fs.existsSync(ARTIFACT_DIR)) {
   hooks.readPackage = (pkg) => {
     // Redirect file: references to packages/envio → .envio-artifacts/envio
     for (const field of ["dependencies", "devDependencies", "optionalDependencies"]) {

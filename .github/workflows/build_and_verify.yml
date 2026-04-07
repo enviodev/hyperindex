@@ -272,16 +272,6 @@ jobs:
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
 
-      - name: Debug envio node_modules contents
-        run: |
-          ART_MIG=$(ls .envio-artifacts/envio/src/Migrations.res.mjs 2>&1 || echo MISSING)
-          REAL=$(readlink -f scenarios/e2e_test/node_modules/envio 2>&1 || echo MISSING)
-          NM_MIG=$(ls scenarios/e2e_test/node_modules/envio/src/Migrations.res.mjs 2>&1 || echo MISSING)
-          REAL_MIG=$(ls "$REAL"/src/Migrations.res.mjs 2>&1 || echo MISSING)
-          NM_LIST=$(ls scenarios/e2e_test/node_modules/envio/src/ 2>&1 | tr '\n' ' ' | head -c 1000)
-          echo "::error title=ENVIO DEBUG::artifact=$ART_MIG | realpath=$REAL | nm_mig=$NM_MIG | real_mig=$REAL_MIG"
-          echo "::error title=NM SRC LIST::$NM_LIST"
-
       - name: Run smoke test
         working-directory: scenarios/e2e_test
         run: |
