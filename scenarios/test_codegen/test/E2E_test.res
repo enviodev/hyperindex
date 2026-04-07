@@ -7,11 +7,11 @@ let undefined = (%raw(`undefined`): option<'a>)
 
 describe("E2E tests", () => {
   Async.it("Currectly starts indexing from a non-zero start block", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let _indexerMock = await Mock.Indexer.make(
+    let _indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -37,11 +37,11 @@ describe("E2E tests", () => {
   })
 
   Async.it("Correctly sets Prom metrics", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -58,7 +58,7 @@ describe("E2E tests", () => {
       {value: "0", labels: Js.Dict.empty()},
     ])
 
-    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     t.expect(await indexerMock.metric("envio_reorg_threshold")).toEqual([
       {value: "1", labels: Js.Dict.empty()},
@@ -77,15 +77,15 @@ describe("E2E tests", () => {
   })
 
   Async.it("Prom metrics are set independently per chain", async t => {
-    let sourceMock1337 = Mock.Source.make(
+    let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let sourceMock100 = Mock.Source.make(
+    let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#100,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -101,8 +101,8 @@ describe("E2E tests", () => {
 
     // Enter reorg threshold for both chains
     let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+      MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+      MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     // Advance only chain 1337 to head
@@ -143,11 +143,11 @@ describe("E2E tests", () => {
   Async.it("Shouldn't allow context access after hander is resolved", async t => {
     let errors = []
 
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -219,15 +219,15 @@ describe("E2E tests", () => {
 
   // A regression test for a bug introduced in 2.30.0
   Async.it("Correct event ordering for ordered multichain indexer", async t => {
-    let sourceMock1337 = Mock.Source.make(
+    let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let sourceMock100 = Mock.Source.make(
+    let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#100,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -244,8 +244,8 @@ describe("E2E tests", () => {
 
     // Test inside of reorg threshold, so we can check the history order
     let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+      MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+      MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
@@ -363,11 +363,11 @@ describe("E2E tests", () => {
   })
 
   Async.it("Track effects in prom metrics", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -604,15 +604,15 @@ describe("E2E tests", () => {
   Async.it(
     "Should attempt fallback source when primary source fails with missing params",
     async t => {
-      let sourceMockPrimary = Mock.Source.make(
+      let sourceMockPrimary = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMockFallback = Mock.Source.make(
+      let sourceMockFallback = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -677,11 +677,11 @@ describe("E2E tests", () => {
   )
 
   Async.it("Effect rate limiting across multiple windows", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -778,11 +778,11 @@ describe("E2E tests", () => {
   })
 
   Async.it("Effect rate limiting with single call per window", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -891,11 +891,11 @@ describe("E2E tests", () => {
   })
 
   Async.it("Effect cache can be disabled per-call via context.cache", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -966,11 +966,11 @@ describe("E2E tests", () => {
   })
 
   Async.it("Effect error in one call shouldn't cause other calls to fail", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -1040,18 +1040,18 @@ describe("E2E tests", () => {
     "Live source should not participate in initial height fetch but should after sync",
     async t => {
       // Create a Sync source (simulating HyperSync) and a Live source (simulating RPC for live)
-      let syncSource = Mock.Source.make(
+      let syncSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
         ~sourceFor=Source.Sync,
       )
-      let liveSource = Mock.Source.make(
+      let liveSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
         ~sourceFor=Source.Live,
       )
 
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -1135,11 +1135,11 @@ describe("E2E tests", () => {
   )
 
   Async.it("Partition queries adjust ranges depending on responses", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -1232,11 +1232,11 @@ describe("E2E tests", () => {
   })
 
   Async.it("Items from later chunk wait for earlier chunk to complete", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -1355,11 +1355,11 @@ describe("E2E tests", () => {
   })
 
   Async.it("Partition merging works for fetching partitions via mergeBlock", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -1498,7 +1498,7 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls
       ->Js.Array2.find(c => c.payload["p"] === "4")
       ->Option.getExn
-    let addresses = partition4Call.payload->Mock.Source.CallPayload.addresses
+    let addresses = partition4Call.payload->MockIndexer.Source.CallPayload.addresses
     t.expect(
       addresses->Js.Dict.unsafeGet("Gravatar")->Array.length,
       ~message="Merged partition should have addresses from both DCs",
@@ -1508,11 +1508,11 @@ describe("E2E tests", () => {
   Async.it(
     "_meta and chain_metadata return events processed as a number (float4 cast)",
     async t => {
-      let sourceMock = Mock.Source.make(
+      let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,

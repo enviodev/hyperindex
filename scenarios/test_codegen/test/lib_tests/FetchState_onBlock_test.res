@@ -12,7 +12,7 @@ let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
   blockTimestamp: getTimestamp(~blockNumber),
 }
 
-let baseEventConfig = (Mock.evmEventConfig(
+let baseEventConfig = (MockIndexer.evmEventConfig(
   ~id="0",
   ~contractName="Gravatar",
 ) :> Internal.eventConfig)

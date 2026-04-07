@@ -4,11 +4,11 @@ describe("E2E blockLag tests", () => {
   Async.it(
     "Chain with blockLag=1 should be marked as synced to head when at knownHeight - blockLag",
     async t => {
-      let sourceMock = Mock.Source.make(
+      let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -21,7 +21,7 @@ describe("E2E blockLag tests", () => {
 
       // Enter reorg threshold the standard way:
       // knownHeight=300, maxReorgDepth=200, so initial fetch is blocks 1-100
-      await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+      await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
       t.expect(
         await indexerMock.metric("envio_reorg_threshold"),

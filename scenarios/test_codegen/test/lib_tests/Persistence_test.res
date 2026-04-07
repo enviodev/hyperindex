@@ -2,7 +2,7 @@ open Vitest
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
-    let storageMock = Mock.Storage.make([#isInitialized, #resumeInitialState, #initialize])
+    let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState, #initialize])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -121,7 +121,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async t => {
-    let storageMock = Mock.Storage.make([#isInitialized, #resumeInitialState])
+    let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
