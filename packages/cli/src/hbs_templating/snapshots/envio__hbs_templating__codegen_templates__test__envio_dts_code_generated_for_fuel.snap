@@ -1,9 +1,10 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3024
 expression: project_template.envio_dts_code
 ---
 import type {default as BigDecimal} from 'bignumber.js';
-import type {Address} from 'envio';
+import type {Address, SingleOrMultiple} from 'envio';
 export type EvmChains = {};
 export type EvmChainId = "EvmChainId is not available. Configure EVM chains in config.yaml and run 'pnpm envio codegen'";
 export type EvmContracts = {};
@@ -32,6 +33,8 @@ export type FuelContracts = {
       readonly logIndex: number;
       /** The address of the contract that emitted this event. */
       readonly srcAddress: Address;
+      /** The event filter record — one optional field per indexed parameter. Use via `EvmEventFilter<C, E>` / `FuelEventFilter<C, E>`. */
+      readonly eventFilter: {};
     };
     "ClearGreeting": {
       /** The name of the event. */
@@ -50,6 +53,8 @@ export type FuelContracts = {
       readonly logIndex: number;
       /** The address of the contract that emitted this event. */
       readonly srcAddress: Address;
+      /** The event filter record — one optional field per indexed parameter. Use via `EvmEventFilter<C, E>` / `FuelEventFilter<C, E>`. */
+      readonly eventFilter: {};
     };
   };
 };
@@ -62,7 +67,7 @@ declare namespace FuelTypes {
     type type5 = { readonly value: FuelTypes.Greeter.type9 };
     type type6 = { readonly user: FuelTypes.Greeter.type7; readonly greeting: FuelTypes.Greeter.type5 };
     type type7 = { readonly bits: FuelTypes.Greeter.type0 };
-    type type8 = undefined;
+    type type8 = void;
     type type9 = string;
   }
 }

@@ -853,9 +853,12 @@ impl ContractTemplate {
                 format!(
                     "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
                    relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
+                    // Use the config.yaml-relative path (NOT the absolute
+                    // path_buf) so the generated import resolves correctly
+                    // when Path.relativePathToRootFromGenerated prefixes it.
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
-                    abi.path_buf.to_string_lossy(),
+                    abi.path_relative_to_root,
                     all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
                 )
@@ -1259,10 +1262,38 @@ impl ProjectTemplate {
                     .to_string()
             }
             system_config::EventKind::Fuel(system_config::FuelEventKind::LogData(type_ident)) => {
-                // Reference FuelTypes namespace for the contract's ABI type
-                format!("FuelTypes.{}.{}", contract_name, type_ident)
+                // Reference FuelTypes namespace for the contract's ABI type.
+                // Use `to_ts_type_string_with_namespace` so nested type
+                // parameters (e.g. `type4<type26>`) also get the namespace
+                // prefix recursively.
+                type_ident.to_ts_type_string_with_namespace(&format!("FuelTypes.{}", contract_name))
             }
             _ => "undefined".to_string(),
+        };
+
+        // Build eventFilter TS type — a record of indexed params wrapped in
+        // SingleOrMultiple. Only EVM events have indexed filters; Fuel events
+        // produce an empty record. Mirrors `generate_event_filter_type` on the
+        // ReScript side at codegen_templates.rs:654.
+        let event_filter_ts = match &event.kind {
+            system_config::EventKind::Params(params) => {
+                let indexed_fields: Vec<String> = params
+                    .iter()
+                    .filter(|p| p.indexed)
+                    .map(|p| {
+                        let ts_type = Self::to_envio_dts_type(
+                            &abi_to_rescript_type(&p.into()).to_ts_type_string(),
+                        );
+                        format!("readonly {}?: SingleOrMultiple<{}>", p.name, ts_type)
+                    })
+                    .collect();
+                if indexed_fields.is_empty() {
+                    "{}".to_string()
+                } else {
+                    format!("{{ {} }}", indexed_fields.join("; "))
+                }
+            }
+            _ => "{}".to_string(),
         };
 
         // For events without custom field_selection, use global type alias
@@ -1316,8 +1347,17 @@ impl ProjectTemplate {
       readonly logIndex: number;
       /** The address of the contract that emitted this event. */
       readonly srcAddress: Address;
+      /** The event filter record — one optional field per indexed parameter. Use via `EvmEventFilter<C, E>` / `FuelEventFilter<C, E>`. */
+      readonly eventFilter: {};
     }};"#,
-            event.name, event.name, contract_name, chain_id_type_name, params_ts, block_ts, tx_ts,
+            event.name,
+            event.name,
+            contract_name,
+            chain_id_type_name,
+            params_ts,
+            block_ts,
+            tx_ts,
+            event_filter_ts,
         )
     }
 
@@ -1556,12 +1596,12 @@ type indexer = {
   chains: indexerChains,
   /** Register an event handler. */
   onEvent: 'event 'paramsConstructor 'filters. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>>,
+    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>, 'filters>,
     Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
   ) => unit,
   /** Register a contract register handler for dynamic contract indexing. */
   contractRegister: 'event 'paramsConstructor 'filters. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>>,
+    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>, 'filters>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
 }"#;
@@ -1853,10 +1893,10 @@ module SingleOrMultiple: {{
 }}
 
 /** Event identity configuration for onEvent/contractRegister. */
-type eventIdentityConfig<'eventIdentity> = {{
+type eventIdentityConfig<'eventIdentity, 'filters> = {{
   event: 'eventIdentity,
   wildcard?: bool,
-  eventFilters?: Js.Json.t,
+  eventFilters?: 'filters,
 }}
 
 module Enums = {{
@@ -2322,7 +2362,7 @@ let allEntities = configWithoutRegistrations.allEntities
             let mut parts = Vec::new();
 
             parts.push("import type {default as BigDecimal} from 'bignumber.js';".to_string());
-            parts.push("import type {Address} from 'envio';".to_string());
+            parts.push("import type {Address, SingleOrMultiple} from 'envio';".to_string());
 
             // Generate EvmChains type
             let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {

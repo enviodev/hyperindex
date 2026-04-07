@@ -23,6 +23,7 @@ import type {
   FuelContractRegisterOptions as GFuelContractRegisterOptions,
   FuelContractRegisterHandler as GFuelContractRegisterHandler,
 } from "envio";
+export type { SingleOrMultiple } from "envio";
 import type { EvmChains, EvmContracts, FuelChains, FuelContracts, SvmChains, Entities, Enums } from "../envio.d.ts";
 export type { EvmChainId, FuelChainId, SvmChainId } from "../envio.d.ts";
 
@@ -68,6 +69,25 @@ export type FuelEvent<
   : {
     [C in TContractName]: FuelContracts[C][TEventName & keyof FuelContracts[C]]
   }[TContractName];
+
+/** Lookup an EVM event filter record by contract and event name. Each indexed
+ * parameter becomes an optional `SingleOrMultiple<T>` field. Use this to type the
+ * `eventFilters` argument of `indexer.onEvent` / `indexer.contractRegister`. */
+export type EvmEventFilter<
+  TContractName extends keyof EvmContracts,
+  TEventName extends keyof EvmContracts[TContractName] & string
+> = IsEmptyObject<EvmContracts> extends true
+  ? "EvmEventFilter is not available. Configure EVM contracts in config.yaml and run 'pnpm envio codegen'"
+  : EvmContracts[TContractName][TEventName] extends { readonly eventFilter: infer F } ? F : never;
+
+/** Lookup a Fuel event filter record by contract and event name. Fuel events do
+ * not currently expose indexed fields, so this resolves to `{}`. */
+export type FuelEventFilter<
+  TContractName extends keyof FuelContracts,
+  TEventName extends keyof FuelContracts[TContractName] & string
+> = IsEmptyObject<FuelContracts> extends true
+  ? "FuelEventFilter is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
+  : FuelContracts[TContractName][TEventName] extends { readonly eventFilter: infer F } ? F : never;
 
 /** Union of all configured SVM chain names. */
 export type SvmChainName = IsEmptyObject<SvmChains> extends true

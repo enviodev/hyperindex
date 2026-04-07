@@ -595,7 +595,11 @@ impl TypeIdent {
     /// Recursively builds the TypeScript string representation of the type
     pub fn to_ts_type_string(&self) -> String {
         match self {
-            Self::Unit => "undefined".to_string(),
+            // Match genType's mapping of ReScript `unit` → TS `void` so that
+            // `envio.d.ts` agrees with `Indexer.gen.ts` for Fuel events whose
+            // params are `unit` (e.g. UnitLog) or contain `unit` payloads
+            // (e.g. swayOptional's None, Status's Pending/Completed).
+            Self::Unit => "void".to_string(),
             Self::Int => "number".to_string(),
             Self::Float => "number".to_string(),
             Self::BigInt => "bigint".to_string(),
@@ -1258,7 +1262,7 @@ mod tests {
 
     #[test]
     fn test_to_ts_type_string_primitives() {
-        assert_eq!(TypeIdent::Unit.to_ts_type_string(), "undefined");
+        assert_eq!(TypeIdent::Unit.to_ts_type_string(), "void");
         assert_eq!(TypeIdent::Int.to_ts_type_string(), "number");
         assert_eq!(TypeIdent::Float.to_ts_type_string(), "number");
         assert_eq!(TypeIdent::BigInt.to_ts_type_string(), "bigint");

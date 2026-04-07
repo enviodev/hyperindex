@@ -18,13 +18,45 @@ let _topNftFactory: Indexer.eventIdentity<_, _, _> = NftFactory(SimpleNftCreated
 let _topGravatar: Indexer.eventIdentity<_, _, _> = Gravatar(NewGravatar)
 let _topSimpleNft: Indexer.eventIdentity<_, _, _> = SimpleNft(Transfer)
 
-// 3. eventIdentityConfig wraps the GADT, with optional wildcard
-let _basicConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>> = {
+// 3. eventIdentityConfig wraps the GADT, with optional wildcard and eventFilters
+let _basicConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>, _> = {
   event: NftFactory(SimpleNftCreated),
 }
-let _wildcardConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>> = {
+let _wildcardConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>, _> = {
   event: Gravatar(NewGravatar),
   wildcard: true,
+}
+// eventFilters carries the per-event `eventFilter` record — one optional
+// field per indexed parameter. The 'filters type parameter on
+// eventIdentityConfig is unified with the GADT constructor's third type
+// argument, so passing `event: EventFiltersTest(Transfer)` pins 'filters to
+// `EventFiltersTest.Transfer.eventFilter`. Missing fields default to no
+// filtering. SingleOrMultiple.t is opaque — construct via `single` / `multiple`.
+let _staticFilterConfig: Indexer.eventIdentityConfig<
+  Indexer.eventIdentity<_, _, _>,
+  Indexer.EventFiltersTest.Transfer.eventFilter,
+> = {
+  event: EventFiltersTest(Transfer),
+  eventFilters: {
+    from: Indexer.SingleOrMultiple.single(
+      "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+    ),
+  },
+}
+// Wildcard + filter combination — exercises the same eventFilter record
+// path alongside wildcard: true, with the Multiple (OR) form.
+let _wildcardWithFilterConfig: Indexer.eventIdentityConfig<
+  Indexer.eventIdentity<_, _, _>,
+  Indexer.EventFiltersTest.Transfer.eventFilter,
+> = {
+  event: EventFiltersTest(Transfer),
+  wildcard: true,
+  eventFilters: {
+    to: Indexer.SingleOrMultiple.multiple([
+      "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+      "0x0000000000000000000000000000000000000001"->Address.unsafeFromString,
+    ]),
+  },
 }
 
 // 4. handlerContext (onEvent context) has expected fields
@@ -79,6 +111,38 @@ let _registerContractRegister = () => {
 let _registerWildcard = () => {
   Indexer.indexer.onEvent(
     {event: SimpleNft(Transfer), wildcard: true},
+    async ({event: _, context: _}) => (),
+  )
+}
+
+// 9. eventFilters static form — typed against the event's per-event eventFilter
+let _registerWithStaticFilter = () => {
+  Indexer.indexer.onEvent(
+    {
+      event: EventFiltersTest(Transfer),
+      eventFilters: {
+        from: Indexer.SingleOrMultiple.single(
+          "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+        ),
+      },
+    },
+    async ({event: _, context: _}) => (),
+  )
+}
+
+// 10. eventFilters combined with wildcard — the filter record survives alongside
+// wildcard: true, and the 'filters generic is pinned by the GADT identity.
+let _registerWildcardWithFilter = () => {
+  Indexer.indexer.onEvent(
+    {
+      event: EventFiltersTest(Transfer),
+      wildcard: true,
+      eventFilters: {
+        to: Indexer.SingleOrMultiple.single(
+          "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+        ),
+      },
+    },
     async ({event: _, context: _}) => (),
   )
 }

@@ -506,12 +506,26 @@ export type FuelContractRegisterContext<Config extends IndexerConfigTypes> = Pre
 /** Constraint: any event must have literal contractName and eventName fields. */
 type EventLike = { readonly contractName: string; readonly eventName: string };
 
+/** Scalar value or array of values — used by event filter fields to accept either a
+ * single topic or multiple alternatives (OR semantics). */
+export type SingleOrMultiple<T> = T | readonly T[];
+
 /** EVM event type resolved by contract and event name. Union of all events when no generics provided. */
 export type EvmOnEvent<
   Config extends IndexerConfigTypes,
   C extends keyof EvmContracts<Config> = keyof EvmContracts<Config>,
   E extends keyof EvmContracts<Config>[C] & string = keyof EvmContracts<Config>[C] & string
 > = EvmContracts<Config>[C][E];
+
+/** EVM event filter type resolved by contract and event name. Each indexed parameter
+ * becomes an optional field typed as `SingleOrMultiple<T>`. Use this to type the
+ * `eventFilters` argument of `indexer.onEvent` / `indexer.contractRegister` for a
+ * specific contract/event pair. */
+export type EvmEventFilter<
+  Config extends IndexerConfigTypes,
+  C extends keyof EvmContracts<Config>,
+  E extends keyof EvmContracts<Config>[C] & string
+> = EvmContracts<Config>[C][E] extends { readonly eventFilter: infer F } ? F : never;
 
 /** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type.
  * The conditional `Event extends EventLike` distributes over union members so that each member's
@@ -543,6 +557,15 @@ export type FuelOnEvent<
   C extends keyof FuelContracts<Config> = keyof FuelContracts<Config>,
   E extends keyof FuelContracts<Config>[C] & string = keyof FuelContracts<Config>[C] & string
 > = FuelContracts<Config>[C][E];
+
+/** Fuel event filter type resolved by contract and event name. Fuel events do not
+ * currently expose indexed fields, so this resolves to an empty record `{}`. Kept
+ * for API symmetry with `EvmEventFilter`. */
+export type FuelEventFilter<
+  Config extends IndexerConfigTypes,
+  C extends keyof FuelContracts<Config>,
+  E extends keyof FuelContracts<Config>[C] & string
+> = FuelContracts<Config>[C][E] extends { readonly eventFilter: infer F } ? F : never;
 
 /** Options for registering a Fuel onEvent handler. */
 export type FuelOnEventOptions<Event extends EventLike> = EvmOnEventOptions<Event>;
