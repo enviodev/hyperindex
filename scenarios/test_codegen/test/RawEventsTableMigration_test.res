@@ -21,7 +21,8 @@ describe("Raw Events Table Migrations", () => {
       await sql->Postgres.unsafe(
         `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
          FROM INFORMATION_SCHEMA.COLUMNS
-         WHERE TABLE_NAME = 'raw_events'
+         WHERE TABLE_SCHEMA = 'public'
+           AND TABLE_NAME = 'raw_events'
          ORDER BY ORDINAL_POSITION;`,
       )
 
