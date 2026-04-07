@@ -136,22 +136,28 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
         AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
         AbiType::FixedArray(inner, _) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
         AbiType::Tuple(fields) => {
-            // Tuples (Solidity structs) are always rendered as inline records, with
-            // fallback index-based names (`_0`, `_1`, ...) when the ABI did not
-            // provide component names.
-            let record_fields = fields
+            // Solidity structs (named components) render as inline records;
+            // anonymous tuples (e.g. from bare signature strings or unnamed
+            // tuple types) stay as positional tuples.
+            if fields
                 .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let raw_name = f
-                        .name
-                        .clone()
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| format!("_{i}"));
-                    RecordField::new(raw_name, abi_type_to_rescript(&f.kind))
-                })
-                .collect();
-            TypeIdent::Record(record_fields)
+                .all(|f| f.name.as_ref().is_some_and(|n| !n.is_empty()))
+            {
+                let record_fields = fields
+                    .iter()
+                    .map(|f| {
+                        RecordField::new(f.name.clone().unwrap(), abi_type_to_rescript(&f.kind))
+                    })
+                    .collect();
+                TypeIdent::Record(record_fields)
+            } else {
+                TypeIdent::Tuple(
+                    fields
+                        .iter()
+                        .map(|f| abi_type_to_rescript(&f.kind))
+                        .collect(),
+                )
+            }
         }
     }
 }
@@ -194,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn test_record_type_unnamed_tuple_uses_index_keys() {
+    fn test_record_type_unnamed_tuple_stays_positional() {
         let tuple_type = AbiType::Tuple(vec![
             AbiTupleField {
                 name: None,
@@ -212,11 +218,8 @@ mod tests {
 
         let parsed = abi_to_rescript_type(&param);
 
-        assert_eq!(parsed.to_string(), "{_0: string, _1: bigint}".to_string());
-        assert_eq!(
-            parsed.to_ts_type_string(),
-            "{ readonly _0: string; readonly _1: bigint }"
-        );
+        assert_eq!(parsed.to_string(), "(string, bigint)".to_string());
+        assert_eq!(parsed.to_ts_type_string(), "[string, bigint]");
     }
 
     #[test]
@@ -276,10 +279,10 @@ mod tests {
 
         assert_eq!(user_address_res_type.to_string(), "Address.t".to_string());
         assert_eq!(amount_uint256_res_type.to_string(), "bigint".to_string());
-        // Bare signature strings have no component names, so fields fall back to _0, _1.
+        // Bare signature strings have no component names, so the tuple stays positional.
         assert_eq!(
             tuple_bool_string_res_type.to_string(),
-            "{_0: bool, _1: Address.t}".to_string()
+            "(bool, Address.t)".to_string()
         );
         assert_eq!(bytes_arr_res_type.to_string(), "array<string>".to_string());
 
@@ -293,7 +296,7 @@ mod tests {
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),
-            "{_0: false, _1: Envio.TestHelpers.Addresses.defaultAddress}".to_string()
+            "(false, Envio.TestHelpers.Addresses.defaultAddress)".to_string()
         );
         assert_eq!(
             bytes_arr_res_type.get_default_value_rescript(),

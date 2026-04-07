@@ -206,31 +206,31 @@ struct EventParamComponent {
 }
 
 /// Walk an `AbiType` to produce the `components` tree that the runtime needs to
-/// rebuild named records. Returns `None` for leaf types so the runtime can keep its
-/// legacy `abiType`-string-driven decoding path.
+/// rebuild named records. Only emits components for *named* tuples (Solidity
+/// structs); anonymous tuples stay positional and the runtime decodes them via
+/// the legacy `abiType` string. Returns `None` for leaf types or anonymous
+/// tuples so the runtime takes the legacy path.
 fn abi_type_to_components(
     ty: &crate::config_parsing::abi_compat::AbiType,
 ) -> Option<Vec<EventParamComponent>> {
     use crate::config_parsing::abi_compat::AbiType;
     match ty {
-        AbiType::Tuple(fields) => Some(
-            fields
+        AbiType::Tuple(fields)
+            if fields
                 .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let name = f
-                        .name
-                        .clone()
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| format!("_{i}"));
-                    EventParamComponent {
-                        name,
+                .all(|f| f.name.as_ref().is_some_and(|n| !n.is_empty())) =>
+        {
+            Some(
+                fields
+                    .iter()
+                    .map(|f| EventParamComponent {
+                        name: f.name.clone().unwrap(),
                         abi_type: f.kind.to_signature_string(),
                         components: abi_type_to_components(&f.kind),
-                    }
-                })
-                .collect(),
-        ),
+                    })
+                    .collect(),
+            )
+        }
         // For arrays, descend into the element type so struct arrays still surface
         // component metadata under the param.
         AbiType::Array(inner) | AbiType::FixedArray(inner, _) => abi_type_to_components(inner),
