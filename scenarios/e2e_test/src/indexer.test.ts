@@ -1,3 +1,7 @@
+// The handler asserts indexer.chains[1].endBlock matches this env var.
+// In the smoke test no DB state is loaded, so the config endBlock applies.
+process.env.E2E_EXPECTED_END_BLOCK = "10861774";
+
 import { describe, it } from "vitest";
 import { createTestIndexer } from "generated";
 
