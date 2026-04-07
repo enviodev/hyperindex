@@ -253,6 +253,7 @@ module Indexer = {
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
     ~enableHasura=false,
+    ~enableRawEvents=false,
     ~reset=true,
     ~batchSize=?,
   ) => {
@@ -295,7 +296,7 @@ module Indexer = {
         ...config,
         shouldRollbackOnReorg: true,
         shouldSaveFullHistory: saveFullHistory,
-        enableRawEvents: false,
+        enableRawEvents,
         chainMap,
         multichain,
         batchSize: batchSize->Option.getWithDefault(config.batchSize),
@@ -461,7 +462,7 @@ module Indexer = {
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false, ~batchSize?)
+        make(~chains, ~enableHasura, ~enableRawEvents, ~multichain, ~saveFullHistory, ~reset=false, ~batchSize?)
       },
       graphql: query => {
         if !enableHasura {
@@ -845,7 +846,6 @@ module Helper = {
   }
 }
 
-@genType
 let mockRawEventRow: InternalTable.RawEvents.t = {
   chainId: 1,
   eventId: 1234567890n,
