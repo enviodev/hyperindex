@@ -60,7 +60,7 @@ let stateSchema = S.union([
 
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
-let getGlobalIndexer = (~config: Config.t): 'indexer => {
+let getGlobalIndexer = (~config: Config.t, ~persistence: Persistence.t): 'indexer => {
   let indexer = Utils.Object.createNullObject()
 
   indexer
@@ -85,13 +85,37 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     let chainObj = Utils.Object.createNullObject()
     chainObj
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {
+        enumerable: true,
+        get: () => {
+          switch persistence.storageStatus {
+          | Ready(initialState) =>
+            switch initialState.chains->Js.Array2.find(c => c.id === chainConfig.id) {
+            | Some(chainState) => chainState.startBlock
+            | None => chainConfig.startBlock
+            }
+          | _ => chainConfig.startBlock
+          }
+        },
+      },
     )
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "endBlock",
-      {enumerable: true, value: chainConfig.endBlock},
+      {
+        enumerable: true,
+        get: () => {
+          switch persistence.storageStatus {
+          | Ready(initialState) =>
+            switch initialState.chains->Js.Array2.find(c => c.id === chainConfig.id) {
+            | Some(chainState) => chainState.endBlock
+            | None => chainConfig.endBlock
+            }
+          | _ => chainConfig.endBlock
+          }
+        },
+      },
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
@@ -100,12 +124,24 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
         enumerable: true,
         get: () => {
           switch globalGsManagerRef.contents {
-          | None => false
           | Some(gsManager) =>
             let state = gsManager->GlobalStateManager.getState
             let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
             let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
             chainFetcher->ChainFetcher.isReady
+          // Before the GlobalStateManager is available (eg during handler
+          // module load after resume), derive liveness from persistence:
+          // a chain is considered live when it previously caught up to head
+          // or endBlock (timestampCaughtUpToHeadOrEndblock is set).
+          | None =>
+            switch persistence.storageStatus {
+            | Ready(initialState) =>
+              switch initialState.chains->Js.Array2.find(c => c.id === chainConfig.id) {
+              | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
+              | None => false
+              }
+            | _ => false
+            }
           }
         },
       },
@@ -124,7 +160,6 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
           enumerable: true,
           get: () => {
             switch globalGsManagerRef.contents {
-            | None => contract.addresses
             | Some(gsManager) => {
                 let state = gsManager->GlobalStateManager.getState
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
@@ -141,6 +176,25 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
                   }
                 }
                 addresses
+              }
+            // Before the GlobalStateManager is available (eg during handler
+            // module load after resume), combine static addresses from config
+            // with dynamic contracts persisted in the database.
+            | None =>
+              switch persistence.storageStatus {
+              | Ready(initialState) =>
+                switch initialState.chains->Js.Array2.find(c => c.id === chainConfig.id) {
+                | Some(chainState) =>
+                  let addresses = contract.addresses->Array.copy
+                  chainState.dynamicContracts->Array.forEach(dc => {
+                    if dc.contractName === contract.name {
+                      addresses->Array.push(dc.address)->ignore
+                    }
+                  })
+                  addresses
+                | None => contract.addresses
+                }
+              | _ => contract.addresses
               }
             }
           },

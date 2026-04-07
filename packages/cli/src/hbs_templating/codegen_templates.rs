@@ -2112,7 +2112,7 @@ let codegenPersistence = Persistence.make(
 
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
-            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
+            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations, ~persistence=Generated.codegenPersistence)"#,
             r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString, ~allEntities=Generated.codegenPersistence.allEntities)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
         );
 
