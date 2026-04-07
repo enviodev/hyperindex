@@ -345,7 +345,7 @@ type mainArgs = Yargs.parsedArgs<args>
 
 let start = async (
   ~makeGeneratedConfig: unit => Config.t,
-  ~persistence: Persistence.t,
+  ~persistence: option<Persistence.t>=?,
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
@@ -359,6 +359,10 @@ let start = async (
 
   // Register all handlers first, then get the config with registrations
   let configWithoutRegistrations = makeGeneratedConfig()
+  let persistence = switch persistence {
+  | Some(p) => p
+  | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
+  }
   let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
   let config = makeGeneratedConfig()
   let config = if isTest {
