@@ -88,7 +88,10 @@ mod nested_params {
             if let AbiType::Tuple(fields) = &event_input.kind {
                 // A tuple level renders as a record (and so its segments are
                 // `Field`s) iff at least one component is named. Otherwise it
-                // stays a positional tuple.
+                // stays a positional tuple. The `!n.is_empty()` check mirrors
+                // `event_parsing::abi_type_to_rescript` so test fixtures that
+                // pass `Some("".to_string())` directly fall back to the
+                // positional-index path consistently.
                 let is_record = fields
                     .iter()
                     .any(|f| f.name.as_ref().is_some_and(|n| !n.is_empty()));

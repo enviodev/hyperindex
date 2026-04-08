@@ -215,6 +215,10 @@ fn abi_type_to_components(
 ) -> Option<Vec<EventParamComponent>> {
     use crate::config_parsing::abi_compat::AbiType;
     match ty {
+        // The `!n.is_empty()` check mirrors `event_parsing::abi_type_to_rescript`
+        // — kept for parity so test fixtures that bypass the constructor and
+        // pass `Some("".to_string())` directly still get mapped to the
+        // positional-index fallback.
         AbiType::Tuple(fields)
             if fields
                 .iter()

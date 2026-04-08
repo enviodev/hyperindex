@@ -174,6 +174,11 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
             // Unnamed components in a mixed tuple fall back to their positional
             // index as the JS object key (e.g. `commonParams["1"]`). Fully anonymous
             // tuples (e.g. from bare signature strings) stay as positional tuples.
+            // The `!n.is_empty()` check covers test fixtures that construct
+            // `Some("".to_string())` directly — production `AbiTupleField`
+            // constructors normalise empty names to `None`, but the
+            // `test_record_type_mixed_named_tuple_uses_index_for_unnamed` test
+            // exercises the empty-string fallback path explicitly.
             let has_named = fields
                 .iter()
                 .any(|f| f.name.as_ref().is_some_and(|n| !n.is_empty()));
