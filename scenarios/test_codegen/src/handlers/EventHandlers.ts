@@ -334,7 +334,7 @@ const WHITELISTED_ADDRESSES = {
   ],
   100: ["0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const],
 };
-indexer.onEvent({ contract: "EventFiltersTest", event: "Transfer", wildcard: true, where: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "Transfer", wildcard: true, where: ({ chainId }) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
@@ -343,13 +343,13 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "Transfer", wildcard: tru
     { params: { from: WHITELISTED_ADDRESSES[chainId as 100 | 137], to: ZERO_ADDRESS } },
   ];
 } }, async (_) => {});
-indexer.onEvent({ contract: "EventFiltersTest", event: "EmptyFiltersArray", wildcard: true, where: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "EmptyFiltersArray", wildcard: true, where: ({ chainId }) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
   return [];
 } }, async (_) => {});
-indexer.onEvent({ contract: "EventFiltersTest", event: "WildcardWithAddress", wildcard: true, where: ({ chainId, addresses }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "WildcardWithAddress", wildcard: true, where: ({ chainId, addresses }) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
@@ -358,7 +358,7 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "WildcardWithAddress", wi
     { params: { from: addresses, to: ZERO_ADDRESS } },
   ];
 } }, async (_) => {});
-indexer.onEvent({ contract: "EventFiltersTest", event: "WithExcessField", wildcard: true, where: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "WithExcessField", wildcard: true, where: ({ chainId }) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
@@ -676,7 +676,7 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
   }
 });
 
-indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chainId }) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }

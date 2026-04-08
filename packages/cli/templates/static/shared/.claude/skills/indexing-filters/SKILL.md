@@ -39,7 +39,7 @@ indexer.onEvent(
 
 ## Function Form — Dynamic Per-Chain
 
-Return a filter based on `chainId`. Return `false` to skip the chain entirely, `[]` to skip all events, `true` to allow all:
+Return a filter based on `chainId`. Return `false` to skip the chain entirely (no events processed), or `true` (or `[]`) to allow all events. To filter, return a single `where` condition or an array of conditions:
 
 ```ts
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -85,8 +85,8 @@ indexer.onEvent(
 - Multiple filter objects → OR (match any)
 - Multiple fields in one `params` record → AND (match all)
 - Array value in a field → match any value in the array
-- `return false` → disable handler for that chain
-- `return true` → accept all events (no filtering)
+- `return false` → skip the chain entirely (no events processed for that chain)
+- `return true` (or `[]`) → accept all events (no filtering, default topic0-only selection)
 
 ## Deep Documentation
 

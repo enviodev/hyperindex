@@ -134,8 +134,34 @@ export type FuelOnEventContext = GFuelOnEventContext<IndexerConfigTypes>;
 /** Context for indexer.contractRegister handlers in Fuel ecosystem (bound to project config). */
 export type FuelContractRegisterContext = GFuelContractRegisterContext<IndexerConfigTypes>;
 
+// Resolve the indexed-parameter shape (`{params: ...}`) for a given event from
+// the project-bound EvmEventFilters / FuelEventFilters lookup tables. Used to
+// thread per-event narrowing into the exported option aliases so wrapper code
+// types `where` the same way `indexer.onEvent` does.
+type _EvmFilterParams<Event extends _EventLike> =
+  EvmEventFilters[Event["contractName"] & keyof EvmEventFilters] extends Record<string, any>
+    ? EvmEventFilters[Event["contractName"] & keyof EvmEventFilters][Event["eventName"] &
+        keyof EvmEventFilters[Event["contractName"] & keyof EvmEventFilters]] extends {
+        readonly params: infer P;
+      }
+      ? P
+      : {}
+    : {};
+type _FuelFilterParams<Event extends _EventLike> =
+  FuelEventFilters[Event["contractName"] & keyof FuelEventFilters] extends Record<string, any>
+    ? FuelEventFilters[Event["contractName"] & keyof FuelEventFilters][Event["eventName"] &
+        keyof FuelEventFilters[Event["contractName"] & keyof FuelEventFilters]] extends {
+        readonly params: infer P;
+      }
+      ? P
+      : {}
+    : {};
+
 /** Options for indexer.onEvent in EVM ecosystem. Pass an EvmEvent to type the contract+event. */
-export type EvmOnEventOptions<Event extends _EventLike = _ProjectEvmEvent> = GEvmOnEventOptions<Event>;
+export type EvmOnEventOptions<Event extends _EventLike = _ProjectEvmEvent> = GEvmOnEventOptions<
+  Event,
+  _EvmFilterParams<Event>
+>;
 
 /** Handler for indexer.onEvent in EVM ecosystem. Context is bound to the project's EvmOnEventContext. */
 export type EvmOnEventHandler<Event extends _EventLike = _ProjectEvmEvent> =
@@ -143,14 +169,17 @@ export type EvmOnEventHandler<Event extends _EventLike = _ProjectEvmEvent> =
 
 /** Options for indexer.contractRegister in EVM ecosystem. */
 export type EvmContractRegisterOptions<Event extends _EventLike = _ProjectEvmEvent> =
-  GEvmContractRegisterOptions<Event>;
+  GEvmContractRegisterOptions<Event, _EvmFilterParams<Event>>;
 
 /** Handler for indexer.contractRegister in EVM ecosystem. Context is bound to the project's EvmContractRegisterContext. */
 export type EvmContractRegisterHandler<Event extends _EventLike = _ProjectEvmEvent> =
   GEvmContractRegisterHandler<Event, EvmContractRegisterContext>;
 
 /** Options for indexer.onEvent in Fuel ecosystem. */
-export type FuelOnEventOptions<Event extends _EventLike = _ProjectFuelEvent> = GFuelOnEventOptions<Event>;
+export type FuelOnEventOptions<Event extends _EventLike = _ProjectFuelEvent> = GFuelOnEventOptions<
+  Event,
+  _FuelFilterParams<Event>
+>;
 
 /** Handler for indexer.onEvent in Fuel ecosystem. */
 export type FuelOnEventHandler<Event extends _EventLike = _ProjectFuelEvent> =
@@ -158,7 +187,7 @@ export type FuelOnEventHandler<Event extends _EventLike = _ProjectFuelEvent> =
 
 /** Options for indexer.contractRegister in Fuel ecosystem. */
 export type FuelContractRegisterOptions<Event extends _EventLike = _ProjectFuelEvent> =
-  GFuelContractRegisterOptions<Event>;
+  GFuelContractRegisterOptions<Event, _FuelFilterParams<Event>>;
 
 /** Handler for indexer.contractRegister in Fuel ecosystem. */
 export type FuelContractRegisterHandler<Event extends _EventLike = _ProjectFuelEvent> =

@@ -104,7 +104,18 @@ let parseEventFiltersOrThrow = {
             | Some(Object(p)) => Some(p)
             | Some(_) =>
               Js.Exn.raiseError("Invalid where configuration. Expected `params` to be an object")
-            | None => None
+            | None =>
+              // A non-empty object without `params` is almost always a typo
+              // (e.g. `parmas:`) or the legacy flat-filter shape (`{from: ...}`).
+              // Silently widening to "match all" would turn a wildcard handler
+              // into unbounded indexing — fail fast instead.
+              if obj->Js.Dict.keys->Js.Array2.length > 0 {
+                Js.Exn.raiseError(
+                  "Invalid where configuration. Indexed parameter filters must be nested under `params`",
+                )
+              } else {
+                None
+              }
             }
           | _ => Js.Exn.raiseError("Invalid where configuration. Expected an object")
           }
