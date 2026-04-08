@@ -191,11 +191,13 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
               switch getInitialChainState(~chainId=chainConfig.id) {
               | Some(chainState) =>
                 let addresses = contract.addresses->Array.copy
-                chainState.dynamicContracts->Array.forEach(dc => {
-                  if dc.contractName === contract.name {
-                    addresses->Array.push(dc.address)->ignore
-                  }
-                })
+                chainState.dynamicContracts->Array.forEach(
+                  dc => {
+                    if dc.contractName === contract.name {
+                      addresses->Array.push(dc.address)->ignore
+                    }
+                  },
+                )
                 addresses
               | None => contract.addresses
               }
@@ -229,8 +231,8 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
 
   // Parse eventIdentity config to extract contractName, eventName, and options.
   // Supports two runtime formats:
-  // - From TypeScript: { contract: "X", event: "Y", wildcard?, eventFilters? }
-  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, eventFilters? }
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where? }
   let parseIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
@@ -238,7 +240,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
           "contract": unknown,
           "event": unknown,
           "wildcard": option<bool>,
-          "eventFilters": option<Js.Json.t>,
+          "where": option<Js.Json.t>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
@@ -254,13 +256,13 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       (event["contract"], event["_0"])
     }
     let wildcard = raw["wildcard"]
-    let eventFilters = raw["eventFilters"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, eventFilters) {
+    let where = raw["where"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where) {
     | (None, None) => None
-    | (wildcard, eventFilters) =>
+    | (wildcard, where) =>
       Some({
         ?wildcard,
-        eventFilters: ?eventFilters->(Utils.magic: option<Js.Json.t> => option<_>),
+        where: ?where->(Utils.magic: option<Js.Json.t> => option<_>),
       })
     }
     (contractName, eventName, eventOptions)

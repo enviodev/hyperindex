@@ -47,17 +47,15 @@ ERC20.Transfer.handler(
 );
 ```
 
-## Combining with Event Filters
+## Combining with Event Filters (`where`)
 
-Wildcard indexing produces high event volume. Use `eventFilters` to reduce it — see the `indexing-filters` skill for array, function, and `addresses` forms.
+Wildcard indexing produces high event volume. Use `where` to reduce it — see the `indexing-filters` skill for array, function, and `addresses` forms.
 
 ```ts
-ERC20.Transfer.handler(
+indexer.onEvent(
+  { contract: "ERC20", event: "Transfer", wildcard: true,
+    where: { params: { from: ZERO_ADDRESS } } },
   async ({ event, context }) => { /* ... */ },
-  {
-    wildcard: true,
-    eventFilters: [{ from: ZERO_ADDRESS }],
-  }
 );
 ```
 

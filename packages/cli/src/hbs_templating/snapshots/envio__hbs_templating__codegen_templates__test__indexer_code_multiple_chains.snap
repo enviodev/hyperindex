@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3049
+assertion_line: 2588
 expression: project_template.indexer_code
 ---
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
@@ -178,10 +178,10 @@ module SingleOrMultiple: {
 }
 
 /** Event identity configuration for onEvent/contractRegister. */
-type eventIdentityConfig<'eventIdentity, 'filters> = {
+type eventIdentityConfig<'eventIdentity, 'where> = {
   event: 'eventIdentity,
   wildcard?: bool,
-  eventFilters?: 'filters,
+  where?: 'where,
 }
 
 module Enums = {
@@ -225,7 +225,7 @@ type chainId = [#1 | #2]
 
 type contractRegisterContract = { add: Address.t => unit }
 
-type contractRegisterChainInfo = {
+type contractRegisterChain = {
   id: chainId,
   \"Contract1": contractRegisterContract,
   \"Contract2": contractRegisterContract,
@@ -234,7 +234,7 @@ type contractRegisterChainInfo = {
 @genType
 type contractRegisterContext = {
   log: Envio.logger,
-  chain: contractRegisterChainInfo,
+  chain: contractRegisterChain,
 }
 
 @genType
@@ -272,9 +272,9 @@ let contractName = "Contract1"
     }
 
     @genType
-    type eventFilter = {}
+    type whereParams = {}
 
-    @genType type eventFilters = Internal.noEventFilters
+    @genType type onEventWhere = Internal.noOnEventWhere
   }
 
   module UpdatedGravatar = {
@@ -308,14 +308,14 @@ let contractName = "Contract1"
     }
 
     @genType
-    type eventFilter = {}
+    type whereParams = {}
 
-    @genType type eventFilters = Internal.noEventFilters
+    @genType type onEventWhere = Internal.noOnEventWhere
   }
 
-  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =
-    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.eventFilter>
-    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.eventFilter>
+  type rec eventIdentity<'event, 'paramsConstructor, 'where> =
+    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.onEventWhere>
+    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.onEventWhere>
 }
 
 @genType
@@ -353,9 +353,9 @@ let contractName = "Contract2"
     }
 
     @genType
-    type eventFilter = {}
+    type whereParams = {}
 
-    @genType type eventFilters = Internal.noEventFilters
+    @genType type onEventWhere = Internal.noOnEventWhere
   }
 
   module UpdatedGravatar = {
@@ -389,14 +389,14 @@ let contractName = "Contract2"
     }
 
     @genType
-    type eventFilter = {}
+    type whereParams = {}
 
-    @genType type eventFilters = Internal.noEventFilters
+    @genType type onEventWhere = Internal.noOnEventWhere
   }
 
-  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =
-    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.eventFilter>
-    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.eventFilter>
+  type rec eventIdentity<'event, 'paramsConstructor, 'where> =
+    | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.onEventWhere>
+    | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.onEventWhere>
 }
 
 /** Contract configuration with name and ABI. */
@@ -433,21 +433,21 @@ type indexerChains = {
 }
 
 @tag("contract")
-type eventIdentity<'event, 'paramsConstructor, 'filters> =
-  | Contract1(Contract1.eventIdentity<'event, 'paramsConstructor, 'filters>)
-  | Contract2(Contract2.eventIdentity<'event, 'paramsConstructor, 'filters>)
+type eventIdentity<'event, 'paramsConstructor, 'where> =
+  | Contract1(Contract1.eventIdentity<'event, 'paramsConstructor, 'where>)
+  | Contract2(Contract2.eventIdentity<'event, 'paramsConstructor, 'where>)
 
 @tag("kind")
-type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =
+type simulateItemConstructor<'event, 'paramsConstructor, 'where> =
   | OnEvent({
-      event: eventIdentity<'event, 'paramsConstructor, 'filters>,
+      event: eventIdentity<'event, 'paramsConstructor, 'where>,
       params?: 'paramsConstructor,
       block?: Internal.evmBlockInput,
       transaction?: Internal.evmTransactionInput,
     })
 
 let makeSimulateItem = (
-  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,
+  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'where>,
 ): Envio.evmSimulateItem => {
   event: (constructor->Utils.magic)["event"]["_0"],
   contract: (constructor->Utils.magic)["event"]["contract"],
@@ -467,13 +467,13 @@ type indexer = {
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
   /** Register an event handler. */
-  onEvent: 'event 'paramsConstructor 'filters. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>, 'filters>,
+  onEvent: 'event 'paramsConstructor 'where. (
+    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
   ) => unit,
   /** Register a contract register handler for dynamic contract indexing. */
-  contractRegister: 'event 'paramsConstructor 'filters. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'filters>, 'filters>,
+  contractRegister: 'event 'paramsConstructor 'where. (
+    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
 }

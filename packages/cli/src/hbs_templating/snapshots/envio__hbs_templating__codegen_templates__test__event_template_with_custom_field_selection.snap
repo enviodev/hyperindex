@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2526
 expression: event_template.module_code
 ---
 
@@ -148,6 +149,6 @@ type event = {
 }
 
 @genType
-type eventFilter = {}
+type whereParams = {}
 
-@genType type eventFilters = Internal.noEventFilters
+@genType type onEventWhere = Internal.noOnEventWhere

@@ -7,7 +7,9 @@ let configWithRegistrations = Indexer.Generated.makeGeneratedConfig()
 let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
 
 // Test types:
-let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
+let filterArgsShouldBeASubsetOfInternal = (
+  %raw(`null`): Indexer.EventFiltersTest.Transfer.onEventWhereArgs :> Internal.eventFiltersArgs
+)
 
 describe("Test eventFilters", () => {
   it("Supports multichain filters", t => {

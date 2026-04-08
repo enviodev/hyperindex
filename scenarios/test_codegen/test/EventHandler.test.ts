@@ -1477,7 +1477,7 @@ describe("onEvent / contractRegister types", () => {
           readonly contract: "Gravatar";
           readonly event: "NewGravatar";
           readonly wildcard?: boolean;
-          readonly eventFilters?: unknown;
+          readonly where?: unknown;
         }
       >
     >(true);

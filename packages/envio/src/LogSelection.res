@@ -83,42 +83,56 @@ let parseEventFiltersOrThrow = {
       topic3: emptyTopics,
     }
 
-    let parse = (eventFilters: Js.Json.t): array<Internal.topicSelection> => {
-      if eventFilters === Obj.magic(true) {
+    let parse = (where: Js.Json.t): array<Internal.topicSelection> => {
+      if where === Obj.magic(true) {
         [default]
-      } else if eventFilters === Obj.magic(false) {
+      } else if where === Obj.magic(false) {
         []
       } else {
-        switch eventFilters {
+        switch where {
         | Array([]) => [%raw(`{}`)]
         | Array(a) => a
-        | _ => [eventFilters]
-        }->Js.Array2.map(eventFilter => {
-          switch eventFilter {
-          | Object(eventFilter) => {
-              let filterKeys = eventFilter->Js.Dict.keys
+        | _ => [where]
+        }->Js.Array2.map(whereCondition => {
+          // A `where` condition is shaped as `{params?: {...}, ...}` where
+          // `params` carries the indexed-parameter filter record. Future
+          // filter dimensions (block, transaction, …) can slot in as sibling
+          // fields alongside `params`. For now we only consume `params`.
+          let whereParams = switch whereCondition {
+          | Object(obj) =>
+            switch obj->Js.Dict.get("params") {
+            | Some(Object(p)) => Some(p)
+            | Some(_) =>
+              Js.Exn.raiseError("Invalid where configuration. Expected `params` to be an object")
+            | None => None
+            }
+          | _ => Js.Exn.raiseError("Invalid where configuration. Expected an object")
+          }
+          switch whereParams {
+          | None => default
+          | Some(paramsFilter) => {
+              let filterKeys = paramsFilter->Js.Dict.keys
               switch filterKeys {
               | [] => default
               | _ => {
                   filterKeys->Js.Array2.forEach(key => {
                     if params->Js.Array2.includes(key)->not {
                       // In TS type validation doesn't catch this
-                      // when we have eventFilters as a callback
+                      // when `where` is a callback
                       Js.Exn.raiseError(
-                        `Invalid event filters configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
+                        `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
                       )
                     }
                   })
                   {
                     Internal.topic0,
-                    topic1: topic1(eventFilter),
-                    topic2: topic2(eventFilter),
-                    topic3: topic3(eventFilter),
+                    topic1: topic1(paramsFilter),
+                    topic2: topic2(paramsFilter),
+                    topic3: topic3(paramsFilter),
                   }
                 }
               }
             }
-          | _ => Js.Exn.raiseError("Invalid event filters configuration. Expected an object")
           }
         })
       }

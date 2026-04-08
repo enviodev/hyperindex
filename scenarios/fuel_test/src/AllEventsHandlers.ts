@@ -17,7 +17,7 @@ type AssertSchemaType<Target, Schema> = TypeEqual<
 >;
 
 const SExtra = {
-  void: S.schema(undefined) as S.Schema<void, void>,
+  void: S.schema(undefined) as S.Schema<undefined, undefined>,
   swayOptional: <T>(schema: S.Schema<T>) =>
     S.union([
       {

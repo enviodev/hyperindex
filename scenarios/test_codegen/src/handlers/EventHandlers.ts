@@ -275,58 +275,58 @@ export const hashingTestParams = {
   fixedBytes32: new Uint8Array(32).fill(0x12),
   struct: [50n, "test"] satisfies [bigint, string],
 };
-indexer.onEvent({ contract: "TestEvents", event: "IndexedUint", eventFilters: {
+indexer.onEvent({ contract: "TestEvents", event: "IndexedUint", where: { params: {
   num: [hashingTestParams.id],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedInt", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedInt", where: { params: {
   num: [-hashingTestParams.id],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedBool", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedBool", where: { params: {
   isTrue: [hashingTestParams.isTrue],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedAddress", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedAddress", where: { params: {
   addr: [hashingTestParams.addr],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedBytes", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedBytes", where: { params: {
   dynBytes: [bytesToHex(hashingTestParams.dynBytes)],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedFixedBytes", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedFixedBytes", where: { params: {
   fixedBytes: [bytesToHex(hashingTestParams.fixedBytes32)],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedString", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedString", where: { params: {
   str: [hashingTestParams.str],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedStruct", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedStruct", where: { params: {
   testStruct: hashingTestParams.struct,
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedArray", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedArray", where: { params: {
   array: [[hashingTestParams.id, hashingTestParams.id + 1n]],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedFixedArray", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedFixedArray", where: { params: {
   array: [[hashingTestParams.id, hashingTestParams.id + 1n]],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedNestedArray", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedNestedArray", where: { params: {
   array: [
     [
       [hashingTestParams.id, hashingTestParams.id],
       [hashingTestParams.id, hashingTestParams.id],
     ],
   ],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedStructArray", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedStructArray", where: { params: {
   array: [[hashingTestParams.struct, hashingTestParams.struct]],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedNestedStruct", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedNestedStruct", where: { params: {
   nestedStruct: [[hashingTestParams.id, hashingTestParams.struct]],
-} }, async (_) => {});
-indexer.onEvent({ contract: "TestEvents", event: "IndexedStructWithArray", eventFilters: {
+} } }, async (_) => {});
+indexer.onEvent({ contract: "TestEvents", event: "IndexedStructWithArray", where: { params: {
   structWithArray: [
     [hashingTestParams.id, hashingTestParams.id + 1n],
     [hashingTestParams.str, hashingTestParams.str],
   ],
-} }, async (_) => {});
+} } }, async (_) => {});
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 const WHITELISTED_ADDRESSES = {
   137: [
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as const,
@@ -334,35 +334,35 @@ const WHITELISTED_ADDRESSES = {
   ],
   100: ["0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const],
 };
-indexer.onEvent({ contract: "EventFiltersTest", event: "Transfer", wildcard: true, eventFilters: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "Transfer", wildcard: true, where: ({ chainId }: any) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
   return [
-    { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId as 100 | 137] },
-    { from: WHITELISTED_ADDRESSES[chainId as 100 | 137], to: ZERO_ADDRESS },
+    { params: { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId as 100 | 137] } },
+    { params: { from: WHITELISTED_ADDRESSES[chainId as 100 | 137], to: ZERO_ADDRESS } },
   ];
 } }, async (_) => {});
-indexer.onEvent({ contract: "EventFiltersTest", event: "EmptyFiltersArray", wildcard: true, eventFilters: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "EmptyFiltersArray", wildcard: true, where: ({ chainId }: any) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
   return [];
 } }, async (_) => {});
-indexer.onEvent({ contract: "EventFiltersTest", event: "WildcardWithAddress", wildcard: true, eventFilters: ({ chainId, addresses }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "WildcardWithAddress", wildcard: true, where: ({ chainId, addresses }: any) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
   return [
-    { from: ZERO_ADDRESS, to: addresses },
-    { from: addresses, to: ZERO_ADDRESS },
+    { params: { from: ZERO_ADDRESS, to: addresses } },
+    { params: { from: addresses, to: ZERO_ADDRESS } },
   ];
 } }, async (_) => {});
-indexer.onEvent({ contract: "EventFiltersTest", event: "WithExcessField", wildcard: true, eventFilters: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "WithExcessField", wildcard: true, where: ({ chainId }: any) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
-  return { from: ZERO_ADDRESS, to: ZERO_ADDRESS };
+  return { params: { from: ZERO_ADDRESS, to: ZERO_ADDRESS } };
 } }, async (_) => {});
 
 indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
@@ -676,12 +676,14 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
   }
 });
 
-indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", eventFilters: ({ chainId }: any) => {
+indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chainId }: any) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
   return {
-    addr: ["0x000"],
+    params: {
+      addr: ["0x000" as `0x${string}`],
+    },
   };
 } }, async ({ event }) => {
   if (event.params.addr === "0x000") {

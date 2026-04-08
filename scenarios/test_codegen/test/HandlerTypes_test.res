@@ -18,7 +18,7 @@ let _topNftFactory: Indexer.eventIdentity<_, _, _> = NftFactory(SimpleNftCreated
 let _topGravatar: Indexer.eventIdentity<_, _, _> = Gravatar(NewGravatar)
 let _topSimpleNft: Indexer.eventIdentity<_, _, _> = SimpleNft(Transfer)
 
-// 3. eventIdentityConfig wraps the GADT, with optional wildcard and eventFilters
+// 3. eventIdentityConfig wraps the GADT, with optional wildcard and `where`
 let _basicConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>, _> = {
   event: NftFactory(SimpleNftCreated),
 }
@@ -26,37 +26,50 @@ let _wildcardConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>,
   event: Gravatar(NewGravatar),
   wildcard: true,
 }
-// eventFilters carries the per-event `eventFilter` record — one optional
-// field per indexed parameter. The 'filters type parameter on
-// eventIdentityConfig is unified with the GADT constructor's third type
-// argument, so passing `event: EventFiltersTest(Transfer)` pins 'filters to
-// `EventFiltersTest.Transfer.eventFilter`. Missing fields default to no
-// filtering. SingleOrMultiple.t is opaque — construct via `single` / `multiple`.
+// `where` carries the per-event filter value. The `'where` type parameter on
+// eventIdentityConfig unifies with the GADT constructor's third type argument,
+// so passing `event: EventFiltersTest(Transfer)` pins `'where` to
+// `EventFiltersTest.Transfer.onEventWhere`. The static form wraps the indexed
+// param record under `{params: ...}`, so future filter dimensions (block,
+// transaction, …) can slot in as sibling fields. `SingleOrMultiple.t` is
+// opaque — construct via `single` / `multiple`.
 let _staticFilterConfig: Indexer.eventIdentityConfig<
   Indexer.eventIdentity<_, _, _>,
-  Indexer.EventFiltersTest.Transfer.eventFilter,
+  Indexer.EventFiltersTest.Transfer.onEventWhere,
 > = {
   event: EventFiltersTest(Transfer),
-  eventFilters: {
-    from: Indexer.SingleOrMultiple.single(
-      "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-    ),
-  },
+  where: Single({
+    params: {
+      from: Indexer.SingleOrMultiple.single(
+        "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+      ),
+    },
+  }),
 }
-// Wildcard + filter combination — exercises the same eventFilter record
-// path alongside wildcard: true, with the Multiple (OR) form.
+// Wildcard + Multiple (OR) filter combination — two filter conditions, each
+// with its own indexed-param record under `params`.
 let _wildcardWithFilterConfig: Indexer.eventIdentityConfig<
   Indexer.eventIdentity<_, _, _>,
-  Indexer.EventFiltersTest.Transfer.eventFilter,
+  Indexer.EventFiltersTest.Transfer.onEventWhere,
 > = {
   event: EventFiltersTest(Transfer),
   wildcard: true,
-  eventFilters: {
-    to: Indexer.SingleOrMultiple.multiple([
-      "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-      "0x0000000000000000000000000000000000000001"->Address.unsafeFromString,
-    ]),
-  },
+  where: Multiple([
+    {
+      params: {
+        to: Indexer.SingleOrMultiple.single(
+          "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+        ),
+      },
+    },
+    {
+      params: {
+        to: Indexer.SingleOrMultiple.single(
+          "0x0000000000000000000000000000000000000001"->Address.unsafeFromString,
+        ),
+      },
+    },
+  ]),
 }
 
 // 4. handlerContext (onEvent context) has expected fields
@@ -72,7 +85,7 @@ let _checkHandlerContext = (ctx: Indexer.handlerContext) => {
 // Note: chain does NOT expose isLive — contract registration runs during sync
 // so the "live" distinction isn't meaningful and the field was dropped.
 let _checkContractRegisterContext = (ctx: Indexer.contractRegisterContext) => {
-  let chain: Indexer.contractRegisterChainInfo = ctx.chain
+  let chain: Indexer.contractRegisterChain = ctx.chain
   let _: Indexer.chainId = chain.id
   let _: Envio.logger = ctx.log
   // chain.ContractName.add(address) is available for each configured contract
@@ -115,33 +128,70 @@ let _registerWildcard = () => {
   )
 }
 
-// 9. eventFilters static form — typed against the event's per-event eventFilter
+// 9. `where` static form — Single condition, typed against the event's
+// per-event `onEventWhere` union.
 let _registerWithStaticFilter = () => {
   Indexer.indexer.onEvent(
     {
       event: EventFiltersTest(Transfer),
-      eventFilters: {
-        from: Indexer.SingleOrMultiple.single(
-          "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-        ),
-      },
+      where: Single({
+        params: {
+          from: Indexer.SingleOrMultiple.single(
+            "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+          ),
+        },
+      }),
     },
     async ({event: _, context: _}) => (),
   )
 }
 
-// 10. eventFilters combined with wildcard — the filter record survives alongside
-// wildcard: true, and the 'filters generic is pinned by the GADT identity.
+// 10. `where` combined with wildcard — the filter record survives alongside
+// wildcard: true, and the `'where` generic is pinned by the GADT identity.
 let _registerWildcardWithFilter = () => {
   Indexer.indexer.onEvent(
     {
       event: EventFiltersTest(Transfer),
       wildcard: true,
-      eventFilters: {
-        to: Indexer.SingleOrMultiple.single(
-          "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-        ),
-      },
+      where: Single({
+        params: {
+          to: Indexer.SingleOrMultiple.single(
+            "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+          ),
+        },
+      }),
+    },
+    async ({event: _, context: _}) => (),
+  )
+}
+
+// 11. Dynamic callback form — returns a filter for the given chain/addresses.
+let _registerDynamicFilter = () => {
+  Indexer.indexer.onEvent(
+    {
+      event: EventFiltersTest(Transfer),
+      wildcard: true,
+      where: Dynamic(
+        ({chainId: _, addresses: _}) => Single({
+          params: {
+            from: Indexer.SingleOrMultiple.single(
+              "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+            ),
+          },
+        }),
+      ),
+    },
+    async ({event: _, context: _}) => (),
+  )
+}
+
+// 12. Dynamic callback returning KeepAll (true) — short-circuit keep all events.
+let _registerDynamicKeepAll = () => {
+  Indexer.indexer.onEvent(
+    {
+      event: EventFiltersTest(Transfer),
+      wildcard: true,
+      where: Dynamic(({chainId: _, addresses: _}) => KeepAll),
     },
     async ({event: _, context: _}) => (),
   )

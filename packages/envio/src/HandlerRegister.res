@@ -169,9 +169,9 @@ let getHandler = (~contractName, ~eventName) => get(~contractName, ~eventName).h
 let getContractRegister = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).contractRegister
 
-let getEventFilters = (~contractName, ~eventName) =>
+let getWhere = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).eventOptions
-  ->Belt.Option.flatMap(value => value.eventFilters)
+  ->Belt.Option.flatMap(value => value.where)
   ->(Utils.magic: option<Internal.eventFilters> => option<Js.Json.t>)
 
 let isWildcard = (~contractName, ~eventName) =>
@@ -207,8 +207,7 @@ let eventOptionsMatch = (
 ) => {
   switch (existing, incoming) {
   | (None, None) => true
-  | (Some(a), Some(b)) =>
-    a.wildcard === b.wildcard && eventFiltersMatch(a.eventFilters, b.eventFilters)
+  | (Some(a), Some(b)) => a.wildcard === b.wildcard && eventFiltersMatch(a.where, b.where)
   | _ => false
   }
 }
@@ -218,9 +217,7 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
   | Some(value) =>
     let value =
       value->(
-        Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
-          Internal.eventFilters,
-        >
+        Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<Internal.eventFilters>
       )
     let t = get(~contractName, ~eventName)
     switch t.eventOptions {
@@ -230,7 +227,7 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }
@@ -265,7 +262,7 @@ let setHandler = (
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
           v->(
-            Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
+            Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<
               Internal.eventFilters,
             >
           )
@@ -287,7 +284,7 @@ let setHandler = (
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }
@@ -326,7 +323,7 @@ let setContractRegister = (
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
           v->(
-            Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
+            Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<
               Internal.eventFilters,
             >
           )
@@ -348,7 +345,7 @@ let setContractRegister = (
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }
