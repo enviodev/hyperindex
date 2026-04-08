@@ -413,11 +413,11 @@ let runContractRegistersOrThrow = async (
       if result->Utils.Promise.isCatchable {
         promises->Array.push(
           result
-          ->Utils.Promise.thenResolve(r => {
+          ->Promise.thenResolve(r => {
             params.isResolved = true
             r
           })
-          ->Utils.Promise.catch(exn => {
+          ->Promise.catch(exn => {
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
           }),
@@ -432,7 +432,7 @@ let runContractRegistersOrThrow = async (
   }
 
   if promises->Utils.Array.notEmpty {
-    let _ = await Utils.Promise.all(promises)
+    let _ = await Promise.all(promises)
   }
 
   itemsWithDcs
@@ -500,7 +500,7 @@ let getLastKnownValidBlock = async (
     )
 
   let getBlockHashes = blockNumbers => {
-    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Utils.Promise.thenResolve(res =>
+    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Promise.thenResolve(res =>
       switch res {
       | Ok(v) => v
       | Error(exn) =>

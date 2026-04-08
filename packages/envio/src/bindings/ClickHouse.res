@@ -419,14 +419,14 @@ let initialize = async (
     await client->exec({query: `CREATE DATABASE IF NOT EXISTS ${database}`})
     await client->exec({query: `USE ${database}`})
 
-    await Utils.Promise.all(
+    await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
       ),
     )->Utils.Promise.ignoreValue
     await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
 
-    await Utils.Promise.all(
+    await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
@@ -463,7 +463,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     let tables: array<{"name": string}> = await tablesResult->json
 
     // Delete rows with checkpoint IDs higher than the target for each history table
-    await Utils.Promise.all(
+    await Promise.all(
       tables->Belt.Array.map(table => {
         let tableName = table["name"]
         client->exec({

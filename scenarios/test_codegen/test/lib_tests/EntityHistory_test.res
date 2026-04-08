@@ -72,7 +72,7 @@
 // let getAllMockEntity = sql =>
 //   sql
 //   ->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.table.tableName}"`)
-//   ->Utils.Promise.thenResolve(json => json->S.parseJsonOrThrow(TestEntity.rowsSchema))
+//   ->Promise.thenResolve(json => json->S.parseJsonOrThrow(TestEntity.rowsSchema))
 
 // let getAllMockEntityHistory = sql =>
 //   sql->Postgres.unsafe(`SELECT * FROM "public"."${TestEntity.entityHistory.table.tableName}"`)
@@ -205,7 +205,7 @@
 //     }
 
 //     switch {
-//       await Utils.Promise.all(
+//       await Promise.all(
 //         Db.sql->PgStorage.setEntityHistoryOrThrow(
 //           ~entityHistory=TestEntity.entityHistory,
 //           ~rows=[entityHistoryItem],
@@ -255,7 +255,7 @@
 //     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
 //     Assert.deepEqual(currentHistoryItems, expectedResult)
 
-//     switch await Utils.Promise.all(
+//     switch await Promise.all(
 //       Db.sql->PgStorage.setEntityHistoryOrThrow(
 //         ~entityHistory=TestEntity.entityHistory,
 //         ~rows=[
@@ -278,7 +278,7 @@
 //       Assert.fail("Failed to insert mock entity history")
 //     | _ => ()
 //     }
-//     switch await Utils.Promise.all(
+//     switch await Promise.all(
 //       Db.sql->PgStorage.setEntityHistoryOrThrow(
 //         ~entityHistory=TestEntity.entityHistory,
 //         ~rows=[
@@ -302,7 +302,7 @@
 //     | _ => ()
 //     }
 
-//     let _ = await Utils.Promise.all(
+//     let _ = await Promise.all(
 //       Db.sql->PgStorage.setEntityHistoryOrThrow(
 //         ~entityHistory=TestEntity.entityHistory,
 //         ~rows=[
@@ -592,7 +592,7 @@
 //             ~entityHistory=TestEntity.entityHistory,
 //             ~rows=Mocks.GnosisBug.historyRows,
 //           )
-//           ->Utils.Promise.all
+//           ->Promise.all
 //           ->Utils.Promise.ignoreValue,
 //       ) catch {
 //       | exn =>
@@ -694,7 +694,7 @@
 //           ~entityHistory=TestEntity.entityHistory,
 //           ~rows=Mocks.GnosisBug.historyRowsForPrune,
 //         )
-//         ->Utils.Promise.all
+//         ->Promise.all
 //         ->Utils.Promise.ignoreValue,
 //     ) catch {
 //     | exn =>
@@ -762,7 +762,7 @@
 //             ~entityHistory=TestEntity.entityHistory,
 //             ~rows=Mocks.historyRows,
 //           )
-//           ->Utils.Promise.all
+//           ->Promise.all
 //           ->Utils.Promise.ignoreValue,
 //       ) catch {
 //       | exn =>
@@ -1021,7 +1021,7 @@
 //       sql =>
 //         sql
 //         ->PgStorage.setEntityHistoryOrThrow(~entityHistory=TestEntity.entityHistory, ~rows)
-//         ->Utils.Promise.all
+//         ->Promise.all
 //         ->Utils.Promise.ignoreValue,
 //     ) catch {
 //     | exn =>

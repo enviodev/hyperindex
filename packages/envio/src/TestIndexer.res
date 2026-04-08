@@ -439,7 +439,7 @@ let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
   string => promise<option<Internal.entity>>
 ) => {
   entityId => {
-    Utils.Promise.resolve(getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get"))
+    Promise.resolve(getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get"))
   }
 }
 
@@ -448,7 +448,7 @@ let makeEntityGetOrThrow = (~state: testIndexerState, ~entityConfig: Internal.en
 ) => {
   (entityId, ~message=?) => {
     switch getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="getOrThrow") {
-    | Some(entity) => Utils.Promise.resolve(entity)
+    | Some(entity) => Promise.resolve(entity)
     | None =>
       let msg = switch message {
       | Some(m) => m
@@ -490,7 +490,7 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
     }
     let entityDict =
       state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
-    Utils.Promise.resolve(entityDict->Js.Dict.values)
+    Promise.resolve(entityDict->Js.Dict.values)
   }
 }
 
@@ -732,7 +732,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               ~dynamicContractsByChain,
             )
 
-            Utils.Promise.make((resolve, reject) => {
+            Promise.make((resolve, reject) => {
               let workerData: workerData = {
                 chainId,
                 startBlock: processChainConfig.startBlock,
@@ -818,17 +818,17 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
           let rec runChains = idx => {
             if idx >= chainEntries->Array.length {
               state.processInProgress = false
-              Utils.Promise.resolve({changes: state.processChanges})
+              Promise.resolve({changes: state.processChanges})
             } else {
-              runChainWorker(chainEntries->Array.getUnsafe(idx))->Utils.Promise.then(_ =>
+              runChainWorker(chainEntries->Array.getUnsafe(idx))->Promise.then(_ =>
                 runChains(idx + 1)
               )
             }
           }
 
-          runChains(0)->Utils.Promise.catch(err => {
+          runChains(0)->Promise.catch(err => {
             state.processInProgress = false
-            Utils.Promise.reject(err->Utils.prettifyExn)
+            Promise.reject(err->Utils.prettifyExn)
           })
         }
       )->(Utils.magic: ('a => promise<processResult>) => unknown),

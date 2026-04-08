@@ -847,71 +847,34 @@ module BigInt = {
 let bigIntSchema = BigInt.schema
 
 module Promise = {
-  type t<+'a> = promise<'a>
-
+  // Async-callback variant of `Promise.make`. The stdlib only ships the
+  // sync variant, but we rely on the async one in a couple of places.
   @new
-  external make: ((@uncurry 'a => unit, 'e => unit) => unit) => t<'a> = "Promise"
+  external makeAsync: ((@uncurry 'a => unit, 'e => unit) => promise<unit>) => promise<'a> =
+    "Promise"
 
-  @new
-  external makeAsync: ((@uncurry 'a => unit, 'e => unit) => promise<unit>) => t<'a> = "Promise"
-
-  @val @scope("Promise")
-  external resolve: 'a => t<'a> = "resolve"
-
-  @send external then: (t<'a>, @uncurry 'a => t<'b>) => t<'b> = "then"
-
-  @send
-  external thenResolve: (t<'a>, @uncurry 'a => 'b) => t<'b> = "then"
-
-  @send external finally: (t<'a>, unit => unit) => t<'a> = "finally"
-
-  @scope("Promise") @val
-  external reject: exn => t<_> = "reject"
-
-  @scope("Promise") @val
-  external all: array<t<'a>> => t<array<'a>> = "all"
-
-  @scope("Promise") @val
-  external all2: ((t<'a>, t<'b>)) => t<('a, 'b)> = "all"
-
-  @scope("Promise") @val
-  external all3: ((t<'a>, t<'b>, t<'c>)) => t<('a, 'b, 'c)> = "all"
-
-  @scope("Promise") @val
-  external all4: ((t<'a>, t<'b>, t<'c>, t<'d>)) => t<('a, 'b, 'c, 'd)> = "all"
-
-  @scope("Promise") @val
-  external all5: ((t<'a>, t<'b>, t<'c>, t<'d>, t<'e>)) => t<('a, 'b, 'c, 'd, 'e)> = "all"
-
-  @scope("Promise") @val
-  external all6: ((t<'a>, t<'b>, t<'c>, t<'d>, t<'e>, t<'f>)) => t<('a, 'b, 'c, 'd, 'e, 'f)> = "all"
-
-  @send
-  external catch: (t<'a>, @uncurry exn => t<'a>) => t<'a> = "catch"
-
+  // `catch` that swallows rejections silently. Handy for fire-and-forget
+  // promises that must not take the process down on failure.
   %%private(let noop = (() => ())->Obj.magic)
   let silentCatch = (promise: promise<'a>): promise<'a> => {
-    catch(promise, noop)
+    promise->Promise.catch(_ => noop())
   }
 
-  let catch = (promise: promise<'a>, callback: exn => promise<'a>): promise<'a> => {
-    catch(promise, err => {
-      callback(Js.Exn.anyToExnInternal(err))
-    })
-  }
-
+  // Like `catch`, but the callback returns a plain value instead of a new
+  // promise. Used when the fallback is a ready-made default.
   @send
-  external catchResolve: (t<'a>, exn => 'a) => t<'a> = "catch"
+  external catchResolve: (promise<'a>, exn => 'a) => promise<'a> = "catch"
 
-  @scope("Promise") @val
-  external race: array<t<'a>> => t<'a> = "race"
-
-  external done: promise<'a> => unit = "%ignore"
-
+  // Drop a promise's resolved value. We can't use `Promise.ignore` for this
+  // because that returns `unit`, not `promise<unit>`.
   external ignoreValue: promise<'a> => promise<unit> = "%identity"
 
+  // Escape hatches for awaiting non-promise values / producing fake promises
+  // in type-directed contexts. Used by a handful of bindings that need to
+  // interoperate with raw JS values.
   external unsafe_async: 'a => promise<'a> = "%identity"
   external unsafe_await: promise<'a> => 'a = "?await"
 
+  // Detects Thenable-like values at runtime (anything with a `.catch` method).
   let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }

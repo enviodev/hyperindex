@@ -55,6 +55,7 @@
     "@fuel-ts/utils": "0.96.1",
     "bignumber.js": "9.3.1",
     "eventsource": "4.1.0",
+    "js-sdsl": "4.4.2",
     "express": "4.19.2",
     "pino": "10.3.1",
     "pino-pretty": "13.1.3",

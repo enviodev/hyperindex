@@ -37,7 +37,7 @@ describe("Test Persistence layer init", () => {
     ).toEqual([])
 
     storageMock.resolveIsInitialized(false)
-    let _ = await Utils.Promise.resolve()
+    let _ = await Promise.resolve()
 
     t.expect(
       switch persistence.storageStatus {
@@ -76,9 +76,9 @@ describe("Test Persistence layer init", () => {
       checkpointId: 0n,
     }
     storageMock.resolveInitialize(initialState)
-    let _ = await Utils.Promise.resolve()
-    let _ = await Utils.Promise.resolve()
-    let _ = await Utils.Promise.resolve()
+    let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
+    let _ = await Promise.resolve()
 
     t.expect(
       persistence.storageStatus,
@@ -131,7 +131,7 @@ describe("Test Persistence layer init", () => {
     let _ = persistence->Persistence.init(~chainConfigs=[])
 
     storageMock.resolveIsInitialized(true)
-    let _ = await Utils.Promise.resolve()
+    let _ = await Promise.resolve()
 
     let initialState: Persistence.initialState = {
       cleanRun: false,
@@ -141,7 +141,7 @@ describe("Test Persistence layer init", () => {
       checkpointId: 0n,
     }
     storageMock.resolveLoadInitialState(initialState)
-    let _ = await Utils.Promise.resolve()
+    let _ = await Promise.resolve()
 
     t.expect(
       persistence.storageStatus,

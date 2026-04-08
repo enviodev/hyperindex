@@ -281,14 +281,14 @@ let preloadBatchOrThrow = async (
                   config,
                 }),
               })
-              ->Utils.Promise.thenResolve(_ => {
+              ->Promise.thenResolve(_ => {
                 timerRef->Prometheus.PreloadHandler.endOperation(
                   ~contract=contractName,
                   ~event=eventName,
                 )
               })
               ->Utils.Promise.silentCatch,
-              // Must have Utils.Promise.catch as well as normal catch,
+              // Must have Promise.catch as well as normal catch,
               // because if user throws an error before await in the handler,
               // it won't create a rejected promise
             )
@@ -327,7 +327,7 @@ let preloadBatchOrThrow = async (
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
 
-  let _ = await Utils.Promise.all(promises)
+  let _ = await Promise.all(promises)
 }
 
 let runBatchHandlersOrThrow = async (

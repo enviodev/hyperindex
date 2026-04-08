@@ -124,7 +124,7 @@ describe("LoadLayer", () => {
 
     let user1 = await getUser("1")
 
-    await Utils.Promise.make(
+    await Promise.make(
       (resolve, _reject) => {
         let _ = Js.Global.setTimeout(
           () => {
@@ -156,7 +156,7 @@ describe("LoadLayer", () => {
   })
 
   Async.it(
-    "Batches requests to db when requesting non existing entity in Utils.Promise.all",
+    "Batches requests to db when requesting non existing entity in Promise.all",
     async t => {
       let storageMock = MockIndexer.Storage.make([#loadByIdsOrThrow])
       let loadManager = LoadManager.make()
@@ -172,7 +172,7 @@ describe("LoadLayer", () => {
           ~shouldGroup=true,
         )
 
-      let users = await Utils.Promise.all([getUser("1"), getUser("2")])
+      let users = await Promise.all([getUser("1"), getUser("2")])
 
       t.expect(users).toEqual([None, None])
       t.expect(
@@ -216,7 +216,7 @@ describe("LoadLayer", () => {
           ~shouldGroup=true,
         )
 
-      let users = await Utils.Promise.all([getUser("1"), getUser("2")])
+      let users = await Promise.all([getUser("1"), getUser("2")])
 
       t.expect(users).toEqual([Some(user1->(Utils.magic: Indexer.Entities.User.t => Internal.entity)), None])
       t.expect(
@@ -266,7 +266,7 @@ describe("LoadLayer", () => {
       // There's a one more in-memory check
       // After schedule resolve and before load operation call
       // So skip a microtask to bypass the check
-      await Utils.Promise.resolve()
+      await Promise.resolve()
 
       inMemoryStore->MockIndexer.InMemoryStore.setEntity(~entityConfig=MockIndexer.entityConfig(User), user1)
 
@@ -316,7 +316,7 @@ describe("LoadLayer", () => {
           ~shouldGroup=true,
         )
 
-      let users = await Utils.Promise.all([
+      let users = await Promise.all([
         getUser("2"),
         (
           async () => {

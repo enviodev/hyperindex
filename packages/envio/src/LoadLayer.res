@@ -89,7 +89,7 @@ let callEffect = (
   effect.prevCallStartTimerRef = timerRef
 
   effect.handler(arg)
-  ->Utils.Promise.thenResolve(output => {
+  ->Promise.thenResolve(output => {
     inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
     if arg.context.cache {
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
@@ -98,7 +98,7 @@ let callEffect = (
   ->Utils.Promise.catchResolve(exn => {
     onError(~inputKey=arg.cacheKey, ~exn)
   })
-  ->Utils.Promise.finally(() => {
+  ->Promise.finally(() => {
     effect.activeCallsCount = effect.activeCallsCount - 1
     Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
       ~labels=effectName,
@@ -210,7 +210,7 @@ let rec executeWithRateLimit = (
       promises
       ->Array.push(
         nextWindowPromise
-        ->Utils.Promise.then(() => {
+        ->Promise.then(() => {
           if millisUntilReset.contents > 0 {
             Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.handleFloat(
               ~labels=effectName,
@@ -232,7 +232,7 @@ let rec executeWithRateLimit = (
   }
 
   // Wait for all to complete
-  promises->Utils.Promise.all
+  promises->Promise.all
 }
 
 let loadEffect = (
@@ -422,7 +422,7 @@ let loadByField = (
           )
         }
       })
-      ->Utils.Promise.all
+      ->Promise.all
 
     timerRef->Prometheus.StorageLoad.endOperation(
       ~operation=key,

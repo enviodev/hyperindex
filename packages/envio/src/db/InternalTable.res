@@ -240,7 +240,7 @@ WHERE "id" = $1;`
       promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Utils.Promise.all(promises)
+    Promise.all(promises)
   }
 
   type progressedChain = {
@@ -277,7 +277,7 @@ WHERE "id" = $1;`
       promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Utils.Promise.all(promises)->Utils.Promise.ignoreValue
+    Promise.all(promises)->Utils.Promise.ignoreValue
   }
 }
 
@@ -461,7 +461,7 @@ LIMIT 1;`
         (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
-    rawResult->Utils.Promise.thenResolve(rows => {
+    rawResult->Promise.thenResolve(rows => {
       rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->Utils.BigInt.fromStringUnsafe)
     })
   }

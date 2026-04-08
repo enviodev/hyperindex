@@ -48,9 +48,9 @@ module MakeManager = (S: State) => {
           S.taskReducer(self.state, task, ~dispatchAction=action =>
             dispatchAction(~stateId, self, action)
           )
-          ->Utils.Promise.catch(e => {
+          ->Promise.catch(e => {
             e->self.onError
-            Utils.Promise.resolve()
+            Promise.resolve()
           })
           ->ignore
         } catch {

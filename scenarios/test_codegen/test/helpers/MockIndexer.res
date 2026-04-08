@@ -115,7 +115,7 @@ module Storage = {
       storage: {
         isInitialized: implement(#isInitialized, () => {
           isInitializedCalls->Js.Array2.push(true)->ignore
-          Utils.Promise.make((resolve, _reject) => {
+          Promise.make((resolve, _reject) => {
             isInitializedResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
@@ -127,19 +127,19 @@ module Storage = {
             "enums": enums,
           })
           ->ignore
-          Utils.Promise.make((resolve, _reject) => {
+          Promise.make((resolve, _reject) => {
             initializeResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
         resumeInitialState: implement(#resumeInitialState, () => {
           resumeInitialStateCalls->Js.Array2.push(true)->ignore
-          Utils.Promise.make((resolve, _reject) => {
+          Promise.make((resolve, _reject) => {
             resumeInitialStateResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
         dumpEffectCache: implement(#dumpEffectCache, () => {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
-          Utils.Promise.resolve()
+          Promise.resolve()
         }),
         loadByIdsOrThrow: (
           type item,
@@ -154,7 +154,7 @@ module Storage = {
               "tableName": table.tableName,
             })
             ->ignore
-            Utils.Promise.resolve([])
+            Promise.resolve([])
           })
         },
         loadByFieldOrThrow: (
@@ -174,7 +174,7 @@ module Storage = {
               "operator": operator,
             })
             ->ignore
-            Utils.Promise.resolve([])
+            Promise.resolve([])
           })
         },
         reset: () => Js.Exn.raiseError("Not implemented"),
@@ -378,7 +378,7 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
         )
-        ->Utils.Promise.thenResolve(items => {
+        ->Promise.thenResolve(items => {
           items->S.parseOrThrow(ec.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
@@ -392,7 +392,7 @@ module Indexer = {
             ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
           ),
         )
-        ->Utils.Promise.thenResolve(items => {
+        ->Promise.thenResolve(items => {
           items->S.parseOrThrow(
             S.array(
               S.union([
@@ -420,7 +420,7 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
-        ->Utils.Promise.thenResolve(items => {
+        ->Promise.thenResolve(items => {
           items->S.parseOrThrow(entityConfig.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
@@ -433,7 +433,7 @@ module Indexer = {
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
         )
-        ->Utils.Promise.thenResolve(rows =>
+        ->Promise.thenResolve(rows =>
           rows
           ->(Utils.magic: unknown => array<unknown>)
           ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
@@ -561,7 +561,7 @@ module Source = {
     // With the function we keep only the pending calls,
     // and remove the resolved ones automatically.
     let keepOnlyPendingCalls = (~array, ~fn) => {
-      Utils.Promise.make((resolve, reject) => {
+      Promise.make((resolve, reject) => {
         let callRef = ref(%raw(`null`))
         callRef :=
           fn(
@@ -651,13 +651,13 @@ module Source = {
           pollingInterval,
           getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
             getBlockHashesCalls->Js.Array2.push(blockNumbers)->ignore
-            Utils.Promise.make((resolve, _reject) => {
+            Promise.make((resolve, _reject) => {
               getBlockHashesResolveFns->Js.Array2.push(resolve)->ignore
             })
           }),
           getHeightOrThrow: implement(#getHeightOrThrow, () => {
             getHeightOrThrowCalls->Js.Array2.push(true)->ignore
-            Utils.Promise.make((resolve, reject) => {
+            Promise.make((resolve, reject) => {
               getHeightOrThrowResolveFns->Js.Array2.push(resolve)->ignore
               getHeightOrThrowRejectFns->Js.Array2.push(reject)->ignore
             })
@@ -734,7 +734,7 @@ module Source = {
                                 ({context} as args) => {
                                   // We don't want preload optimization for the tests
                                   if context.isPreload {
-                                    Utils.Promise.resolve()
+                                    Promise.resolve()
                                   } else {
                                     handler(args)
                                   }

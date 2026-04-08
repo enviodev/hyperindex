@@ -354,5 +354,5 @@ let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger) =>
     ~sourceName,
     ~chainId,
     ~logger,
-  )->Utils.Promise.thenResolve(res => res->Result.map(res => res->Array.get(0)))
+  )->Promise.thenResolve(res => res->Result.map(res => res->Array.get(0)))
 let queryBlockDataMulti = BlockData.queryBlockDataMulti

@@ -864,7 +864,7 @@ let injectedTaskReducer = (
   | ProcessPartitionQueryResponse(partitionQueryResponse) =>
     state
     ->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)
-    ->Utils.Promise.done
+    ->Promise.done
   | PruneStaleEntityHistory =>
     let runPrune = async () => {
       switch state.chainManager->ChainManager.getSafeCheckpointId {
@@ -942,7 +942,7 @@ let injectedTaskReducer = (
         await state.chainManager.chainFetchers
         ->ChainMap.keys
         ->Array.map(fetchForChain(_))
-        ->Utils.Promise.all
+        ->Promise.all
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isPreparingRollback(state) {

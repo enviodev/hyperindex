@@ -11,11 +11,11 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
     poweredByHyperSync: false,
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
-      Utils.Promise.resolve(Ok([]))
+      Promise.resolve(Ok([]))
     },
     getHeightOrThrow: () => {
       // Report at least height 1 so the engine doesn't treat 0 as "no blocks available"
-      Utils.Promise.resolve(max(endBlock, 1))
+      Promise.resolve(max(endBlock, 1))
     },
     getItemsOrThrow: (
       ~fromBlock as _,
@@ -37,7 +37,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       }
 
       let reportedHeight = max(endBlock, 1)
-      Utils.Promise.resolve({
+      Promise.resolve({
         Source.knownHeight: reportedHeight,
         reorgGuard: {
           rangeLastBlock: {

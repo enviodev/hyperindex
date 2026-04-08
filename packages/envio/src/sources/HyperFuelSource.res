@@ -308,7 +308,7 @@ let make = ({chain, endpointUrl}: options): t => {
     //     ReorgDetection.blockNumber,
     //     blockTimestamp: timestamp,
     //     blockHash: hash,
-    //   }->Utils.Promise.resolve
+    //   }->Promise.resolve
     // | None =>
     //The optional block and timestamp of the last item returned by the query
     //(Optional in the case that there are no logs returned in the query)
@@ -324,7 +324,7 @@ let make = ({chain, endpointUrl}: options): t => {
           blockTimestamp: block.time,
           blockHash: block.id,
         }: ReorgDetection.blockDataWithTimestamp
-      )->Utils.Promise.resolve
+      )->Promise.resolve
     //If it does not match it means that there were no matching logs in the last
     //block so we should fetch the block data
     | Some(_)
@@ -332,7 +332,7 @@ let make = ({chain, endpointUrl}: options): t => {
       //If there were no logs at all in the current page query then fetch the
       //timestamp of the heighest block accounted for
       HyperFuel.queryBlockData(~serverUrl=endpointUrl, ~blockNumber=heighestBlockQueried, ~logger)
-      ->Utils.Promise.thenResolve(res => {
+      ->Promise.thenResolve(res => {
         switch res {
         | Some(blockData) => blockData
         | None =>
@@ -342,7 +342,7 @@ let make = ({chain, endpointUrl}: options): t => {
           )
         }
       })
-      ->Utils.Promise.catch(exn => {
+      ->Promise.catch(exn => {
         exn->mkLogAndRaise(
           ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
         )

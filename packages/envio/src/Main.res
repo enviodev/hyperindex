@@ -274,8 +274,8 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   app->post("/console/syncCache", (_req, res) => {
     if isDevelopmentMode {
       (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
-      ->Utils.Promise.thenResolve(_ => res->json(Boolean(true)))
-      ->Utils.Promise.done
+      ->Promise.thenResolve(_ => res->json(Boolean(true)))
+      ->Promise.done
     } else {
       res->json(Boolean(false))
     }
@@ -289,7 +289,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     let _ =
       PromClient.defaultRegister
       ->PromClient.metrics
-      ->Utils.Promise.thenResolve(metrics => res->endWithData(metrics))
+      ->Promise.thenResolve(metrics => res->endWithData(metrics))
   })
 
   app->get("/metrics/runtime", (_req, res) => {
@@ -297,7 +297,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     let _ =
       runtimeRegistry
       ->PromClient.metrics
-      ->Utils.Promise.thenResolve(metrics => res->endWithData(metrics))
+      ->Promise.thenResolve(metrics => res->endWithData(metrics))
   })
 
   let server = app->listen(Env.serverPort)

@@ -185,7 +185,7 @@ let fetchNext = async (
         await queries
         ->Array.map(q => {
           let promise = q->executeQuery
-          let _ = promise->Utils.Promise.thenResolve(_ => {
+          let _ = promise->Promise.thenResolve(_ => {
             sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
             Prometheus.IndexingConcurrency.set(
               ~concurrency=sourceManager.fetchingPartitionsCount,
@@ -197,7 +197,7 @@ let fetchNext = async (
           })
           promise
         })
-        ->Utils.Promise.all
+        ->Promise.all
     }
   }
 }
@@ -243,11 +243,11 @@ let getSourceNewHeight = async (
     // If subscription exists, wait for next height event
     switch sourceState.unsubscribe {
     | Some(_) =>
-      let subscriptionPromise = Utils.Promise.make((resolve, _reject) => {
+      let subscriptionPromise = Promise.make((resolve, _reject) => {
         sourceState.pendingHeightResolvers->Array.push(resolve)
       })
       // If subscription goes quiet for half the stall timeout, fall back to REST polling
-      let pollingFallback = Utils.delay(stallTimeout / 2)->Utils.Promise.then(async () => {
+      let pollingFallback = Utils.delay(stallTimeout / 2)->Promise.then(async () => {
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
@@ -266,7 +266,7 @@ let getSourceNewHeight = async (
         }
         h.contents
       })
-      let height = await Utils.Promise.race([subscriptionPromise, pollingFallback])
+      let height = await Promise.race([subscriptionPromise, pollingFallback])
 
       // Only accept heights greater than initialHeight
       if height > initialHeight {
@@ -418,7 +418,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
     sourceManager.newBlockStallTimeout
   }
 
-  let (source, newBlockHeight) = await Utils.Promise.race(
+  let (source, newBlockHeight) = await Promise.race(
     mainSources
     ->Array.map(async sourceState => {
       (
@@ -434,7 +434,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
       )
     })
     ->Array.concat([
-      Utils.delay(stallTimeout)->Utils.Promise.then(() => {
+      Utils.delay(stallTimeout)->Promise.then(() => {
         // Build fallback: sources not in mainSources with a valid role, even with recent lastFailedAt
         let fallbackSources = []
         sourcesState->Array.forEach(sourceState => {
@@ -466,9 +466,9 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
             )
           }
         }
-        // Utils.Promise.race will be forever pending if fallbackSources is empty
+        // Promise.race will be forever pending if fallbackSources is empty
         // which is good for this use case
-        Utils.Promise.race(
+        Promise.race(
           fallbackSources->Array.map(async sourceState => {
             (
               sourceState.source,
