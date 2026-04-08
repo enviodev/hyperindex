@@ -2,7 +2,7 @@
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
 import { S } from "envio";
-import { AllEvents } from "generated";
+import { indexer } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type RemoveReadonly<T> = T extends {}
@@ -17,7 +17,7 @@ type AssertSchemaType<Target, Schema> = TypeEqual<
 >;
 
 const SExtra = {
-  void: S.schema(undefined) as S.Schema<void, void>,
+  void: S.schema(undefined) as S.Schema<undefined, undefined>,
   swayOptional: <T>(schema: S.Schema<T>) =>
     S.union([
       {
@@ -43,14 +43,14 @@ const SExtra = {
 };
 
 const unitLogSchema = SExtra.void;
-AllEvents.UnitLog.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "UnitLog" },async ({ event }) => {
   S.assertOrThrow(event.params, unitLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof unitLogSchema>>(true);
 });
 
 const optionLogSchema = SExtra.swayOptional(S.number);
 // Add underscore here, because otherwise ReScript adds $$ which breaks runtime
-AllEvents.Option_.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "Option_" },async ({ event }) => {
   S.assertOrThrow(event.params, optionLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof optionLogSchema>>(
     true
@@ -61,7 +61,7 @@ const simpleStructWithOptionalSchema = S.schema({
   f1: S.number,
   f2: SExtra.swayOptional(S.number),
 });
-AllEvents.SimpleStructWithOptionalField.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "SimpleStructWithOptionalField" },async ({ event }) => {
   S.assertOrThrow(event.params, simpleStructWithOptionalSchema)!;
   expectType<
     AssertSchemaType<typeof event.params, typeof simpleStructWithOptionalSchema>
@@ -69,37 +69,37 @@ AllEvents.SimpleStructWithOptionalField.handler(async ({ event }) => {
 });
 
 const u8LogSchema = S.number;
-AllEvents.U8Log.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "U8Log" },async ({ event }) => {
   S.assertOrThrow(event.params, u8LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u8LogSchema>>(true);
 });
 
 const u16LogSchema = S.number;
-AllEvents.U16Log.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "U16Log" },async ({ event }) => {
   S.assertOrThrow(event.params, u16LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u16LogSchema>>(true);
 });
 
 const u32LogSchema = S.number;
-AllEvents.U32Log.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "U32Log" },async ({ event }) => {
   S.assertOrThrow(event.params, u32LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u32LogSchema>>(true);
 });
 
 const u64LogSchema = S.bigint;
-AllEvents.U64Log.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "U64Log" },async ({ event }) => {
   S.assertOrThrow(event.params, u64LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof u64LogSchema>>(true);
 });
 
 const b256LogSchema = S.string;
-AllEvents.B256Log.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "B256Log" },async ({ event }) => {
   S.assertOrThrow(event.params, b256LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof b256LogSchema>>(true);
 });
 
 const arrayLogSchema = S.array(S.number);
-AllEvents.ArrayLog.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "ArrayLog" },async ({ event }) => {
   S.assertOrThrow(event.params, arrayLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof arrayLogSchema>>(
     true
@@ -107,7 +107,7 @@ AllEvents.ArrayLog.handler(async ({ event }) => {
 });
 
 const resultLogSchema = SExtra.swayResult(S.number, S.boolean);
-AllEvents.Result.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "Result" },async ({ event }) => {
   S.assertOrThrow(event.params, resultLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof resultLogSchema>>(
     true
@@ -130,13 +130,13 @@ const statusSchema = S.union([
     },
   },
 ]);
-AllEvents.Status.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "Status" },async ({ event }) => {
   S.assertOrThrow(event.params, statusSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof statusSchema>>(true);
 });
 
 const tupleLogSchema = S.schema([S.bigint, S.boolean]);
-AllEvents.TupleLog.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "TupleLog" },async ({ event }) => {
   S.assertOrThrow(event.params, tupleLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof tupleLogSchema>>(
     true
@@ -146,7 +146,7 @@ AllEvents.TupleLog.handler(async ({ event }) => {
 const simpleStructSchema = S.schema({
   f1: S.number,
 });
-AllEvents.SimpleStruct.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "SimpleStruct" },async ({ event }) => {
   S.assertOrThrow(event.params, simpleStructSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof simpleStructSchema>>(
     true
@@ -154,7 +154,7 @@ AllEvents.SimpleStruct.handler(async ({ event }) => {
 });
 
 const unknownLogSchema = S.bigint;
-AllEvents.UnknownLog.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "UnknownLog" },async ({ event }) => {
   S.assertOrThrow(event.params, unknownLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof unknownLogSchema>>(
     true
@@ -162,29 +162,27 @@ AllEvents.UnknownLog.handler(async ({ event }) => {
 });
 
 const boolLogSchema = S.boolean;
-AllEvents.BoolLog.handler(
+indexer.onEvent({ contract: "AllEvents", event: "BoolLog", wildcard: true },
   async ({ event }) => {
     S.assertOrThrow(event.params, boolLogSchema)!;
     expectType<AssertSchemaType<typeof event.params, typeof boolLogSchema>>(
       true
     );
   },
-  { wildcard: true }
 );
 
 const strLogSchema = S.string;
-AllEvents.StrLog.handler(
+indexer.onEvent({ contract: "AllEvents", event: "StrLog", wildcard: true },
   async ({ event }) => {
     S.assertOrThrow(event.params, strLogSchema)!;
     expectType<AssertSchemaType<typeof event.params, typeof strLogSchema>>(
       true
     );
   },
-  { wildcard: true }
 );
 
 const stringLogSchema = S.string;
-AllEvents.StringLog.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "StringLog" },async ({ event }) => {
   S.assertOrThrow(event.params, stringLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof stringLogSchema>>(
     true
@@ -192,7 +190,7 @@ AllEvents.StringLog.handler(async ({ event }) => {
 });
 
 const option2LogSchema = SExtra.swayOptional(SExtra.swayOptional(S.number));
-AllEvents.Option2.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "Option2" },async ({ event }) => {
   S.assertOrThrow(event.params, option2LogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof option2LogSchema>>(
     true
@@ -200,13 +198,13 @@ AllEvents.Option2.handler(async ({ event }) => {
 });
 
 const vecLogSchema = S.array(S.bigint);
-AllEvents.VecLog.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "VecLog" },async ({ event }) => {
   S.assertOrThrow(event.params, vecLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof vecLogSchema>>(true);
 });
 
 const bytesLogSchema = S.unknown;
-AllEvents.BytesLog.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "BytesLog" },async ({ event }) => {
   S.assertOrThrow(event.params, bytesLogSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof bytesLogSchema>>(
     true
@@ -217,7 +215,7 @@ const mintSchema = S.schema({
   subId: S.string,
   amount: S.bigint,
 });
-AllEvents.Mint.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "Mint" },async ({ event }) => {
   S.assertOrThrow(event.params, mintSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof mintSchema>>(true);
 });
@@ -226,7 +224,7 @@ const burnSchema = S.schema({
   subId: S.string,
   amount: S.bigint,
 });
-AllEvents.Burn.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "Burn" },async ({ event }) => {
   S.assertOrThrow(event.params, burnSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof burnSchema>>(true);
 });
@@ -236,7 +234,7 @@ const transferOutSchema = S.schema({
   to: S.address,
   amount: S.bigint,
 });
-AllEvents.Transfer.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "Transfer" },async ({ event }) => {
   S.assertOrThrow(event.params, transferOutSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof transferOutSchema>>(
     true
@@ -246,7 +244,7 @@ AllEvents.Transfer.handler(async ({ event }) => {
 const tagsEventSchema = S.schema({
   tags: SExtra.swayOptional(S.array(S.string)),
 });
-AllEvents.TagsEvent.handler(async ({ event }) => {
+indexer.onEvent({ contract: "AllEvents", event: "TagsEvent" },async ({ event }) => {
   S.assertOrThrow(event.params, tagsEventSchema)!;
   expectType<AssertSchemaType<typeof event.params, typeof tagsEventSchema>>(
     true
@@ -258,7 +256,7 @@ AllEvents.TagsEvent.handler(async ({ event }) => {
 //   to: S.string,
 //   amount: S.bigint,
 // });
-// AllEvents.Call.handler(
+// indexer.onEvent({ contract: "AllEvents", event: "Call" },
 //   async ({ event }) => {
 //     S.assertOrThrow(event.params,callSchema)!;
 //     expectType<AssertSchemaType<typeof event.params, typeof callSchema>>(true);

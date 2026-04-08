@@ -51,7 +51,10 @@ fn get_abi_path_string(local_import_args: &LocalImportArgs) -> Result<String> {
     match &local_import_args.abi_file {
         Some(p) => Ok(p.clone()),
         None => prompt_abi_file_path(|path| {
-            let maybe_parsed_abi = FuelAbi::parse(PathBuf::from(&path));
+            // Validation-only parse; the path_relative_to_root argument is
+            // unused here because the interactive prompt only checks the
+            // file is parseable.
+            let maybe_parsed_abi = FuelAbi::parse(PathBuf::from(&path), path.to_string());
             match maybe_parsed_abi {
                 Ok(_) => Validation::Valid,
                 Err(e) => Validation::Invalid(e.into()),
@@ -120,7 +123,10 @@ async fn get_contract_import_selection(mut args: ContractImportArgs) -> Result<S
 
     let abi_path_string =
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
-    let abi = FuelAbi::parse(PathBuf::from(&abi_path_string)).context("Failed parsing Fuel ABI")?;
+    // During interactive init we only need ABI parsing — the eventual codegen
+    // uses the relative path stored in the project's config.yaml, not this one.
+    let abi = FuelAbi::parse(PathBuf::from(&abi_path_string), abi_path_string.clone())
+        .context("Failed parsing Fuel ABI")?;
 
     let mut selected_events: Vec<EventConfig> = abi
         .get_logs()

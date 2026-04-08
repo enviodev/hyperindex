@@ -82,7 +82,6 @@ type t = {
   maxAddrInPartition: int,
   batchSize: int,
   lowercaseAddresses: bool,
-  addContractNameToContractNameMapping: dict<string>,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
@@ -559,7 +558,7 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
             ~isWildcard,
             ~handler,
             ~contractRegister,
-            ~eventFilters=HandlerRegister.getEventFilters(~contractName, ~eventName),
+            ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
             ~globalBlockFieldsSet,
@@ -714,15 +713,6 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
     })
     ->ChainMap.fromArrayUnsafe
 
-  // Build the contract name mapping for efficient lookup
-  let addContractNameToContractNameMapping = Js.Dict.empty()
-  chains->Array.forEach(chainConfig => {
-    chainConfig.contracts->Array.forEach(contract => {
-      let addKey = "add" ++ contract.name->Utils.String.capitalize
-      addContractNameToContractNameMapping->Js.Dict.set(addKey, contract.name)
-    })
-  })
-
   let ecosystem = switch ecosystemName {
   | Ecosystem.Evm => Evm.ecosystem
   | Ecosystem.Fuel => Fuel.ecosystem
@@ -783,7 +773,6 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
     maxAddrInPartition,
     batchSize: publicConfig["fullBatchSize"]->Option.getWithDefault(5000),
     lowercaseAddresses,
-    addContractNameToContractNameMapping,
     userEntitiesByName,
     userEntities,
     allEntities,

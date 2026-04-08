@@ -11,6 +11,13 @@ import {
   type FuelEvent,
   type SvmChainId,
   type TestIndexer,
+  type EvmOnEventOptions,
+  type EvmOnEventHandler,
+  type EvmContractRegisterOptions,
+  type EvmContractRegisterHandler,
+  type EvmOnEventContext,
+  type EvmContractRegisterContext,
+  type OnEventWhere,
 } from "generated";
 import { type Address } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -682,6 +689,45 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.ok(
       addresses?.some((a: { contract: string }) => a.contract === "NftFactory"),
       "Composed contractRegister should register NftFactory"
+    );
+  });
+
+  it("captured contractRegister add() throws after handler resolved", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    // Two sequential FactoryEvent events:
+    //   1. testCase "captureAdd"       — contractRegister handler stashes
+    //      context.chain.SimpleNft.add into a module-scoped variable.
+    //   2. testCase "callCapturedAdd"  — onEvent handler tries to call the
+    //      captured closure. By then the first event's contractRegister params
+    //      have isResolved=true, so the closure must throw. The handler
+    //      records the outcome via the CustomSelectionTestPass entity id.
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "captureAdd" },
+            },
+            {
+              contract: "Gravatar",
+              event: "FactoryEvent",
+              params: { contract: dcAddress, testCase: "callCapturedAdd" },
+            },
+          ],
+        },
+      },
+    });
+
+    const sets = result.changes[0]?.CustomSelectionTestPass?.sets ?? [];
+    assert.ok(
+      sets.some((e: { id: string }) => e.id === "captured-add-threw"),
+      `Captured contractRegister add() should throw after handler resolved. Got entity ids: ${sets.map((e: { id: string }) => e.id).join(", ")}`
     );
   });
 
@@ -1417,5 +1463,191 @@ describe("Use Envio test framework to test event handlers", () => {
         "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'pnpm envio codegen'"
       >
     >(true);
+  });
+});
+
+describe("onEvent / contractRegister types", () => {
+  it("EvmOnEventOptions resolves contract/event literals from Event", () => {
+    type GravatarNewGravatar = EvmEvent<"Gravatar", "NewGravatar">;
+    type Opts = EvmOnEventOptions<GravatarNewGravatar>;
+
+    // Gravatar.NewGravatar has no indexed params, so the project-bound
+    // EvmEventFilters lookup resolves params to {} and `where` is typed
+    // as `OnEventWhere<{}>` rather than `unknown`.
+    expectType<
+      TypeEqual<
+        Opts,
+        {
+          readonly contract: "Gravatar";
+          readonly event: "NewGravatar";
+          readonly wildcard?: boolean;
+          readonly where?: OnEventWhere<{}>;
+        }
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterOptions has same shape as EvmOnEventOptions", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    expectType<
+      TypeEqual<EvmContractRegisterOptions<Ev>, EvmOnEventOptions<Ev>>
+    >(true);
+  });
+
+  it("EvmOnEventHandler has correct args shape", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type Handler = EvmOnEventHandler<Ev>;
+
+    expectType<
+      TypeEqual<
+        Handler,
+        (args: { event: Ev; context: EvmOnEventContext }) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterHandler uses EvmContractRegisterContext", () => {
+    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type Handler = EvmContractRegisterHandler<Ev>;
+
+    expectType<
+      TypeEqual<
+        Handler,
+        (args: {
+          event: Ev;
+          context: EvmContractRegisterContext;
+        }) => Promise<void>
+      >
+    >(true);
+  });
+
+  it("EvmOnEventContext has chain info and entity ops", () => {
+    expectType<TypeEqual<EvmOnEventContext["chain"]["id"], EvmChainId>>(true);
+    expectType<TypeEqual<EvmOnEventContext["chain"]["isLive"], boolean>>(true);
+    expectType<TypeEqual<EvmOnEventContext["isPreload"], boolean>>(true);
+
+    // Entity ops are available on context
+    expectType<
+      TypeEqual<
+        EvmOnEventContext["User"]["get"],
+        (id: string) => Promise<User | undefined>
+      >
+    >(true);
+    expectType<
+      TypeEqual<EvmOnEventContext["User"]["set"], (entity: User) => void>
+    >(true);
+  });
+
+  it("EvmContractRegisterContext has chain.ContractName.add() registration", () => {
+    expectType<
+      TypeEqual<EvmContractRegisterContext["chain"]["id"], EvmChainId>
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["NftFactory"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["SimpleNft"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        EvmContractRegisterContext["chain"]["Gravatar"]["add"],
+        (address: Address) => void
+      >
+    >(true);
+  });
+
+  it("EvmContractRegisterContext does not expose entity operations", () => {
+    // @ts-expect-error - User entity ops should not be on contractRegister context
+    type _userOnCr = EvmContractRegisterContext["User"];
+  });
+
+  it("indexer.onEvent rejects invalid contract/event combinations", () => {
+    indexer.onEvent(
+      // @ts-expect-error - "BadContract" is not a configured contract
+      { contract: "BadContract", event: "X" },
+      async () => {},
+    );
+
+    indexer.onEvent(
+      // @ts-expect-error - "BadEvent" is not an event of Gravatar
+      { contract: "Gravatar", event: "BadEvent" },
+      async () => {},
+    );
+
+    // Valid combination should compile (no @ts-expect-error)
+    indexer.onEvent(
+      { contract: "Gravatar", event: "NewGravatar" },
+      async ({ event }) => {
+        expectType<TypeEqual<typeof event.params.displayName, string>>(true);
+      },
+    );
+  });
+
+  it("indexer.contractRegister exposes context.chain.ContractName.add()", () => {
+    indexer.contractRegister(
+      { contract: "NftFactory", event: "SimpleNftCreated" },
+      async ({ event, context }) => {
+        // event is typed
+        expectType<
+          TypeEqual<typeof event.params.contractAddress, `0x${string}`>
+        >(true);
+        // chain.ContractName.add(address) is available
+        context.chain.SimpleNft.add(event.params.contractAddress);
+        context.chain.NftFactory.add(event.params.contractAddress);
+        // @ts-expect-error - UnknownContract is not configured
+        context.chain.UnknownContract.add(event.params.contractAddress);
+      },
+    );
+  });
+
+  it("EvmOnEventHandler defaults to union of all events", () => {
+    // Without args, the handler accepts the union of all EVM events
+    type DefaultHandler = EvmOnEventHandler;
+    type DefaultArgs = Parameters<DefaultHandler>[0];
+
+    // The event field is the union of all EVM events
+    expectType<TypeEqual<DefaultArgs["event"], EvmEvent>>(true);
+    expectType<TypeEqual<DefaultArgs["context"], EvmOnEventContext>>(true);
+  });
+
+  it("EvmOnEventOptions rejects invalid Event constraint", () => {
+    // EventLike requires contractName and eventName fields
+    // @ts-expect-error - missing required fields
+    type _bad = EvmOnEventOptions<{ foo: "bar" }>;
+  });
+
+  it("EvmOnEventOptions preserves contract/event pairing across union members", () => {
+    // With distributive conditional typing, a union Event type yields a union
+    // of options where each member's contract/event are paired together.
+    // Mismatched pairings (e.g. contract: "Gravatar", event: "SimpleNftCreated")
+    // must be rejected.
+    type UnionEvent =
+      | EvmEvent<"Gravatar", "NewGravatar">
+      | EvmEvent<"NftFactory", "SimpleNftCreated">;
+    type UnionOpts = EvmOnEventOptions<UnionEvent>;
+
+    // Valid pairings compile
+    const _a: UnionOpts = { contract: "Gravatar", event: "NewGravatar" };
+    const _b: UnionOpts = {
+      contract: "NftFactory",
+      event: "SimpleNftCreated",
+    };
+
+    // @ts-expect-error - "SimpleNftCreated" is not an event of "Gravatar"
+    const _bad1: UnionOpts = {
+      contract: "Gravatar",
+      event: "SimpleNftCreated",
+    };
+    // @ts-expect-error - "NewGravatar" is not an event of "NftFactory"
+    const _bad2: UnionOpts = {
+      contract: "NftFactory",
+      event: "NewGravatar",
+    };
   });
 });

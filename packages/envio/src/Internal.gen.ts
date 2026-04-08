@@ -5,7 +5,7 @@
 
 import type {GenericContractRegister as $$genericContractRegister} from './Types.ts';
 
-import type {Invalid as $$noEventFilters} from './Types.ts';
+import type {Invalid as $$noOnEventWhere} from './Types.ts';
 
 import type {t as Address_t} from './Address.gen.js';
 
@@ -40,18 +40,18 @@ export type entityHandlerContext<entity> = {
   readonly deleteUnsafe: (_1:string) => void
 };
 
-export type genericHandlerWithLoader<loader,handler,eventFilters> = {
+export type genericHandlerWithLoader<loader,handler,where> = {
   readonly loader: loader; 
   readonly handler: handler; 
   readonly wildcard?: boolean; 
-  readonly eventFilters?: eventFilters
+  readonly where?: where
 };
 
 export abstract class fuelEventConfig { protected opaque!: any }; /* simulate opaque types */
 
 export abstract class evmEventConfig { protected opaque!: any }; /* simulate opaque types */
 
-export type eventOptions<eventFilters> = { readonly wildcard?: boolean; readonly eventFilters?: eventFilters };
+export type eventOptions<where> = { readonly wildcard?: boolean; readonly where?: where };
 
 export type fuelSupplyParams = { readonly subId: string; readonly amount: bigint };
 
@@ -61,4 +61,4 @@ export type fuelTransferParams = {
   readonly amount: bigint
 };
 
-export type noEventFilters = $$noEventFilters;
+export type noOnEventWhere = $$noOnEventWhere;

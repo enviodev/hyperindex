@@ -1527,7 +1527,8 @@ impl Event {
             PathBuf::from(&abi_file_path),
         )
         .context("Failed to get path to ABI relative to the root of the project")?;
-        let fuel_abi = FuelAbi::parse(abi_path).context("Failed to parse ABI".to_string())?;
+        let fuel_abi = FuelAbi::parse(abi_path, abi_file_path.to_string())
+            .context("Failed to parse ABI".to_string())?;
 
         let mut events = vec![];
 

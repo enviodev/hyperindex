@@ -27,10 +27,11 @@ chains:
 
 ## Handler with `wildcard: true`
 
-Pass `wildcard: true` as the handler's 2nd argument. Use `event.srcAddress` to identify which contract emitted the event:
+Pass `wildcard: true` in the options object to `indexer.onEvent`. Use `event.srcAddress` to identify which contract emitted the event:
 
 ```ts
-ERC20.Transfer.handler(
+indexer.onEvent(
+  { contract: "ERC20", event: "Transfer", wildcard: true },
   async ({ event, context }) => {
     const tokenAddress = event.srcAddress; // The actual contract address
     const id = `${event.chainId}-${event.transaction.hash}-${event.logIndex}`;
@@ -43,21 +44,24 @@ ERC20.Transfer.handler(
       value: event.params.value,
     });
   },
-  { wildcard: true }
 );
 ```
 
-## Combining with Event Filters
+## Combining with Event Filters (`where`)
 
-Wildcard indexing produces high event volume. Use `eventFilters` to reduce it — see the `indexing-filters` skill for array, function, and `addresses` forms.
+Wildcard indexing produces high event volume. Use `where` to reduce it — see the `indexing-filters` skill for object, array, function, and `addresses` forms.
 
 ```ts
-ERC20.Transfer.handler(
-  async ({ event, context }) => { /* ... */ },
+indexer.onEvent(
   {
+    contract: "ERC20",
+    event: "Transfer",
     wildcard: true,
-    eventFilters: [{ from: ZERO_ADDRESS }],
-  }
+    where: { params: { from: ZERO_ADDRESS } },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
 );
 ```
 

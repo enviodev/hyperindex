@@ -80,7 +80,8 @@ let make = (
         isRegistered
       }
 
-      // Check if event has Static([]) filters (from eventFilters: false)
+      // Check if event has Static([]) filters (from a dynamic where
+      // callback returning `false` / SkipAll for this chain).
       // If so, skip it entirely - it should never be fetched
       let shouldSkip = try {
         let getEventFiltersOrThrow = (
