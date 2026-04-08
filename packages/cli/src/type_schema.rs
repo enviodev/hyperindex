@@ -751,12 +751,31 @@ impl TypeIdent {
                     .join(", ");
                 format!("S.tuple(s => ({}))", inner_str)
             }
-            //Inline records are only used for Solidity struct event params. EVM events
-            //build their param schemas at runtime via EventConfigBuilder.res, and Fuel
-            //codegen never produces TypeIdent::Record, so this branch is unreachable.
-            Self::Record(_) => {
-                let _ = mode;
-                unreachable!("TypeIdent::Record schema unused — events build schema at runtime")
+            // Inline records render as ReScript JS object types
+            // (`{"funder": Address.t, ...}`), so the schema callback must
+            // return a matching JS object literal with quoted keys —
+            // mirroring how `to_string_internal` and
+            // `get_default_value_rescript` emit them.
+            Self::Record(fields) => {
+                if fields.is_empty() {
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
+                }
+                let inline_type = self.to_string();
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!(
+                            "\"{}\": s.field(\"{}\", {})",
+                            key,
+                            key,
+                            f.type_ident.to_rescript_schema(mode)
+                        )
+                    })
+                    .join(", ");
+                format!("S.object((s): {inline_type} => {{{inner}}})")
             }
             Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.config.schema", &enum_name.capitalized)
@@ -1120,6 +1139,35 @@ mod tests {
             TypeExpr::Record(vec![])
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.object((_): eventArgs => {})".to_string()
+        );
+        // Inline TypeIdent::Record renders as a JS object schema with quoted
+        // keys, matching how `to_string_internal` and
+        // `get_default_value_rescript` emit them. Verifies the schema-side
+        // implementation that replaces a stale unreachable!() — see CodeRabbit
+        // review on PR #1096.
+        assert_eq!(
+            TypeIdent::Record(vec![
+                RecordField::new("funder".to_string(), TypeIdent::Address),
+                RecordField::new("amount".to_string(), TypeIdent::BigInt),
+            ])
+            .to_rescript_schema(&SchemaMode::ForDb),
+            "S.object((s): {\"funder\": Address.t, \"amount\": bigint} => \
+             {\"funder\": s.field(\"funder\", Address.schema), \"amount\": s.field(\"amount\", \
+             Utils.BigInt.schema)})"
+                .to_string()
+        );
+        // Original keys with `as_name` (e.g. unnamed slots `"1"` from mixed
+        // tuples) round-trip to quoted keys via `as_name.unwrap_or(name)`.
+        assert_eq!(
+            TypeIdent::Record(vec![
+                RecordField::new("label".to_string(), TypeIdent::String),
+                RecordField::new("1".to_string(), TypeIdent::BigInt),
+            ])
+            .to_rescript_schema(&SchemaMode::ForDb),
+            "S.object((s): {\"label\": string, \"1\": bigint} => \
+             {\"label\": s.field(\"label\", S.string), \"1\": s.field(\"1\", \
+             Utils.BigInt.schema)})"
+                .to_string()
         );
     }
 
