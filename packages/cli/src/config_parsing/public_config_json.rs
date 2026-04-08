@@ -385,7 +385,16 @@ impl SystemConfig {
                                             name: p.name.clone(),
                                             abi_type: p.kind.to_signature_string(),
                                             indexed: p.indexed,
-                                            components: abi_type_to_components(&p.kind),
+                                            // Indexed structs/tuples are delivered as keccak256
+                                            // topic hashes, not decoded tuples, so the runtime
+                                            // can't rebuild a named record from them. Skip the
+                                            // component metadata so the decoder takes the legacy
+                                            // path and leaves the value as the raw hash.
+                                            components: if p.indexed {
+                                                None
+                                            } else {
+                                                abi_type_to_components(&p.kind)
+                                            },
                                         })
                                         .collect();
                                     (params, None)

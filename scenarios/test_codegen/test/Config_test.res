@@ -290,11 +290,45 @@ describe("EventConfigBuilder", () => {
     let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
     let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
       indexed: [],
-      body: [("hi", 42n, "0xabc", true)->Utils.magic],
+      body: [
+        ("hi", 42n, "0xabc", true)->(
+          Utils.magic: ((string, bigint, string, bool)) => HyperSyncClient.Decoder.decodedRaw
+        ),
+      ],
     }
     let decoded = decoder(mockDecodedEvent)
     t.expect(decoded).toEqual(
-      {"mixed": {"label": "hi", "1": 42n, "recipient": "0xabc", "3": true}}->Utils.magic,
+      {"mixed": {"label": "hi", "1": 42n, "recipient": "0xabc", "3": true}}->(
+        Utils.magic: {..} => Internal.eventParams
+      ),
+    )
+  })
+
+  it("buildHyperSyncDecoder leaves indexed struct params as topic hashes", t => {
+    // Indexed structs/tuples are delivered as keccak256 topic hashes (single
+    // hex strings), not positional arrays. Even if `components` metadata is
+    // present, the decoder must NOT try to rebuild a named record from them —
+    // doing so would treat the hash as an array and read garbage.
+    let params: array<EventConfigBuilder.eventParam> = [
+      {
+        name: "indexedStruct",
+        abiType: "(address,uint256)",
+        indexed: true,
+        components: [
+          {name: "owner", abiType: "address"},
+          {name: "amount", abiType: "uint256"},
+        ],
+      },
+    ]
+    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
+    let topicHash = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
+      indexed: [topicHash->(Utils.magic: string => HyperSyncClient.Decoder.decodedRaw)],
+      body: [],
+    }
+    let decoded = decoder(mockDecodedEvent)
+    t.expect(decoded).toEqual(
+      {"indexedStruct": topicHash}->(Utils.magic: {..} => Internal.eventParams),
     )
   })
 

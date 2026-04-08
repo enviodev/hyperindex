@@ -3,13 +3,38 @@
 mod nested_params {
     use super::*;
     use crate::config_parsing::abi_compat::{AbiType, EventParam};
-    pub type ParamIndex = usize;
+
+    ///A single segment of a path into a nested tuple/struct param. A tuple
+    ///level renders as a ReScript JS object / TS record iff at least one of
+    ///its components is named (matches `event_parsing.rs::abi_type_to_rescript`),
+    ///in which case all segments at that level are `Field`s — unnamed slots
+    ///fall back to their positional index as the field key. Fully anonymous
+    ///tuples stay positional and use `Index`.
+    #[derive(Debug, Clone, PartialEq, Serialize)]
+    pub enum AccessorSegment {
+        Index(usize),
+        Field(String),
+    }
+
+    impl AccessorSegment {
+        /// JS object key suffix for the generated handler — both TS and ReScript
+        /// JS object types are accessed via `value["key"]`, even for `Index`
+        /// segments since at runtime arrays support numeric string keys too.
+        /// Anonymous-tuple paths (which only contain `Index` segments) take the
+        /// dedicated ReScript path in `generate_rescript_handler_content`.
+        fn as_entity_segment(&self) -> String {
+            match self {
+                Self::Index(i) => i.to_string(),
+                Self::Field(name) => name.clone(),
+            }
+        }
+    }
 
     ///Recursive Representation of param token. With reference to it's own index
     ///if it is a tuple
     enum NestedEventParam {
-        Param(EventParam, ParamIndex),
-        TupleParam(ParamIndex, Box<NestedEventParam>),
+        Param(EventParam, usize),
+        TupleParam(AccessorSegment, Box<NestedEventParam>),
         Tuple(Vec<NestedEventParam>),
     }
 
@@ -17,13 +42,27 @@ mod nested_params {
         ///Constructs NestedEventParam from an EventParam
         fn from(event_input: EventParam, param_index: usize) -> Self {
             if let AbiType::Tuple(fields) = &event_input.kind {
-                //in the tuple case return a Tuple type with an array of inner
-                //event params
+                // A tuple level renders as a record (and so its segments are
+                // `Field`s) iff at least one component is named. Otherwise it
+                // stays a positional tuple.
+                let is_record = fields
+                    .iter()
+                    .any(|f| f.name.as_ref().is_some_and(|n| !n.is_empty()));
                 Self::Tuple(
                     fields
                         .iter()
                         .enumerate()
                         .map(|(i, f)| {
+                            let segment = if is_record {
+                                AccessorSegment::Field(
+                                    f.name
+                                        .clone()
+                                        .filter(|n| !n.is_empty())
+                                        .unwrap_or_else(|| i.to_string()),
+                                )
+                            } else {
+                                AccessorSegment::Index(i)
+                            };
                             let inner_event_input = EventParam {
                                 // Keep the same name as the event input name
                                 name: event_input.name.clone(),
@@ -33,7 +72,7 @@ mod nested_params {
                             };
                             //Recursively get the inner NestedEventParam type
                             Self::TupleParam(
-                                i,
+                                segment,
                                 Box::new(Self::from(inner_event_input, param_index)),
                             )
                         })
@@ -48,29 +87,29 @@ mod nested_params {
         //calls this with an empty vec.
         fn get_flattened_inputs_inner(
             &self,
-            mut accessor_indexes: Vec<ParamIndex>,
+            mut accessor_segments: Vec<AccessorSegment>,
         ) -> Vec<FlattenedEventParam> {
             match &self {
                 Self::Param(e, i) => {
-                    let accessor_indexes = if accessor_indexes.is_empty() {
+                    let accessor_segments = if accessor_segments.is_empty() {
                         None
                     } else {
-                        Some(accessor_indexes)
+                        Some(accessor_segments)
                     };
 
                     vec![FlattenedEventParam {
                         event_param_pos: *i,
                         event_param: e.clone(),
-                        accessor_indexes,
+                        accessor_segments,
                     }]
                 }
-                Self::TupleParam(i, arg_or_tuple) => {
-                    accessor_indexes.push(*i);
-                    arg_or_tuple.get_flattened_inputs_inner(accessor_indexes)
+                Self::TupleParam(segment, arg_or_tuple) => {
+                    accessor_segments.push(segment.clone());
+                    arg_or_tuple.get_flattened_inputs_inner(accessor_segments)
                 }
                 Self::Tuple(params) => params
                     .iter()
-                    .flat_map(|param| param.get_flattened_inputs_inner(accessor_indexes.clone()))
+                    .flat_map(|param| param.get_flattened_inputs_inner(accessor_segments.clone()))
                     .collect::<Vec<_>>(),
             }
         }
@@ -84,13 +123,13 @@ mod nested_params {
 
     ///A flattened representation of an event param, meaning
     ///tuples/structs would broken into a single FlattenedEventParam for each
-    ///param that it contains and include accessor indexes for where to find that param
+    ///param that it contains and include accessor segments for where to find that param
     ///within its parent tuple/struct
     #[derive(Debug, Clone, PartialEq)]
     pub struct FlattenedEventParam {
         event_param_pos: usize,
         pub event_param: EventParam,
-        pub accessor_indexes: Option<Vec<ParamIndex>>,
+        pub accessor_segments: Option<Vec<AccessorSegment>>,
     }
 
     impl FlattenedEventParam {
@@ -104,30 +143,30 @@ mod nested_params {
         }
         ///Gets the key of the param for the entity representing the event
         ///If this is not a tuple it will be the same as the "event_param_key"
-        ///eg. MyEventEntity has a param called myTupleParam_1_2, where as the
-        ///event_param_key is myTupleParam with accessor_indexes of [1, 2]
-        ///In a JS template this would be myTupleParam[1][2] to get the value of the parameter
+        ///eg. MyEventEntity has a param called myTupleParam_funder_amount (or
+        ///myTupleParam_1_2 for anonymous tuples), where as the event_param_key
+        ///is myTupleParam with accessor_segments of [Field("funder"), Field("amount")].
         pub fn get_entity_key(&self) -> CapitalizedOptions {
-            let accessor_indexes_string = self.accessor_indexes.as_ref().map_or_else(
-                //If there is no accessor_indexes this is an empty string
+            let accessor_segments_string = self.accessor_segments.as_ref().map_or_else(
+                //If there is no accessor_segments this is an empty string
                 || "".to_string(),
-                |accessor_indexes| {
+                |segments| {
                     format!(
                         "_{}",
-                        //join each index with "_"
-                        //eg. _1_2 for a double nested tuple
-                        accessor_indexes
+                        //join each segment with "_"
+                        //eg. _funder_amount for named struct fields, _1_2 for anonymous tuples
+                        segments
                             .iter()
-                            .map(|u| u.to_string())
+                            .map(|s| s.as_entity_segment())
                             .collect::<Vec<_>>()
                             .join("_")
                     )
                 },
             );
 
-            //Join the param name with the accessor_indexes_string
-            //eg. myTupleParam_1_2 or myNonTupleParam if there are no accessor indexes
-            let mut entity_key = format!("{}{}", self.get_param_name(), accessor_indexes_string);
+            //Join the param name with the accessor_segments_string
+            //eg. myTupleParam_funder or myNonTupleParam if there are no accessor segments
+            let mut entity_key = format!("{}{}", self.get_param_name(), accessor_segments_string);
 
             // Check if entity_key is "id" and rename to "event_id"
             if entity_key == "id" {
@@ -139,9 +178,10 @@ mod nested_params {
 
         ///Gets the event param "key" for the event type. Will be the same
         ///as the entity key if the type is not a tuple. In the case of a tuple
-        ///entity key will append _0_1 for eg to represent thested param in a flat structure
-        ///the event param key will not append this and will need to access that tuple at the given
-        ///index
+        ///entity key will append `_funder_amount` (or `_0_1` for anonymous tuples)
+        ///to represent the nested param in a flat structure; the event param key
+        ///will not append this and will need to access that tuple at the given
+        ///segment.
         pub fn get_event_param_key(&self) -> CapitalizedOptions {
             self.get_param_name().to_capitalized_options()
         }
@@ -152,13 +192,13 @@ mod nested_params {
             name: &str,
             kind: AbiType,
             indexed: bool,
-            accessor_indexes: Vec<usize>,
+            accessor_segments: Vec<AccessorSegment>,
             event_param_pos: usize,
         ) -> Self {
-            let accessor_indexes = if accessor_indexes.is_empty() {
+            let accessor_segments = if accessor_segments.is_empty() {
                 None
             } else {
-                Some(accessor_indexes)
+                Some(accessor_segments)
             };
 
             FlattenedEventParam {
@@ -168,7 +208,7 @@ mod nested_params {
                     kind,
                     indexed,
                 },
-                accessor_indexes,
+                accessor_segments,
             }
         }
     }
@@ -202,7 +242,7 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{Context, Result};
-use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
+use nested_params::{flatten_event_inputs, AccessorSegment, FlattenedEventParam};
 use serde::Serialize;
 use std::{path::Path, vec};
 
@@ -302,10 +342,20 @@ impl Contract {
                     param.entity_key.uncapitalized, param.event_key.original
                 ));
 
-                // Add tuple accessor indexes if present
-                if let Some(indexes) = &param.tuple_param_accessor_indexes {
-                    for index in indexes {
-                        content.push_str(&format!("[{}]", index));
+                // Add tuple accessor segments if present. Named-tuple paths
+                // (Solidity structs / mixed tuples) emit JS object key access
+                // (`["funder"]`); fully anonymous tuple paths emit positional
+                // index access (`[0]`).
+                if let Some(segments) = &param.tuple_param_accessor_segments {
+                    for segment in segments {
+                        match segment {
+                            AccessorSegment::Index(i) => {
+                                content.push_str(&format!("[{}]", i));
+                            }
+                            AccessorSegment::Field(name) => {
+                                content.push_str(&format!("[\"{}\"]", name));
+                            }
+                        }
                     }
                 }
                 content.push_str(",\n");
@@ -353,13 +403,24 @@ impl Contract {
                     param.entity_key.uncapitalized, param.event_key.uncapitalized
                 ));
 
-                // Add tuple accessor indexes if present
-                if let Some(indexes) = &param.tuple_param_accessor_indexes {
-                    for index in indexes {
-                        content.push_str(&format!(
-                            "\n      ->Utils.Tuple.get({})->Belt.Option.getUnsafe",
-                            index
-                        ));
+                // Add tuple accessor segments if present. Named tuples
+                // (Solidity structs / mixed tuples) render as ReScript JS
+                // object types so they're accessed via `["funder"]`, while
+                // fully anonymous tuples remain positional and need
+                // `Utils.Tuple.get(i)`.
+                if let Some(segments) = &param.tuple_param_accessor_segments {
+                    for segment in segments {
+                        match segment {
+                            AccessorSegment::Index(i) => {
+                                content.push_str(&format!(
+                                    "\n      ->Utils.Tuple.get({})->Belt.Option.getUnsafe",
+                                    i
+                                ));
+                            }
+                            AccessorSegment::Field(name) => {
+                                content.push_str(&format!("[\"{}\"]", name));
+                            }
+                        }
                     }
                 }
 
@@ -758,13 +819,17 @@ impl Event {
 pub struct Param {
     res_name: String,
     js_name: String,
-    ///Event param name + index if its a tuple ie. myTupleParam_0_1 or just myRegularParam
+    ///Event param name + path if its a tuple ie. myTupleParam_funder (or
+    ///myTupleParam_0_1 for anonymous tuples) or just myRegularParam.
     entity_key: CapitalizedOptions,
     ///Just the event param name accessible on the event type
     event_key: CapitalizedOptions,
-    ///List of nested acessors so for a nested tuple Some([0, 1]) this can be used combined with
-    ///the event key ie. event.params.myTupleParam[0][1]
-    tuple_param_accessor_indexes: Option<Vec<ParamIndex>>,
+    ///List of nested accessors so for a nested struct Some([Field("funder")])
+    ///this can be used combined with the event key ie.
+    ///event.params.myTupleParam["funder"], while anonymous tuples emit
+    ///positional segments like Some([Index(0), Index(1)]) →
+    ///event.params.myTupleParam[0][1].
+    tuple_param_accessor_segments: Option<Vec<AccessorSegment>>,
     graphql_type: FieldType,
     is_eth_address: bool,
     default_value_rescript: String,
@@ -785,7 +850,7 @@ impl Param {
             js_name,
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
-            tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
+            tuple_param_accessor_segments: flattened_event_param.accessor_segments,
             graphql_type: FieldType::from_dyn_sol_type(
                 &flattened_event_param.event_param.kind.to_dyn_sol_type(),
             )
@@ -978,6 +1043,21 @@ mod test {
         AbiTupleField { name: None, kind }
     }
 
+    fn named(name: &str, kind: AbiType) -> AbiTupleField {
+        AbiTupleField {
+            name: Some(name.to_string()),
+            kind,
+        }
+    }
+
+    fn idx(i: usize) -> AccessorSegment {
+        AccessorSegment::Index(i)
+    }
+
+    fn field(name: &str) -> AccessorSegment {
+        AccessorSegment::Field(name.to_string())
+    }
+
     #[test]
     fn flatten_event_with_tuple() {
         let event_inputs = vec![
@@ -995,8 +1075,8 @@ mod test {
 
         let expected_flat_inputs = vec![
             FlattenedEventParam::new("user", AbiType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", AbiType::Uint(256), false, vec![0], 1),
-            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![1], 1),
+            FlattenedEventParam::new("myTupleParam", AbiType::Uint(256), false, vec![idx(0)], 1),
+            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![idx(1)], 1),
         ];
 
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
@@ -1045,9 +1125,21 @@ mod test {
 
         let expected_flat_inputs = vec![
             FlattenedEventParam::new("", AbiType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", AbiType::Uint(8), false, vec![0, 0], 1),
-            FlattenedEventParam::new("myTupleParam", AbiType::Uint(8), false, vec![0, 1], 1),
-            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![1], 1),
+            FlattenedEventParam::new(
+                "myTupleParam",
+                AbiType::Uint(8),
+                false,
+                vec![idx(0), idx(0)],
+                1,
+            ),
+            FlattenedEventParam::new(
+                "myTupleParam",
+                AbiType::Uint(8),
+                false,
+                vec![idx(0), idx(1)],
+                1,
+            ),
+            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![idx(1)], 1),
             FlattenedEventParam::new("id", AbiType::String, false, vec![], 2),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
@@ -1085,6 +1177,100 @@ mod test {
             .collect();
 
         assert_eq!(expected_event_keys, actual_event_keys);
+    }
+
+    #[test]
+    fn flatten_event_with_named_and_mixed_structs() {
+        // Solidity structs (all components named) flatten using `Field`
+        // segments so the import handler emits `event.params.commonParams["funder"]`
+        // and the entity column is `commonParams_funder`.
+        // Mixed-name tuples promote unnamed slots to their positional index
+        // as the field key, matching `event_parsing.rs::abi_type_to_rescript`.
+        let event_inputs = vec![
+            EventParam {
+                name: "commonParams".to_string(),
+                kind: AbiType::Tuple(vec![
+                    named("funder", AbiType::Address),
+                    named(
+                        "amounts",
+                        AbiType::Tuple(vec![
+                            named("deposit", AbiType::Uint(128)),
+                            named("brokerFee", AbiType::Uint(128)),
+                        ]),
+                    ),
+                ]),
+                indexed: false,
+            },
+            EventParam {
+                name: "mixedTuple".to_string(),
+                kind: AbiType::Tuple(vec![
+                    named("label", AbiType::String),
+                    unnamed(AbiType::Uint(256)),
+                    named("recipient", AbiType::Address),
+                ]),
+                indexed: false,
+            },
+        ];
+
+        let expected_flat_inputs = vec![
+            FlattenedEventParam::new(
+                "commonParams",
+                AbiType::Address,
+                false,
+                vec![field("funder")],
+                0,
+            ),
+            FlattenedEventParam::new(
+                "commonParams",
+                AbiType::Uint(128),
+                false,
+                vec![field("amounts"), field("deposit")],
+                0,
+            ),
+            FlattenedEventParam::new(
+                "commonParams",
+                AbiType::Uint(128),
+                false,
+                vec![field("amounts"), field("brokerFee")],
+                0,
+            ),
+            FlattenedEventParam::new(
+                "mixedTuple",
+                AbiType::String,
+                false,
+                vec![field("label")],
+                1,
+            ),
+            FlattenedEventParam::new("mixedTuple", AbiType::Uint(256), false, vec![field("1")], 1),
+            FlattenedEventParam::new(
+                "mixedTuple",
+                AbiType::Address,
+                false,
+                vec![field("recipient")],
+                1,
+            ),
+        ];
+        let actual_flat_inputs = flatten_event_inputs(event_inputs);
+        assert_eq!(expected_flat_inputs, actual_flat_inputs);
+
+        let expected_entity_keys: Vec<_> = vec![
+            "commonParams_funder",
+            "commonParams_amounts_deposit",
+            "commonParams_amounts_brokerFee",
+            "mixedTuple_label",
+            "mixedTuple_1",
+            "mixedTuple_recipient",
+        ]
+        .into_iter()
+        .map(|s| s.to_string().to_capitalized_options())
+        .collect();
+
+        let actual_entity_keys: Vec<_> = actual_flat_inputs
+            .iter()
+            .map(|f| f.get_entity_key())
+            .collect();
+
+        assert_eq!(expected_entity_keys, actual_entity_keys);
     }
 
     fn get_test_template_helper(

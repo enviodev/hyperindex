@@ -319,8 +319,12 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
 
     // For any param that has tuple component metadata, rewrite its value from a
     // positional array into a named record post-decode. We pre-collect the
-    // params that need remapping so the hot path only walks those.
-    let paramsToRemap = params->Js.Array2.filter(p => p.components->Option.isSome)
+    // params that need remapping so the hot path only walks those. Indexed
+    // struct/tuple params arrive as keccak256 topic hashes (single hex strings)
+    // rather than positional arrays, so they must be skipped here — running
+    // componentsToRemapper on a hash would treat the hex string as an array
+    // and read garbage.
+    let paramsToRemap = params->Js.Array2.filter(p => !p.indexed && p.components->Option.isSome)
 
     if paramsToRemap->Array.length == 0 {
       baseDecode

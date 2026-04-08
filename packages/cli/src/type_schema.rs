@@ -612,23 +612,26 @@ impl TypeIdent {
                 format!("[{}]", inner)
             }
             Self::Record(fields) => {
+                // Solidity forbids zero-component structs, so an empty Record
+                // here would be a codegen bug — match the ReScript-side
+                // unreachable! in `to_string_internal` / `get_default_value_rescript`.
                 if fields.is_empty() {
-                    "{}".to_string()
-                } else {
-                    let inner = fields
-                        .iter()
-                        .map(|f| {
-                            let field_name =
-                                f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
-                            format!(
-                                "readonly {}: {}",
-                                field_name,
-                                f.type_ident.to_ts_type_string_with_namespace(ns)
-                            )
-                        })
-                        .join("; ");
-                    format!("{{ {} }}", inner)
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
                 }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let field_name = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!(
+                            "readonly {}: {}",
+                            field_name,
+                            f.type_ident.to_ts_type_string_with_namespace(ns)
+                        )
+                    })
+                    .join("; ");
+                format!("{{ {} }}", inner)
             }
             // Primitive types don't need namespace resolution
             _ => self.to_ts_type_string(),
@@ -671,23 +674,26 @@ impl TypeIdent {
                 format!("[{}]", inner_types_str)
             }
             Self::Record(fields) => {
+                // Solidity forbids zero-component structs, so an empty Record
+                // here would be a codegen bug — match the ReScript-side
+                // unreachable! in `to_string_internal` / `get_default_value_rescript`.
                 if fields.is_empty() {
-                    "{}".to_string()
-                } else {
-                    let inner = fields
-                        .iter()
-                        .map(|f| {
-                            let field_name =
-                                f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
-                            format!(
-                                "readonly {}: {}",
-                                field_name,
-                                f.type_ident.to_ts_type_string()
-                            )
-                        })
-                        .join("; ");
-                    format!("{{ {} }}", inner)
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
                 }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let field_name = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!(
+                            "readonly {}: {}",
+                            field_name,
+                            f.type_ident.to_ts_type_string()
+                        )
+                    })
+                    .join("; ");
+                format!("{{ {} }}", inner)
             }
             Self::SchemaEnum(enum_name) => {
                 format!("Enums[\"{}\"]", &enum_name.original)
