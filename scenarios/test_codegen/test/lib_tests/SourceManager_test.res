@@ -2,7 +2,7 @@ open Belt
 open Vitest
 
 type executeQueryMock = {
-  fn: FetchState.query => Promise.t<unit>,
+  fn: FetchState.query => Utils.Promise.t<unit>,
   calls: array<FetchState.query>,
   callIds: array<string>,
   resolveAll: unit => unit,
@@ -23,7 +23,7 @@ let executeQueryMock = () => {
       callIds
       ->Js.Array2.push(query.partitionId)
       ->ignore
-      Promise.make((resolve, _reject) => {
+      Utils.Promise.make((resolve, _reject) => {
         resolveFns->Js.Array2.push(resolve)->ignore
       })
     },
@@ -33,7 +33,7 @@ let executeQueryMock = () => {
 }
 
 type waitForNewBlockMock = {
-  fn: (~knownHeight: int) => Promise.t<int>,
+  fn: (~knownHeight: int) => Utils.Promise.t<int>,
   calls: array<int>,
   resolveAll: int => unit,
   resolveFns: array<int => unit>,
@@ -48,7 +48,7 @@ let waitForNewBlockMock = () => {
     },
     fn: (~knownHeight) => {
       calls->Js.Array2.push(knownHeight)->ignore
-      Promise.make((resolve, _reject) => {
+      Utils.Promise.make((resolve, _reject) => {
         resolveFns->Js.Array2.push(resolve)->ignore
       })
     },
@@ -719,7 +719,7 @@ describe("SourceManager fetchNext", () => {
     t.expect(onNewBlockMock.calls).toEqual([])
     waitForNewBlockMock.resolveAll(6)
 
-    await Promise.resolve()
+    await Utils.Promise.resolve()
     t.expect(onNewBlockMock.calls).toEqual([6])
 
     await fetchNextPromise
@@ -1119,7 +1119,7 @@ describe("SourceManager wait for new blocks", () => {
 
     let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
 
-    let ((), ()) = await Promise.all2((
+    let ((), ()) = await Utils.Promise.all2((
       (
         async () => {
           t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -1223,7 +1223,7 @@ describe("SourceManager wait for new blocks", () => {
 
     let p = sourceManager->SourceManager.waitForNewBlock(~isLive=false, ~knownHeight=100)
 
-    let ((), ()) = await Promise.all2((
+    let ((), ()) = await Utils.Promise.all2((
       (
         async () => {
           t.expect(mock0.getHeightOrThrowCalls->Array.length).toEqual(1)
@@ -1663,7 +1663,7 @@ describe("SourceManager.executeQuery", () => {
     ).toEqual(
       0,
     )
-    await Promise.resolve() // Wait for microtask, so the rejection is caught
+    await Utils.Promise.resolve() // Wait for microtask, so the rejection is caught
 
     switch sourceMock.getItemsOrThrowCalls {
     | [call] => {
@@ -1717,7 +1717,7 @@ describe("SourceManager.executeQuery", () => {
           }
         | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
         }
-        await Promise.resolve()
+        await Utils.Promise.resolve()
         if idx !== 2 {
           await Utils.delay(0)
         }
@@ -1737,7 +1737,7 @@ describe("SourceManager.executeQuery", () => {
       | _ => Js.Exn.raiseError("Should have one pending call to fallbackMock")
       }
 
-      await Promise.resolve()
+      await Utils.Promise.resolve()
       await Utils.delay(0)
 
       // Retry 4 on fallback (odd retry, no switch)
@@ -1754,7 +1754,7 @@ describe("SourceManager.executeQuery", () => {
       | _ => Js.Exn.raiseError("Should have one pending call to fallbackMock")
       }
 
-      await Promise.resolve()
+      await Utils.Promise.resolve()
       await Utils.delay(0)
 
       // Retry 5 on sync (fallback failed, sync has oldest lastFailedAt)
@@ -1871,7 +1871,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             )
           | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
           }
-          await Promise.resolve()
+          await Utils.Promise.resolve()
           if idx !== 2 {
             await Utils.delay(0)
           }
@@ -2064,7 +2064,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             )
           | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
           }
-          await Promise.resolve()
+          await Utils.Promise.resolve()
           if idx !== 2 {
             await Utils.delay(0)
           }
@@ -2117,7 +2117,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
             )
           | _ => Js.Exn.raiseError("Should have one pending call to syncMock")
           }
-          await Promise.resolve()
+          await Utils.Promise.resolve()
           if idx !== 2 {
             await Utils.delay(0)
           }
@@ -2274,7 +2274,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
       | _ => Js.Exn.raiseError("Expected one pending call to syncMock0")
       }
 
-      await Promise.resolve()
+      await Utils.Promise.resolve()
 
       // Should switch to syncMock1
       switch syncMock1.getItemsOrThrowCalls {
@@ -2306,7 +2306,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
           )
         | _ => Js.Exn.raiseError("Expected one pending call to syncMock1")
         }
-        await Promise.resolve()
+        await Utils.Promise.resolve()
         switch syncMock0.getItemsOrThrowCalls {
         | [call] => call.resolve([])
         | _ => Js.Exn.raiseError("Expected syncMock0 to be usable (lastFailedAt not set)")
@@ -2347,7 +2347,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
       | _ => Js.Exn.raiseError("Expected one pending call to syncMock0")
       }
-      await Promise.resolve()
+      await Utils.Promise.resolve()
 
       // syncMock1 gets the query next. Also fail with ImpossibleForTheQuery.
       switch syncMock1.getItemsOrThrowCalls {
@@ -2363,7 +2363,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
       | _ => Js.Exn.raiseError("Expected one pending call to syncMock1")
       }
-      await Promise.resolve()
+      await Utils.Promise.resolve()
 
       // syncMock2 gets the query. Both mock0 and mock1 are excluded.
       switch syncMock2.getItemsOrThrowCalls {
@@ -2405,7 +2405,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         | [call] => call.reject(withBackoff)
         | _ => Js.Exn.raiseError(`Expected one pending call to syncMock at retry ${idx->Int.toString}`)
         }
-        await Promise.resolve()
+        await Utils.Promise.resolve()
         if idx !== 2 {
           await Utils.delay(0)
         }
@@ -2482,7 +2482,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
       | _ => Js.Exn.raiseError("Expected one pending call to syncMock0")
       }
-      await Promise.resolve()
+      await Utils.Promise.resolve()
 
       // Exclude syncMock1 via ImpossibleForTheQuery
       switch syncMock1.getItemsOrThrowCalls {
@@ -2498,7 +2498,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
       | _ => Js.Exn.raiseError("Expected one pending call to syncMock1")
       }
-      await Promise.resolve()
+      await Utils.Promise.resolve()
 
       // All primaries excluded — should fall back to secondary (fallback)
       switch fallbackMock.getItemsOrThrowCalls {
@@ -2538,7 +2538,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         | [call] => call.reject(withBackoff)
         | _ => Js.Exn.raiseError(`Expected one pending call at retry ${idx->Int.toString}`)
         }
-        await Promise.resolve()
+        await Utils.Promise.resolve()
         await Utils.delay(0)
       }
 
@@ -2582,7 +2582,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
       | _ => Js.Exn.raiseError("Expected one pending call to syncMock0")
       }
-      await Promise.resolve()
+      await Utils.Promise.resolve()
       switch syncMock1.getItemsOrThrowCalls {
       | [call] => call.resolve([])
       | _ => Js.Exn.raiseError("Expected syncMock1 to get the query")
@@ -2610,7 +2610,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         )
       | _ => Js.Exn.raiseError("Expected one pending call to syncMock1")
       }
-      await Promise.resolve()
+      await Utils.Promise.resolve()
 
       switch syncMock0.getItemsOrThrowCalls {
       | [call] => call.resolve([])
@@ -2846,7 +2846,7 @@ describe("SourceManager height subscription", () => {
 
     // Verify promise is still pending (not resolved with lower height)
     let resolved = ref(false)
-    let _ = p2->Promise.thenResolve(
+    let _ = p2->Utils.Promise.thenResolve(
       _ => {
         resolved := true
       },

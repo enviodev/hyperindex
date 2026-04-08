@@ -266,18 +266,18 @@ module Array = {
 
       let rec loop = (i, j, k) => {
         if i < Array.length(xs) && j < Array.length(ys) {
-          if f(xs[i], ys[j]) {
-            result[k] = xs[i]
+          if f(xs->Belt.Array.getUnsafe(i), ys->Belt.Array.getUnsafe(j)) {
+            result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
             loop(i + 1, j, k + 1)
           } else {
-            result[k] = ys[j]
+            result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
             loop(i, j + 1, k + 1)
           }
         } else if i < Array.length(xs) {
-          result[k] = xs[i]
+          result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
           loop(i + 1, j, k + 1)
         } else if j < Array.length(ys) {
-          result[k] = ys[j]
+          result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
           loop(i, j + 1, k + 1)
         }
       }
@@ -307,7 +307,7 @@ module Array = {
       } else {
         switch results->Js.Array2.unsafe_get(index) {
         | Ok(value) => {
-            output[index] = value
+            output->Belt.Array.setUnsafe(index, value)
             loop(index + 1, output)
           }
         | Error(_) as err => err->(magic: result<'a, 'b> => result<array<'a>, 'b>)
@@ -338,7 +338,7 @@ Helper to check if a value exists in an array
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
-      let item = arr[i]
+      let item = arr->Belt.Array.getUnsafe(i)
       await item->fn
     }
   }
@@ -369,7 +369,7 @@ Helper to check if a value exists in an array
       if index < 0 {
         None
       } else {
-        let item = arr[index]
+        let item = arr->Belt.Array.getUnsafe(index)
         if fn(item) {
           Some((item, index))
         } else {
@@ -765,4 +765,147 @@ module EnvioPackage = {
   | S.Raised(error) =>
     Js.Exn.raiseError(`Failed to get package.json in envio package: ${error->S.Error.message}`)
   }
+}
+
+module BigInt = {
+  %%private(
+    @inline
+    let unsafeToOption: (unit => 'a) => option<'a> = unsafeFunc => {
+      try {
+        unsafeFunc()->Some
+      } catch {
+      | Js.Exn.Error(_obj) => None
+      }
+    }
+  )
+
+  // constructors and methods
+  @val external fromInt: int => bigint = "BigInt"
+  @val external fromStringUnsafe: string => bigint = "BigInt"
+  @val external fromUnknownUnsafe: unknown => bigint = "BigInt"
+  let fromString = str => unsafeToOption(() => str->fromStringUnsafe)
+  @send external toString: bigint => string = "toString"
+  let toInt = (b: bigint): option<int> => b->toString->Belt.Int.fromString
+
+  //silence unused var warnings for raw bindings
+  @@warning("-27")
+  // operation
+  let add = (a: bigint, b: bigint): bigint => %raw("a + b")
+  let sub = (a: bigint, b: bigint): bigint => %raw("a - b")
+  let mul = (a: bigint, b: bigint): bigint => %raw("a * b")
+  let div = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a / b : 0n")
+  let pow = (a: bigint, b: bigint): bigint => %raw("a ** b")
+  let mod = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a % b : 0n")
+
+  // comparison
+  let eq = (a: bigint, b: bigint): bool => %raw("a === b")
+  let neq = (a: bigint, b: bigint): bool => %raw("a !== b")
+  let gt = (a: bigint, b: bigint): bool => %raw("a > b")
+  let gte = (a: bigint, b: bigint): bool => %raw("a >= b")
+  let lt = (a: bigint, b: bigint): bool => %raw("a < b")
+  let lte = (a: bigint, b: bigint): bool => %raw("a <= b")
+
+  module Bitwise = {
+    let shift_left = (a: bigint, b: bigint): bigint => %raw("a << b")
+    let shift_right = (a: bigint, b: bigint): bigint => %raw("a >> b")
+    let logor = (a: bigint, b: bigint): bigint => %raw("a | b")
+    let logand = (a: bigint, b: bigint): bigint => %raw("a & b")
+  }
+
+  let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
+    const res = new Array(arr.length);
+    for (let i = 0; i < arr.length; i++) {
+      res[i] = arr[i].toString();
+    }
+    return res;
+  }`)
+
+  let zero = fromInt(0)
+  let toFloat: bigint => float = %raw(`(n) => Number(n)`)
+  let toIntUnsafe: bigint => int = %raw(`(n) => Number(n)`)
+
+  @genType
+  let schema =
+    S.string
+    ->S.setName("BigInt")
+    ->S.transform(s => {
+      parser: string =>
+        switch string->fromString {
+        | Some(bigInt) => bigInt
+        | None => s.fail("The string is not valid BigInt")
+        },
+      serializer: bigint => bigint->toString,
+    })
+
+  let nativeSchema = S.bigint
+}
+
+module Promise = {
+  type t<+'a> = promise<'a>
+
+  @new
+  external make: ((@uncurry 'a => unit, 'e => unit) => unit) => t<'a> = "Promise"
+
+  @new
+  external makeAsync: ((@uncurry 'a => unit, 'e => unit) => promise<unit>) => t<'a> = "Promise"
+
+  @val @scope("Promise")
+  external resolve: 'a => t<'a> = "resolve"
+
+  @send external then: (t<'a>, @uncurry 'a => t<'b>) => t<'b> = "then"
+
+  @send
+  external thenResolve: (t<'a>, @uncurry 'a => 'b) => t<'b> = "then"
+
+  @send external finally: (t<'a>, unit => unit) => t<'a> = "finally"
+
+  @scope("Promise") @val
+  external reject: exn => t<_> = "reject"
+
+  @scope("Promise") @val
+  external all: array<t<'a>> => t<array<'a>> = "all"
+
+  @scope("Promise") @val
+  external all2: ((t<'a>, t<'b>)) => t<('a, 'b)> = "all"
+
+  @scope("Promise") @val
+  external all3: ((t<'a>, t<'b>, t<'c>)) => t<('a, 'b, 'c)> = "all"
+
+  @scope("Promise") @val
+  external all4: ((t<'a>, t<'b>, t<'c>, t<'d>)) => t<('a, 'b, 'c, 'd)> = "all"
+
+  @scope("Promise") @val
+  external all5: ((t<'a>, t<'b>, t<'c>, t<'d>, t<'e>)) => t<('a, 'b, 'c, 'd, 'e)> = "all"
+
+  @scope("Promise") @val
+  external all6: ((t<'a>, t<'b>, t<'c>, t<'d>, t<'e>, t<'f>)) => t<('a, 'b, 'c, 'd, 'e, 'f)> = "all"
+
+  @send
+  external catch: (t<'a>, @uncurry exn => t<'a>) => t<'a> = "catch"
+
+  %%private(let noop = (() => ())->Obj.magic)
+  let silentCatch = (promise: promise<'a>): promise<'a> => {
+    catch(promise, noop)
+  }
+
+  let catch = (promise: promise<'a>, callback: exn => promise<'a>): promise<'a> => {
+    catch(promise, err => {
+      callback(Js.Exn.anyToExnInternal(err))
+    })
+  }
+
+  @send
+  external catchResolve: (t<'a>, exn => 'a) => t<'a> = "catch"
+
+  @scope("Promise") @val
+  external race: array<t<'a>> => t<'a> = "race"
+
+  external done: promise<'a> => unit = "%ignore"
+
+  external ignoreValue: promise<'a> => promise<unit> = "%identity"
+
+  external unsafe_async: 'a => promise<'a> = "%identity"
+  external unsafe_await: promise<'a> => 'a = "?await"
+
+  let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }

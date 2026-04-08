@@ -42,7 +42,7 @@ let schedule = async loadManager => {
   // then we do nothing. The call will be automatically
   // handled when the promise below resolves
   loadManager.isCollecting = true
-  await Promise.resolve()
+  await Utils.Promise.resolve()
   loadManager.isCollecting = false
 
   let groups = loadManager.groups
@@ -138,7 +138,7 @@ let call = (
   // keep the grouping logic when the data needs to be loaded
   // It has a small additional runtime cost, but might reduce IO time
   if !shouldGroup && hasInMemory(inputKey) {
-    getUnsafeInMemory(inputKey)->Promise.resolve
+    getUnsafeInMemory(inputKey)->Utils.Promise.resolve
   } else {
     let group = switch loadManager.groups->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(group) => group
@@ -166,7 +166,7 @@ let call = (
     switch group.calls->Utils.Dict.dangerouslyGetNonOption(inputKey) {
     | Some(c) => c.promise
     | None => {
-        let promise = Promise.make((resolve, reject) => {
+        let promise = Utils.Promise.make((resolve, reject) => {
           let call: Call.t = {
             input: input->(Utils.magic: 'input => Call.input),
             resolve,

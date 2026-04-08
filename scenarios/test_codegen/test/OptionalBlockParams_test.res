@@ -185,13 +185,13 @@ Async.it(
     let indexer = Indexer.createTestIndexer()
 
     let error = try {
-      let _ = await Promise.race([
+      let _ = await Utils.Promise.race([
         indexer.process({
           chains: {
             \"1337": {startBlock: 1},
           },
         }),
-        Promise.make((_, reject) =>
+        Utils.Promise.make((_, reject) =>
           Js.Global.setTimeout(
             () => reject(Utils.Error.make("timeout")),
             3000,

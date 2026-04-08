@@ -147,8 +147,8 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
         ~fieldValue,
       )
     )
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+    ->Utils.Promise.all
+    ->Utils.Promise.thenResolve(results => results->Belt.Array.concatMany)
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
     // _gte and _lte are composed from Eq + Gt/Lt
     let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
@@ -169,8 +169,8 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
       )
 
     [loadWithOperator(Eq), loadWithOperator(rangeOperator)]
-    ->Promise.all
-    ->Promise.thenResolve(results => results->Belt.Array.concatMany)
+    ->Utils.Promise.all
+    ->Utils.Promise.thenResolve(results => results->Belt.Array.concatMany)
   } else {
     let operator: TableIndices.Operator.t = switch operatorKey {
     | "_eq" => Eq
@@ -251,7 +251,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldGroup=params.isPreload,
             ~item=params.item,
             ~entityId,
-          )->Promise.thenResolve(entity => {
+          )->Utils.Promise.thenResolve(entity => {
             switch entity {
             | Some(entity) => entity
             | None =>
@@ -274,7 +274,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             ~shouldGroup=params.isPreload,
             ~item=params.item,
             ~entityId=entity.id,
-          )->Promise.thenResolve(storageEntity => {
+          )->Utils.Promise.thenResolve(storageEntity => {
             switch storageEntity {
             | Some(entity) => entity
             | None => {

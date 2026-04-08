@@ -152,7 +152,7 @@ let handleWriteBatch = (
           entityDict->Js.Dict.set(entityId, parsedEntity)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->BigInt.toString
+          let checkpointKey = checkpointId->Utils.BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -174,7 +174,7 @@ let handleWriteBatch = (
           Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->BigInt.toString
+          let checkpointKey = checkpointId->Utils.BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -223,7 +223,7 @@ let handleWriteBatch = (
     )
 
     // Add entity changes for this checkpoint
-    let checkpointKey = checkpointId->BigInt.toString
+    let checkpointKey = checkpointId->Utils.BigInt.toString
     switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
     | Some(entityChanges) =>
       entityChanges
@@ -439,7 +439,7 @@ let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
   string => promise<option<Internal.entity>>
 ) => {
   entityId => {
-    Promise.resolve(getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get"))
+    Utils.Promise.resolve(getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get"))
   }
 }
 
@@ -448,7 +448,7 @@ let makeEntityGetOrThrow = (~state: testIndexerState, ~entityConfig: Internal.en
 ) => {
   (entityId, ~message=?) => {
     switch getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="getOrThrow") {
-    | Some(entity) => Promise.resolve(entity)
+    | Some(entity) => Utils.Promise.resolve(entity)
     | None =>
       let msg = switch message {
       | Some(m) => m
@@ -490,7 +490,7 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
     }
     let entityDict =
       state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
-    Promise.resolve(entityDict->Js.Dict.values)
+    Utils.Promise.resolve(entityDict->Js.Dict.values)
   }
 }
 
@@ -732,7 +732,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               ~dynamicContractsByChain,
             )
 
-            Promise.make((resolve, reject) => {
+            Utils.Promise.make((resolve, reject) => {
               let workerData: workerData = {
                 chainId,
                 startBlock: processChainConfig.startBlock,
@@ -814,17 +814,17 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
           let rec runChains = idx => {
             if idx >= chainEntries->Array.length {
               state.processInProgress = false
-              Promise.resolve({changes: state.processChanges})
+              Utils.Promise.resolve({changes: state.processChanges})
             } else {
-              runChainWorker(chainEntries->Array.getUnsafe(idx))->Promise.then(_ =>
+              runChainWorker(chainEntries->Array.getUnsafe(idx))->Utils.Promise.then(_ =>
                 runChains(idx + 1)
               )
             }
           }
 
-          runChains(0)->Promise.catch(err => {
+          runChains(0)->Utils.Promise.catch(err => {
             state.processInProgress = false
-            Promise.reject(err->Utils.prettifyExn)
+            Utils.Promise.reject(err->Utils.prettifyExn)
           })
         }
       )->(Utils.magic: ('a => promise<processResult>) => unknown),

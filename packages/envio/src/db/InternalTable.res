@@ -127,7 +127,7 @@ module Chains = {
           switch Js.typeof(value) {
           | "object" => "NULL"
           | "number" => value->(Utils.magic: option<unknown> => int)->Belt.Int.toString
-          | "bigint" => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
+          | "bigint" => value->(Utils.magic: option<unknown> => bigint)->Utils.BigInt.toString
           | "boolean" => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
           | _ => Js.Exn.raiseError("Invalid envio_chains value type")
           }
@@ -240,7 +240,7 @@ WHERE "id" = $1;`
       promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise.all(promises)
+    Utils.Promise.all(promises)
   }
 
   type progressedChain = {
@@ -277,7 +277,7 @@ WHERE "id" = $1;`
       promises->Js.Array2.push(sql->Postgres.preparedUnsafe(query, params->Obj.magic))->ignore
     })
 
-    Promise.all(promises)->Promise.ignoreValue
+    Utils.Promise.all(promises)->Utils.Promise.ignoreValue
   }
 }
 
@@ -325,12 +325,15 @@ module Checkpoints = {
 
   // Schema for parsing DB results where BIGINT columns come back as strings
   let dbSchema = S.object(s => {
-    id: s.field("id", BigInt.schema),
+    id: s.field("id", Utils.BigInt.schema),
     chainId: s.field("chain_id", S.int),
     blockNumber: s.field("block_number", S.int),
     blockHash: s.field(
       "block_hash",
-      S.union([S.string->(Utils.magic: S.t<string> => S.t<Js.null<string>>), S.literal(%raw(`null`))]),
+      S.union([
+        S.string->(Utils.magic: S.t<string> => S.t<Js.null<string>>),
+        S.literal(%raw(`null`)),
+      ]),
     ),
     eventsProcessed: s.field("events_processed", S.int),
   })
@@ -375,7 +378,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
-    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->Utils.BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
   }
 
   let makeInsertCheckpointQuery = (~pgSchema) => {
@@ -395,7 +398,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
     let query = makeInsertCheckpointQuery(~pgSchema)
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
-    let checkpointIdStrings = checkpointIds->BigInt.arrayToStringArray
+    let checkpointIdStrings = checkpointIds->Utils.BigInt.arrayToStringArray
     sql
     ->Postgres.preparedUnsafe(
       query,
@@ -411,16 +414,16 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
         ) => unknown
       ),
     )
-    ->Promise.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
     sql
     ->Postgres.preparedUnsafe(
       `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
-      [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      [rollbackTargetCheckpointId->Utils.BigInt.toString]->(Utils.magic: array<string> => unknown),
     )
-    ->Promise.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let makePruneStaleCheckpointsQuery = (~pgSchema) => {
@@ -431,9 +434,9 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
     sql
     ->Postgres.preparedUnsafe(
       makePruneStaleCheckpointsQuery(~pgSchema),
-      [safeCheckpointId->BigInt.toString]->Obj.magic,
+      [safeCheckpointId->Utils.BigInt.toString]->Obj.magic,
     )
-    ->Promise.ignoreValue
+    ->Utils.Promise.ignoreValue
   }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
@@ -458,8 +461,8 @@ LIMIT 1;`
         (reorgChainId, lastKnownValidBlockNumber)->Obj.magic,
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
-    rawResult->Promise.thenResolve(rows => {
-      rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->BigInt.fromStringUnsafe)
+    rawResult->Utils.Promise.thenResolve(rows => {
+      rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->Utils.BigInt.fromStringUnsafe)
     })
   }
 
@@ -481,7 +484,7 @@ GROUP BY "${(#chain_id: field :> string)}";`
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema),
-      [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
+      [rollbackTargetCheckpointId->Utils.BigInt.toString]->Obj.magic,
     )
     ->(
       Utils.magic: promise<unknown> => promise<

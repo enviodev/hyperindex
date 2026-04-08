@@ -199,6 +199,6 @@ module TestHelpers = {
         "0xdD2FD4581271e230360230F9337D5c0430Bf44C0",
         "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
       ]->Belt.Array.map(Address.Evm.fromStringOrThrow)
-    let defaultAddress = mockAddresses[0]
+    let defaultAddress = mockAddresses->Belt.Array.getUnsafe(0)
   }
 }

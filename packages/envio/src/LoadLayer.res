@@ -89,16 +89,16 @@ let callEffect = (
   effect.prevCallStartTimerRef = timerRef
 
   effect.handler(arg)
-  ->Promise.thenResolve(output => {
+  ->Utils.Promise.thenResolve(output => {
     inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
     if arg.context.cache {
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
     }
   })
-  ->Promise.catchResolve(exn => {
+  ->Utils.Promise.catchResolve(exn => {
     onError(~inputKey=arg.cacheKey, ~exn)
   })
-  ->Promise.finally(() => {
+  ->Utils.Promise.finally(() => {
     effect.activeCallsCount = effect.activeCallsCount - 1
     Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
       ~labels=effectName,
@@ -143,7 +143,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
-        )->Promise.ignoreValue,
+        )->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
@@ -176,7 +176,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
-        )->Promise.ignoreValue,
+        )->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
@@ -210,7 +210,7 @@ let rec executeWithRateLimit = (
       promises
       ->Array.push(
         nextWindowPromise
-        ->Promise.then(() => {
+        ->Utils.Promise.then(() => {
           if millisUntilReset.contents > 0 {
             Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.handleFloat(
               ~labels=effectName,
@@ -225,14 +225,14 @@ let rec executeWithRateLimit = (
             ~isFromQueue=true,
           )
         })
-        ->Promise.ignoreValue,
+        ->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
   }
 
   // Wait for all to complete
-  promises->Promise.all
+  promises->Utils.Promise.all
 }
 
 let loadEffect = (
@@ -323,7 +323,7 @@ let loadEffect = (
           ~inMemTable,
           ~onError,
           ~isFromQueue=false,
-        )->Promise.ignoreValue
+        )->Utils.Promise.ignoreValue
       }
     }
   }
@@ -422,7 +422,7 @@ let loadByField = (
           )
         }
       })
-      ->Promise.all
+      ->Utils.Promise.all
 
     timerRef->Prometheus.StorageLoad.endOperation(
       ~operation=key,

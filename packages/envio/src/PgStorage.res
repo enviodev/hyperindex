@@ -523,7 +523,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
               )
           responses->Js.Array2.push(response)->ignore
         })
-        let _ = await Promise.all(responses)
+        let _ = await Utils.Promise.all(responses)
       } else {
         // Use UNNEST approach for single query
         await sql->Postgres.preparedUnsafe(
@@ -594,7 +594,7 @@ let getConnectedPsqlExec = {
   async (~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) => {
     switch psqlExecState.contents {
     | Unknown => {
-        let promise = Promise.make((resolve, _reject) => {
+        let promise = Utils.Promise.make((resolve, _reject) => {
           let binary = "psql"
           NodeJs.ChildProcess.exec(`${binary} --version`, (~error, ~stdout as _, ~stderr as _) => {
             switch error {
@@ -721,7 +721,7 @@ let executeSet = (
   if items->Array.length > 0 {
     sql->dbFunction(items)
   } else {
-    Promise.resolve()
+    Utils.Promise.resolve()
   }
 }
 
@@ -828,10 +828,10 @@ let rec writeBatch = async (
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
                   (
                     batchDeleteEntityIds,
-                    batchDeleteCheckpointIds->BigInt.arrayToStringArray,
+                    batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
                   )->Obj.magic,
                 )
-                ->Promise.ignoreValue,
+                ->Utils.Promise.ignoreValue,
               )
             }
 
@@ -880,7 +880,7 @@ let rec writeBatch = async (
             )
           }
 
-          let _ = await promises->Promise.all
+          let _ = await promises->Utils.Promise.all
         } catch {
         // There's a race condition that sql->Postgres.beginSql
         // might throw PG error, earlier, than the handled error
@@ -889,13 +889,13 @@ let rec writeBatch = async (
         | exn => {
             /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
             let normalizedExn = switch exn {
-            | JsError(_) => exn
+            | JsExn(_) => exn
             | Persistence.StorageError({reason: exn}) => exn
             | _ => exn
             }->Js.Exn.anyToExnInternal
 
             switch normalizedExn {
-            | JsError(error) =>
+            | JsExn(error) =>
               // Workaround for https://github.com/enviodev/hyperindex/issues/446
               // We do escaping only when we actually got an error writing for the first time.
               // This is not perfect, but an optimization to avoid escaping for every single item.
@@ -946,14 +946,14 @@ let rec writeBatch = async (
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
           )
           ->ignore
-          Promise.all(promises)
+          Utils.Promise.all(promises)
         },
       )
     | None => None
     }
 
     try {
-      let _ = await Promise.all2((
+      let _ = await Utils.Promise.all2((
         sql->Postgres.beginSql(async sql => {
           //Rollback tables need to happen first in the traction
           switch rollbackTables {
@@ -993,8 +993,8 @@ let rec writeBatch = async (
 
           await setOperations
           ->Belt.Array.map(dbFunc => sql->dbFunc)
-          ->Promise.all
-          ->Promise.ignoreValue
+          ->Utils.Promise.all
+          ->Utils.Promise.ignoreValue
 
           switch sinkPromise {
           | Some(sinkPromise) =>
@@ -1011,7 +1011,7 @@ let rec writeBatch = async (
         ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
           setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
         })
-        ->Promise.all,
+        ->Utils.Promise.all,
       ))
 
       // Just in case, if there's a not PG-specific error.
@@ -1140,10 +1140,10 @@ let make = (
       // Try to restore cache tables from binary files
       let nothingToUploadErrorMessage = "Nothing to upload."
 
-      switch await Promise.all2((
+      switch await Utils.Promise.all2((
         NodeJs.Fs.Promises.readdir(cacheDirPath)
-        ->Promise.thenResolve(e => Ok(e))
-        ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
+        ->Utils.Promise.thenResolve(e => Ok(e))
+        ->Utils.Promise.catch(_ => Utils.Promise.resolve(Error(nothingToUploadErrorMessage))),
         getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName),
       )) {
       | (Ok(entries), Ok(psqlExec)) => {
@@ -1159,12 +1159,12 @@ let make = (
 
               sql
               ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
-              ->Promise.then(() => {
+              ->Utils.Promise.then(() => {
                 let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
 
                 let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
-                Promise.make(
+                Utils.Promise.make(
                   (resolve, reject) => {
                     NodeJs.ChildProcess.execWithOptions(
                       command,
@@ -1180,7 +1180,7 @@ let make = (
                 )
               })
             })
-            ->Promise.all
+            ->Utils.Promise.all
 
           Logging.info("Successfully uploaded cache.")
         }
@@ -1261,9 +1261,9 @@ let make = (
     )
     // Execute all queries within a single transaction for integrity
     let _ = await sql->Postgres.beginSql(sql => {
-      // Promise.all might be not safe to use here,
+      // Utils.Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Js.Array2.map(query => sql->Postgres.unsafe(query)))
+      Utils.Promise.all(queries->Js.Array2.map(query => sql->Postgres.unsafe(query)))
     })
 
     let cache = await restoreEffectCache(~withUpload=true)
@@ -1449,7 +1449,7 @@ let make = (
 
               let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
 
-              Promise.make((resolve, reject) => {
+              Utils.Promise.make((resolve, reject) => {
                 NodeJs.ChildProcess.execWithOptions(
                   command,
                   psqlExecOptions,
@@ -1463,7 +1463,7 @@ let make = (
               })
             })
 
-            let _ = await promises->Promise.all
+            let _ = await promises->Utils.Promise.all
             Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
           }
         | Error(message) => Logging.error(`Failed to dump cache. ${message}`)
@@ -1475,12 +1475,12 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Promise.all4((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints) = await Utils.Promise.all4((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
         ~pgSchema,
-      )->Promise.thenResolve(rawInitialStates => {
+      )->Utils.Promise.thenResolve(rawInitialStates => {
         rawInitialStates->Belt.Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
           startBlock: rawInitialState.startBlock,
@@ -1511,11 +1511,12 @@ let make = (
       ),
     ))
 
-    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringUnsafe
+    let checkpointId =
+      (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->Utils.BigInt.fromStringUnsafe
 
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
-      checkpointId: raw["id"]->BigInt.fromStringUnsafe,
+      checkpointId: raw["id"]->Utils.BigInt.fromStringUnsafe,
       chainId: raw["chain_id"],
       blockNumber: raw["block_number"],
       blockHash: raw["block_hash"],
@@ -1538,11 +1539,11 @@ let make = (
 
   let reset = async () => {
     let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
-    await sql->Postgres.unsafe(query)->Promise.ignoreValue
+    await sql->Postgres.unsafe(query)->Utils.Promise.ignoreValue
   }
 
   let setChainMeta = chainsData =>
-    InternalTable.Chains.setMeta(sql, ~pgSchema, ~chainsData)->Promise.thenResolve(_ =>
+    InternalTable.Chains.setMeta(sql, ~pgSchema, ~chainsData)->Utils.Promise.thenResolve(_ =>
       %raw(`undefined`)
     )
 
@@ -1573,19 +1574,23 @@ let make = (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId,
   ) => {
-    await Promise.all2((
+    await Utils.Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        [rollbackTargetCheckpointId->Utils.BigInt.toString]->(
+          Utils.magic: array<string> => unknown
+        ),
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        [rollbackTargetCheckpointId->Utils.BigInt.toString]->(
+          Utils.magic: array<string> => unknown
+        ),
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
@@ -1607,7 +1612,7 @@ let make = (
         let timerRef = Hrtime.makeTimer()
         Some(
           sink.writeBatch(~batch, ~updatedEntities)
-          ->Promise.thenResolve(_ => {
+          ->Utils.Promise.thenResolve(_ => {
             Prometheus.SinkWrite.increment(
               ~sinkName=sink.name,
               ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
@@ -1615,7 +1620,7 @@ let make = (
             None
           })
           // Otherwise it fails with unhandled exception
-          ->Promise.catchResolve(exn => Some(exn)),
+          ->Utils.Promise.catchResolve(exn => Some(exn)),
         )
       }
     | None => None
@@ -1698,8 +1703,11 @@ let makeStorageFromEnv = (
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
-            )->Promise.catch(err => {
-              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
+            )->Utils.Promise.catch(err => {
+              Logging.errorWithExn(
+                err->Utils.prettifyExn,
+                `Error tracking tables`,
+              )->Utils.Promise.resolve
             })
           },
         )
@@ -1719,11 +1727,11 @@ let makeStorageFromEnv = (
               },
               ~pgSchema,
               ~tableNames,
-            )->Promise.catch(err => {
+            )->Utils.Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,
                 `Error tracking new tables`,
-              )->Promise.resolve
+              )->Utils.Promise.resolve
             })
           },
         )

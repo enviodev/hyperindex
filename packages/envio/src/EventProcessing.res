@@ -43,7 +43,7 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
           Js.typeof(value) === "bigint"
             ? value
               ->(Utils.magic: unknown => bigint)
-              ->BigInt.toString
+              ->Utils.BigInt.toString
               ->(Utils.magic: string => unknown)
             : value,
         )
@@ -102,7 +102,7 @@ let addItemToRawEvents = (
     params,
   }
 
-  let eventIdStr = eventId->BigInt.toString
+  let eventIdStr = eventId->Utils.BigInt.toString
 
   inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }
@@ -281,14 +281,14 @@ let preloadBatchOrThrow = async (
                   config,
                 }),
               })
-              ->Promise.thenResolve(_ => {
+              ->Utils.Promise.thenResolve(_ => {
                 timerRef->Prometheus.PreloadHandler.endOperation(
                   ~contract=contractName,
                   ~event=eventName,
                 )
               })
-              ->Promise.silentCatch,
-              // Must have Promise.catch as well as normal catch,
+              ->Utils.Promise.silentCatch,
+              // Must have Utils.Promise.catch as well as normal catch,
               // because if user throws an error before await in the handler,
               // it won't create a rejected promise
             )
@@ -316,7 +316,7 @@ let preloadBatchOrThrow = async (
                   config,
                 }),
               )
-            })->Promise.silentCatch,
+            })->Utils.Promise.silentCatch,
           )
         } catch {
         | _ => ()
@@ -327,7 +327,7 @@ let preloadBatchOrThrow = async (
     itemIdx := itemIdx.contents + checkpointEventsProcessed
   }
 
-  let _ = await Promise.all(promises)
+  let _ = await Utils.Promise.all(promises)
 }
 
 let runBatchHandlersOrThrow = async (

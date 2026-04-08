@@ -246,7 +246,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       // Mock a contract creation tx where `to` is null
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=_ =>
-          Promise.resolve(
+          Utils.Promise.resolve(
             %raw(`{"from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5", "to": null, "gas": "0x5208"}`),
           ),
         ~getReceiptJson=neverGetReceiptJson,
@@ -273,7 +273,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
-        ~getReceiptJson=_ => Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
+        ~getReceiptJson=_ => Utils.Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
         ~lowercaseAddresses=false,
       )
 
@@ -292,7 +292,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
-        ~getReceiptJson=_ => Promise.resolve(%raw(`{"cumulativeGasUsed": "0x7a120"}`)),
+        ~getReceiptJson=_ => Utils.Promise.resolve(%raw(`{"cumulativeGasUsed": "0x7a120"}`)),
         ~lowercaseAddresses=false,
       )
 
@@ -311,7 +311,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
-        ~getReceiptJson=_ => Promise.resolve(%raw(`{"effectiveGasPrice": "0x41ef67ce5"}`)),
+        ~getReceiptJson=_ => Utils.Promise.resolve(%raw(`{"effectiveGasPrice": "0x41ef67ce5"}`)),
         ~lowercaseAddresses=false,
       )
 
@@ -330,9 +330,9 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=_ =>
-          Promise.resolve(%raw(`{"gas": "0x5208", "value": "0x3e8"}`)),
+          Utils.Promise.resolve(%raw(`{"gas": "0x5208", "value": "0x3e8"}`)),
         ~getReceiptJson=_ =>
-          Promise.resolve(
+          Utils.Promise.resolve(
             %raw(`{"gasUsed": "0x5208", "effectiveGasPrice": "0x41ef67ce5", "status": "0x1"}`),
           ),
         ~lowercaseAddresses=false,
@@ -359,7 +359,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=_ =>
-          Promise.resolve(%raw(`{"gas": "0x5208", "input": "0xdeadbeef"}`)),
+          Utils.Promise.resolve(%raw(`{"gas": "0x5208", "input": "0xdeadbeef"}`)),
         ~getReceiptJson=neverGetReceiptJson,
         ~lowercaseAddresses=false,
       )
@@ -384,7 +384,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       // that the user didn't request. These should be silently ignored.
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=_ =>
-          Promise.resolve(
+          Utils.Promise.resolve(
             %raw(`{
               "gas": "0x5208",
               "blockHash": "0xabc",
@@ -413,7 +413,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     async t => {
       let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
         ~getTransactionJson=neverGetTransactionJson,
-        ~getReceiptJson=_ => Promise.resolve(%raw(`{"l1FeeScalar": "0.684"}`)),
+        ~getReceiptJson=_ => Utils.Promise.resolve(%raw(`{"l1FeeScalar": "0.684"}`)),
         ~lowercaseAddresses=false,
       )
 
@@ -429,7 +429,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
 
   Async.it("Error with a value not matching the field schema", async t => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionJson=_ => Promise.resolve(%raw(`{"gas": "not-a-hex-value"}`)),
+      ~getTransactionJson=_ => Utils.Promise.resolve(%raw(`{"gas": "not-a-hex-value"}`)),
       ~getReceiptJson=neverGetReceiptJson,
       ~lowercaseAddresses=false,
     )
@@ -452,7 +452,7 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
       ~getTransactionJson=neverGetTransactionJson,
       ~getReceiptJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{"from": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5", "contractAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"}`),
         ),
       ~lowercaseAddresses=true,
@@ -496,7 +496,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Works with a single number field", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabc"}`),
         ),
       ~lowercaseAddresses=false,
@@ -513,7 +513,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Works with number, timestamp, and hash fields", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{"number": "0x1e240", "timestamp": "0x5f5e100", "hash": "0xabcdef"}`),
         ),
       ~lowercaseAddresses=false,
@@ -530,7 +530,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Parses selected block fields from raw JSON", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{
             "number": "0x1e240",
             "timestamp": "0x5f5e100",
@@ -555,7 +555,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Parses miner address with lowercaseAddresses=true", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{
             "number": "0x1",
             "timestamp": "0x1",
@@ -576,7 +576,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Parses miner address with lowercaseAddresses=false (checksum)", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{
             "number": "0x1",
             "timestamp": "0x1",
@@ -597,7 +597,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Unknown extra fields in JSON don't cause failures", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{
             "number": "0x1e240",
             "timestamp": "0x5f5e100",
@@ -622,7 +622,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Error with a value not matching the field schema", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{
             "number": "0x1",
             "timestamp": "0x1",
@@ -650,7 +650,7 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   Async.it("Parses optional fields correctly (nullable with value)", async t => {
     let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
       ~getBlockJson=_ =>
-        Promise.resolve(
+        Utils.Promise.resolve(
           %raw(`{
             "number": "0x1",
             "timestamp": "0x1",
@@ -743,7 +743,7 @@ describe("RpcSource - fieldRegistry completeness", () => {
 
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
-  let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]
+  let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
@@ -876,7 +876,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
 
   it("Should handle retry with the range", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -909,7 +909,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Shouldn't retry on height not available", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -933,7 +933,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should retry on block range too large", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         code: 'UNKNOWN_ERROR',
         error: {
@@ -949,7 +949,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should ignore invalid range errors where toBlock is less than fromBlock", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -982,7 +982,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should handle block range limit from https://1rpc.io/eth", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -1014,7 +1014,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should handle block range limit from Alchemy", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {

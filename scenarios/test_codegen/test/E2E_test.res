@@ -100,7 +100,7 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     // Enter reorg threshold for both chains
-    let _ = await Promise.all2((
+    let _ = await Utils.Promise.all2((
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
@@ -243,7 +243,7 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     // Test inside of reorg threshold, so we can check the history order
-    let _ = await Promise.all2((
+    let _ = await Utils.Promise.all2((
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
@@ -294,7 +294,7 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await Promise.all2((indexerMock.queryCheckpoints(), indexerMock.queryHistory(SimpleEntity))),
+      await Utils.Promise.all2((indexerMock.queryCheckpoints(), indexerMock.queryHistory(SimpleEntity))),
     ).toEqual((
       [
         {
@@ -486,7 +486,7 @@ describe("E2E tests", () => {
           logIndex: 0,
           handler: async ({context}) => {
             t.expect(
-              await Promise.all2((
+              await Utils.Promise.all2((
                 context.effect(testEffectWithCache, "test"),
                 context.effect(testEffectWithCache, "test-2"),
               )),
@@ -499,7 +499,7 @@ describe("E2E tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await Promise.all3((
+      await Utils.Promise.all3((
         indexerMock.metric("envio_storage_load_where_size"),
         indexerMock.metric("envio_storage_load_size"),
         indexerMock.metric("envio_storage_load_total"),
@@ -526,7 +526,7 @@ describe("E2E tests", () => {
       ],
     ))
     t.expect(
-      await Promise.all2((
+      await Utils.Promise.all2((
         indexerMock.metric("envio_effect_call_total"),
         indexerMock.metric("envio_effect_cache"),
       )),
@@ -571,7 +571,7 @@ describe("E2E tests", () => {
           logIndex: 0,
           handler: async ({context}) => {
             t.expect(
-              await Promise.all2((
+              await Utils.Promise.all2((
                 context.effect(testEffectWithCacheV2, "test"),
                 context.effect(testEffectWithCacheV2, "test-2"),
               )),
@@ -718,7 +718,7 @@ describe("E2E tests", () => {
           logIndex: 0,
           handler: async ({context}) => {
             // Call effect 6 times - should span 3 windows (2+2+2)
-            let resultsPromise = Promise.all([
+            let resultsPromise = Utils.Promise.all([
               context.effect(testEffectMultiWindow, "1"),
               context.effect(testEffectMultiWindow, "2"),
               context.effect(testEffectMultiWindow, "3"),
@@ -729,7 +729,7 @@ describe("E2E tests", () => {
 
             // Check metrics while effects are executing
             await Utils.delay(3)
-            let (queueMetric, activeMetric) = await Promise.all2((
+            let (queueMetric, activeMetric) = await Utils.Promise.all2((
               indexerMock.metric("envio_effect_queue"),
               indexerMock.metric("envio_effect_active_calls"),
             ))
@@ -823,7 +823,7 @@ describe("E2E tests", () => {
           blockNumber: 100,
           logIndex: 0,
           handler: async ({context}) => {
-            let resultsPromise = Promise.all([
+            let resultsPromise = Utils.Promise.all([
               context.effect(testEffectNested, "call-1"),
               context.effect(testEffectNested, "call-2"),
               context.effect(testEffectNested, "call-3"),
@@ -832,7 +832,7 @@ describe("E2E tests", () => {
 
             // Check metrics while effects are executing (shortly after trigger)
             await Utils.delay(3)
-            let (queueMetric1, activeMetric1) = await Promise.all2((
+            let (queueMetric1, activeMetric1) = await Utils.Promise.all2((
               indexerMock.metric("envio_effect_queue"),
               indexerMock.metric("envio_effect_active_calls"),
             ))

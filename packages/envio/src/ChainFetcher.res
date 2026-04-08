@@ -410,14 +410,14 @@ let runContractRegistersOrThrow = async (
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Promise.isCatchable {
+      if result->Utils.Promise.isCatchable {
         promises->Array.push(
           result
-          ->Promise.thenResolve(r => {
+          ->Utils.Promise.thenResolve(r => {
             params.isResolved = true
             r
           })
-          ->Promise.catch(exn => {
+          ->Utils.Promise.catch(exn => {
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
           }),
@@ -432,7 +432,7 @@ let runContractRegistersOrThrow = async (
   }
 
   if promises->Utils.Array.notEmpty {
-    let _ = await Promise.all(promises)
+    let _ = await Utils.Promise.all(promises)
   }
 
   itemsWithDcs
@@ -500,7 +500,7 @@ let getLastKnownValidBlock = async (
     )
 
   let getBlockHashes = blockNumbers => {
-    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Promise.thenResolve(res =>
+    getBlockHashes(~blockNumbers, ~logger=chainFetcher.logger)->Utils.Promise.thenResolve(res =>
       switch res {
       | Ok(v) => v
       | Error(exn) =>

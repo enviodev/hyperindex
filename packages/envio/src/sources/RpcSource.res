@@ -235,8 +235,10 @@ let getNextPage = (
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
-    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
-      Promise.reject(
+    Time.resolvePromiseAfterDelay(
+      ~delayMilliseconds=sc.queryTimeoutMillis,
+    )->Utils.Promise.then(() =>
+      Utils.Promise.reject(
         QueryTimout(
           `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
         ),
@@ -253,7 +255,7 @@ let getNextPage = (
       fromBlock,
       toBlock,
     },
-  )->Promise.then(async logs => {
+  )->Utils.Promise.then(async logs => {
     {
       logs,
       latestFetchedBlockInfo: await latestFetchedBlockPromise,
@@ -261,8 +263,8 @@ let getNextPage = (
   })
 
   [queryTimoutPromise, logsPromise]
-  ->Promise.race
-  ->Promise.catch(err => {
+  ->Utils.Promise.race
+  ->Utils.Promise.catch(err => {
     switch getSuggestedBlockIntervalFromExn(err) {
     | Some((nextBlockIntervalTry, isMaxRange)) =>
       mutSuggestedBlockIntervals->Js.Dict.set(
@@ -505,10 +507,10 @@ let makeThrowingGetEventBlock = (
           })
 
           let fn = if selectedBlockFields->Utils.Set.size == 0 {
-            _ => %raw(`{}`)->(Utils.magic: 'a => Internal.eventBlock)->Promise.resolve
+            _ => %raw(`{}`)->(Utils.magic: 'a => Internal.eventBlock)->Utils.Promise.resolve
           } else {
             (log: Rpc.GetLogs.log) => {
-              getBlockJson(log.blockNumber)->Promise.thenResolve(json => {
+              getBlockJson(log.blockNumber)->Utils.Promise.thenResolve(json => {
                 let mutBlockAcc = Js.Dict.empty()
                 parseBlockFieldsFromJson(mutBlockAcc, fields, json)
                 mutBlockAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => Internal.eventBlock)
@@ -781,32 +783,32 @@ let makeThrowingGetEventTransaction = (
           }
 
           let fn = if selectedTransactionFields->Utils.Set.size == 0 {
-            _ => %raw(`{}`)->Promise.resolve
+            _ => %raw(`{}`)->Utils.Promise.resolve
           } else {
             switch strategy {
             | NoRpc =>
               (log: Rpc.GetLogs.log) => {
                 let mutTransactionAcc = Js.Dict.empty()
                 setLogFields(mutTransactionAcc, log)
-                mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)->Promise.resolve
+                mutTransactionAcc->(Utils.magic: Js.Dict.t<Js.Json.t> => 'a)->Utils.Promise.resolve
               }
             | _ =>
               (log: Rpc.GetLogs.log) => {
                 let txJsonPromise = switch strategy {
                 | TransactionOnly | TransactionAndReceipt =>
-                  getTransactionJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
-                | _ => Promise.resolve(None)
+                  getTransactionJson(log.transactionHash)->Utils.Promise.thenResolve(v => Some(v))
+                | _ => Utils.Promise.resolve(None)
                 }
                 let receiptJsonPromise = switch strategy {
                 | ReceiptOnly | TransactionAndReceipt =>
-                  getReceiptJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
-                | _ => Promise.resolve(None)
+                  getReceiptJson(log.transactionHash)->Utils.Promise.thenResolve(v => Some(v))
+                | _ => Utils.Promise.resolve(None)
                 }
 
-                Promise.all2((txJsonPromise, receiptJsonPromise))->Promise.thenResolve(((
-                  txJson,
-                  receiptJson,
-                )) => {
+                Utils.Promise.all2((
+                  txJsonPromise,
+                  receiptJsonPromise,
+                ))->Utils.Promise.thenResolve(((txJson, receiptJson)) => {
                   let mutTransactionAcc = Js.Dict.empty()
                   setLogFields(mutTransactionAcc, log)
 
@@ -1040,8 +1042,8 @@ let make = (
       fromBlock > 0
         ? blockLoader.contents
           ->LazyLoader.get(fromBlock - 1)
-          ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
-        : Promise.resolve(None)
+          ->Utils.Promise.thenResolve(json => Some(parseBlockInfo(json)))
+        : Utils.Promise.resolve(None)
 
     let {getLogSelectionOrThrow} = getSelectionConfig(selection)
     let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
@@ -1054,7 +1056,7 @@ let make = (
       ~loadBlock=blockNumber =>
         blockLoader.contents
         ->LazyLoader.get(blockNumber)
-        ->Promise.thenResolve(parseBlockInfo),
+        ->Utils.Promise.thenResolve(parseBlockInfo),
       ~syncConfig,
       ~client,
       ~mutSuggestedBlockIntervals,
@@ -1129,7 +1131,7 @@ let make = (
             Some(
               (
                 async () => {
-                  let (block, transaction) = try await Promise.all2((
+                  let (block, transaction) = try await Utils.Promise.all2((
                     log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
                     log->getEventTransactionOrThrow(
                       ~selectedTransactionFields=eventConfig.selectedTransactionFields,
@@ -1174,7 +1176,7 @@ let make = (
           }
         }
       })
-      ->Promise.all
+      ->Utils.Promise.all
 
     let optFirstBlockParent = await firstBlockParentPromise
 
@@ -1214,8 +1216,8 @@ let make = (
 
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
-    ->Promise.all
-    ->Promise.thenResolve(rawBlocks => {
+    ->Utils.Promise.all
+    ->Utils.Promise.thenResolve(rawBlocks => {
       rawBlocks
       ->Array.map(json => {
         let b = parseBlockInfo(json)
@@ -1230,7 +1232,7 @@ let make = (
       })
       ->Ok
     })
-    ->Promise.catch(exn => exn->Error->Promise.resolve)
+    ->Utils.Promise.catch(exn => exn->Error->Utils.Promise.resolve)
   }
 
   let createHeightSubscription =

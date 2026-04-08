@@ -36,11 +36,11 @@ Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
 
   let gravatarSize: Indexer.Enums.GravatarSize.t = SMALL
   let gravatarObject: Indexer.Entities.Gravatar.t = {
-    id: event.params.id->BigInt.toString,
+    id: event.params.id->Utils.BigInt.toString,
     owner_id: event.params.owner->Address.toString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
-    updatesCount: BigInt.fromInt(1),
+    updatesCount: Utils.BigInt.fromInt(1),
     size: gravatarSize,
   }
 
@@ -48,7 +48,7 @@ Indexer.Gravatar.NewGravatar.handler(async ({event, context}) => {
 })
 
 Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
-  let maybeGravatar = await context.\"Gravatar".get(event.params.id->BigInt.toString)
+  let maybeGravatar = await context.\"Gravatar".get(event.params.id->Utils.BigInt.toString)
 
   /// Some examples of user logging
   context.log.debug(`We are processing the event, ${event.block.hash} (debug)`)
@@ -100,13 +100,13 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
   )
 
   let updatesCount =
-    maybeGravatar->Belt.Option.mapWithDefault(BigInt.fromInt(1), gravatar =>
-      gravatar.Indexer.Entities.Gravatar.updatesCount->BigInt.add(BigInt.fromInt(1))
+    maybeGravatar->Belt.Option.mapWithDefault(Utils.BigInt.fromInt(1), gravatar =>
+      gravatar.Indexer.Entities.Gravatar.updatesCount->Utils.BigInt.add(Utils.BigInt.fromInt(1))
     )
 
   let gravatarSize: Indexer.Enums.GravatarSize.t = MEDIUM
   let gravatar: Indexer.Entities.Gravatar.t = {
-    id: event.params.id->BigInt.toString,
+    id: event.params.id->Utils.BigInt.toString,
     owner_id: event.params.owner->Address.toString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
@@ -114,7 +114,7 @@ Indexer.Gravatar.UpdatedGravatar.handler(async ({event, context}) => {
     size: gravatarSize,
   }
 
-  if event.params.id->BigInt.toString == "1001" {
+  if event.params.id->Utils.BigInt.toString == "1001" {
     context.log.info("id matched, deleting gravatar 1004")
     context.\"Gravatar".deleteUnsafe("1004")
   }

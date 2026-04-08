@@ -104,7 +104,7 @@ let useMessages = (~config) => {
   let (request, setRequest) = React.useState(_ => Loading)
   React.useEffect0(() => {
     InitApi.getMessages(~config)
-    ->Promise.thenResolve(res =>
+    ->Utils.Promise.thenResolve(res =>
       switch res {
       | Ok(data) => setRequest(_ => Data(data))
       | Error(e) =>

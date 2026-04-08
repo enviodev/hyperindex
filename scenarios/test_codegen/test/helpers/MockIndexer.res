@@ -115,7 +115,7 @@ module Storage = {
       storage: {
         isInitialized: implement(#isInitialized, () => {
           isInitializedCalls->Js.Array2.push(true)->ignore
-          Promise.make((resolve, _reject) => {
+          Utils.Promise.make((resolve, _reject) => {
             isInitializedResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
@@ -127,19 +127,19 @@ module Storage = {
             "enums": enums,
           })
           ->ignore
-          Promise.make((resolve, _reject) => {
+          Utils.Promise.make((resolve, _reject) => {
             initializeResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
         resumeInitialState: implement(#resumeInitialState, () => {
           resumeInitialStateCalls->Js.Array2.push(true)->ignore
-          Promise.make((resolve, _reject) => {
+          Utils.Promise.make((resolve, _reject) => {
             resumeInitialStateResolveFns->Js.Array2.push(resolve)->ignore
           })
         }),
         dumpEffectCache: implement(#dumpEffectCache, () => {
           dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
-          Promise.resolve()
+          Utils.Promise.resolve()
         }),
         loadByIdsOrThrow: (
           type item,
@@ -154,7 +154,7 @@ module Storage = {
               "tableName": table.tableName,
             })
             ->ignore
-            Promise.resolve([])
+            Utils.Promise.resolve([])
           })
         },
         loadByFieldOrThrow: (
@@ -174,7 +174,7 @@ module Storage = {
               "operator": operator,
             })
             ->ignore
-            Promise.resolve([])
+            Utils.Promise.resolve([])
           })
         },
         reset: () => Js.Exn.raiseError("Not implemented"),
@@ -349,7 +349,7 @@ module Indexer = {
 
     {
       getBatchWritePromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
+        Utils.Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
@@ -358,7 +358,7 @@ module Indexer = {
         })
       },
       getRollbackReadyPromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
+        Utils.Promise.makeAsync(async (resolve, _reject) => {
           while (
             switch (gsManager->GlobalStateManager.getState).rollbackState {
             | RollbackReady(_) => false
@@ -378,7 +378,7 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
         )
-        ->Promise.thenResolve(items => {
+        ->Utils.Promise.thenResolve(items => {
           items->S.parseOrThrow(ec.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
@@ -392,7 +392,7 @@ module Indexer = {
             ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
           ),
         )
-        ->Promise.thenResolve(items => {
+        ->Utils.Promise.thenResolve(items => {
           items->S.parseOrThrow(
             S.array(
               S.union([
@@ -420,7 +420,7 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
         )
-        ->Promise.thenResolve(items => {
+        ->Utils.Promise.thenResolve(items => {
           items->S.parseOrThrow(entityConfig.rowsSchema)
         })
         ->(Utils.magic: promise<array<Internal.entity>> => promise<array<entity>>)
@@ -433,7 +433,7 @@ module Indexer = {
             ~tableName=InternalTable.Checkpoints.table.tableName,
           ),
         )
-        ->Promise.thenResolve(rows =>
+        ->Utils.Promise.thenResolve(rows =>
           rows
           ->(Utils.magic: unknown => array<unknown>)
           ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
@@ -561,7 +561,7 @@ module Source = {
     // With the function we keep only the pending calls,
     // and remove the resolved ones automatically.
     let keepOnlyPendingCalls = (~array, ~fn) => {
-      Promise.make((resolve, reject) => {
+      Utils.Promise.make((resolve, reject) => {
         let callRef = ref(%raw(`null`))
         callRef :=
           fn(
@@ -651,13 +651,13 @@ module Source = {
           pollingInterval,
           getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
             getBlockHashesCalls->Js.Array2.push(blockNumbers)->ignore
-            Promise.make((resolve, _reject) => {
+            Utils.Promise.make((resolve, _reject) => {
               getBlockHashesResolveFns->Js.Array2.push(resolve)->ignore
             })
           }),
           getHeightOrThrow: implement(#getHeightOrThrow, () => {
             getHeightOrThrowCalls->Js.Array2.push(true)->ignore
-            Promise.make((resolve, reject) => {
+            Utils.Promise.make((resolve, reject) => {
               getHeightOrThrowResolveFns->Js.Array2.push(resolve)->ignore
               getHeightOrThrowRejectFns->Js.Array2.push(reject)->ignore
             })
@@ -734,7 +734,7 @@ module Source = {
                                 ({context} as args) => {
                                   // We don't want preload optimization for the tests
                                   if context.isPreload {
-                                    Promise.resolve()
+                                    Utils.Promise.resolve()
                                   } else {
                                     handler(args)
                                   }

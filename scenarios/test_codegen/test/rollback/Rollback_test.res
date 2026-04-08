@@ -98,7 +98,7 @@ describe("E2E rollback tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await Promise.all3((
+      await Utils.Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
@@ -115,7 +115,7 @@ describe("E2E rollback tests", () => {
             eventsProcessed: 2,
           },
           {
-            id: firstHistoryCheckpointId->BigInt.add(1n),
+            id: firstHistoryCheckpointId->Utils.BigInt.add(1n),
             blockHash: Js.Null.Value("0x102"),
             blockNumber: 102,
             chainId: 1337,
@@ -154,7 +154,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(1n),
             entityId: "3",
             entity: {
               Indexer.Entities.SimpleEntity.id: "3",
@@ -170,7 +170,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Delete({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(1n),
             entityId: "4",
           }),
         ],
@@ -259,7 +259,7 @@ describe("E2E rollback tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await Promise.all3((
+      await Utils.Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
@@ -269,7 +269,7 @@ describe("E2E rollback tests", () => {
       (
         [
           {
-            id: firstHistoryCheckpointId->BigInt.add(3n),
+            id: firstHistoryCheckpointId->Utils.BigInt.add(3n),
             blockHash: Js.Null.Value("0x101"),
             blockNumber: 101,
             chainId: 1337,
@@ -288,7 +288,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(3n),
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -296,7 +296,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(3n),
             entityId: "2",
             entity: {
               Indexer.Entities.SimpleEntity.id: "2",
@@ -332,7 +332,7 @@ describe("E2E rollback tests", () => {
       let indexerMock = await MockIndexer.Indexer.make(~chains)
       await Utils.delay(0)
 
-      let _ = await Promise.all2((
+      let _ = await Utils.Promise.all2((
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
@@ -586,7 +586,7 @@ describe("E2E rollback tests", () => {
       )
       await Utils.delay(0)
 
-      let _ = await Promise.all2((
+      let _ = await Utils.Promise.all2((
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
       ))
@@ -891,7 +891,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     )
     await Utils.delay(0)
 
-    let _ = await Promise.all2((
+    let _ = await Utils.Promise.all2((
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
@@ -980,7 +980,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await Promise.all3((
+      await Utils.Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
@@ -1250,7 +1250,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await Promise.all3((
+      await Utils.Promise.all3((
         indexerMock.queryCheckpoints(),
         indexerMock.query(SimpleEntity),
         indexerMock.queryHistory(SimpleEntity),
@@ -1352,7 +1352,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       await Utils.delay(0)
 
-      let _ = await Promise.all2((
+      let _ = await Utils.Promise.all2((
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
@@ -1451,7 +1451,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await indexerMock.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Utils.Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
@@ -1556,7 +1556,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ),
       )
       t.expect(
-        await Promise.all2((
+        await Utils.Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
@@ -1667,7 +1667,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await indexerMock.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Utils.Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
@@ -1742,7 +1742,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ),
       )
       t.expect(
-        await Promise.all2((
+        await Utils.Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
@@ -1796,7 +1796,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       )
       await Utils.delay(0)
 
-      let _ = await Promise.all2((
+      let _ = await Utils.Promise.all2((
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
@@ -1869,7 +1869,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await indexerMock.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Utils.Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
@@ -1957,7 +1957,7 @@ Sorted by timestamp and chain id`,
         ),
       )
       t.expect(
-        await Promise.all2((
+        await Utils.Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
@@ -2105,7 +2105,7 @@ Sorted by timestamp and chain id`,
       await indexerMock.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Utils.Promise.all3((
           indexerMock.queryCheckpoints(),
           indexerMock.query(SimpleEntity),
           indexerMock.queryHistory(SimpleEntity),
@@ -2178,7 +2178,7 @@ Sorted by timestamp and chain id`,
         ),
       )
       t.expect(
-        await Promise.all2((
+        await Utils.Promise.all2((
           indexerMock.query(EntityWithBigDecimal),
           indexerMock.queryHistory(EntityWithBigDecimal),
         )),
@@ -2395,7 +2395,7 @@ Sorted by timestamp and chain id`,
       await Utils.delay(0)
 
       // Both chains enter reorg threshold (blocks 1-100 fetched, knownHeight=300)
-      let _ = await Promise.all2((
+      let _ = await Utils.Promise.all2((
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
@@ -2576,7 +2576,7 @@ Sorted by timestamp and chain id`,
       await Utils.delay(0)
 
       // All three chains enter reorg threshold
-      let _ = await Promise.all3((
+      let _ = await Utils.Promise.all3((
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock137),
@@ -3059,7 +3059,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       )
       await Utils.delay(0)
 
-      let _ = await Promise.all2((
+      let _ = await Utils.Promise.all2((
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
       ))
