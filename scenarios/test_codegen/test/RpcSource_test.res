@@ -748,7 +748,7 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
       dependsOnAddresses: true,
-      eventConfigs: [(Mock.evmEventConfig() :> Internal.eventConfig)],
+      eventConfigs: [(MockIndexer.evmEventConfig() :> Internal.eventConfig)],
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
@@ -759,7 +759,7 @@ describe("RpcSource - getSelectionConfig", () => {
     ).toEqual(
       {
         addresses: Some([mockAddress0]),
-        topicQuery: [Single(Mock.eventId)],
+        topicQuery: [Single(MockIndexer.eventId)],
       },
     )
   })
@@ -768,8 +768,8 @@ describe("RpcSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
-        (Mock.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
-        (Mock.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -788,7 +788,7 @@ describe("RpcSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
-        (Mock.evmEventConfig(
+        (MockIndexer.evmEventConfig(
           ~id="event 2",
           ~isWildcard=true,
           ~dependsOnAddresses=true,
@@ -812,7 +812,7 @@ describe("RpcSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
-        (Mock.evmEventConfig(
+        (MockIndexer.evmEventConfig(
           ~id="event 2",
           ~isWildcard=false,
           ~dependsOnAddresses=true,
@@ -855,8 +855,8 @@ describe("RpcSource - getSelectionConfig", () => {
       let _ = {
         dependsOnAddresses: true,
         eventConfigs: [
-          (Mock.evmEventConfig(~id="1") :> Internal.eventConfig),
-          (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="1") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
         ],
       }->RpcSource.getSelectionConfig(~chain)
       Js.Exn.raiseError("Should have thrown")

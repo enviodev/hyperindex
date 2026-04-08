@@ -126,7 +126,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should create indices for A entity table",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(Mock.entityConfig(A).table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableIndicesQuery(MockIndexer.entityConfig(A).table, ~pgSchema="test_schema")
 
         let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
         t.expect(
@@ -139,7 +139,7 @@ describe("Test PgStorage SQL generation functions", () => {
     Async.it(
       "Should handle table with no indices",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(Mock.entityConfig(B).table, ~pgSchema="test_schema")
+        let query = PgStorage.makeCreateTableIndicesQuery(MockIndexer.entityConfig(B).table, ~pgSchema="test_schema")
 
         // B entity has no indexed fields, so should return empty string
         t.expect(
@@ -155,7 +155,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for A entity table",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          Mock.entityConfig(A).table,
+          MockIndexer.entityConfig(A).table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -172,7 +172,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for B entity table with derived fields",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          Mock.entityConfig(B).table,
+          MockIndexer.entityConfig(B).table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -189,7 +189,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should handle default values",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          Mock.entityConfig(A).table,
+          MockIndexer.entityConfig(A).table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -208,13 +208,13 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create complete initialization queries",
       async t => {
         let entities = [
-          Mock.entityConfig(A),
-          Mock.entityConfig(B),
-          Mock.entityConfig(EntityWith63LenghtName______________________________________one),
-          Mock.entityConfig(EntityWith63LenghtName______________________________________two),
-          Mock.entityConfig(EntityWithAllTypes),
+          MockIndexer.entityConfig(A),
+          MockIndexer.entityConfig(B),
+          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________one),
+          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________two),
+          MockIndexer.entityConfig(EntityWithAllTypes),
         ]
-        let enums = Mock.config.allEnums
+        let enums = MockIndexer.config.allEnums
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
@@ -395,7 +395,7 @@ $$ LANGUAGE plpgsql;`)
       "Should create SQL for single entity with indices",
       async t => {
         // Test with just entity A which has an indexed field
-        let entities = [Mock.entityConfig(A)]
+        let entities = [MockIndexer.entityConfig(A)]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
@@ -533,8 +533,8 @@ $$ LANGUAGE plpgsql;`)
       async t => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=Mock.entityConfig(EntityWithAllNonArrayTypes).table,
-          ~itemSchema=Mock.entityConfig(EntityWithAllNonArrayTypes).schema,
+          ~table=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).table,
+          ~itemSchema=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).schema,
           ~isRawEvents=false,
         )
 
@@ -575,8 +575,8 @@ SELECT * FROM unnest($1::INTEGER[],$2::BIGINT[],$3::TEXT[],$4::TEXT[],$5::INTEGE
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=Mock.entityConfig(A).table,
-          ~itemSchema=Mock.entityConfig(A).schema,
+          ~table=MockIndexer.entityConfig(A).table,
+          ~itemSchema=MockIndexer.entityConfig(A).schema,
           ~itemsCount=2,
         )
 
@@ -596,8 +596,8 @@ VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=Mock.entityConfig(B).table,
-          ~itemSchema=Mock.entityConfig(B).schema,
+          ~table=MockIndexer.entityConfig(B).table,
+          ~itemSchema=MockIndexer.entityConfig(B).schema,
           ~itemsCount=1,
         )
 
