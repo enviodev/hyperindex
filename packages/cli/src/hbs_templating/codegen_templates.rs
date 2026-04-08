@@ -1115,7 +1115,8 @@ impl ProjectTemplate {
     /// future filter dimensions (block, transaction, …) can be added as
     /// siblings. Only EVM events have indexed filters; Fuel events produce
     /// an empty record. Mirrors `generate_event_filter_type` on the ReScript
-    /// side.
+    /// side, which intentionally renders indexed-struct filters as positional
+    /// tuples — at runtime they're delivered as keccak256 topic hashes anyway.
     fn generate_event_where_ts(event: &system_config::Event) -> String {
         let params_ts = match &event.kind {
             system_config::EventKind::Params(params) => {
@@ -1124,7 +1125,10 @@ impl ProjectTemplate {
                     .filter(|p| p.indexed)
                     .map(|p| {
                         let ts_type = Self::to_envio_dts_type(
-                            &abi_to_rescript_type(&p.into()).to_ts_type_string(),
+                            &crate::config_parsing::event_parsing::abi_to_rescript_type_positional(
+                                &p.into(),
+                            )
+                            .to_ts_type_string(),
                         );
                         format!("readonly {}?: SingleOrMultiple<{}>", p.name, ts_type)
                     })
