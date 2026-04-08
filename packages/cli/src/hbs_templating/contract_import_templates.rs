@@ -307,11 +307,8 @@ impl Contract {
         content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
         content.push_str(" */\n");
 
-        // Import statement for contract module
-        content.push_str(&format!(
-            "import {{ {} }} from \"generated\";\n",
-            self.name.capitalized
-        ));
+        // Import the indexer instance
+        content.push_str("import { indexer } from \"generated\";\n");
 
         // Import type statement for entity types
         if !self.imported_events.is_empty() {
@@ -322,11 +319,11 @@ impl Contract {
             content.push_str("} from \"generated\";\n");
         }
 
-        // Handler registrations
+        // Handler registrations using indexer.onEvent
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "{}.{}.handler(async ({{ event, context }}) => {{\n",
+                "indexer.onEvent({{ contract: \"{}\", event: \"{}\" }}, async ({{ event, context }}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -383,11 +380,11 @@ impl Contract {
         content.push('\n');
         content.push_str("open Indexer\n");
 
-        // Handler registrations
+        // Handler registrations using indexer.onEvent + GADT event identity
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "{}.{}.handler(async ({{event, context}}) => {{\n",
+                "indexer.onEvent({{event: {}({})}}, async ({{event, context}}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -569,11 +566,12 @@ impl Contract {
         content.push_str(
             "    t.expect(result.changes.length, \"Should have at least one change\").toBeGreaterThan(0);\n",
         );
+        content.push_str("    const firstChange = result.changes[0]!;\n");
         content.push_str(&format!(
-            "    t.expect(result.changes[0].chainId).toBe({});\n",
+            "    t.expect(firstChange.chainId).toBe({});\n",
             chain_id
         ));
-        content.push_str("    t.expect(result.changes[0].eventsProcessed).toBeGreaterThan(0);\n");
+        content.push_str("    t.expect(firstChange.eventsProcessed).toBeGreaterThan(0);\n");
         content.push_str("  }, 60_000);\n");
         content.push_str("});\n");
 

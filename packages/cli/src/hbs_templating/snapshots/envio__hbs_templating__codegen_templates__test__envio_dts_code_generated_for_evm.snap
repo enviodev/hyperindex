@@ -1,9 +1,10 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 2554
 expression: project_template.envio_dts_code
 ---
 import type {default as BigDecimal} from 'bignumber.js';
-import type {Address} from 'envio';
+import type {Address, SingleOrMultiple} from 'envio';
 export type EvmChains = {
   "ethereumMainnet": { id: 1 };
 };
@@ -674,9 +675,16 @@ export type EvmContracts = {
     };
   };
 };
+export type EvmEventFilters = {
+  "Contract1": {
+    "NewGravatar": { readonly params: {} };
+    "UpdatedGravatar": { readonly params: {} };
+  };
+};
 export type FuelChains = {};
 export type FuelChainId = "FuelChainId is not available. Configure Fuel chains in config.yaml and run 'pnpm envio codegen'";
 export type FuelContracts = {};
+export type FuelEventFilters = {};
 declare namespace FuelTypes {}
 export type SvmChains = {};
 export type SvmChainId = "SvmChainId is not available. Configure SVM chains in config.yaml and run 'pnpm envio codegen'";

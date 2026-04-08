@@ -7,7 +7,9 @@ let configWithRegistrations = Indexer.Generated.makeGeneratedConfig()
 let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
 
 // Test types:
-let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.eventFiltersArgs :> Internal.eventFiltersArgs)
+let filterArgsShouldBeASubsetOfInternal = (
+  %raw(`null`): Indexer.EventFiltersTest.Transfer.onEventWhereArgs :> Internal.eventFiltersArgs
+)
 
 describe("Test eventFilters", () => {
   it("Supports multichain filters", t => {
@@ -128,6 +130,6 @@ describe("Test eventFilters", () => {
       () => {
         eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137))
       },
-    ).toThrowError(`Invalid event filters configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
+    ).toThrowError(`Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
   })
 })

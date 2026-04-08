@@ -640,7 +640,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 102,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
+            context.chain.\"SimpleNft".add(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
           },
           handler,
         },
@@ -648,7 +648,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 103,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1))
+            context.chain.\"SimpleNft".add(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1))
           },
           handler,
         },
@@ -656,7 +656,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 104,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2))
+            context.chain.\"SimpleNft".add(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2))
           },
           handler,
         },

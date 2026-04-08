@@ -1,11 +1,11 @@
-import { Greeter, type User } from "generated";
+import { indexer, type User } from "generated";
 
 /**
 Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Greeter.NewGreeting.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Greeter", event: "NewGreeting" }, async ({ event, context }) => {
   //The id for the "User" entity
   const userId = event.params.user.bits;
   //The greeting string that was added.
@@ -46,7 +46,7 @@ Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Greeter.ClearGreeting.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Greeter", event: "ClearGreeting" }, async ({ event, context }) => {
   //The id for the "User" entity derived from params of the ClearGreeting event
   const userId = event.params.user.bits;
   //The optional User entity that may exist already at "userId"
