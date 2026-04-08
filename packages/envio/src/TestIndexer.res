@@ -745,6 +745,10 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   workerPath,
                   {
                     workerData: workerData->(Utils.magic: workerData => Js.Json.t),
+                    // Explicitly forward parent env so handlers running in
+                    // the worker observe the same environment as the test
+                    // process (e.g. E2E_EXPECTED_END_BLOCK).
+                    env: %raw(`process.env`),
                   },
                 )
               } catch {

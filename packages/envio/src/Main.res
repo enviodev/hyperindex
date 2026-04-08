@@ -60,6 +60,22 @@ let stateSchema = S.union([
 
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
+// Persistence is set by Main.start before handler modules load, so that
+// the exported indexer value can lazily expose DB state (startBlock,
+// endBlock, isLive, dynamic contract addresses) once it's ready.
+let globalPersistenceRef: ref<option<Persistence.t>> = ref(None)
+
+let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
+  switch globalPersistenceRef.contents {
+  | Some(persistence) =>
+    switch persistence.storageStatus {
+    | Ready(initialState) => initialState.chains->Js.Array2.find(c => c.id === chainId)
+    | _ => None
+    }
+  | None => None
+  }
+}
+
 let getGlobalIndexer = (~config: Config.t): 'indexer => {
   let indexer = Utils.Object.createNullObject()
 
@@ -85,13 +101,32 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     let chainObj = Utils.Object.createNullObject()
     chainObj
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {
+        enumerable: true,
+        get: () => {
+          switch getInitialChainState(~chainId=chainConfig.id) {
+          | Some(chainState) => chainState.startBlock
+          | None => chainConfig.startBlock
+          }
+        },
+      },
     )
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "endBlock",
-      {enumerable: true, value: chainConfig.endBlock},
+      {
+        enumerable: true,
+        get: () => {
+          // Persistence may store endBlock=None (eg the test indexer's
+          // auto-exit mode where the user didn't specify an endBlock).
+          // Only override the config when persistence has an explicit value.
+          switch getInitialChainState(~chainId=chainConfig.id) {
+          | Some({endBlock: Some(_) as eb}) => eb
+          | _ => chainConfig.endBlock
+          }
+        },
+      },
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
@@ -100,12 +135,20 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
         enumerable: true,
         get: () => {
           switch globalGsManagerRef.contents {
-          | None => false
           | Some(gsManager) =>
             let state = gsManager->GlobalStateManager.getState
             let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
             let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
             chainFetcher->ChainFetcher.isReady
+          // Before the GlobalStateManager is available (eg during handler
+          // module load after resume), derive liveness from persistence:
+          // a chain is considered live when it previously caught up to head
+          // or endBlock (timestampCaughtUpToHeadOrEndblock is set).
+          | None =>
+            switch getInitialChainState(~chainId=chainConfig.id) {
+            | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
+            | None => false
+            }
           }
         },
       },
@@ -124,7 +167,6 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
           enumerable: true,
           get: () => {
             switch globalGsManagerRef.contents {
-            | None => contract.addresses
             | Some(gsManager) => {
                 let state = gsManager->GlobalStateManager.getState
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
@@ -141,6 +183,21 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
                   }
                 }
                 addresses
+              }
+            // Before the GlobalStateManager is available (eg during handler
+            // module load after resume), combine static addresses from config
+            // with dynamic contracts persisted in the database.
+            | None =>
+              switch getInitialChainState(~chainId=chainConfig.id) {
+              | Some(chainState) =>
+                let addresses = contract.addresses->Array.copy
+                chainState.dynamicContracts->Array.forEach(dc => {
+                  if dc.contractName === contract.name {
+                    addresses->Array.push(dc.address)->ignore
+                  }
+                })
+                addresses
+              | None => contract.addresses
               }
             }
           },
@@ -280,12 +337,19 @@ let start = async (
   // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
   let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
-  // Register all handlers first, then get the config with registrations
+  // Initialize persistence first so the exported indexer value contains state from the database
+  // when handler files are loaded (they may access the indexer at module top level).
   let configWithoutRegistrations = makeGeneratedConfig()
   let persistence = switch persistence {
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
   }
+  globalPersistenceRef := Some(persistence)
+  await persistence->Persistence.init(
+    ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
+  )
+
+  // Register all handlers, then get the config with registrations
   let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
   let config = makeGeneratedConfig()
   let config = if isTest {
@@ -363,8 +427,6 @@ let start = async (
       }
     )
   }
-
-  await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
 
   let chainManager = await ChainManager.makeFromDbState(
     ~initialState=ctx.persistence->Persistence.getInitializedState,
