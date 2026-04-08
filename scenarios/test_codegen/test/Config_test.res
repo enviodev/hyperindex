@@ -269,6 +269,35 @@ describe("EventConfigBuilder", () => {
     )
   })
 
+  it("buildHyperSyncDecoder remaps mixed-name tuple components using index keys", t => {
+    // Issue #538 follow-up: when a tuple has some named and some unnamed
+    // components, the CLI emits `"0"`, `"1"`, ... for unnamed slots. The
+    // runtime decoder must honour those keys so handlers can access unnamed
+    // fields via `value["1"]`.
+    let params: array<EventConfigBuilder.eventParam> = [
+      {
+        name: "mixed",
+        abiType: "(string,uint256,address,bool)",
+        indexed: false,
+        components: [
+          {name: "label", abiType: "string"},
+          {name: "1", abiType: "uint256"},
+          {name: "recipient", abiType: "address"},
+          {name: "3", abiType: "bool"},
+        ],
+      },
+    ]
+    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
+    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
+      indexed: [],
+      body: [("hi", 42n, "0xabc", true)->Utils.magic],
+    }
+    let decoded = decoder(mockDecodedEvent)
+    t.expect(decoded).toEqual(
+      {"mixed": {"label": "hi", "1": 42n, "recipient": "0xabc", "3": true}}->Utils.magic,
+    )
+  })
+
   it("abiTypeToSchema throws on unsupported types", t => {
     t.expect(() => EventConfigBuilder.abiTypeToSchema("function")).toThrowError(
       "Unsupported ABI type: function",

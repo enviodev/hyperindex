@@ -10,7 +10,7 @@ expression: ts
       /** The unique identifier of the blockchain network where this event occurred. */
       readonly chainId: ChainId;
       /** The parameters or arguments associated with this event. */
-      readonly params: { readonly streamId: bigint; readonly commonParams: { readonly funder: Address; readonly sender: Address; readonly recipient: Address; readonly amounts: { readonly deposit: bigint; readonly brokerFee: bigint }; readonly token: Address; readonly cancelable: boolean; readonly transferable: boolean; readonly timestamps: { readonly start: bigint; readonly end: bigint }; readonly shape: string; readonly broker: Address }; readonly tranches: readonly { readonly amount: bigint; readonly timestamp: bigint }[] };
+      readonly params: { readonly streamId: bigint; readonly commonParams: { readonly funder: Address; readonly sender: Address; readonly recipient: Address; readonly amounts: { readonly deposit: bigint; readonly brokerFee: bigint }; readonly token: Address; readonly cancelable: boolean; readonly transferable: boolean; readonly timestamps: { readonly start: bigint; readonly end: bigint }; readonly shape: string; readonly broker: Address }; readonly tranches: readonly { readonly amount: bigint; readonly timestamp: bigint }[]; readonly mixedTuple: { readonly label: string; readonly 1: bigint; readonly recipient: Address; readonly 3: boolean } };
       /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
       readonly block: EvmBlock;
       /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */

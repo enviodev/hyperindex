@@ -50,17 +50,6 @@ fn indent(code: &str) -> String {
 // ============== Template Types ==============
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EventParamTypeTemplate {
-    pub res_name: String,
-    pub js_name: String,
-    pub res_type: String,
-    pub ts_type: String,
-    pub default_value_rescript: String,
-    pub default_value_non_rescript: String,
-    pub is_eth_address: bool,
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
@@ -471,7 +460,6 @@ let handler: fnWithEventConfig<
 pub struct EventTemplate {
     pub name: String,
     pub module_code: String,
-    pub params: Vec<EventParamTypeTemplate>,
 }
 
 impl EventTemplate {
@@ -518,7 +506,6 @@ impl EventTemplate {
         EventTemplate {
             name: event_name,
             module_code: event_mod.to_string(),
-            params: vec![],
         }
     }
 
@@ -538,7 +525,6 @@ impl EventTemplate {
         EventTemplate {
             name: event_name,
             module_code: event_mod.to_string(),
-            params: vec![],
         }
     }
 
@@ -549,23 +535,6 @@ impl EventTemplate {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
-                let template_params = params
-                    .iter()
-                    .map(|input| {
-                        let res_type = abi_to_rescript_type(&input.into());
-                        let js_name = input.name.to_string();
-                        EventParamTypeTemplate {
-                            res_name: RecordField::to_valid_rescript_name(&js_name),
-                            js_name,
-                            default_value_rescript: res_type.get_default_value_rescript(),
-                            default_value_non_rescript: res_type.get_default_value_non_rescript(),
-                            ts_type: res_type.to_ts_type_string(),
-                            res_type: res_type.to_string(),
-                            is_eth_address: res_type == TypeIdent::Address,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
                 // Solidity structs render as ReScript JS object types
                 // (`{"funder": Address.t, ...}`) via `TypeIdent::Record`, which
                 // IS inlinable inside a nominal record. The top-level `type
@@ -628,7 +597,6 @@ impl EventTemplate {
                 Ok(EventTemplate {
                     name: event_name,
                     module_code: event_mod.to_string(),
-                    params: template_params,
                 })
             }
             EventKind::Fuel(fuel_event_kind) => {
@@ -648,7 +616,6 @@ impl EventTemplate {
                         Ok(EventTemplate {
                             name: event_name,
                             module_code: event_mod.to_string(),
-                            params: vec![],
                         })
                     }
                     FuelEventKind::Mint | FuelEventKind::Burn => Ok(Self::from_fuel_supply_event(
@@ -2469,7 +2436,6 @@ mod test {
         .unwrap();
 
         assert_eq!(event_template.name, "NewGravatar");
-        assert_eq!(event_template.params.len(), 0);
         insta::assert_snapshot!(event_template.module_code);
     }
 
@@ -2485,6 +2451,10 @@ mod test {
     /// `commonParams` is a named struct containing a nested `timestamps`
     /// struct, and `tranches` is an array of `Tranche` structs — this
     /// exercises every interesting code path for struct rendering.
+    ///
+    /// The synthetic `mixedTuple` param covers tuples that mix named and
+    /// unnamed components: unnamed fields fall back to their positional
+    /// index as the JS object key.
     fn sablier_named_struct_event() -> system_config::Event {
         use crate::config_parsing::abi_compat::{AbiTupleField, AbiType, EventParam};
 
@@ -2493,6 +2463,9 @@ mod test {
                 name: Some(name.to_string()),
                 kind,
             }
+        }
+        fn unnamed(kind: AbiType) -> AbiTupleField {
+            AbiTupleField { name: None, kind }
         }
 
         let common_params = AbiType::Tuple(vec![
@@ -2525,6 +2498,13 @@ mod test {
             named("timestamp", AbiType::Uint(40)),
         ]);
 
+        let mixed_tuple = AbiType::Tuple(vec![
+            named("label", AbiType::String),
+            unnamed(AbiType::Uint(256)),
+            named("recipient", AbiType::Address),
+            unnamed(AbiType::Bool),
+        ]);
+
         system_config::Event {
             name: "CreateLockupTranchedStream".to_string(),
             kind: system_config::EventKind::Params(vec![
@@ -2541,6 +2521,11 @@ mod test {
                 EventParam {
                     name: "tranches".to_string(),
                     kind: AbiType::Array(Box::new(tranche)),
+                    indexed: false,
+                },
+                EventParam {
+                    name: "mixedTuple".to_string(),
+                    kind: mixed_tuple,
                     indexed: false,
                 },
             ]),
@@ -2613,7 +2598,6 @@ mod test {
 
         insta::assert_snapshot!(event_template.module_code);
         assert_eq!(event_template.name, "NewGravatar");
-        assert_eq!(event_template.params.len(), 0);
     }
 
     #[test]

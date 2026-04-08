@@ -197,8 +197,9 @@ struct EventParam {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct EventParamComponent {
-    /// Component name from the ABI. CLI fills in `_0`, `_1`, ... for unnamed slots so
-    /// the runtime always has a valid record key.
+    /// Component name from the ABI. For unnamed slots in mixed-name tuples the
+    /// CLI fills in the positional index (`"0"`, `"1"`, ...) so the runtime
+    /// always has a valid record key that matches the codegen'd type.
     name: String,
     abi_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,10 +207,9 @@ struct EventParamComponent {
 }
 
 /// Walk an `AbiType` to produce the `components` tree that the runtime needs to
-/// rebuild named records. Only emits components for *named* tuples (Solidity
-/// structs); anonymous tuples stay positional and the runtime decodes them via
-/// the legacy `abiType` string. Returns `None` for leaf types or anonymous
-/// tuples so the runtime takes the legacy path.
+/// rebuild named records. Emits components for any tuple with at least one named
+/// field (Solidity structs and mixed-name tuples); fully anonymous tuples stay
+/// positional and the runtime decodes them via the legacy `abiType` string.
 fn abi_type_to_components(
     ty: &crate::config_parsing::abi_compat::AbiType,
 ) -> Option<Vec<EventParamComponent>> {
@@ -218,13 +218,18 @@ fn abi_type_to_components(
         AbiType::Tuple(fields)
             if fields
                 .iter()
-                .all(|f| f.name.as_ref().is_some_and(|n| !n.is_empty())) =>
+                .any(|f| f.name.as_ref().is_some_and(|n| !n.is_empty())) =>
         {
             Some(
                 fields
                     .iter()
-                    .map(|f| EventParamComponent {
-                        name: f.name.clone().unwrap(),
+                    .enumerate()
+                    .map(|(i, f)| EventParamComponent {
+                        name: f
+                            .name
+                            .clone()
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| i.to_string()),
                         abi_type: f.kind.to_signature_string(),
                         components: abi_type_to_components(&f.kind),
                     })

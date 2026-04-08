@@ -169,17 +169,25 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
         AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
         AbiType::FixedArray(inner, _) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
         AbiType::Tuple(fields) => {
-            // Solidity structs (named components) render as inline records;
-            // anonymous tuples (e.g. from bare signature strings or unnamed
-            // tuple types) stay as positional tuples.
-            if fields
+            // Any named component promotes the whole tuple to an inline record,
+            // so handlers can do `event.params.funder` instead of `commonParams[0]`.
+            // Unnamed components in a mixed tuple fall back to their positional
+            // index as the JS object key (e.g. `commonParams["1"]`). Fully anonymous
+            // tuples (e.g. from bare signature strings) stay as positional tuples.
+            let has_named = fields
                 .iter()
-                .all(|f| f.name.as_ref().is_some_and(|n| !n.is_empty()))
-            {
+                .any(|f| f.name.as_ref().is_some_and(|n| !n.is_empty()));
+            if has_named {
                 let record_fields = fields
                     .iter()
-                    .map(|f| {
-                        RecordField::new(f.name.clone().unwrap(), abi_type_to_rescript(&f.kind))
+                    .enumerate()
+                    .map(|(i, f)| {
+                        let name = f
+                            .name
+                            .clone()
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| i.to_string());
+                        RecordField::new(name, abi_type_to_rescript(&f.kind))
                     })
                     .collect();
                 TypeIdent::Record(record_fields)
@@ -295,6 +303,60 @@ mod tests {
         assert_eq!(
             parsed.to_ts_type_string(),
             "{ readonly funder: Address; readonly amount: bigint }"
+        );
+    }
+
+    #[test]
+    fn test_record_type_mixed_named_tuple_uses_index_for_unnamed() {
+        // Mixed-name tuples (some components named, others not) still render as
+        // an inline record. Unnamed fields fall back to their positional index
+        // as the JS object key, with no leading underscore.
+        let tuple_type = AbiType::Tuple(vec![
+            AbiTupleField {
+                name: Some("funder".to_string()),
+                kind: AbiType::Address,
+            },
+            AbiTupleField {
+                name: None,
+                kind: AbiType::Uint(256),
+            },
+            AbiTupleField {
+                name: Some("".to_string()),
+                kind: AbiType::Bool,
+            },
+            AbiTupleField {
+                name: Some("recipient".to_string()),
+                kind: AbiType::Address,
+            },
+        ]);
+        let param = EvmEventParam {
+            abi_type: &tuple_type,
+            name: "commonParams",
+        };
+
+        let parsed = abi_to_rescript_type(&param);
+
+        match &parsed {
+            TypeIdent::Record(fields) => {
+                assert_eq!(
+                    fields,
+                    &vec![
+                        RecordField::new("funder".to_string(), TypeIdent::Address),
+                        RecordField::new("1".to_string(), TypeIdent::BigInt),
+                        RecordField::new("2".to_string(), TypeIdent::Bool),
+                        RecordField::new("recipient".to_string(), TypeIdent::Address),
+                    ]
+                );
+            }
+            _ => panic!("expected Record"),
+        }
+        assert_eq!(
+            parsed.to_string(),
+            "{\"funder\": Address.t, \"1\": bigint, \"2\": bool, \"recipient\": Address.t}"
+        );
+        assert_eq!(
+            parsed.to_ts_type_string(),
+            "{ readonly funder: Address; readonly 1: bigint; readonly 2: boolean; readonly recipient: Address }"
         );
     }
 

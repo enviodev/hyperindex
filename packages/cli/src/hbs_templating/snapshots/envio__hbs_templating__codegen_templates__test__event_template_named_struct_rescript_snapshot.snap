@@ -5,9 +5,9 @@ expression: template.module_code
 
 let name = "CreateLockupTranchedStream"
 let contractName = contractName
-type params = {streamId: bigint, commonParams: {"funder": Address.t, "sender": Address.t, "recipient": Address.t, "amounts": {"deposit": bigint, "brokerFee": bigint}, "token": Address.t, "cancelable": bool, "transferable": bool, "timestamps": {"start": bigint, "end": bigint}, "shape": string, "broker": Address.t}, tranches: array<{"amount": bigint, "timestamp": bigint}>}
+type params = {streamId: bigint, commonParams: {"funder": Address.t, "sender": Address.t, "recipient": Address.t, "amounts": {"deposit": bigint, "brokerFee": bigint}, "token": Address.t, "cancelable": bool, "transferable": bool, "timestamps": {"start": bigint, "end": bigint}, "shape": string, "broker": Address.t}, tranches: array<{"amount": bigint, "timestamp": bigint}>, mixedTuple: {"label": string, "1": bigint, "recipient": Address.t, "3": bool}}
 /** Event params with all fields optional. Missing fields use default values. */
-type paramsConstructor = {streamId?: bigint, commonParams?: (Address.t, Address.t, Address.t, (bigint, bigint), Address.t, bool, bool, (bigint, bigint), string, Address.t), tranches?: array<(bigint, bigint)>}
+type paramsConstructor = {streamId?: bigint, commonParams?: (Address.t, Address.t, Address.t, (bigint, bigint), Address.t, bool, bool, (bigint, bigint), string, Address.t), tranches?: array<(bigint, bigint)>, mixedTuple?: (string, bigint, Address.t, bool)}
 type block = Block.t
 type transaction = Transaction.t
 
