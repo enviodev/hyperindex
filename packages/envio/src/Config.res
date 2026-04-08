@@ -808,3 +808,12 @@ let getChain = (config, ~chainId) => {
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
 }
+
+@val external envioConfigEnv: option<string> = "process.env.ENVIO_CONFIG"
+
+let fromEnv = () => {
+  switch envioConfigEnv {
+  | Some(configStr) => configStr->Js.Json.parseExn->fromPublic
+  | None => Js.Exn.raiseError("ENVIO_CONFIG environment variable is not set")
+  }
+}

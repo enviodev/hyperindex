@@ -79,12 +79,12 @@ let dcToItem = (dc: Internal.indexingContract) => {
   item
 }
 
-let baseEventConfig = (Mock.evmEventConfig(
+let baseEventConfig = (MockIndexer.evmEventConfig(
   ~id="0",
   ~contractName="Gravatar",
 ) :> Internal.eventConfig)
 
-let baseEventConfig2 = (Mock.evmEventConfig(
+let baseEventConfig2 = (MockIndexer.evmEventConfig(
   ~id="0",
   ~contractName="NftFactory",
 ) :> Internal.eventConfig)
@@ -272,7 +272,7 @@ describe("FetchState.make", () => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let fetchState = FetchState.make(
         ~eventConfigs=[
-          (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           baseEventConfig,
         ],
         ~contracts=[makeConfigContract("ContractA", mockAddress1), dc],
@@ -352,7 +352,7 @@ describe("FetchState.make", () => {
       let dc2 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress4)
       let fetchState = FetchState.make(
         ~eventConfigs=[
-          (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           baseEventConfig,
         ],
         ~contracts=[
@@ -455,11 +455,11 @@ describe("FetchState.make", () => {
   )
 
   it("Two static contracts with different names merge based on block distance", t => {
-    let contractAEventConfig = (Mock.evmEventConfig(
+    let contractAEventConfig = (MockIndexer.evmEventConfig(
       ~id="0",
       ~contractName="ContractA",
     ) :> Internal.eventConfig)
-    let contractBEventConfig = (Mock.evmEventConfig(
+    let contractBEventConfig = (MockIndexer.evmEventConfig(
       ~id="0",
       ~contractName="ContractB",
     ) :> Internal.eventConfig)
@@ -550,7 +550,7 @@ describe("FetchState.make", () => {
   it(
     "Single contract with close startBlocks creates one partition, far startBlocks creates two with mergeBlock",
     t => {
-      let gravatarEventConfig = (Mock.evmEventConfig(
+      let gravatarEventConfig = (MockIndexer.evmEventConfig(
         ~id="0",
         ~contractName="Gravatar",
       ) :> Internal.eventConfig)
@@ -646,7 +646,7 @@ describe("FetchState.make", () => {
   )
 
   it("Single contract with filterByAddresses keeps separate partitions per startBlock", t => {
-    let gravatarEventConfig = (Mock.evmEventConfig(
+    let gravatarEventConfig = (MockIndexer.evmEventConfig(
       ~id="0",
       ~contractName="Gravatar",
       ~filterByAddresses=true,
@@ -708,12 +708,12 @@ describe("FetchState.make", () => {
   it(
     "Different contracts with filterByAddresses use mergeBlock strategy and merge addresses into later partition",
     t => {
-      let contractAEventConfig = (Mock.evmEventConfig(
+      let contractAEventConfig = (MockIndexer.evmEventConfig(
         ~id="0",
         ~contractName="ContractA",
         ~filterByAddresses=true,
       ) :> Internal.eventConfig)
-      let contractBEventConfig = (Mock.evmEventConfig(
+      let contractBEventConfig = (MockIndexer.evmEventConfig(
         ~id="0",
         ~contractName="ContractB",
         ~filterByAddresses=true,
@@ -994,10 +994,10 @@ describe("FetchState.registerDynamicContracts", () => {
       let fetchState = FetchState.make(
         ~eventConfigs=[
           baseEventConfig,
-          (Mock.evmEventConfig(~id="0", ~contractName="NftFactory") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="0", ~contractName="NftFactory") :> Internal.eventConfig),
           // An event from another contract
           // which has an event filter by addresses
-          (Mock.evmEventConfig(
+          (MockIndexer.evmEventConfig(
             ~id="0",
             ~contractName="SimpleNft",
             ~isWildcard=false,
@@ -1254,21 +1254,21 @@ describe("FetchState.registerDynamicContracts", () => {
   it(
     "Creates FetchState with wildcard and normal events. Addresses not belonging to event configs should be skipped (pre-registration case)",
     t => {
-      let wildcard1 = (Mock.evmEventConfig(
+      let wildcard1 = (MockIndexer.evmEventConfig(
         ~id="wildcard1",
         ~contractName="Gravatar",
         ~isWildcard=true,
       ) :> Internal.eventConfig)
-      let wildcard2 = (Mock.evmEventConfig(
+      let wildcard2 = (MockIndexer.evmEventConfig(
         ~id="wildcard2",
         ~contractName="Gravatar",
         ~isWildcard=true,
       ) :> Internal.eventConfig)
-      let normal1 = (Mock.evmEventConfig(
+      let normal1 = (MockIndexer.evmEventConfig(
         ~id="normal1",
         ~contractName="NftFactory",
       ) :> Internal.eventConfig)
-      let normal2 = (Mock.evmEventConfig(
+      let normal2 = (MockIndexer.evmEventConfig(
         ~id="normal2",
         ~contractName="NftFactory",
         ~isWildcard=true,
@@ -1979,7 +1979,7 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Wildcard partition never merges to another one", t => {
-    let wildcard = (Mock.evmEventConfig(
+    let wildcard = (MockIndexer.evmEventConfig(
       ~id="wildcard",
       ~contractName="ContractA",
       ~isWildcard=true,
@@ -1987,8 +1987,8 @@ describe("FetchState.getNextQuery & integration", () => {
     let fetchState =
       FetchState.make(
         ~eventConfigs=[
-          (Mock.evmEventConfig(~id="0", ~contractName="Gravatar") :> Internal.eventConfig),
-          (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="0", ~contractName="Gravatar") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
           wildcard,
         ],
         ~contracts=[makeConfigContract("ContractA", mockAddress1)],
@@ -2174,7 +2174,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
   it("Keeps wildcard partition on rollback", t => {
     let wildcardEventConfigs = [
-      (Mock.evmEventConfig(
+      (MockIndexer.evmEventConfig(
         ~id="wildcard",
         ~contractName="ContractA",
         ~isWildcard=true,
@@ -2182,7 +2182,7 @@ describe("FetchState.getNextQuery & integration", () => {
     ]
     let eventConfigs = [
       ...wildcardEventConfigs,
-      (Mock.evmEventConfig(~id="0", ~contractName="Gravatar") :> Internal.eventConfig),
+      (MockIndexer.evmEventConfig(~id="0", ~contractName="Gravatar") :> Internal.eventConfig),
     ]
     let fetchState =
       FetchState.make(
@@ -2388,7 +2388,7 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("Shouldn't wait for new block until all partitions reached the head", t => {
-    let wildcard = (Mock.evmEventConfig(
+    let wildcard = (MockIndexer.evmEventConfig(
       ~id="wildcard",
       ~contractName="ContractA",
       ~isWildcard=true,
@@ -2398,7 +2398,7 @@ describe("FetchState unit tests for specific cases", () => {
     // another reached max queue size
     let fetchState = FetchState.make(
       ~eventConfigs=[
-        (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
         wildcard,
       ],
       ~contracts=[makeConfigContract("ContractA", mockAddress0)],
@@ -2528,7 +2528,7 @@ describe("FetchState unit tests for specific cases", () => {
   it("Returns NoItem when there is an empty partition at block 0", t => {
     let fetchState = FetchState.make(
       ~eventConfigs=[
-        (Mock.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
       ],
       ~contracts=[
         makeConfigContract("ContractA", mockAddress1),

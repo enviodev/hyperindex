@@ -25,11 +25,14 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
       let _ = await Utils.importPath(toImportUrl(handlerPath))
     } catch {
     | exn =>
+      let cause = exn->Utils.prettifyExn->Obj.magic
       Logging.errorWithExn(
         exn,
         `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
       )
-      Js.Exn.raiseError(`Failed to load handler file for contract ${contractName}: ${handlerPath}`)
+      Js.Exn.raiseError(
+        `Failed to load handler file for contract ${contractName}: ${handlerPath}. Cause: ${cause}`,
+      )
     }
   }
 }
@@ -62,8 +65,9 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
     await handlerFiles
     ->Js.Array2.map(file => {
       Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
+        let cause = exn->Utils.prettifyExn->Obj.magic
         Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
-        Js.Exn.raiseError(`Failed to auto-load handler file: ${file}`)
+        Js.Exn.raiseError(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
       })
     })
     ->Promise.all
