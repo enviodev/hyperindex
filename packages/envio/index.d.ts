@@ -493,23 +493,24 @@ type ContractRegistration = {
   readonly add: (address: Address) => void;
 };
 
-/** Context for contractRegister handlers. Chain object includes contract registration methods. */
+/** Context for contractRegister handlers. Chain object includes contract registration methods.
+ * `isLive` is intentionally absent: contract registration runs during historical sync,
+ * so the "live" distinction isn't meaningful and the runtime does not expose it. */
 export type EvmContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
   readonly log: Logger;
   readonly chain: {
     readonly id: EvmChainIds<Config>;
-    readonly isLive: boolean;
   } & {
     readonly [K in EvmContractNames<Config>]: ContractRegistration;
   };
 }>;
 
-/** Context for contractRegister handlers in Fuel ecosystem. */
+/** Context for contractRegister handlers in Fuel ecosystem. `isLive` is intentionally
+ * absent — see EvmContractRegisterContext. */
 export type FuelContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
   readonly log: Logger;
   readonly chain: {
     readonly id: FuelChainIds<Config>;
-    readonly isLive: boolean;
   } & {
     readonly [K in FuelContractNames<Config>]: ContractRegistration;
   };

@@ -169,7 +169,7 @@ let getHandler = (~contractName, ~eventName) => get(~contractName, ~eventName).h
 let getContractRegister = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).contractRegister
 
-let getWhere = (~contractName, ~eventName) =>
+let getOnEventWhere = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).eventOptions->Belt.Option.flatMap(value => value.where)
 
 let isWildcard = (~contractName, ~eventName) =>

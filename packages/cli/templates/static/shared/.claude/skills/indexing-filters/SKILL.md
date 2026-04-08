@@ -10,36 +10,47 @@ description: >-
 
 The `where` handler option filters events by indexed parameters. Works with or without `wildcard: true`.
 
-The filter record is nested under a `params` field so future filter dimensions (block, transaction, …) can be added as siblings.
-
-## Array Form — Static Filters (OR)
-
-```ts
-indexer.onEvent(
-  { contract: "ERC20", event: "Transfer", wildcard: true,
-    where: [
-      { params: { from: ZERO_ADDRESS } },
-      { params: { to: ZERO_ADDRESS } },
-    ] },
-  async ({ event, context }) => { /* ... */ },
-);
-```
-
-Each entry in the array is **OR'd** together. Within a single `params` record, fields are **AND'd**. Arrays in a field position match **any** value in the array.
+The filter value is a `{ params: ... }` record. `params` can be a **single object** (AND-conjunction across indexed parameters) or an **array** of objects (OR across multiple AND-conjunctions). The `{params}` wrapper reserves room for future filter dimensions (block, transaction, …) as sibling fields.
 
 ## Single Object Form
 
 ```ts
 indexer.onEvent(
-  { contract: "ERC20", event: "Transfer", wildcard: true,
-    where: { params: { from: ZERO_ADDRESS, to: WHITELISTED } } },
-  async ({ event, context }) => { /* ... */ },
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
+    where: { params: { from: ZERO_ADDRESS, to: WHITELISTED } },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
 );
 ```
 
+## Array Form — Static Filters (OR)
+
+```ts
+indexer.onEvent(
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
+    where: {
+      params: [{ from: ZERO_ADDRESS }, { to: ZERO_ADDRESS }],
+    },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
+);
+```
+
+Each entry in the `params` array is **OR'd** together. Within a single entry, fields are **AND'd**. Arrays in a field position match **any** value in the array.
+
 ## Function Form — Dynamic Per-Chain
 
-Return a filter based on `chainId`. Return `false` to skip the chain entirely (no events processed), or `true` (or `[]`) to allow all events. To filter, return a single `where` condition or an array of conditions:
+Return a filter based on `chainId`. Return `false` to skip the chain entirely (no events processed), or `true` to allow all events. To filter, return a `{params: ...}` object where `params` is a single record or an array of records:
 
 ```ts
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -49,15 +60,23 @@ const WHITELISTED = {
 };
 
 indexer.onEvent(
-  { contract: "ERC20", event: "Transfer", wildcard: true,
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
     where: ({ chainId }) => {
       if (chainId !== 100 && chainId !== 137) return false;
-      return [
-        { params: { from: ZERO_ADDRESS, to: WHITELISTED[chainId] } },
-        { params: { from: WHITELISTED[chainId], to: ZERO_ADDRESS } },
-      ];
-    } },
-  async ({ event, context }) => { /* ... */ },
+      return {
+        params: [
+          { from: ZERO_ADDRESS, to: WHITELISTED[chainId] },
+          { from: WHITELISTED[chainId], to: ZERO_ADDRESS },
+        ],
+      };
+    },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
 );
 ```
 
@@ -67,26 +86,34 @@ For dynamically registered contracts, use `addresses` to filter by their address
 
 ```ts
 indexer.onEvent(
-  { contract: "ERC20", event: "Transfer", wildcard: true,
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
     where: ({ chainId, addresses }) => {
       if (chainId !== 100 && chainId !== 137) return false;
-      return [
-        { params: { from: ZERO_ADDRESS, to: addresses } },
-        { params: { from: addresses, to: ZERO_ADDRESS } },
-      ];
-    } },
-  async ({ event, context }) => { /* ... */ },
+      return {
+        params: [
+          { from: ZERO_ADDRESS, to: addresses },
+          { from: addresses, to: ZERO_ADDRESS },
+        ],
+      };
+    },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
 );
 ```
 
 ## Filter Semantics
 
-- Filter fields under `params` correspond to the event's **indexed parameters** only
-- Multiple filter objects → OR (match any)
-- Multiple fields in one `params` record → AND (match all)
+- Filter fields inside each `params` entry correspond to the event's **indexed parameters** only
+- Multiple entries in the `params` array → OR (match any)
+- Multiple fields in one entry → AND (match all)
 - Array value in a field → match any value in the array
 - `return false` → skip the chain entirely (no events processed for that chain)
-- `return true` (or `[]`) → accept all events (no filtering, default topic0-only selection)
+- `return true` → accept all events (no filtering, default topic0-only selection)
 
 ## Deep Documentation
 

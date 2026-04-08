@@ -49,13 +49,19 @@ indexer.onEvent(
 
 ## Combining with Event Filters (`where`)
 
-Wildcard indexing produces high event volume. Use `where` to reduce it — see the `indexing-filters` skill for array, function, and `addresses` forms.
+Wildcard indexing produces high event volume. Use `where` to reduce it — see the `indexing-filters` skill for object, array, function, and `addresses` forms.
 
 ```ts
 indexer.onEvent(
-  { contract: "ERC20", event: "Transfer", wildcard: true,
-    where: { params: { from: ZERO_ADDRESS } } },
-  async ({ event, context }) => { /* ... */ },
+  {
+    contract: "ERC20",
+    event: "Transfer",
+    wildcard: true,
+    where: { params: { from: ZERO_ADDRESS } },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
 );
 ```
 

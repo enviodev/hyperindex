@@ -23,7 +23,7 @@ let getContractRegister: (
   ~contractName: string,
   ~eventName: string,
 ) => option<Internal.contractRegister>
-let getWhere: (~contractName: string, ~eventName: string) => option<Js.Json.t>
+let getOnEventWhere: (~contractName: string, ~eventName: string) => option<Js.Json.t>
 let isWildcard: (~contractName: string, ~eventName: string) => bool
 let hasRegistration: (~contractName: string, ~eventName: string) => bool
 

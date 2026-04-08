@@ -558,7 +558,7 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
             ~isWildcard,
             ~handler,
             ~contractRegister,
-            ~eventFilters=HandlerRegister.getWhere(~contractName, ~eventName),
+            ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
             ~globalBlockFieldsSet,
