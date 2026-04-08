@@ -338,25 +338,29 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "Transfer", wildcard: tru
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
-  return [
-    { params: { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId as 100 | 137] } },
-    { params: { from: WHITELISTED_ADDRESSES[chainId as 100 | 137], to: ZERO_ADDRESS } },
-  ];
+  return {
+    params: [
+      { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId as 100 | 137] },
+      { from: WHITELISTED_ADDRESSES[chainId as 100 | 137], to: ZERO_ADDRESS },
+    ],
+  };
 } }, async (_) => {});
 indexer.onEvent({ contract: "EventFiltersTest", event: "EmptyFiltersArray", wildcard: true, where: ({ chainId }) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
-  return [];
+  return { params: [] };
 } }, async (_) => {});
 indexer.onEvent({ contract: "EventFiltersTest", event: "WildcardWithAddress", wildcard: true, where: ({ chainId, addresses }) => {
   if (chainId !== 100 && chainId !== 137) {
     return false;
   }
-  return [
-    { params: { from: ZERO_ADDRESS, to: addresses } },
-    { params: { from: addresses, to: ZERO_ADDRESS } },
-  ];
+  return {
+    params: [
+      { from: ZERO_ADDRESS, to: addresses },
+      { from: addresses, to: ZERO_ADDRESS },
+    ],
+  };
 } }, async (_) => {});
 indexer.onEvent({ contract: "EventFiltersTest", event: "WithExcessField", wildcard: true, where: ({ chainId }) => {
   if (chainId !== 100 && chainId !== 137) {

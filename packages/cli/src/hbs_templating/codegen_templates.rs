@@ -339,27 +339,28 @@ impl EventMod {
         let data_type = &self.data_type;
         let where_params_type = &self.event_filter_type;
 
-        // Two forms of the `where` option:
+        // The `where` option in ReScript is *always* a callback. The callback
+        // receives the chain id and registered addresses and returns either a
+        // `whereCondition` (filter to apply) or a boolean (`KeepAll` / `SkipAll`)
+        // for per-invocation short-circuiting. OR semantics across multiple
+        // filter shapes are expressed inside `params` itself via
+        // `SingleOrMultiple` — there's no top-level `Multiple` constructor.
+        //
         // - Events with no indexed params (Fuel, or EVM events without indexed
         //   fields) get the `Internal.noOnEventWhere` stub so the option field
         //   exists but cannot be populated.
-        // - Events with indexed params get the full `onEventWhere` union:
-        //   Single / Multiple / Dynamic. The dynamic callback may additionally
-        //   return a boolean (KeepAll / SkipAll) for per-invocation
-        //   short-circuiting. Skip/Keep at the static layer is intentionally
-        //   omitted — static "keep all" is expressed by omitting `where`.
+        // - TypeScript additionally accepts the static object form (just the
+        //   `whereCondition` directly) — see `OnEventWhere<P>` in
+        //   `packages/envio/index.d.ts`. The runtime parser handles both shapes.
         let where_type_code = match self.event_filter_type.as_str() {
             "{}" => "@genType type onEventWhere = Internal.noOnEventWhere".to_string(),
-            _ => "@genType type whereCondition = {params?: whereParams}\n
+            _ => "@genType type whereCondition = {params?: SingleOrMultiple.t<whereParams>}\n
 @genType type onEventWhereArgs = {/** The unique identifier of the blockchain \
                 network where this event occurred. */ chainId: chainId, /** Addresses of the \
                 contracts indexing the event. */ addresses: array<Address.t>}\n
-@genType @unboxed type onEventWhereFilter = Single(whereCondition) | \
-                Multiple(array<whereCondition>)\n
-@genType @unboxed type onEventWhereDynamicReturn = | ...onEventWhereFilter | \
+@genType @unboxed type onEventWhereResult = Filter(whereCondition) | \
                 @as(false) SkipAll | @as(true) KeepAll\n
-@genType @unboxed type onEventWhere = | ...onEventWhereFilter | \
-                Dynamic(onEventWhereArgs => onEventWhereDynamicReturn)"
+@genType type onEventWhere = onEventWhereArgs => onEventWhereResult"
                 .to_string(),
         };
 
@@ -1390,12 +1391,12 @@ type indexer = {
   chains: indexerChains,
   /** Register an event handler. */
   onEvent: 'event 'paramsConstructor 'where. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
   ) => unit,
   /** Register a contract register handler for dynamic contract indexing. */
   contractRegister: 'event 'paramsConstructor 'where. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
 }"#;
@@ -1684,8 +1685,8 @@ module SingleOrMultiple: {{
   }}
 }}
 
-/** Event identity configuration for onEvent/contractRegister. */
-type eventIdentityConfig<'eventIdentity, 'where> = {{
+/** Options for onEvent / contractRegister. */
+type onEventOptions<'eventIdentity, 'where> = {{
   event: 'eventIdentity,
   wildcard?: bool,
   where?: 'where,

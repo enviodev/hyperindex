@@ -543,17 +543,23 @@ export type OnEventWhereArgs = {
   readonly addresses: readonly Address[];
 };
 
-/** Static filter form of `where`: either a single filter condition or an
- * array of them (OR semantics). The inner `{params}` wrapper reserves
- * room for future filter dimensions (block, transaction, …) as sibling
- * fields. */
-export type OnEventWhereFilter<Params> =
-  | { readonly params?: Params }
-  | readonly { readonly params?: Params }[];
+/** A single `where` filter condition. The `{params}` wrapper reserves room
+ * for future filter dimensions (block, transaction, …) as sibling fields.
+ * `params` accepts either a single AND-conjunction of indexed-parameter
+ * narrowings, or an array of them (OR semantics). */
+export type OnEventWhereFilter<Params> = {
+  readonly params?: Params | readonly Params[];
+};
 
-/** The `where` option value of `indexer.onEvent` / `indexer.contractRegister`:
- * a static filter, or a dynamic callback. The dynamic callback may return a
- * boolean to keep (`true`) or skip (`false`) all events on that invocation. */
+/** The `where` option value of `indexer.onEvent` / `indexer.contractRegister`.
+ *
+ * TypeScript accepts either a static filter object or a dynamic callback.
+ * The dynamic callback may return a boolean to keep (`true`) or skip (`false`)
+ * all events on that invocation, or an `OnEventWhereFilter` for narrowing.
+ *
+ * The ReScript surface only exposes the callback form — multi-condition OR
+ * semantics are always expressed via an array on `params`, not at the top
+ * level of `where`. */
 export type OnEventWhere<Params> =
   | OnEventWhereFilter<Params>
   | ((args: OnEventWhereArgs) => OnEventWhereFilter<Params> | boolean);

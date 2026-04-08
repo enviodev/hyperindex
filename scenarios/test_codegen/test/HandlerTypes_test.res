@@ -18,58 +18,61 @@ let _topNftFactory: Indexer.eventIdentity<_, _, _> = NftFactory(SimpleNftCreated
 let _topGravatar: Indexer.eventIdentity<_, _, _> = Gravatar(NewGravatar)
 let _topSimpleNft: Indexer.eventIdentity<_, _, _> = SimpleNft(Transfer)
 
-// 3. eventIdentityConfig wraps the GADT, with optional wildcard and `where`
-let _basicConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>, _> = {
+// 3. onEventOptions wraps the GADT, with optional wildcard and `where`.
+let _basicConfig: Indexer.onEventOptions<Indexer.eventIdentity<_, _, _>, _> = {
   event: NftFactory(SimpleNftCreated),
 }
-let _wildcardConfig: Indexer.eventIdentityConfig<Indexer.eventIdentity<_, _, _>, _> = {
+let _wildcardConfig: Indexer.onEventOptions<Indexer.eventIdentity<_, _, _>, _> = {
   event: Gravatar(NewGravatar),
   wildcard: true,
 }
 // `where` carries the per-event filter value. The `'where` type parameter on
-// eventIdentityConfig unifies with the GADT constructor's third type argument,
+// onEventOptions unifies with the GADT constructor's third type argument,
 // so passing `event: EventFiltersTest(Transfer)` pins `'where` to
-// `EventFiltersTest.Transfer.onEventWhere`. The static form wraps the indexed
-// param record under `{params: ...}`, so future filter dimensions (block,
-// transaction, …) can slot in as sibling fields. `SingleOrMultiple.t` is
-// opaque — construct via `single` / `multiple`.
-let _staticFilterConfig: Indexer.eventIdentityConfig<
+// `EventFiltersTest.Transfer.onEventWhere`. In ReScript `where` is *always*
+// a callback — OR semantics are expressed via an array on `params`, not at
+// the top level of `where`. `SingleOrMultiple.t` is opaque — construct via
+// `single` / `multiple`. The inner `whereParams` record needs an explicit
+// annotation because `single`'s generic type parameter doesn't propagate
+// inference through the opaque type.
+module TransferEvent = Indexer.EventFiltersTest.Transfer
+let _staticFilterConfig: Indexer.onEventOptions<
   Indexer.eventIdentity<_, _, _>,
-  Indexer.EventFiltersTest.Transfer.onEventWhere,
+  TransferEvent.onEventWhere,
 > = {
   event: EventFiltersTest(Transfer),
-  where: Single({
-    params: {
+  where: _ => {
+    let p: TransferEvent.whereParams = {
       from: Indexer.SingleOrMultiple.single(
         "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
       ),
-    },
-  }),
+    }
+    Filter({params: Indexer.SingleOrMultiple.single(p)})
+  },
 }
-// Wildcard + Multiple (OR) filter combination — two filter conditions, each
-// with its own indexed-param record under `params`.
-let _wildcardWithFilterConfig: Indexer.eventIdentityConfig<
+// Wildcard + multi-condition OR filter — two AND-conjunctions on `params`,
+// expressing `(to=A) OR (to=B)`.
+let _wildcardWithFilterConfig: Indexer.onEventOptions<
   Indexer.eventIdentity<_, _, _>,
-  Indexer.EventFiltersTest.Transfer.onEventWhere,
+  TransferEvent.onEventWhere,
 > = {
   event: EventFiltersTest(Transfer),
   wildcard: true,
-  where: Multiple([
-    {
-      params: {
+  where: _ => {
+    let conditions: array<TransferEvent.whereParams> = [
+      {
         to: Indexer.SingleOrMultiple.single(
           "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
         ),
       },
-    },
-    {
-      params: {
+      {
         to: Indexer.SingleOrMultiple.single(
           "0x0000000000000000000000000000000000000001"->Address.unsafeFromString,
         ),
       },
-    },
-  ]),
+    ]
+    Filter({params: Indexer.SingleOrMultiple.multiple(conditions)})
+  },
 }
 
 // 4. handlerContext (onEvent context) has expected fields
@@ -128,70 +131,71 @@ let _registerWildcard = () => {
   )
 }
 
-// 9. `where` static form — Single condition, typed against the event's
-// per-event `onEventWhere` union.
+// 9. `where` callback returning a single filter condition — typed against
+// the event's per-event `onEventWhere` function type.
 let _registerWithStaticFilter = () => {
   Indexer.indexer.onEvent(
     {
       event: EventFiltersTest(Transfer),
-      where: Single({
-        params: {
+      where: _ => {
+        let p: TransferEvent.whereParams = {
           from: Indexer.SingleOrMultiple.single(
             "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
           ),
-        },
-      }),
+        }
+        Filter({params: Indexer.SingleOrMultiple.single(p)})
+      },
     },
     async ({event: _, context: _}) => (),
   )
 }
 
-// 10. `where` combined with wildcard — the filter record survives alongside
+// 10. `where` combined with wildcard — the filter callback survives alongside
 // wildcard: true, and the `'where` generic is pinned by the GADT identity.
 let _registerWildcardWithFilter = () => {
   Indexer.indexer.onEvent(
     {
       event: EventFiltersTest(Transfer),
       wildcard: true,
-      where: Single({
-        params: {
+      where: _ => {
+        let p: TransferEvent.whereParams = {
           to: Indexer.SingleOrMultiple.single(
             "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
           ),
-        },
-      }),
+        }
+        Filter({params: Indexer.SingleOrMultiple.single(p)})
+      },
     },
     async ({event: _, context: _}) => (),
   )
 }
 
-// 11. Dynamic callback form — returns a filter for the given chain/addresses.
+// 11. Dynamic callback that branches on chain id.
 let _registerDynamicFilter = () => {
   Indexer.indexer.onEvent(
     {
       event: EventFiltersTest(Transfer),
       wildcard: true,
-      where: Dynamic(
-        ({chainId: _, addresses: _}) => Single({
-          params: {
-            from: Indexer.SingleOrMultiple.single(
-              "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-            ),
-          },
-        }),
-      ),
+      where: ({chainId: _, addresses: _}) => {
+        let p: TransferEvent.whereParams = {
+          from: Indexer.SingleOrMultiple.single(
+            "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+          ),
+        }
+        Filter({params: Indexer.SingleOrMultiple.single(p)})
+      },
     },
     async ({event: _, context: _}) => (),
   )
 }
 
-// 12. Dynamic callback returning KeepAll (true) — short-circuit keep all events.
+// 12. Callback returning KeepAll (true) — short-circuit keep all events.
 let _registerDynamicKeepAll = () => {
   Indexer.indexer.onEvent(
     {
       event: EventFiltersTest(Transfer),
       wildcard: true,
-      where: Dynamic(({chainId: _, addresses: _}) => KeepAll),
+      where: _ => KeepAll,
     },
     async ({event: _, context: _}) => (),
   )

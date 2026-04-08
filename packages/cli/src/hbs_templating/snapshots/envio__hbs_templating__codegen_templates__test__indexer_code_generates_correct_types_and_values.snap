@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2581
+assertion_line: 2582
 expression: project_template.indexer_code
 ---
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
@@ -177,8 +177,8 @@ module SingleOrMultiple: {
   }
 }
 
-/** Event identity configuration for onEvent/contractRegister. */
-type eventIdentityConfig<'eventIdentity, 'where> = {
+/** Options for onEvent / contractRegister. */
+type onEventOptions<'eventIdentity, 'where> = {
   event: 'eventIdentity,
   wildcard?: bool,
   where?: 'where,
@@ -395,12 +395,12 @@ type indexer = {
   chains: indexerChains,
   /** Register an event handler. */
   onEvent: 'event 'paramsConstructor 'where. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
   ) => unit,
   /** Register a contract register handler for dynamic contract indexing. */
   contractRegister: 'event 'paramsConstructor 'where. (
-    eventIdentityConfig<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
 }
