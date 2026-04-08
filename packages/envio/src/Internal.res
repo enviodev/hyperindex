@@ -328,11 +328,11 @@ type handlerArgs = {
 type handler = genericHandler<handlerArgs>
 
 @genType
-type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
+type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   loader: 'loader,
   handler: 'handler,
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
 }
 
 // This is private so it's not manually constructed internally
@@ -474,9 +474,9 @@ external getItemDcs: item => option<dcs> = "dcs"
 external setItemDcs: (item, dcs) => unit = "dcs"
 
 @genType
-type eventOptions<'eventFilters> = {
+type eventOptions<'where> = {
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
 }
 
 @genType
@@ -563,7 +563,7 @@ let makeCacheTable = (~effectName) => {
 }
 
 @genType.import(("./Types.ts", "Invalid"))
-type noEventFilters
+type noOnEventWhere
 
 type checkpointId = bigint
 

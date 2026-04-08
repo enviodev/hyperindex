@@ -337,17 +337,30 @@ impl EventMod {
     fn to_string_internal(&self) -> String {
         let event_name = &self.event_name;
         let data_type = &self.data_type;
-        let event_filter_type = &self.event_filter_type;
+        let where_params_type = &self.event_filter_type;
 
-        let event_filters_type_code = match self.event_filter_type.as_str() {
-            "{}" => "@genType type eventFilters = Internal.noEventFilters".to_string(),
-            _ => "@genType type eventFiltersArgs = {/** The unique identifier of the blockchain \
+        // The `where` option in ReScript is *always* a callback. The callback
+        // receives the chain id and registered addresses and returns either a
+        // `whereCondition` (filter to apply) or a boolean (`KeepAll` / `SkipAll`)
+        // for per-invocation short-circuiting. OR semantics across multiple
+        // filter shapes are expressed inside `params` itself via
+        // `SingleOrMultiple` — there's no top-level `Multiple` constructor.
+        //
+        // - Events with no indexed params (Fuel, or EVM events without indexed
+        //   fields) get the `Internal.noOnEventWhere` stub so the option field
+        //   exists but cannot be populated.
+        // - TypeScript additionally accepts the static object form (just the
+        //   `whereCondition` directly) — see `OnEventWhere<P>` in
+        //   `packages/envio/index.d.ts`. The runtime parser handles both shapes.
+        let where_type_code = match self.event_filter_type.as_str() {
+            "{}" => "@genType type onEventWhere = Internal.noOnEventWhere".to_string(),
+            _ => "@genType type whereCondition = {params?: SingleOrMultiple.t<whereParams>}\n
+@genType type onEventWhereArgs = {/** The unique identifier of the blockchain \
                 network where this event occurred. */ chainId: chainId, /** Addresses of the \
                 contracts indexing the event. */ addresses: array<Address.t>}\n
-@genType @unboxed type eventFiltersDefinition = Single(eventFilter) | \
-                Multiple(array<eventFilter>) | @as(false) Skip | @as(true) Keep\n
-@genType @unboxed type eventFilters = | ...eventFiltersDefinition | Dynamic(eventFiltersArgs => \
-                eventFiltersDefinition)"
+@genType @unboxed type onEventWhereResult = Filter(whereCondition) | \
+                @as(false) SkipAll | @as(true) KeepAll\n
+@genType type onEventWhere = onEventWhereArgs => onEventWhereResult"
                 .to_string(),
         };
 
@@ -387,14 +400,6 @@ impl EventMod {
                 _ => ("Block.t".to_string(), "Transaction.t".to_string()),
             };
 
-        let types_code =
-          r#"@genType
-type handlerArgs = Internal.genericHandlerArgs<event, handlerContext>
-@genType
-type handler = Internal.genericHandler<handlerArgs>
-@genType
-type contractRegister = Internal.genericContractRegister<Internal.genericContractRegisterArgs<event, contractRegistrations>>"#.to_string();
-
         let params_constructor_type = &self.params_constructor_type;
 
         format!(
@@ -427,43 +432,10 @@ type event = {{
   block: block,
 }}
 
-{types_code}
-
 @genType
-type eventFilter = {event_filter_type}
+type whereParams = {where_params_type}
 
-{event_filters_type_code}
-
-let contractRegister: fnWithEventConfig<
-  Internal.genericContractRegister<
-    Internal.genericContractRegisterArgs<event, contractRegistrations>,
-  >,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (contractRegister, ~eventConfig=?) =>
-  HandlerRegister.setContractRegister(
-    ~contractName,
-    ~eventName=name,
-    contractRegister,
-    ~eventOptions=eventConfig,
-  )
-
-let handler: fnWithEventConfig<
-  Internal.genericHandler<Internal.genericHandlerArgs<event, handlerContext>>,
-  HandlerTypes.eventConfig<eventFilters>,
-> = (handler, ~eventConfig=?) => {{
-  HandlerRegister.setHandler(
-    ~contractName,
-    ~eventName=name,
-    handler->(
-      Utils.magic: Internal.genericHandler<
-        Internal.genericHandlerArgs<event, handlerContext>,
-      > => Internal.genericHandler<
-        Internal.genericHandlerArgs<event, Internal.handlerContext>,
-      >
-    ),
-    ~eventOptions=eventConfig,
-  )
-}}"#
+{where_type_code}"#
         )
     }
 }
@@ -680,9 +652,12 @@ impl ContractTemplate {
                 format!(
                     "let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../${{Path.\
                    relativePathToRootFromGenerated}}/{}`))[\"default\"])\n{}\n{}",
+                    // Use the config.yaml-relative path (NOT the absolute
+                    // path_buf) so the generated import resolves correctly
+                    // when Path.relativePathToRootFromGenerated prefixes it.
                     // If we decide to inline the abi, instead of using require
                     // we need to remember that abi might contain ` and we should escape it
-                    abi.path_buf.to_string_lossy(),
+                    abi.path_relative_to_root,
                     all_abi_type_declarations,
                     all_abi_type_declarations.to_rescript_schema(&SchemaMode::ForDb)
                 )
@@ -1086,8 +1061,11 @@ impl ProjectTemplate {
                     .to_string()
             }
             system_config::EventKind::Fuel(system_config::FuelEventKind::LogData(type_ident)) => {
-                // Reference FuelTypes namespace for the contract's ABI type
-                format!("FuelTypes.{}.{}", contract_name, type_ident)
+                // Reference FuelTypes namespace for the contract's ABI type.
+                // Use `to_ts_type_string_with_namespace` so nested type
+                // parameters (e.g. `type4<type26>`) also get the namespace
+                // prefix recursively.
+                type_ident.to_ts_type_string_with_namespace(&format!("FuelTypes.{}", contract_name))
             }
             _ => "undefined".to_string(),
         };
@@ -1146,6 +1124,36 @@ impl ProjectTemplate {
     }};"#,
             event.name, event.name, contract_name, chain_id_type_name, params_ts, block_ts, tx_ts,
         )
+    }
+
+    /// Build the `where` filter TS type for an event — a record of indexed
+    /// params wrapped in SingleOrMultiple, nested under a `params` key so
+    /// future filter dimensions (block, transaction, …) can be added as
+    /// siblings. Only EVM events have indexed filters; Fuel events produce
+    /// an empty record. Mirrors `generate_event_filter_type` on the ReScript
+    /// side.
+    fn generate_event_where_ts(event: &system_config::Event) -> String {
+        let params_ts = match &event.kind {
+            system_config::EventKind::Params(params) => {
+                let indexed_fields: Vec<String> = params
+                    .iter()
+                    .filter(|p| p.indexed)
+                    .map(|p| {
+                        let ts_type = Self::to_envio_dts_type(
+                            &abi_to_rescript_type(&p.into()).to_ts_type_string(),
+                        );
+                        format!("readonly {}?: SingleOrMultiple<{}>", p.name, ts_type)
+                    })
+                    .collect();
+                if indexed_fields.is_empty() {
+                    "{}".to_string()
+                } else {
+                    format!("{{ {} }}", indexed_fields.join("; "))
+                }
+            }
+            _ => "{}".to_string(),
+        };
+        format!("{{ readonly params: {} }}", params_ts)
     }
 
     pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
@@ -1381,6 +1389,16 @@ type indexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
+  /** Register an event handler. */
+  onEvent: 'event 'paramsConstructor 'where. (
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
+  ) => unit,
+  /** Register a contract register handler for dynamic contract indexing. */
+  contractRegister: 'event 'paramsConstructor 'where. (
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
+  ) => unit,
 }"#;
 
         // Generate getChainById function
@@ -1481,14 +1499,14 @@ type handlerContext = {{
                             format!(
                                 "    | @as(\"{event_name}\") {event_name}: eventIdentity<\
                                  {event_name}.event, {event_name}.paramsConstructor, \
-                                 {event_name}.eventFilter>",
+                                 {event_name}.onEventWhere>",
                                 event_name = event.name,
                             )
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
                     format!(
-                        "\n\n  type rec eventIdentity<'event, 'paramsConstructor, 'filters> =\n{}",
+                        "\n\n  type rec eventIdentity<'event, 'paramsConstructor, 'where> =\n{}",
                         gadt_constructors,
                     )
                 };
@@ -1509,22 +1527,25 @@ type handlerContext = {{
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        // Generate GADT event identifier types for type-safe simulate items
-        let simulate_types_code = if codegen_contracts.is_empty() {
-            String::new()
-        } else {
-            let contracts_with_events: Vec<_> = codegen_contracts
-                .iter()
-                .filter(|c| !c.codegen_events.is_empty())
-                .collect();
+        // Generate GADT event identifier types for type-safe simulate items.
+        // For configs without any contract events (e.g. SVM-only or empty-contract
+        // configs) we still emit an abstract `eventIdentity` type so the unconditional
+        // `type indexer` definition below — which references it in onEvent /
+        // contractRegister fields — type-checks. Such configs simply have no
+        // constructors to pass in.
+        let contracts_with_events: Vec<_> = codegen_contracts
+            .iter()
+            .filter(|c| !c.codegen_events.is_empty())
+            .collect();
 
+        let simulate_types_code = if contracts_with_events.is_empty() {
+            "type eventIdentity<'event, 'paramsConstructor, 'where>".to_string()
+        } else {
             let top_constructors = contracts_with_events
                 .iter()
                 .map(|c| {
                     let name = &c.name.capitalized;
-                    format!(
-                        "  | {name}({name}.eventIdentity<'event, 'paramsConstructor, 'filters>)"
-                    )
+                    format!("  | {name}({name}.eventIdentity<'event, 'paramsConstructor, 'where>)")
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -1551,18 +1572,18 @@ type handlerContext = {{
 
             format!(
                 "@tag(\"contract\")\n\
-                 type eventIdentity<'event, 'paramsConstructor, 'filters> =\n\
+                 type eventIdentity<'event, 'paramsConstructor, 'where> =\n\
                  {top_constructors}\n\n\
                  @tag(\"kind\")\n\
-                 type simulateItemConstructor<'event, 'paramsConstructor, 'filters> =\n\
+                 type simulateItemConstructor<'event, 'paramsConstructor, 'where> =\n\
                  \x20 | OnEvent({{\n\
-                 \x20     event: eventIdentity<'event, 'paramsConstructor, 'filters>,\n\
+                 \x20     event: eventIdentity<'event, 'paramsConstructor, 'where>,\n\
                  \x20     params{params_optional}: 'paramsConstructor,\n\
                  \x20     block?: {block_constructor_type},\n\
                  \x20     transaction?: {transaction_constructor_type},\n\
                  \x20   }})\n\n\
                  let makeSimulateItem = (\n\
-                 \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'filters>,\n\
+                 \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'where>,\n\
                  ): {simulate_item_type} => {{\n\
                  \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
                  \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
@@ -1573,10 +1594,10 @@ type handlerContext = {{
             )
         };
 
-        // Generate contractRegistrations type
-        let contract_registration_fields: String = codegen_contracts
+        // Generate contractRegisterContext type with chain.ContractName.add() pattern
+        let contract_register_chain_fields: String = codegen_contracts
             .iter()
-            .map(|c| format!("  add{}: (Address.t) => unit,", c.name.capitalized))
+            .map(|c| format!("  \\\"{}\": contractRegisterContract,", c.name.capitalized))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -1614,13 +1635,6 @@ type handlerContext = {{
 //*************
 @genType.as("Id")
 type id = string
-
-@genType
-type contractRegistrations = {{
-  log: Envio.logger,
-  // TODO: only add contracts we've registered for the event in the config
-{contract_registration_fields}
-}}
 
 //*************
 //**CONTRACTS**
@@ -1671,35 +1685,12 @@ module SingleOrMultiple: {{
   }}
 }}
 
-module HandlerTypes = {{
-  @genType
-  type args<'eventArgs, 'context> = {{
-    event: Internal.genericEvent<'eventArgs, Block.t, Transaction.t>,
-    context: 'context,
-  }}
-
-  @genType
-  type contractRegisterArgs<'eventArgs> = Internal.genericContractRegisterArgs<Internal.genericEvent<'eventArgs, Block.t, Transaction.t>, contractRegistrations>
-  @genType
-  type contractRegister<'eventArgs> = Internal.genericContractRegister<contractRegisterArgs<'eventArgs>>
-
-  @genType
-  type eventConfig<'eventFilters> = Internal.eventOptions<'eventFilters>
+/** Options for onEvent / contractRegister. */
+type onEventOptions<'eventIdentity, 'where> = {{
+  event: 'eventIdentity,
+  wildcard?: bool,
+  where?: 'where,
 }}
-
-@genType.import(("./bindings/OpaqueTypes.ts", "HandlerWithOptions"))
-type fnWithEventConfig<'fn, 'eventConfig> = ('fn, ~eventConfig: 'eventConfig=?) => unit
-
-type handlerWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
-  Internal.genericHandler<'eventArgs>,
-  HandlerTypes.eventConfig<'eventFilters>,
->
-
-@genType
-type contractRegisterWithOptions<'eventArgs, 'eventFilters> = fnWithEventConfig<
-  HandlerTypes.contractRegister<'eventArgs>,
-  HandlerTypes.eventConfig<'eventFilters>,
->
 
 module Enums = {{
 {enums_module_code}
@@ -1713,6 +1704,19 @@ module Entities = {{
 
 {chain_id_type}
 
+type contractRegisterContract = {{ add: Address.t => unit }}
+
+type contractRegisterChain = {{
+  id: chainId,
+{contract_register_chain_fields}
+}}
+
+@genType
+type contractRegisterContext = {{
+  log: Envio.logger,
+  chain: contractRegisterChain,
+}}
+
 {contract_modules_code}
 
 {indexer_contract_type}
@@ -1721,13 +1725,13 @@ module Entities = {{
 
 {indexer_chains_type}
 
+{simulate_types_code}
+
 {indexer_type}
 
 {get_chain_by_id}
 
-{on_block_code}
-
-{simulate_types_code}"#
+{on_block_code}"#
         );
 
         // Generate testIndexer types and createTestIndexer
@@ -1854,7 +1858,7 @@ let allEntities = configWithoutRegistrations.allEntities
             let mut parts = Vec::new();
 
             parts.push("import type {default as BigDecimal} from 'bignumber.js';".to_string());
-            parts.push("import type {Address} from 'envio';".to_string());
+            parts.push("import type {Address, SingleOrMultiple} from 'envio';".to_string());
 
             // Generate EvmChains type
             let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
@@ -1947,6 +1951,39 @@ let allEntities = configWithoutRegistrations.allEntities
                 )
             });
 
+            // Generate EvmEventFilters — sibling of EvmContracts carrying the
+            // `where` filter shape for each event. Split out so per-event
+            // entries in EvmContracts stay focused on event payload types.
+            let evm_event_filters_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
+                cfg.contracts
+                    .iter()
+                    .map(|(name, contract)| {
+                        let event_entries: Vec<String> = contract
+                            .events
+                            .iter()
+                            .map(|event| {
+                                format!(
+                                    "    \"{}\": {};",
+                                    event.name,
+                                    Self::generate_event_where_ts(event)
+                                )
+                            })
+                            .collect();
+                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            parts.push(if evm_event_filters_entries.is_empty() {
+                "export type EvmEventFilters = {};".to_string()
+            } else {
+                format!(
+                    "export type EvmEventFilters = {{\n{}\n}};",
+                    evm_event_filters_entries.join("\n")
+                )
+            });
+
             // Generate FuelChains type
             let fuel_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 chain_configs
@@ -2031,6 +2068,11 @@ let allEntities = configWithoutRegistrations.allEntities
                     fuel_contracts_entries.join("\n")
                 )
             });
+
+            // Fuel events have no indexed-param filters — emit an empty
+            // FuelEventFilters sibling so the `EvmEventFilters<Config>`
+            // lookup helpers in index.d.ts can resolve cleanly.
+            parts.push("export type FuelEventFilters = {};".to_string());
 
             // Generate FuelTypes namespace — type declarations with generics support
             let fuel_types_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {

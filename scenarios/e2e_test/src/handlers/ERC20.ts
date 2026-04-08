@@ -1,4 +1,4 @@
-import { ERC20, indexer } from "generated";
+import { indexer } from "generated";
 
 // Verify that indexer.chains reads endBlock from the database, not from config.
 // E2E_EXPECTED_END_BLOCK is always required so the check runs on every start.
@@ -13,7 +13,7 @@ if (actual !== expected) {
   );
 }
 
-ERC20.Transfer.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
   context.Transfer.set({
     id: `${event.chainId}-${event.block.number}-${event.logIndex}`,
     from: event.params.from,

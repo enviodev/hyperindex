@@ -222,7 +222,7 @@ module Storage = {
 // Aliases to access the generated Indexer module after the local `module Indexer` shadows it
 type eventLog<'a> = Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>
 type handlerContext = Indexer.handlerContext
-type contractRegister<'a> = Indexer.HandlerTypes.contractRegister<'a>
+type contractRegister<'a> = Internal.genericContractRegister<Internal.genericContractRegisterArgs<Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>, Indexer.contractRegisterContext>>
 module Transaction = Indexer.Transaction
 
 module Indexer = {

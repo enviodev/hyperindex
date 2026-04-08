@@ -1,7 +1,7 @@
 type eventRegistration = {
   handler: option<Internal.handler>,
   contractRegister: option<Internal.contractRegister>,
-  eventOptions: option<Internal.eventOptions<Internal.eventFilters>>,
+  eventOptions: option<Internal.eventOptions<Js.Json.t>>,
 }
 
 let empty = {
@@ -169,10 +169,8 @@ let getHandler = (~contractName, ~eventName) => get(~contractName, ~eventName).h
 let getContractRegister = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).contractRegister
 
-let getEventFilters = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).eventOptions
-  ->Belt.Option.flatMap(value => value.eventFilters)
-  ->(Utils.magic: option<Internal.eventFilters> => option<Js.Json.t>)
+let getOnEventWhere = (~contractName, ~eventName) =>
+  get(~contractName, ~eventName).eventOptions->Belt.Option.flatMap(value => value.where)
 
 let isWildcard = (~contractName, ~eventName) =>
   get(~contractName, ~eventName).eventOptions
@@ -192,23 +190,31 @@ let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
   Js.Exn.raiseError(fullMsg)
 }
 
-let eventFiltersMatch = (a: option<Internal.eventFilters>, b: option<Internal.eventFilters>) => {
+// Compare two raw `where` configs as the user passed them (object/array/bool/function).
+// At registration time we haven't parsed the config into `Internal.eventFilters` yet,
+// so structural equality on the raw JSON shape is what users actually wrote. For a
+// dynamic callback (a function value) structural equality is meaningless, so fall
+// back to referential equality on the function reference.
+let whereMatch = (a: option<Js.Json.t>, b: option<Js.Json.t>) => {
   switch (a, b) {
   | (None, None) => true
-  | (Some(Static(a)), Some(Static(b))) => a == b
-  | (Some(Dynamic(a)), Some(Dynamic(b))) => a === b
+  | (Some(a), Some(b)) =>
+    if Js.typeof(a) === "function" || Js.typeof(b) === "function" {
+      a === b
+    } else {
+      a == b
+    }
   | _ => false
   }
 }
 
 let eventOptionsMatch = (
-  existing: option<Internal.eventOptions<Internal.eventFilters>>,
-  incoming: option<Internal.eventOptions<Internal.eventFilters>>,
+  existing: option<Internal.eventOptions<Js.Json.t>>,
+  incoming: option<Internal.eventOptions<Js.Json.t>>,
 ) => {
   switch (existing, incoming) {
   | (None, None) => true
-  | (Some(a), Some(b)) =>
-    a.wildcard === b.wildcard && eventFiltersMatch(a.eventFilters, b.eventFilters)
+  | (Some(a), Some(b)) => a.wildcard === b.wildcard && whereMatch(a.where, b.where)
   | _ => false
   }
 }
@@ -217,11 +223,7 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
   switch eventOptions {
   | Some(value) =>
     let value =
-      value->(
-        Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
-          Internal.eventFilters,
-        >
-      )
+      value->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<Js.Json.t>)
     let t = get(~contractName, ~eventName)
     switch t.eventOptions {
     | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
@@ -230,7 +232,7 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }
@@ -264,11 +266,7 @@ let setHandler = (
     | Some(prevHandler) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(
-            Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
-              Internal.eventFilters,
-            >
-          )
+          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<Js.Json.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedHandler: Internal.handler = async args => {
@@ -287,7 +285,7 @@ let setHandler = (
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }
@@ -325,11 +323,7 @@ let setContractRegister = (
     | Some(prevContractRegister) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(
-            Utils.magic: Internal.eventOptions<'eventFilters> => Internal.eventOptions<
-              Internal.eventFilters,
-            >
-          )
+          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<Js.Json.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedContractRegister: Internal.contractRegister = async args => {
@@ -348,7 +342,7 @@ let setContractRegister = (
         raiseDuplicateRegistration(
           ~contractName,
           ~eventName,
-          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, eventFilters)",
+          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
           ~logger,
         )
       }

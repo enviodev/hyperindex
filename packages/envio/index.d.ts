@@ -12,7 +12,8 @@ export type {
   onBlockArgs as OnBlockArgs,
   onBlockOptions as OnBlockOptions,
 } from "./src/Envio.gen.ts";
-import type { Address } from "./src/Types.ts";
+import type { logger as Logger } from "./src/Envio.gen.ts";
+import type { Address, EffectCaller } from "./src/Types.ts";
 export type { EffectCaller, Address } from "./src/Types.ts";
 
 export const TestHelpers: {
@@ -391,14 +392,336 @@ type IndexerConfigTypes = {
   evm?: {
     chains: Record<string, { id: number }>;
     contracts?: Record<string, Record<string, { eventName: string }>>;
+    eventFilters?: Record<string, Record<string, { readonly params: object }>>;
   };
   fuel?: {
     chains: Record<string, { id: number }>;
     contracts?: Record<string, Record<string, { eventName: string }>>;
+    eventFilters?: Record<string, Record<string, { readonly params: object }>>;
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
 };
+
+// ============== onEvent / contractRegister Types ==============
+
+// Extract contracts type from config
+type EvmContracts<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts: infer C extends Record<string, Record<string, any>> }
+    ? C : {};
+
+type FuelContracts<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts: infer C extends Record<string, Record<string, any>> }
+    ? C : {};
+
+// Extract eventFilters type from config — a sibling lookup table that maps
+// contract+event to the `where` filter shape `{ params: { ... } }`. Split
+// out from `EvmContracts` so per-event entries stay focused on the event
+// payload and keep the two lookup tables independently composable.
+type EvmEventFilters<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { eventFilters: infer F extends Record<string, Record<string, any>> }
+    ? F : {};
+
+type FuelEventFilters<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { eventFilters: infer F extends Record<string, Record<string, any>> }
+    ? F : {};
+
+// Extract contract names for contract registration
+type EvmContractNames<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts: Record<infer N, any> } ? N & string : never;
+
+type FuelContractNames<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts: Record<infer N, any> } ? N & string : never;
+
+/** Event identity for onEvent/contractRegister calls. */
+type EventIdentity<
+  Contracts extends Record<string, Record<string, any>>,
+  C extends keyof Contracts = keyof Contracts,
+  E extends keyof Contracts[C] & string = keyof Contracts[C] & string
+> = {
+  /** The contract name as defined in config.yaml. */
+  readonly contract: C;
+  /** The event name as defined in the contract ABI. */
+  readonly event: E;
+  /** Whether to process all events (wildcard mode). */
+  readonly wildcard?: boolean;
+};
+
+/** Context for onEvent handlers. Includes entity operations, logging, and chain info. */
+export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
+  /** Access the logger instance. */
+  readonly log: Logger;
+  /** Call an Effect with the given input. */
+  readonly effect: EffectCaller;
+  /** True when running in preload mode (parallel pre-run for cache population). */
+  readonly isPreload: boolean;
+  /** Chain state for the current event's chain. */
+  readonly chain: {
+    readonly id: EvmChainIds<Config>;
+    readonly isLive: boolean;
+  };
+} & {
+  readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
+}>;
+
+/** Context for onEvent handlers in Fuel ecosystem. */
+export type FuelOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
+  readonly log: Logger;
+  readonly effect: EffectCaller;
+  readonly isPreload: boolean;
+  readonly chain: {
+    readonly id: FuelChainIds<Config>;
+    readonly isLive: boolean;
+  };
+} & {
+  readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
+}>;
+
+/** Entity operations available in handler contexts. */
+type EntityOperations<Entity> = {
+  readonly get: (id: string) => Promise<Entity | undefined>;
+  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly getWhere: (filter: GetWhereFilter<Entity>) => Promise<Entity[]>;
+  readonly getOrCreate: (entity: Entity) => Promise<Entity>;
+  readonly set: (entity: Entity) => void;
+  readonly deleteUnsafe: (id: string) => void;
+};
+
+/** Contract registration handle. */
+type ContractRegistration = {
+  /** Register a new contract address for dynamic indexing. */
+  readonly add: (address: Address) => void;
+};
+
+/** Context for contractRegister handlers. Chain object includes contract registration methods.
+ * `isLive` is intentionally absent: contract registration runs during historical sync,
+ * so the "live" distinction isn't meaningful and the runtime does not expose it. */
+export type EvmContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
+  readonly log: Logger;
+  readonly chain: {
+    readonly id: EvmChainIds<Config>;
+  } & {
+    readonly [K in EvmContractNames<Config>]: ContractRegistration;
+  };
+}>;
+
+/** Context for contractRegister handlers in Fuel ecosystem. `isLive` is intentionally
+ * absent — see EvmContractRegisterContext. */
+export type FuelContractRegisterContext<Config extends IndexerConfigTypes> = Prettify<{
+  readonly log: Logger;
+  readonly chain: {
+    readonly id: FuelChainIds<Config>;
+  } & {
+    readonly [K in FuelContractNames<Config>]: ContractRegistration;
+  };
+}>;
+
+// ============== onEvent / contractRegister Named Types ==============
+
+/** Constraint: any event must have literal contractName and eventName fields. */
+type EventLike = { readonly contractName: string; readonly eventName: string };
+
+/** Scalar value or array of values — used by event filter fields to accept either a
+ * single topic or multiple alternatives (OR semantics). */
+export type SingleOrMultiple<T> = T | readonly T[];
+
+/** EVM event type resolved by contract and event name. Union of all events when no generics provided.
+ * The mapped form distributes `K in C` so disjoint event sets across contracts survive — using
+ * `EvmContracts<Config>[C][E]` directly would collapse to keys common to *all* contracts (often `never`). */
+export type EvmOnEvent<
+  Config extends IndexerConfigTypes,
+  C extends keyof EvmContracts<Config> = keyof EvmContracts<Config>,
+  E extends string = string
+> = {
+  [K in C]: EvmContracts<Config>[K][E & keyof EvmContracts<Config>[K]];
+}[C];
+
+/** Arguments passed to the dynamic `where` callback form: the current chain
+ * and addresses in scope. Return an `OnEventWhereFilter` to apply a filter,
+ * or `true` / `false` to keep / skip all events for that invocation. */
+export type OnEventWhereArgs = {
+  readonly chainId: number;
+  readonly addresses: readonly Address[];
+};
+
+/** A single `where` filter condition. The `{params}` wrapper reserves room
+ * for future filter dimensions (block, transaction, …) as sibling fields.
+ * `params` accepts either a single AND-conjunction of indexed-parameter
+ * narrowings, or an array of them (OR semantics). */
+export type OnEventWhereFilter<Params> = {
+  readonly params?: Params | readonly Params[];
+};
+
+/** The `where` option value of `indexer.onEvent` / `indexer.contractRegister`.
+ *
+ * TypeScript accepts either a static filter object or a dynamic callback.
+ * The dynamic callback may return a boolean to keep (`true`) or skip (`false`)
+ * all events on that invocation, or an `OnEventWhereFilter` for narrowing.
+ *
+ * The ReScript surface only exposes the callback form — multi-condition OR
+ * semantics are always expressed via an array on `params`, not at the top
+ * level of `where`. */
+export type OnEventWhere<Params> =
+  | OnEventWhereFilter<Params>
+  | ((args: OnEventWhereArgs) => OnEventWhereFilter<Params> | boolean);
+
+/** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type.
+ * The conditional `Event extends EventLike` distributes over union members so that each member's
+ * contractName/eventName pair is constrained together — preventing invalid cross-member pairings.
+ * The `Params` generic carries the indexed-parameter shape (looked up via `EvmEventFilters[C][E]["params"]`
+ * by callers) so the `where` option enforces the same per-event narrowing as the inline handler signature. */
+export type EvmOnEventOptions<Event extends EventLike, Params = {}> = Event extends EventLike
+  ? {
+      readonly contract: Event["contractName"];
+      readonly event: Event["eventName"];
+      readonly wildcard?: boolean;
+      readonly where?: OnEventWhere<Params>;
+    }
+  : never;
+
+/** Handler function for an EVM onEvent registration. Context is provided as a separate generic so the project alias can bind it. */
+export type EvmOnEventHandler<Event extends EventLike, Context> = (args: {
+  event: Event;
+  context: Context;
+}) => Promise<void>;
+
+/** Options for registering an EVM contractRegister handler. Same shape as EvmOnEventOptions. */
+export type EvmContractRegisterOptions<Event extends EventLike, Params = {}> = EvmOnEventOptions<
+  Event,
+  Params
+>;
+
+/** Handler function for an EVM contractRegister registration. */
+export type EvmContractRegisterHandler<Event extends EventLike, Context> = EvmOnEventHandler<Event, Context>;
+
+/** Fuel event type resolved by contract and event name. Same distributive-mapped pattern as `EvmOnEvent`. */
+export type FuelOnEvent<
+  Config extends IndexerConfigTypes,
+  C extends keyof FuelContracts<Config> = keyof FuelContracts<Config>,
+  E extends string = string
+> = {
+  [K in C]: FuelContracts<Config>[K][E & keyof FuelContracts<Config>[K]];
+}[C];
+
+/** Options for registering a Fuel onEvent handler. */
+export type FuelOnEventOptions<Event extends EventLike, Params = {}> = EvmOnEventOptions<
+  Event,
+  Params
+>;
+
+/** Handler function for a Fuel onEvent registration. */
+export type FuelOnEventHandler<Event extends EventLike, Context> = EvmOnEventHandler<Event, Context>;
+
+/** Options for registering a Fuel contractRegister handler. */
+export type FuelContractRegisterOptions<Event extends EventLike, Params = {}> = EvmOnEventOptions<
+  Event,
+  Params
+>;
+
+/** Handler function for a Fuel contractRegister registration. */
+export type FuelContractRegisterHandler<Event extends EventLike, Context> = EvmOnEventHandler<Event, Context>;
+
+// ============== Indexer Handler Methods ==============
+
+// onEvent/contractRegister methods for EVM ecosystem
+// NOTE: options use inline { contract: C; event: E } shape for TypeScript inference.
+// Using EvmOnEventOptions<Contracts[C][E]> would break inference since C/E can't be
+// derived from indexed access types. The named EvmOnEventOptions type is for end-user
+// reference; the inline shape here is structurally identical.
+type EvmHandlerMethods<Config extends IndexerConfigTypes> =
+  Config["evm"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
+    ? {
+        /** Register an event handler. */
+        readonly onEvent: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          options: {
+            readonly contract: C;
+            readonly event: E;
+            readonly wildcard?: boolean;
+            readonly where?: OnEventWhere<
+              EvmEventFilters<Config>[C] extends Record<string, any>
+                ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
+                  ? P
+                  : {}
+                : {}
+            >;
+          },
+          handler: EvmOnEventHandler<Contracts[C][E], EvmOnEventContext<Config>>
+        ) => void;
+        /** Register a contract register handler for dynamic contract indexing. */
+        readonly contractRegister: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          options: {
+            readonly contract: C;
+            readonly event: E;
+            readonly wildcard?: boolean;
+            readonly where?: OnEventWhere<
+              EvmEventFilters<Config>[C] extends Record<string, any>
+                ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
+                  ? P
+                  : {}
+                : {}
+            >;
+          },
+          handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
+        ) => void;
+      }
+    : {};
+
+// onEvent/contractRegister methods for Fuel ecosystem
+type FuelHandlerMethods<Config extends IndexerConfigTypes> =
+  Config["fuel"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
+    ? {
+        readonly onEvent: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          options: {
+            readonly contract: C;
+            readonly event: E;
+            readonly wildcard?: boolean;
+            readonly where?: OnEventWhere<
+              FuelEventFilters<Config>[C] extends Record<string, any>
+                ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
+                  ? P
+                  : {}
+                : {}
+            >;
+          },
+          handler: FuelOnEventHandler<Contracts[C][E], FuelOnEventContext<Config>>
+        ) => void;
+        readonly contractRegister: <
+          C extends keyof Contracts & string,
+          E extends keyof Contracts[C] & string
+        >(
+          options: {
+            readonly contract: C;
+            readonly event: E;
+            readonly wildcard?: boolean;
+            readonly where?: OnEventWhere<
+              FuelEventFilters<Config>[C] extends Record<string, any>
+                ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
+                  ? P
+                  : {}
+                : {}
+            >;
+          },
+          handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
+        ) => void;
+      }
+    : {};
+
+// Single ecosystem handler methods (flattened)
+type SingleEcosystemHandlerMethods<Config extends IndexerConfigTypes> =
+  HasEvm<Config> extends true
+    ? EvmHandlerMethods<Config>
+    : HasFuel<Config> extends true
+    ? FuelHandlerMethods<Config>
+    : {};
 
 // Helper: Check if ecosystem is configured in a given config
 type HasEvm<Config> = "evm" extends keyof Config ? true : false;
@@ -499,18 +822,21 @@ type SingleEcosystemChains<Config extends IndexerConfigTypes> =
     ? SvmEcosystem<Config>
     : {};
 
-// Multi-ecosystem chains (namespaced by ecosystem)
+// Multi-ecosystem chains (namespaced by ecosystem). Each ecosystem branch
+// also includes its handler registration methods (onEvent, contractRegister)
+// so multi-ecosystem indexers expose `indexer.evm.onEvent` etc. — mirrors
+// the runtime object built in `Main.res`.
 type MultiEcosystemChains<Config extends IndexerConfigTypes> =
   (HasEvm<Config> extends true
     ? {
         /** EVM ecosystem configuration. */
-        readonly evm: EvmEcosystem<Config>;
+        readonly evm: EvmEcosystem<Config> & EvmHandlerMethods<Config>;
       }
     : {}) &
     (HasFuel<Config> extends true
       ? {
           /** Fuel ecosystem configuration. */
-          readonly fuel: FuelEcosystem<Config>;
+          readonly fuel: FuelEcosystem<Config> & FuelHandlerMethods<Config>;
         }
       : {}) &
     (HasSvm<Config> extends true
@@ -532,7 +858,7 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
     /** The indexer description from config.yaml. */
     readonly description: string | undefined;
   } & (EcosystemCount<Config> extends 1
-    ? SingleEcosystemChains<Config>
+    ? SingleEcosystemChains<Config> & SingleEcosystemHandlerMethods<Config>
     : MultiEcosystemChains<Config>)
 >;
 

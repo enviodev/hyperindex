@@ -191,11 +191,13 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
               switch getInitialChainState(~chainId=chainConfig.id) {
               | Some(chainState) =>
                 let addresses = contract.addresses->Array.copy
-                chainState.dynamicContracts->Array.forEach(dc => {
-                  if dc.contractName === contract.name {
-                    addresses->Array.push(dc.address)->ignore
-                  }
-                })
+                chainState.dynamicContracts->Array.forEach(
+                  dc => {
+                    if dc.contractName === contract.name {
+                      addresses->Array.push(dc.address)->ignore
+                    }
+                  },
+                )
                 addresses
               | None => contract.addresses
               }
@@ -226,6 +228,83 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->Utils.Object.definePropertyWithValue("chainIds", {enumerable: true, value: chainIds})
   ->ignore
   indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
+
+  // Parse eventIdentity config to extract contractName, eventName, and options.
+  // Supports two runtime formats:
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where? }
+  let parseIdentityConfig = (identityConfig: 'a) => {
+    let raw =
+      identityConfig->(
+        Utils.magic: 'a => {
+          "contract": unknown,
+          "event": unknown,
+          "wildcard": option<bool>,
+          "where": option<Js.Json.t>,
+        }
+      )
+    // Detect format: if "contract" is a string, it's the TS format
+    let (contractName, eventName) = if Js.typeof(raw["contract"]) === "string" {
+      // TS format: { contract: "X", event: "Y" }
+      (
+        raw["contract"]->(Utils.magic: unknown => string),
+        raw["event"]->(Utils.magic: unknown => string),
+      )
+    } else {
+      // ReScript GADT format: { event: { contract: "X", _0: "Y" } }
+      let event = raw["event"]->(Utils.magic: unknown => {"contract": string, "_0": string})
+      (event["contract"], event["_0"])
+    }
+    let wildcard = raw["wildcard"]
+    let where = raw["where"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where) {
+    | (None, None) => None
+    | (wildcard, where) =>
+      Some({
+        ?wildcard,
+        where: ?where->(Utils.magic: option<Js.Json.t> => option<_>),
+      })
+    }
+    (contractName, eventName, eventOptions)
+  }
+
+  // onEvent: delegates to HandlerRegister.setHandler
+  let onEventFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setHandler(
+      ~contractName,
+      ~eventName,
+      handler->(
+        Utils.magic: 'b => Internal.genericHandler<
+          Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>,
+        >
+      ),
+      ~eventOptions,
+    )
+  }
+
+  // contractRegister: delegates to HandlerRegister.setContractRegister
+  let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setContractRegister(
+      ~contractName,
+      ~eventName,
+      handler->(
+        Utils.magic: 'b => Internal.genericContractRegister<
+          Internal.genericContractRegisterArgs<Internal.event, Internal.contractRegisterContext>,
+        >
+      ),
+      ~eventOptions,
+    )
+  }
+
+  indexer
+  ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
+  ->Utils.Object.definePropertyWithValue(
+    "contractRegister",
+    {enumerable: true, value: contractRegisterFn},
+  )
+  ->ignore
 
   indexer->(Utils.magic: 'a => 'indexer)
 }
