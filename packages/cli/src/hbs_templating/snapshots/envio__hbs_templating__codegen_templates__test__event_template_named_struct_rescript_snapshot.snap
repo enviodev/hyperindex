@@ -5,12 +5,7 @@ expression: template.module_code
 
 let name = "CreateLockupTranchedStream"
 let contractName = contractName
-type params_commonParams_amounts = {deposit: bigint, brokerFee: bigint}
-type params_commonParams_timestamps = {start: bigint, end: bigint}
-type params_commonParams = {funder: Address.t, sender: Address.t, recipient: Address.t, amounts: params_commonParams_amounts, token: Address.t, cancelable: bool, transferable: bool, timestamps: params_commonParams_timestamps, shape: string, broker: Address.t}
-type params_tranches = {amount: bigint, timestamp: bigint}
-
-type params = {streamId: bigint, commonParams: params_commonParams, tranches: array<params_tranches>}
+type params = {streamId: bigint, commonParams: {"funder": Address.t, "sender": Address.t, "recipient": Address.t, "amounts": {"deposit": bigint, "brokerFee": bigint}, "token": Address.t, "cancelable": bool, "transferable": bool, "timestamps": {"start": bigint, "end": bigint}, "shape": string, "broker": Address.t}, tranches: array<{"amount": bigint, "timestamp": bigint}>}
 /** Event params with all fields optional. Missing fields use default values. */
 type paramsConstructor = {streamId?: bigint, commonParams?: (Address.t, Address.t, Address.t, (bigint, bigint), Address.t, bool, bool, (bigint, bigint), string, Address.t), tranches?: array<(bigint, bigint)>}
 type block = Block.t

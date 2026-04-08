@@ -536,12 +536,23 @@ impl TypeIdent {
                 format!("({})", inner_types_str)
             }
             Self::Record(fields) => {
+                //Inline records render as ReScript JS object types (`{"a": int}`) so they
+                //can be nested inside other records without requiring a lifted type alias.
+                //Solidity forbids zero-component structs, so an empty Record here would be
+                //a codegen bug.
                 if fields.is_empty() {
-                    "{.}".to_string()
-                } else {
-                    let inner = fields.iter().map(|f| f.to_string()).join(", ");
-                    format!("{{{inner}}}")
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
                 }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!("\"{}\": {}", key, f.type_ident)
+                    })
+                    .join(", ");
+                format!("{{{inner}}}")
             }
             Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.t", &enum_name.capitalized)
@@ -734,25 +745,12 @@ impl TypeIdent {
                     .join(", ");
                 format!("S.tuple(s => ({}))", inner_str)
             }
-            Self::Record(fields) => {
-                let type_str = self.to_string();
-                if fields.is_empty() {
-                    format!("S.object((_): {type_str} => {{}})")
-                } else {
-                    let inner = fields
-                        .iter()
-                        .map(|f| {
-                            let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
-                            format!(
-                                "{}: s.field(\"{}\", {})",
-                                f.name,
-                                key,
-                                f.type_ident.to_rescript_schema(mode)
-                            )
-                        })
-                        .join(", ");
-                    format!("S.object((s): {type_str} => {{{inner}}})")
-                }
+            //Inline records are only used for Solidity struct event params. EVM events
+            //build their param schemas at runtime via EventConfigBuilder.res, and Fuel
+            //codegen never produces TypeIdent::Record, so this branch is unreachable.
+            Self::Record(_) => {
+                let _ = mode;
+                unreachable!("TypeIdent::Record schema unused — events build schema at runtime")
             }
             Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.config.schema", &enum_name.capitalized)
@@ -841,17 +839,21 @@ impl TypeIdent {
                 format!("({})", inner_types_str)
             }
             Self::Record(fields) => {
+                //TypeIdent::Record renders as a ReScript JS object type, so the default
+                //literal must use the matching `{"key": value}` syntax.
                 if fields.is_empty() {
-                    "()".to_string()
-                } else {
-                    let inner = fields
-                        .iter()
-                        .map(|f| {
-                            format!("{}: {}", f.name, f.type_ident.get_default_value_rescript())
-                        })
-                        .join(", ");
-                    format!("{{{inner}}}")
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
                 }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!("\"{}\": {}", key, f.type_ident.get_default_value_rescript())
+                    })
+                    .join(", ");
+                format!("{{{inner}}}")
             }
             // TODO: ensure these are defined
             Self::GenericParam(name) => {

@@ -286,6 +286,12 @@ mod tests {
             }
             _ => panic!("expected Record"),
         }
+        // Inline records render as ReScript JS object types so they can be nested
+        // inside other records without requiring lifted type aliases.
+        assert_eq!(
+            parsed.to_string(),
+            "{\"funder\": Address.t, \"amount\": bigint}"
+        );
         assert_eq!(
             parsed.to_ts_type_string(),
             "{ readonly funder: Address; readonly amount: bigint }"

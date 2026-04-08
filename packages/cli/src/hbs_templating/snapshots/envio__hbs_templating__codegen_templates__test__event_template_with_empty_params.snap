@@ -5,7 +5,6 @@ expression: event_template.module_code
 
 let name = "NewGravatar"
 let contractName = contractName
-
 type params = unit
 /** Event params with all fields optional. Missing fields use default values. */
 type paramsConstructor = unit
