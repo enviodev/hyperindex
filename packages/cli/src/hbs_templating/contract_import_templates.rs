@@ -30,6 +30,50 @@ mod nested_params {
         }
     }
 
+    /// Build the ReScript accessor expression for a flattened event param.
+    /// Wraps any piped `->Utils.Tuple.get(...)->Belt.Option.getUnsafe` chain
+    /// in parens before appending a `["field"]` bracket access, because
+    /// ReScript's `->` binds tighter than `[]` — without parens
+    /// `value->Belt.Option.getUnsafe["funder"]` parses as
+    /// `value->(Belt.Option.getUnsafe["funder"])` and tries to index into
+    /// the function itself.
+    pub fn build_rescript_accessor(base: &str, segments: &[AccessorSegment]) -> String {
+        let mut accessor = base.to_string();
+        for segment in segments {
+            match segment {
+                AccessorSegment::Index(i) => {
+                    accessor.push_str(&format!("->Utils.Tuple.get({})->Belt.Option.getUnsafe", i));
+                }
+                AccessorSegment::Field(name) => {
+                    if accessor.contains("->") {
+                        accessor = format!("({})[\"{}\"]", accessor, name);
+                    } else {
+                        accessor.push_str(&format!("[\"{}\"]", name));
+                    }
+                }
+            }
+        }
+        accessor
+    }
+
+    /// Build the TypeScript accessor expression for a flattened event param.
+    /// JavaScript bracket access works uniformly for arrays and objects, so
+    /// no parenthesisation is needed.
+    pub fn build_typescript_accessor(base: &str, segments: &[AccessorSegment]) -> String {
+        let mut accessor = base.to_string();
+        for segment in segments {
+            match segment {
+                AccessorSegment::Index(i) => {
+                    accessor.push_str(&format!("[{}]", i));
+                }
+                AccessorSegment::Field(name) => {
+                    accessor.push_str(&format!("[\"{}\"]", name));
+                }
+            }
+        }
+        accessor
+    }
+
     ///Recursive Representation of param token. With reference to it's own index
     ///if it is a tuple
     enum NestedEventParam {
@@ -242,7 +286,10 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{Context, Result};
-use nested_params::{flatten_event_inputs, AccessorSegment, FlattenedEventParam};
+use nested_params::{
+    build_rescript_accessor, build_typescript_accessor, flatten_event_inputs, AccessorSegment,
+    FlattenedEventParam,
+};
 use serde::Serialize;
 use std::{path::Path, vec};
 
@@ -332,30 +379,19 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params
+            // Add params. Tuple accessor segments are appended via the
+            // shared helper so named-struct fields render as `["funder"]`
+            // and anonymous-tuple slots render as `[0]`.
             for param in &event.params {
+                let base = format!("event.params.{}", param.event_key.original);
+                let accessor = match &param.tuple_param_accessor_segments {
+                    Some(segments) => build_typescript_accessor(&base, segments),
+                    None => base,
+                };
                 content.push_str(&format!(
-                    "    {}: event.params.{}",
-                    param.entity_key.uncapitalized, param.event_key.original
+                    "    {}: {},\n",
+                    param.entity_key.uncapitalized, accessor
                 ));
-
-                // Add tuple accessor segments if present. Named-tuple paths
-                // (Solidity structs / mixed tuples) emit JS object key access
-                // (`["funder"]`); fully anonymous tuple paths emit positional
-                // index access (`[0]`).
-                if let Some(segments) = &param.tuple_param_accessor_segments {
-                    for segment in segments {
-                        match segment {
-                            AccessorSegment::Index(i) => {
-                                content.push_str(&format!("[{}]", i));
-                            }
-                            AccessorSegment::Field(name) => {
-                                content.push_str(&format!("[\"{}\"]", name));
-                            }
-                        }
-                    }
-                }
-                content.push_str(",\n");
             }
 
             content.push_str("  };\n\n");
@@ -393,33 +429,20 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params
+            // Add params. Tuple accessor segments are appended via the
+            // shared helper, which knows to wrap any piped
+            // `->Utils.Tuple.get(...)->Belt.Option.getUnsafe` chain in parens
+            // before a following `["field"]` bracket access.
             for param in &event.params {
+                let base = format!("event.params.{}", param.event_key.uncapitalized);
+                let accessor = match &param.tuple_param_accessor_segments {
+                    Some(segments) => build_rescript_accessor(&base, segments),
+                    None => base,
+                };
                 content.push_str(&format!(
-                    "    {}: event.params.{}",
-                    param.entity_key.uncapitalized, param.event_key.uncapitalized
+                    "    {}: {}",
+                    param.entity_key.uncapitalized, accessor
                 ));
-
-                // Add tuple accessor segments if present. Named tuples
-                // (Solidity structs / mixed tuples) render as ReScript JS
-                // object types so they're accessed via `["funder"]`, while
-                // fully anonymous tuples remain positional and need
-                // `Utils.Tuple.get(i)`.
-                if let Some(segments) = &param.tuple_param_accessor_segments {
-                    for segment in segments {
-                        match segment {
-                            AccessorSegment::Index(i) => {
-                                content.push_str(&format!(
-                                    "\n      ->Utils.Tuple.get({})->Belt.Option.getUnsafe",
-                                    i
-                                ));
-                            }
-                            AccessorSegment::Field(name) => {
-                                content.push_str(&format!("[\"{}\"]", name));
-                            }
-                        }
-                    }
-                }
 
                 // Add address conversion if needed
                 if param.is_eth_address {
@@ -1269,6 +1292,61 @@ mod test {
             .collect();
 
         assert_eq!(expected_entity_keys, actual_entity_keys);
+    }
+
+    #[test]
+    fn build_accessor_handles_all_segment_shapes() {
+        // Pure named struct path: only `["field"]` accesses, no parens.
+        assert_eq!(
+            build_rescript_accessor("event.params.foo", &[field("funder"), field("amount")]),
+            "event.params.foo[\"funder\"][\"amount\"]"
+        );
+        assert_eq!(
+            build_typescript_accessor("event.params.foo", &[field("funder"), field("amount")]),
+            "event.params.foo[\"funder\"][\"amount\"]"
+        );
+
+        // Pure anonymous tuple path: only piped chain, no parens needed.
+        assert_eq!(
+            build_rescript_accessor("event.params.foo", &[idx(0), idx(1)]),
+            "event.params.foo->Utils.Tuple.get(0)->Belt.Option.getUnsafe->Utils.Tuple.get(1)->Belt.Option.getUnsafe"
+        );
+        assert_eq!(
+            build_typescript_accessor("event.params.foo", &[idx(0), idx(1)]),
+            "event.params.foo[0][1]"
+        );
+
+        // Mixed Index → Field: piped chain must be parenthesised before
+        // the bracket access, otherwise ReScript parses it as
+        // `value->(Belt.Option.getUnsafe["funder"])` and tries to index
+        // into the function itself. Regression test for the CodeRabbit
+        // review in PR #1096.
+        assert_eq!(
+            build_rescript_accessor("event.params.foo", &[idx(0), field("funder")]),
+            "(event.params.foo->Utils.Tuple.get(0)->Belt.Option.getUnsafe)[\"funder\"]"
+        );
+        // TS doesn't need parens — `[]` works for arrays and objects alike.
+        assert_eq!(
+            build_typescript_accessor("event.params.foo", &[idx(0), field("funder")]),
+            "event.params.foo[0][\"funder\"]"
+        );
+
+        // Mixed Field → Index: bracket-then-pipe is fine without parens
+        // because `[]` binds tighter than `->`.
+        assert_eq!(
+            build_rescript_accessor("event.params.foo", &[field("funder"), idx(0)]),
+            "event.params.foo[\"funder\"]->Utils.Tuple.get(0)->Belt.Option.getUnsafe"
+        );
+
+        // Index → Field → Index → Field (the awkward case): the second
+        // bracket access must wrap the parenthesised expression yet again.
+        assert_eq!(
+            build_rescript_accessor(
+                "event.params.foo",
+                &[idx(0), field("funder"), idx(1), field("amount")]
+            ),
+            "((event.params.foo->Utils.Tuple.get(0)->Belt.Option.getUnsafe)[\"funder\"]->Utils.Tuple.get(1)->Belt.Option.getUnsafe)[\"amount\"]"
+        );
     }
 
     fn get_test_template_helper(
