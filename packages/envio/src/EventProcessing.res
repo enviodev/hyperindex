@@ -43,7 +43,7 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
           Js.typeof(value) === "bigint"
             ? value
               ->(Utils.magic: unknown => bigint)
-              ->Utils.BigInt.toString
+              ->BigInt.toString
               ->(Utils.magic: string => unknown)
             : value,
         )
@@ -102,7 +102,7 @@ let addItemToRawEvents = (
     params,
   }
 
-  let eventIdStr = eventId->Utils.BigInt.toString
+  let eventIdStr = eventId->BigInt.toString
 
   inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }

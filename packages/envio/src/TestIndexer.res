@@ -152,7 +152,7 @@ let handleWriteBatch = (
           entityDict->Js.Dict.set(entityId, parsedEntity)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->Utils.BigInt.toString
+          let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -174,7 +174,7 @@ let handleWriteBatch = (
           Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
 
           // Track change by checkpoint
-          let checkpointKey = checkpointId->Utils.BigInt.toString
+          let checkpointKey = checkpointId->BigInt.toString
           let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
@@ -223,7 +223,7 @@ let handleWriteBatch = (
     )
 
     // Add entity changes for this checkpoint
-    let checkpointKey = checkpointId->Utils.BigInt.toString
+    let checkpointKey = checkpointId->BigInt.toString
     switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
     | Some(entityChanges) =>
       entityChanges

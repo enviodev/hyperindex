@@ -22,7 +22,7 @@ describe("Test makeClickHouseEntitySchema", () => {
       arrayOfFloats: [],
       bool: true,
       optBool: None,
-      bigInt: Utils.BigInt.fromInt(1),
+      bigInt: BigInt.fromInt(1),
       optBigInt: None,
       arrayOfBigInts: [],
       bigDecimal: BigDecimal.fromFloat(1.0),
