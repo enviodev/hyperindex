@@ -42,9 +42,9 @@ describe("Write/read tests", () => {
       optBool: Some(false),
       //TODO: get array of bools working
       // arrayOfBool: [true, false],
-      bigInt: BigInt.fromInt(1),
-      optBigInt: Some(BigInt.fromInt(2)),
-      arrayOfBigInts: [BigInt.fromInt(3), BigInt.fromInt(4)],
+      bigInt: Utils.BigInt.fromInt(1),
+      optBigInt: Some(Utils.BigInt.fromInt(2)),
+      arrayOfBigInts: [Utils.BigInt.fromInt(3), Utils.BigInt.fromInt(4)],
       bigDecimal: BigDecimal.fromStringUnsafe("1.1"),
       bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
       optBigDecimal: Some(BigDecimal.fromStringUnsafe("2.2")),
@@ -67,8 +67,8 @@ describe("Write/read tests", () => {
       optFloat: Some(2.2),
       bool: true,
       optBool: Some(false),
-      bigInt: BigInt.fromInt(1),
-      optBigInt: Some(BigInt.fromInt(2)),
+      bigInt: Utils.BigInt.fromInt(1),
+      optBigInt: Some(Utils.BigInt.fromInt(2)),
       bigDecimal: BigDecimal.fromStringUnsafe("1.1"),
       optBigDecimal: Some(BigDecimal.fromStringUnsafe("2.2")),
       bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1.1"),
@@ -249,42 +249,42 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
             contractAddress: "0xabcdef0123456789abcdef0123456789abcdef01"->Utils.magic,
             name: "Test Collection",
             symbol: "TEST",
-            maxSupply: BigInt.fromInt(100),
+            maxSupply: Utils.BigInt.fromInt(100),
             currentSupply: 1,
           })
 
           context.\"Token".set({
             id: "token-1",
-            tokenId: BigInt.fromInt(50),
+            tokenId: Utils.BigInt.fromInt(50),
             collection_id: testCollectionId,
             owner_id: testUserId,
           })
 
           context.\"Token".set({
             id: "token-2",
-            tokenId: BigInt.fromInt(60),
+            tokenId: Utils.BigInt.fromInt(60),
             collection_id: testCollectionId,
             owner_id: testUserId,
           })
 
           // Execute getWhere queries
           whereEqOwnerTest := (await context.\"Token".getWhere({owner: {_eq: testUserId}}))
-          whereEqTokenIdTest := (await context.\"Token".getWhere({tokenId: {_eq: BigInt.fromInt(50)}}))
-          whereTokenIdGt50Test := (await context.\"Token".getWhere({tokenId: {_gt: BigInt.fromInt(50)}}))
-          whereTokenIdGt49Test := (await context.\"Token".getWhere({tokenId: {_gt: BigInt.fromInt(49)}}))
-          whereTokenIdLt50Test := (await context.\"Token".getWhere({tokenId: {_lt: BigInt.fromInt(50)}}))
-          whereTokenIdLt51Test := (await context.\"Token".getWhere({tokenId: {_lt: BigInt.fromInt(51)}}))
+          whereEqTokenIdTest := (await context.\"Token".getWhere({tokenId: {_eq: Utils.BigInt.fromInt(50)}}))
+          whereTokenIdGt50Test := (await context.\"Token".getWhere({tokenId: {_gt: Utils.BigInt.fromInt(50)}}))
+          whereTokenIdGt49Test := (await context.\"Token".getWhere({tokenId: {_gt: Utils.BigInt.fromInt(49)}}))
+          whereTokenIdLt50Test := (await context.\"Token".getWhere({tokenId: {_lt: Utils.BigInt.fromInt(50)}}))
+          whereTokenIdLt51Test := (await context.\"Token".getWhere({tokenId: {_lt: Utils.BigInt.fromInt(51)}}))
 
           // Execute _gte and _lte queries
-          whereTokenIdGte50Test := (await context.\"Token".getWhere({tokenId: {_gte: BigInt.fromInt(50)}}))
-          whereTokenIdGte51Test := (await context.\"Token".getWhere({tokenId: {_gte: BigInt.fromInt(51)}}))
-          whereTokenIdLte50Test := (await context.\"Token".getWhere({tokenId: {_lte: BigInt.fromInt(50)}}))
-          whereTokenIdLte49Test := (await context.\"Token".getWhere({tokenId: {_lte: BigInt.fromInt(49)}}))
+          whereTokenIdGte50Test := (await context.\"Token".getWhere({tokenId: {_gte: Utils.BigInt.fromInt(50)}}))
+          whereTokenIdGte51Test := (await context.\"Token".getWhere({tokenId: {_gte: Utils.BigInt.fromInt(51)}}))
+          whereTokenIdLte50Test := (await context.\"Token".getWhere({tokenId: {_lte: Utils.BigInt.fromInt(50)}}))
+          whereTokenIdLte49Test := (await context.\"Token".getWhere({tokenId: {_lte: Utils.BigInt.fromInt(49)}}))
 
           // Execute _in queries
           whereInOwnerTest := (await context.\"Token".getWhere({owner: {_in: [testUserId, "non-existent-user"]}}))
-          whereInTokenIdTest := (await context.\"Token".getWhere({tokenId: {_in: [BigInt.fromInt(50), BigInt.fromInt(60)]}}))
-          whereInTokenIdNoMatchTest := (await context.\"Token".getWhere({tokenId: {_in: [BigInt.fromInt(999)]}}))
+          whereInTokenIdTest := (await context.\"Token".getWhere({tokenId: {_in: [Utils.BigInt.fromInt(50), Utils.BigInt.fromInt(60)]}}))
+          whereInTokenIdNoMatchTest := (await context.\"Token".getWhere({tokenId: {_in: [Utils.BigInt.fromInt(999)]}}))
           whereInTokenIdEmptyTest := (await context.\"Token".getWhere({tokenId: {_in: []}}))
         },
       },

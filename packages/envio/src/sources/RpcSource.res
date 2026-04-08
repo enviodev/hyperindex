@@ -235,7 +235,9 @@ let getNextPage = (
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
-    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
+    Time.resolvePromiseAfterDelay(
+      ~delayMilliseconds=sc.queryTimeoutMillis,
+    )->Promise.then(() =>
       Promise.reject(
         QueryTimout(
           `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
@@ -803,10 +805,10 @@ let makeThrowingGetEventTransaction = (
                 | _ => Promise.resolve(None)
                 }
 
-                Promise.all2((txJsonPromise, receiptJsonPromise))->Promise.thenResolve(((
-                  txJson,
-                  receiptJson,
-                )) => {
+                Promise.all2((
+                  txJsonPromise,
+                  receiptJsonPromise,
+                ))->Promise.thenResolve(((txJson, receiptJson)) => {
                   let mutTransactionAcc = Js.Dict.empty()
                   setLogFields(mutTransactionAcc, log)
 

@@ -720,8 +720,8 @@ impl TypeIdent {
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
-                SchemaMode::ForDb => "BigInt.schema".to_string(),
-                SchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
+                SchemaMode::ForDb => "Utils.BigInt.schema".to_string(),
+                SchemaMode::ForFieldSelection => "Utils.BigInt.nativeSchema".to_string(),
             },
             Self::BigDecimal => "BigDecimal.schema".to_string(),
             Self::Address => "Address.schema".to_string(),
@@ -1042,12 +1042,12 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "BigInt.schema".to_string()
+            "Utils.BigInt.schema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
-            "BigInt.nativeSchema".to_string()
+            "Utils.BigInt.nativeSchema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigDecimal)
@@ -1077,12 +1077,12 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "S.null(BigInt.schema)".to_string()
+            "S.null(Utils.BigInt.schema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
-            "S.nullable(BigInt.nativeSchema)".to_string()
+            "S.nullable(Utils.BigInt.nativeSchema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::Tuple(vec![TypeIdent::Int, TypeIdent::Bool]))

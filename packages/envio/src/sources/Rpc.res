@@ -51,7 +51,7 @@ let makeHexSchema = fromStr =>
     serializer: value => value->Viem.toHex->(Utils.magic: EvmTypes.Hex.t => 'a),
   })
 
-let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)
+let hexBigintSchema: S.schema<bigint> = makeHexSchema(Utils.BigInt.fromString)
 external number: string => int = "Number"
 let hexIntSchema: S.schema<int> = makeHexSchema(v => v->number->Some)
 

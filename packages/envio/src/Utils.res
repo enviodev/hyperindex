@@ -266,18 +266,18 @@ module Array = {
 
       let rec loop = (i, j, k) => {
         if i < Array.length(xs) && j < Array.length(ys) {
-          if f(xs[i], ys[j]) {
-            result[k] = xs[i]
+          if f(xs->Belt.Array.getUnsafe(i), ys->Belt.Array.getUnsafe(j)) {
+            result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
             loop(i + 1, j, k + 1)
           } else {
-            result[k] = ys[j]
+            result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
             loop(i, j + 1, k + 1)
           }
         } else if i < Array.length(xs) {
-          result[k] = xs[i]
+          result->Belt.Array.setUnsafe(k, xs->Belt.Array.getUnsafe(i))
           loop(i + 1, j, k + 1)
         } else if j < Array.length(ys) {
-          result[k] = ys[j]
+          result->Belt.Array.setUnsafe(k, ys->Belt.Array.getUnsafe(j))
           loop(i, j + 1, k + 1)
         }
       }
@@ -307,7 +307,7 @@ module Array = {
       } else {
         switch results->Js.Array2.unsafe_get(index) {
         | Ok(value) => {
-            output[index] = value
+            output->Belt.Array.setUnsafe(index, value)
             loop(index + 1, output)
           }
         | Error(_) as err => err->(magic: result<'a, 'b> => result<array<'a>, 'b>)
@@ -338,7 +338,7 @@ Helper to check if a value exists in an array
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
-      let item = arr[i]
+      let item = arr->Belt.Array.getUnsafe(i)
       await item->fn
     }
   }
@@ -369,7 +369,7 @@ Helper to check if a value exists in an array
       if index < 0 {
         None
       } else {
-        let item = arr[index]
+        let item = arr->Belt.Array.getUnsafe(index)
         if fn(item) {
           Some((item, index))
         } else {
@@ -765,4 +765,116 @@ module EnvioPackage = {
   | S.Raised(error) =>
     Js.Exn.raiseError(`Failed to get package.json in envio package: ${error->S.Error.message}`)
   }
+}
+
+module BigInt = {
+  %%private(
+    @inline
+    let unsafeToOption: (unit => 'a) => option<'a> = unsafeFunc => {
+      try {
+        unsafeFunc()->Some
+      } catch {
+      | Js.Exn.Error(_obj) => None
+      }
+    }
+  )
+
+  // constructors and methods
+  @val external fromInt: int => bigint = "BigInt"
+  @val external fromStringUnsafe: string => bigint = "BigInt"
+  @val external fromUnknownUnsafe: unknown => bigint = "BigInt"
+  let fromString = str => unsafeToOption(() => str->fromStringUnsafe)
+  @send external toString: bigint => string = "toString"
+  let toInt = (b: bigint): option<int> => b->toString->Belt.Int.fromString
+
+  //silence unused var warnings for raw bindings
+  @@warning("-27")
+  // operation
+  let add = (a: bigint, b: bigint): bigint => %raw("a + b")
+  let sub = (a: bigint, b: bigint): bigint => %raw("a - b")
+  let mul = (a: bigint, b: bigint): bigint => %raw("a * b")
+  let div = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a / b : 0n")
+  let pow = (a: bigint, b: bigint): bigint => %raw("a ** b")
+  let mod = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a % b : 0n")
+
+  // comparison
+  let eq = (a: bigint, b: bigint): bool => %raw("a === b")
+  let neq = (a: bigint, b: bigint): bool => %raw("a !== b")
+  let gt = (a: bigint, b: bigint): bool => %raw("a > b")
+  let gte = (a: bigint, b: bigint): bool => %raw("a >= b")
+  let lt = (a: bigint, b: bigint): bool => %raw("a < b")
+  let lte = (a: bigint, b: bigint): bool => %raw("a <= b")
+
+  module Bitwise = {
+    let shift_left = (a: bigint, b: bigint): bigint => %raw("a << b")
+    let shift_right = (a: bigint, b: bigint): bigint => %raw("a >> b")
+    let logor = (a: bigint, b: bigint): bigint => %raw("a | b")
+    let logand = (a: bigint, b: bigint): bigint => %raw("a & b")
+  }
+
+  let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
+    const res = new Array(arr.length);
+    for (let i = 0; i < arr.length; i++) {
+      res[i] = arr[i].toString();
+    }
+    return res;
+  }`)
+
+  let zero = fromInt(0)
+  let toFloat: bigint => float = %raw(`(n) => Number(n)`)
+  let toIntUnsafe: bigint => int = %raw(`(n) => Number(n)`)
+
+  let schema =
+    S.string
+    ->S.setName("BigInt")
+    ->S.transform(s => {
+      parser: string =>
+        switch string->fromString {
+        | Some(bigInt) => bigInt
+        | None => s.fail("The string is not valid BigInt")
+        },
+      serializer: bigint => bigint->toString,
+    })
+
+  let nativeSchema = S.bigint
+}
+
+// Top-level alias for genType. The `BigInt` module name gets escaped to
+// `$$BigInt` in the compiled .res.mjs because it shadows the JS builtin,
+// which breaks `UtilsJS.BigInt.schema` references in genType output.
+// Re-exporting under an unescaped name keeps the .gen.ts wrapper happy.
+@genType
+let bigIntSchema = BigInt.schema
+
+module Promise = {
+  // Async-callback variant of `Promise.make`. The stdlib only ships the
+  // sync variant, but we rely on the async one in a couple of places.
+  @new
+  external makeAsync: ((@uncurry 'a => unit, 'e => unit) => promise<unit>) => promise<'a> =
+    "Promise"
+
+  // `catch` that swallows rejections silently. Handy for fire-and-forget
+  // promises that must not take the process down on failure.
+  %%private(let noop = (() => ())->Obj.magic)
+  let silentCatch = (promise: promise<'a>): promise<'a> => {
+    promise->Promise.catch(_ => noop())
+  }
+
+  // Like `catch`, but the callback returns a plain value instead of a new
+  // promise. Used when the fallback is a ready-made default.
+  @send
+  external catchResolve: (promise<'a>, exn => 'a) => promise<'a> = "catch"
+
+  // Drop a promise's resolved value. We can't use `Promise.ignore` for this
+  // because that returns `unit`, not `promise<unit>`.
+  external ignoreValue: promise<'a> => promise<unit> = "%identity"
+
+  // Escape hatches for awaiting non-promise values / producing fake promises
+  // in type-directed contexts. Used by a handful of bindings that need to
+  // interoperate with raw JS values.
+  external unsafe_async: 'a => promise<'a> = "%identity"
+  external unsafe_await: promise<'a> => 'a = "?await"
+
+  // Detects Thenable-like values at runtime (anything with a `.catch` method).
+  let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }

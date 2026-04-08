@@ -171,7 +171,7 @@ let updateChainMetadataTable = (
 
   //Don't await this set, it can happen in its own time
   throttler->Throttler.schedule(() =>
-    persistence.storage.setChainMeta(chainsData)->Promise.ignoreValue
+    persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
   )
 }
 
@@ -862,7 +862,9 @@ let injectedTaskReducer = (
 ) => {
   switch task {
   | ProcessPartitionQueryResponse(partitionQueryResponse) =>
-    state->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)->Promise.done
+    state
+    ->processPartitionQueryResponse(partitionQueryResponse, ~dispatchAction)
+    ->Promise.done
   | PruneStaleEntityHistory =>
     let runPrune = async () => {
       switch state.chainManager->ChainManager.getSafeCheckpointId {
@@ -1182,7 +1184,7 @@ let injectedTaskReducer = (
       let diff =
         await state.ctx.persistence->Persistence.prepareRollbackDiff(
           ~rollbackTargetCheckpointId,
-          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
+          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->Utils.BigInt.add(1n),
         )
 
       let chainManager = {

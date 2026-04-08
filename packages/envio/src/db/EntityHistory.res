@@ -23,11 +23,11 @@ let unsafeCheckpointIdSchema =
   ->S.setName("CheckpointId")
   ->S.transform(s => {
     parser: string =>
-      switch BigInt.fromString(string) {
+      switch Utils.BigInt.fromString(string) {
       | None => s.fail("The string is not valid CheckpointId")
       | Some(v) => v
       },
-    serializer: bigint => bigint->BigInt.toString,
+    serializer: bigint => bigint->Utils.BigInt.toString,
   })
 
 let makeSetUpdateSchema: S.t<'entity> => S.t<Change.t<'entity>> = entitySchema => {
@@ -112,7 +112,7 @@ let pruneStaleEntityHistory = (
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
     makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    [safeCheckpointId->Utils.BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
 }
 
@@ -141,17 +141,23 @@ let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<st
     makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
     [ids]->Obj.magic,
   )
-  ->Promise.ignoreValue
+  ->Utils.Promise.ignoreValue
 }
 
-let rollback = (sql, ~pgSchema, ~entityName, ~entityIndex, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+let rollback = (
+  sql,
+  ~pgSchema,
+  ~entityName,
+  ~entityIndex,
+  ~rollbackTargetCheckpointId: Internal.checkpointId,
+) => {
   sql
   ->Postgres.preparedUnsafe(
     `DELETE FROM "${pgSchema}"."${historyTableName(
         ~entityName,
         ~entityIndex,
       )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    [rollbackTargetCheckpointId->Utils.BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
-  ->Promise.ignoreValue
+  ->Utils.Promise.ignoreValue
 }

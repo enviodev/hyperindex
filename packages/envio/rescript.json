@@ -23,5 +23,8 @@
     "version": 4
   },
   "bs-dependencies": ["rescript-schema", "@rescript/react", "rescript-envsafe"],
-  "bsc-flags": ["-open RescriptSchema"]
+  "bsc-flags": ["-open RescriptSchema"],
+  "warnings": {
+    "number": "-3-44"
+  }
 }

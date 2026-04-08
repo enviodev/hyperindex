@@ -411,7 +411,7 @@ let runContractRegistersOrThrow = async (
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Promise.isCatchable {
+      if result->Utils.Promise.isCatchable {
         promises->Array.push(
           result
           ->Promise.thenResolve(r => {
