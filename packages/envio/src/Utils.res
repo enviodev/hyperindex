@@ -824,7 +824,6 @@ module BigInt = {
   let toFloat: bigint => float = %raw(`(n) => Number(n)`)
   let toIntUnsafe: bigint => int = %raw(`(n) => Number(n)`)
 
-  @genType
   let schema =
     S.string
     ->S.setName("BigInt")
@@ -839,6 +838,13 @@ module BigInt = {
 
   let nativeSchema = S.bigint
 }
+
+// Top-level alias for genType. The `BigInt` module name gets escaped to
+// `$$BigInt` in the compiled .res.mjs because it shadows the JS builtin,
+// which breaks `UtilsJS.BigInt.schema` references in genType output.
+// Re-exporting under an unescaped name keeps the .gen.ts wrapper happy.
+@genType
+let bigIntSchema = BigInt.schema
 
 module Promise = {
   type t<+'a> = promise<'a>

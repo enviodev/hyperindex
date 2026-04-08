@@ -67,7 +67,7 @@ import type {
 } from "./src/Envio.gen.ts";
 
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.gen.ts";
-import { BigInt_schema as bigintSchema } from "./src/Utils.gen.ts";
+import { bigIntSchema as bigintSchema } from "./src/Utils.gen.ts";
 import * as Sury from "rescript-schema";
 
 type UnknownToOutput<T> = T extends Sury.Schema<unknown>
