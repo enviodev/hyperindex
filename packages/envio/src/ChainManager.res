@@ -131,11 +131,11 @@ let nextItemIsNone = (chainManager: t): bool => {
 
 let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): Batch.t => {
   Batch.make(
-    ~checkpointIdBeforeBatch=chainManager.committedCheckpointId->BigInt.add(
+    ~checkpointIdBeforeBatch=chainManager.committedCheckpointId->Utils.BigInt.add(
       // Since for rollback we have a diff checkpoint id.
       // This is needed to currectly overwrite old state
       // in an append-only ClickHouse insert.
-      isRollback ? 1n : 0n
+      isRollback ? 1n : 0n,
     ),
     ~chainsBeforeBatch=chainManager.chainFetchers->ChainMap.map((cf): Batch.chainBeforeBatch => {
       fetchState: cf.fetchState,

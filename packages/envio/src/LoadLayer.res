@@ -95,7 +95,7 @@ let callEffect = (
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
     }
   })
-  ->Promise.catchResolve(exn => {
+  ->Utils.Promise.catchResolve(exn => {
     onError(~inputKey=arg.cacheKey, ~exn)
   })
   ->Promise.finally(() => {
@@ -143,7 +143,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
-        )->Promise.ignoreValue,
+        )->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
@@ -176,7 +176,7 @@ let rec executeWithRateLimit = (
           ~inMemTable,
           ~timerRef,
           ~onError,
-        )->Promise.ignoreValue,
+        )->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
@@ -225,7 +225,7 @@ let rec executeWithRateLimit = (
             ~isFromQueue=true,
           )
         })
-        ->Promise.ignoreValue,
+        ->Utils.Promise.ignoreValue,
       )
       ->ignore
     }
@@ -323,7 +323,7 @@ let loadEffect = (
           ~inMemTable,
           ~onError,
           ~isFromQueue=false,
-        )->Promise.ignoreValue
+        )->Utils.Promise.ignoreValue
       }
     }
   }

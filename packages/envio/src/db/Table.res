@@ -272,7 +272,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
       items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
         let rec coerceSchema = schema =>
           switch schema->S.classify {
-          | BigInt => BigInt.schema->S.toUnknown
+          | BigInt => Utils.BigInt.schema->S.toUnknown
           | Option(child)
           | Null(child) =>
             S.null(child->coerceSchema)->S.toUnknown

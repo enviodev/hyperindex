@@ -124,10 +124,12 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
           | UInt52 => {
               let uint52Schema =
                 S.float
-                ->S.preprocess(_ => {
-                  parser: unknown =>
-                    unknown->(Utils.magic: unknown => string)->Js.Float.fromString,
-                })
+                ->S.preprocess(
+                  _ => {
+                    parser: unknown =>
+                      unknown->(Utils.magic: unknown => string)->Js.Float.fromString,
+                  },
+                )
                 ->S.toUnknown
               if f.isNullable {
                 S.null(uint52Schema)->S.toUnknown
@@ -202,7 +204,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     for idx in 0 to checkpointsCount - 1 {
       checkpointRows
       ->Js.Array2.push((
-        batch.checkpointIds->Belt.Array.getUnsafe(idx)->BigInt.toString,
+        batch.checkpointIds->Belt.Array.getUnsafe(idx)->Utils.BigInt.toString,
         batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx),
@@ -421,14 +423,14 @@ let initialize = async (
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database)})
       ),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
     await client->exec({query: makeCreateCheckpointsTableQuery(~database)})
 
     await Promise.all(
       entities->Belt.Array.map(entityConfig =>
         client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
       ),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
 
     Logging.trace("ClickHouse sink initialization completed successfully")
   } catch {
@@ -465,14 +467,14 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
       tables->Belt.Array.map(table => {
         let tableName = table["name"]
         client->exec({
-          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
+          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Utils.BigInt.toString}`,
         })
       }),
-    )->Promise.ignoreValue
+    )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
     await client->exec({
-      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
+      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->Utils.BigInt.toString}`,
     })
   } catch {
   | Persistence.StorageError(_) as exn => raise(exn)

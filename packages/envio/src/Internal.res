@@ -486,7 +486,7 @@ type fuelSupplyParams = {
 }
 let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
 @genType
 type fuelTransferParams = {
@@ -497,7 +497,7 @@ type fuelTransferParams = {
 let fuelTransferParamsSchema = S.schema(s => {
   to: s.matches(Address.schema),
   assetId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
 
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered

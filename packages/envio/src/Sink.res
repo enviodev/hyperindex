@@ -42,7 +42,7 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
         updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
           ClickHouse.setUpdatesOrThrow(client, ~cache, ~updates, ~entityConfig, ~database)
         }),
-      )->Promise.ignoreValue
+      )->Utils.Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
     },
   }

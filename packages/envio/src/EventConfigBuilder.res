@@ -71,8 +71,8 @@ let rec abiTypeToSchema = (abiType: string): S.t<unknown> => {
     | "address" => Address.schema->S.toUnknown
     | "bool" => S.bool->S.toUnknown
     | "string" | "bytes" => S.string->S.toUnknown
-    | t if t->Js.String2.startsWith("uint") => BigInt.schema->S.toUnknown
-    | t if t->Js.String2.startsWith("int") => BigInt.schema->S.toUnknown
+    | t if t->Js.String2.startsWith("uint") => Utils.BigInt.schema->S.toUnknown
+    | t if t->Js.String2.startsWith("int") => Utils.BigInt.schema->S.toUnknown
     | t if t->Js.String2.startsWith("bytes") => S.string->S.toUnknown
     | other => Js.Exn.raiseError(`Unsupported ABI type: ${other}`)
     }

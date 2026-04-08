@@ -828,10 +828,10 @@ let rec writeBatch = async (
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
                   (
                     batchDeleteEntityIds,
-                    batchDeleteCheckpointIds->BigInt.arrayToStringArray,
+                    batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
                   )->Obj.magic,
                 )
-                ->Promise.ignoreValue,
+                ->Utils.Promise.ignoreValue,
               )
             }
 
@@ -889,13 +889,13 @@ let rec writeBatch = async (
         | exn => {
             /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
             let normalizedExn = switch exn {
-            | JsError(_) => exn
+            | JsExn(_) => exn
             | Persistence.StorageError({reason: exn}) => exn
             | _ => exn
             }->Js.Exn.anyToExnInternal
 
             switch normalizedExn {
-            | JsError(error) =>
+            | JsExn(error) =>
               // Workaround for https://github.com/enviodev/hyperindex/issues/446
               // We do escaping only when we actually got an error writing for the first time.
               // This is not perfect, but an optimization to avoid escaping for every single item.
@@ -994,7 +994,7 @@ let rec writeBatch = async (
           await setOperations
           ->Belt.Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
-          ->Promise.ignoreValue
+          ->Utils.Promise.ignoreValue
 
           switch sinkPromise {
           | Some(sinkPromise) =>
@@ -1511,11 +1511,12 @@ let make = (
       ),
     ))
 
-    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringUnsafe
+    let checkpointId =
+      (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->Utils.BigInt.fromStringUnsafe
 
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
-      checkpointId: raw["id"]->BigInt.fromStringUnsafe,
+      checkpointId: raw["id"]->Utils.BigInt.fromStringUnsafe,
       chainId: raw["chain_id"],
       blockNumber: raw["block_number"],
       blockHash: raw["block_hash"],
@@ -1538,7 +1539,7 @@ let make = (
 
   let reset = async () => {
     let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
-    await sql->Postgres.unsafe(query)->Promise.ignoreValue
+    await sql->Postgres.unsafe(query)->Utils.Promise.ignoreValue
   }
 
   let setChainMeta = chainsData =>
@@ -1578,14 +1579,18 @@ let make = (
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        [rollbackTargetCheckpointId->Utils.BigInt.toString]->(
+          Utils.magic: array<string> => unknown
+        ),
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        [rollbackTargetCheckpointId->Utils.BigInt.toString]->(
+          Utils.magic: array<string> => unknown
+        ),
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
@@ -1615,7 +1620,7 @@ let make = (
             None
           })
           // Otherwise it fails with unhandled exception
-          ->Promise.catchResolve(exn => Some(exn)),
+          ->Utils.Promise.catchResolve(exn => Some(exn)),
         )
       }
     | None => None
@@ -1699,7 +1704,10 @@ let makeStorageFromEnv = (
               ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
-              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
+              Logging.errorWithExn(
+                err->Utils.prettifyExn,
+                `Error tracking tables`,
+              )->Promise.resolve
             })
           },
         )

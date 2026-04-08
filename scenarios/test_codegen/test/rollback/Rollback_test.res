@@ -115,7 +115,7 @@ describe("E2E rollback tests", () => {
             eventsProcessed: 2,
           },
           {
-            id: firstHistoryCheckpointId->BigInt.add(1n),
+            id: firstHistoryCheckpointId->Utils.BigInt.add(1n),
             blockHash: Js.Null.Value("0x102"),
             blockNumber: 102,
             chainId: 1337,
@@ -154,7 +154,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(1n),
             entityId: "3",
             entity: {
               Indexer.Entities.SimpleEntity.id: "3",
@@ -170,7 +170,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Delete({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(1n),
             entityId: "4",
           }),
         ],
@@ -269,7 +269,7 @@ describe("E2E rollback tests", () => {
       (
         [
           {
-            id: firstHistoryCheckpointId->BigInt.add(3n),
+            id: firstHistoryCheckpointId->Utils.BigInt.add(3n),
             blockHash: Js.Null.Value("0x101"),
             blockNumber: 101,
             chainId: 1337,
@@ -288,7 +288,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(3n),
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -296,7 +296,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(3n),
             entityId: "2",
             entity: {
               Indexer.Entities.SimpleEntity.id: "2",

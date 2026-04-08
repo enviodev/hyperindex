@@ -349,7 +349,7 @@ module Indexer = {
 
     {
       getBatchWritePromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
+        Utils.Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
@@ -358,7 +358,7 @@ module Indexer = {
         })
       },
       getRollbackReadyPromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
+        Utils.Promise.makeAsync(async (resolve, _reject) => {
           while (
             switch (gsManager->GlobalStateManager.getState).rollbackState {
             | RollbackReady(_) => false
