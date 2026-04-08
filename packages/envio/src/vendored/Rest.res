@@ -25,13 +25,6 @@ module Obj = {
   external magic: 'a => 'b = "%identity"
 }
 
-module Promise = {
-  type t<+'a> = promise<'a>
-
-  @send
-  external thenResolve: (t<'a>, 'a => 'b) => t<'b> = "then"
-}
-
 module Option = {
   let unsafeSome: 'a => option<'a> = Obj.magic
   let unsafeUnwrap: option<'a> => 'a = Obj.magic
