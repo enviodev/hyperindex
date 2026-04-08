@@ -1,0 +1,22 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+expression: ts
+---
+    "CreateLockupTranchedStream": {
+      /** The name of the event. */
+      readonly eventName: "CreateLockupTranchedStream";
+      /** The name of the contract that emitted this event. */
+      readonly contractName: "SablierLockup";
+      /** The unique identifier of the blockchain network where this event occurred. */
+      readonly chainId: ChainId;
+      /** The parameters or arguments associated with this event. */
+      readonly params: { readonly streamId: bigint; readonly commonParams: { readonly funder: Address; readonly sender: Address; readonly recipient: Address; readonly amounts: { readonly deposit: bigint; readonly brokerFee: bigint }; readonly token: Address; readonly cancelable: boolean; readonly transferable: boolean; readonly timestamps: { readonly start: bigint; readonly end: bigint }; readonly shape: string; readonly broker: Address }; readonly tranches: readonly { readonly amount: bigint; readonly timestamp: bigint }[] };
+      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
+      readonly block: EvmBlock;
+      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
+      readonly transaction: EvmTransaction;
+      /** The index of this event's log within the block. */
+      readonly logIndex: number;
+      /** The address of the contract that emitted this event. */
+      readonly srcAddress: Address;
+    };

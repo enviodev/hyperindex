@@ -2562,20 +2562,19 @@ mod test {
         insta::assert_snapshot!(event_template.module_code);
     }
 
-    #[test]
-    fn event_template_with_named_struct_param() {
-        // Mirrors the Sablier-style event from issue #538:
-        //
-        //   event CreateLockupTranchedStream(
-        //     uint256 indexed streamId,
-        //     Lockup.CreateEventCommon commonParams,
-        //     LockupTranched.Tranche[] tranches
-        //   );
-        //
-        // where `commonParams` is a named struct that itself contains a nested
-        // `timestamps` struct, and `tranches` is an array of `Tranche` structs.
-        // After the fix we expect both to render as inline records with named
-        // fields, not positional tuples.
+    /// Builds the Sablier-style event from issue #538 used by the named-struct
+    /// snapshot tests below:
+    ///
+    ///   event CreateLockupTranchedStream(
+    ///     uint256 indexed streamId,
+    ///     Lockup.CreateEventCommon commonParams,
+    ///     LockupTranched.Tranche[] tranches
+    ///   );
+    ///
+    /// `commonParams` is a named struct containing a nested `timestamps`
+    /// struct, and `tranches` is an array of `Tranche` structs — this
+    /// exercises every interesting code path for struct rendering.
+    fn sablier_named_struct_event() -> system_config::Event {
         use crate::config_parsing::abi_compat::{AbiTupleField, AbiType, EventParam};
 
         fn named(name: &str, kind: AbiType) -> AbiTupleField {
@@ -2615,7 +2614,7 @@ mod test {
             named("timestamp", AbiType::Uint(40)),
         ]);
 
-        let event = system_config::Event {
+        system_config::Event {
             name: "CreateLockupTranchedStream".to_string(),
             kind: system_config::EventKind::Params(vec![
                 EventParam {
@@ -2638,47 +2637,41 @@ mod test {
                 .to_string(),
             event_signature: String::new(),
             field_selection: None,
-        };
+        }
+    }
 
+    #[test]
+    fn event_template_named_struct_rescript_snapshot() {
+        // Snapshots the ReScript module emitted for the Sablier-style event,
+        // exercising lifted `params_*` type aliases for nested + array structs.
+        let event = sablier_named_struct_event();
         let template = EventTemplate::from_config_event(&event, None).unwrap();
+        insta::assert_snapshot!(template.module_code);
+    }
 
-        // Per-param TS rendering: commonParams and tranches should be objects,
-        // not positional arrays, and the nested structs (`amounts`, `timestamps`,
-        // tranche) should likewise have named fields.
-        let common_ts = &template.params[1].ts_type;
-        assert!(
-            common_ts.contains("readonly funder: Address")
-                && common_ts.contains("readonly amounts: { readonly deposit: bigint")
-                && common_ts.contains("readonly timestamps: { readonly start: bigint"),
-            "commonParams TS type should be a named record with nested records, got: {}",
-            common_ts
+    #[test]
+    fn event_template_named_struct_typescript_snapshot() {
+        // Snapshots the TypeScript event type emitted into envio.d.ts. Unlike
+        // ReScript, TypeScript inlines record types directly so each named
+        // struct shows up as `{ readonly funder: Address; ... }`.
+        // The test module imports `system_config::FieldSelection`, so the
+        // codegen-internal `FieldSelection` (used by `generate_contract_event_ts_type`)
+        // must be referenced via `super::`.
+        let event = sablier_named_struct_event();
+        let all_evm = system_config::FieldSelection::all_evm();
+        let aggregated = super::FieldSelection::new(super::FieldSelectionOptions {
+            block_fields: all_evm.block_fields,
+            transaction_fields: all_evm.transaction_fields,
+        });
+        let ts = ProjectTemplate::generate_contract_event_ts_type(
+            "SablierLockup",
+            &event,
+            &aggregated,
+            "ChainId",
+            "EvmBlock",
+            "EvmTransaction",
         );
-
-        let tranches_ts = &template.params[2].ts_type;
-        assert_eq!(
-            tranches_ts, "readonly { readonly amount: bigint; readonly timestamp: bigint }[]",
-            "tranches TS type should be an array of named records"
-        );
-
-        // ReScript rendering of the commonParams type.
-        let common_res = &template.params[1].res_type;
-        assert!(
-            common_res.contains("funder: Address.t")
-                && common_res.contains("amounts: {deposit: bigint, brokerFee: bigint}")
-                && common_res.contains("timestamps: {start: bigint, end: bigint}"),
-            "commonParams ReScript type should be a named record with nested records, got: {}",
-            common_res
-        );
-
-        // Default values for the record should also build a record literal,
-        // not a positional tuple.
-        let common_default = &template.params[1].default_value_rescript;
-        assert!(
-            common_default.starts_with("{")
-                && common_default.contains("funder: Envio.TestHelpers.Addresses.defaultAddress"),
-            "commonParams default should be a record literal, got: {}",
-            common_default
-        );
+        insta::assert_snapshot!(ts);
     }
 
     #[test]

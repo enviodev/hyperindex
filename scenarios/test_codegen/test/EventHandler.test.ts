@@ -925,8 +925,6 @@ describe("Use Envio test framework to test event handlers", () => {
     const result = await indexer.process({
       chains: {
         1337: {
-          startBlock: 1,
-          endBlock: 100,
           simulate: [
             {
               contract: "Gravatar",
