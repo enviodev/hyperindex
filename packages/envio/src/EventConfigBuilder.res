@@ -2,8 +2,8 @@ open Belt
 
 // Recursive tuple/struct component metadata emitted by the CLI when an event
 // param (or any nested field) is a Solidity struct. `name` is always non-empty —
-// the CLI fills in `_0`, `_1`, ... for anonymous components — so the runtime can
-// always rebuild a keyed object.
+// the CLI fills in `"0"`, `"1"`, ... for anonymous components in mixed-name
+// tuples — so the runtime can always rebuild a keyed object.
 type rec eventParamComponent = {
   name: string,
   abiType: string,

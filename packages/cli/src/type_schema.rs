@@ -946,18 +946,22 @@ impl TypeIdent {
                 format!("[{}]", inner_types_str)
             }
             Self::Record(fields) => {
+                // Match the other TypeIdent::Record arms — Solidity forbids
+                // zero-component structs, so an empty Record here would be a
+                // codegen bug. Fail fast instead of silently emitting `{}`.
                 if fields.is_empty() {
-                    "{}".to_string()
-                } else {
-                    let inner = fields
-                        .iter()
-                        .map(|f| {
-                            let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
-                            format!("{}: {}", key, f.type_ident.get_default_value_non_rescript())
-                        })
-                        .join(", ");
-                    format!("{{{inner}}}")
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
                 }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!("{}: {}", key, f.type_ident.get_default_value_non_rescript())
+                    })
+                    .join(", ");
+                format!("{{{inner}}}")
             }
             // TODO: ensure these are defined
             Self::GenericParam(name) => {
