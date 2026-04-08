@@ -1296,17 +1296,6 @@ type chainId = [{}]"#,
                 .join(" | "),
         );
 
-        let on_block_code = format!(
-            r#"@genType /** Register a Block Handler. It'll be called for every block by default. */
-let onBlock: (
-Envio.onBlockOptions<chainId>,
-{},
-) => unit = (
-HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
-)->Utils.magic"#,
-            on_block_handler_type
-        );
-
         // Generate indexer types and value
         let indexer_contract_type = r#"/** Contract configuration with name and ABI. */
 type indexerContract = {
@@ -1379,8 +1368,9 @@ type indexerChains = {{
             indexer_chains_fields
         );
 
-        let indexer_type = r#"/** Metadata and configuration for the indexer. */
-type indexer = {
+        let indexer_type = format!(
+            r#"/** Metadata and configuration for the indexer. */
+type indexer = {{
   /** The name of the indexer from config.yaml. */
   name: string,
   /** The description of the indexer from config.yaml. */
@@ -1399,7 +1389,13 @@ type indexer = {
     onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
-}"#;
+  /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
+  onBlock: (
+    Envio.onBlockOptions<indexerChain>,
+    {on_block_handler_type},
+  ) => unit,
+}}"#
+        );
 
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
@@ -1729,9 +1725,7 @@ type contractRegisterContext = {{
 
 {indexer_type}
 
-{get_chain_by_id}
-
-{on_block_code}"#
+{get_chain_by_id}"#
         );
 
         // Generate testIndexer types and createTestIndexer

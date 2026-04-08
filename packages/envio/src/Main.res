@@ -298,12 +298,74 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     )
   }
 
+  // `where` is evaluated once per configured chain at registration time.
+  // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
+  // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
+  // math at `FetchState.res:619` stays untouched.
+  let onBlockFn = (rawOptions: 'a, handler: 'b) => {
+    let raw =
+      rawOptions->(
+        Utils.magic: 'a => {
+          "name": string,
+          "where": option<Envio.onBlockWhereArgs<unknown> => Envio.onBlockWhereResult>,
+        }
+      )
+    let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
+    let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
+
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainId = chainConfig.id
+      let chainObj = chainsDict->Js.Dict.unsafeGet(chainId->Int.toString)
+
+      // A `false` return skips this chain; anything else (true, undefined, or
+      // a filter object) registers. Nullish is coerced to the `true` variant
+      // so the unboxed-variant `switch` stays exhaustive.
+      let normalized = switch raw["where"] {
+      | None => Envio.OnBlockWhereBool(true)
+      | Some(predicate) =>
+        let result = predicate({chain: chainObj})
+        if result === %raw(`undefined`) || result === %raw(`null`) {
+          OnBlockWhereBool(true)
+        } else {
+          result
+        }
+      }
+
+      let (shouldRegister, startBlock, endBlock, interval) = switch normalized {
+      | OnBlockWhereBool(false) => (false, None, None, 1)
+      | OnBlockWhereBool(true) => (true, None, None, 1)
+      | OnBlockWhereFilter(filter) =>
+        let numberFilter = filter.block->Belt.Option.flatMap(b => b.number)
+        let gte = numberFilter->Belt.Option.flatMap(n => n._gte)
+        let lte = numberFilter->Belt.Option.flatMap(n => n._lte)
+        let every =
+          numberFilter
+          ->Belt.Option.flatMap(n => n._every)
+          ->Belt.Option.getWithDefault(1)
+        (true, gte, lte, every)
+      }
+      if shouldRegister {
+        HandlerRegister.registerOnBlock(
+          ~name=raw["name"],
+          ~chainId,
+          ~interval,
+          ~startBlock,
+          ~endBlock,
+          ~handler=typedHandler,
+        )
+      }
+    })
+  }
+
   indexer
   ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
   ->Utils.Object.definePropertyWithValue(
     "contractRegister",
     {enumerable: true, value: contractRegisterFn},
   )
+  ->Utils.Object.definePropertyWithValue("onBlock", {enumerable: true, value: onBlockFn})
   ->ignore
 
   indexer->(Utils.magic: 'a => 'indexer)

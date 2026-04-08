@@ -8,13 +8,16 @@ For more information, see the [block handlers documentation](https://docs.envio.
 
 ## Block Handler
 
-The `onBlock` handler is triggered for each block at the specified interval. This example uses an effect to fetch additional block data from the Solana RPC:
+The `indexer.onBlock` handler is triggered for each block on the matching chain. The `where` predicate is evaluated once per configured chain and can restrict handlers to specific chains or block ranges. This example uses an effect to fetch additional block data from the Solana RPC:
 
 ```ts
-onBlock({ chain: 0, name: "BlockTracker" }, async ({ slot, context }) => {
-  const block = await context.effect(getBlockEffect, { slot });
-  // Process block data...
-});
+indexer.onBlock(
+  { name: "BlockTracker", where: ({ chain }) => chain.id === 0 },
+  async ({ slot, context }) => {
+    const block = await context.effect(getBlockEffect, { slot });
+    // Process block data...
+  },
+);
 ```
 
 ## Prerequisites

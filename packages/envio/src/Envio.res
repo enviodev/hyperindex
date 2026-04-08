@@ -18,12 +18,35 @@ type onBlockArgs<'block, 'context> = {
 }
 
 @genType
+type onBlockNumberFilter = {
+  _gte?: int,
+  _lte?: int,
+  /** Match every Nth block relative to _gte (or chain startBlock). */
+  _every?: int,
+}
+
+@genType
+type onBlockBlockFilter = {number?: onBlockNumberFilter}
+
+@genType
+type onBlockFilter = {block?: onBlockBlockFilter}
+
+// Unboxed union: `bool | onBlockFilter`. `where` returns one of:
+//   - `false` → skip this chain
+//   - `true` / omit → register on this chain with no extra filter
+//   - an `onBlockFilter` object → register with the given range/stride
+@genType @unboxed
+type onBlockWhereResult =
+  | OnBlockWhereBool(bool)
+  | OnBlockWhereFilter(onBlockFilter)
+
+@genType
+type onBlockWhereArgs<'chain> = {chain: 'chain}
+
+@genType
 type onBlockOptions<'chain> = {
   name: string,
-  chain: 'chain,
-  interval?: int,
-  startBlock?: int,
-  endBlock?: int,
+  where?: onBlockWhereArgs<'chain> => onBlockWhereResult,
 }
 
 type whereOperator<'fieldType> = {

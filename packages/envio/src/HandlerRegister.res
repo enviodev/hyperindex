@@ -96,17 +96,14 @@ let isPendingRegistration = () => {
   }
 }
 
-let onBlockOptionsSchema = S.schema(s =>
-  {
-    "name": s.matches(S.string),
-    "chain": s.matches(S.int),
-    "interval": s.matches(S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
-    "startBlock": s.matches(S.option(S.int)),
-    "endBlock": s.matches(S.option(S.int)),
-  }
-)
-
-let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<unit>) => {
+let registerOnBlock = (
+  ~name,
+  ~chainId,
+  ~interval,
+  ~startBlock,
+  ~endBlock,
+  ~handler: Internal.onBlockArgs => promise<unit>,
+) => {
   withRegistration(registration => {
     // We need to get timestamp for ordered multichain mode
     switch registration.multichain {
@@ -117,50 +114,26 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
       )
     }
 
-    let options = rawOptions->S.parseOrThrow(onBlockOptionsSchema)
-    let chainId = switch options["chain"] {
-    | chainId => chainId
-    // Dmitry: I want to add names for chains in the future
-    // and to be able to use them as a lookup.
-    // To do so, we'll need to pass a config during reigstration
-    // instead of isInitialized check.
-    }
-
     let onBlockByChainId = registration.registrations.onBlockByChainId
-
-    switch onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainId->Belt.Int.toString) {
-    | None =>
-      onBlockByChainId->Utils.Dict.setByInt(
-        chainId,
-        [
-          (
-            {
-              index: 0,
-              name: options["name"],
-              startBlock: options["startBlock"],
-              endBlock: options["endBlock"],
-              interval: options["interval"],
-              chainId,
-              handler,
-            }: Internal.onBlockConfig
-          ),
-        ],
-      )
-    | Some(onBlockConfigs) =>
-      onBlockConfigs->Belt.Array.push(
-        (
-          {
-            index: onBlockConfigs->Belt.Array.length,
-            name: options["name"],
-            startBlock: options["startBlock"],
-            endBlock: options["endBlock"],
-            interval: options["interval"],
-            chainId,
-            handler,
-          }: Internal.onBlockConfig
-        ),
-      )
-    }
+    let key = chainId->Belt.Int.toString
+    let index =
+      onBlockByChainId
+      ->Utils.Dict.dangerouslyGetNonOption(key)
+      ->Belt.Option.mapWithDefault(0, configs => configs->Belt.Array.length)
+    onBlockByChainId->Utils.Dict.push(
+      key,
+      (
+        {
+          index,
+          name,
+          startBlock,
+          endBlock,
+          interval,
+          chainId,
+          handler,
+        }: Internal.onBlockConfig
+      ),
+    )
   })
 }
 

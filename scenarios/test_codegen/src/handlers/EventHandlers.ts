@@ -14,7 +14,6 @@ import {
   type EvmEvent,
   type NftCollection,
   type User,
-  onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
@@ -753,7 +752,10 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
     }
 
     case "onBlockInHandler": {
-      onBlock({ name: "test", chain: 1 }, async () => {});
+      indexer.onBlock(
+        { name: "test", where: ({ chain }) => chain.id === 1 },
+        async () => {},
+      );
       break;
     }
 

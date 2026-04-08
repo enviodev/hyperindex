@@ -51,6 +51,34 @@ export type WhereOperator<T> = {
 };
 
 /**
+ * Filter on block number for `indexer.onBlock` `where` predicate. Reuses
+ * `_gte`/`_lte` from {@link WhereOperator} and adds a block-specific `_every`.
+ */
+export type OnBlockNumberFilter = Pick<WhereOperator<number>, "_gte" | "_lte"> & {
+  /**
+   * Match every Nth block. Alignment is relative to `_gte` (or the chain's
+   * configured startBlock when `_gte` is omitted), preserving the semantic
+   * `(blockNumber - startBlock) % _every === 0`.
+   */
+  readonly _every?: number;
+};
+
+/** Structured filter object returned by an `indexer.onBlock` `where` predicate. */
+export type OnBlockFilter = {
+  readonly block?: {
+    readonly number?: OnBlockNumberFilter;
+  };
+};
+
+/**
+ * Return type of an `indexer.onBlock` `where` predicate.
+ * - `false` → skip this chain entirely.
+ * - `true` / `undefined` → register on the chain with no extra filter.
+ * - {@link OnBlockFilter} → register with the given range/stride.
+ */
+export type OnBlockWhereResult = boolean | OnBlockFilter | void;
+
+/**
  * Constructs a getWhere filter type from an entity type.
  * Each field can be filtered using {@link WhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`).
  *
@@ -447,8 +475,12 @@ type EventIdentity<
   readonly wildcard?: boolean;
 };
 
-/** Context for onEvent handlers. Includes entity operations, logging, and chain info. */
-export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
+/**
+ * Shared shape for handler contexts across ecosystems — logger, effect
+ * caller, preload flag, chain state, and the entity operations map derived
+ * from the project schema.
+ */
+type BaseHandlerContext<Config extends IndexerConfigTypes, ChainId> = {
   /** Access the logger instance. */
   readonly log: Logger;
   /** Call an Effect with the given input. */
@@ -457,25 +489,27 @@ export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
   readonly isPreload: boolean;
   /** Chain state for the current event's chain. */
   readonly chain: {
-    readonly id: EvmChainIds<Config>;
+    readonly id: ChainId;
     readonly isLive: boolean;
   };
 } & {
   readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
-}>;
+};
+
+/** Context for onEvent handlers. Includes entity operations, logging, and chain info. */
+export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<
+  BaseHandlerContext<Config, EvmChainIds<Config>>
+>;
 
 /** Context for onEvent handlers in Fuel ecosystem. */
-export type FuelOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
-  readonly log: Logger;
-  readonly effect: EffectCaller;
-  readonly isPreload: boolean;
-  readonly chain: {
-    readonly id: FuelChainIds<Config>;
-    readonly isLive: boolean;
-  };
-} & {
-  readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
-}>;
+export type FuelOnEventContext<Config extends IndexerConfigTypes> = Prettify<
+  BaseHandlerContext<Config, FuelChainIds<Config>>
+>;
+
+/** Context for `indexer.onBlock` handlers in SVM ecosystem. */
+export type SvmOnBlockContext<Config extends IndexerConfigTypes> = Prettify<
+  BaseHandlerContext<Config, SvmChainIds<Config>>
+>;
 
 /** Entity operations available in handler contexts. */
 type EntityOperations<Entity> = {
@@ -623,6 +657,19 @@ export type FuelContractRegisterHandler<Event extends EventLike, Context> = EvmO
 
 // ============== Indexer Handler Methods ==============
 
+/**
+ * Shared shape for `indexer.onBlock` across ecosystems. The `HandlerArgs`
+ * parameter lets each ecosystem supply its own block-identifier field
+ * (`block.number` on EVM/Fuel, `slot` on SVM) alongside the context.
+ */
+type OnBlockMethod<Chain, HandlerArgs> = (
+  options: {
+    readonly name: string;
+    readonly where?: (args: { readonly chain: Chain }) => OnBlockWhereResult;
+  },
+  handler: (args: HandlerArgs) => Promise<void>,
+) => void;
+
 // onEvent/contractRegister methods for EVM ecosystem
 // NOTE: options use inline { contract: C; event: E } shape for TypeScript inference.
 // Using EvmOnEventOptions<Contracts[C][E]> would break inference since C/E can't be
@@ -669,6 +716,19 @@ type EvmHandlerMethods<Config extends IndexerConfigTypes> =
           },
           handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
         ) => void;
+        /**
+         * Register a Block Handler. `where` is evaluated once per configured
+         * chain at registration time; return `false` to skip a chain, `true` /
+         * `undefined` to match every block, or a filter object describing a
+         * block-number range and stride.
+         */
+        readonly onBlock: OnBlockMethod<
+          EvmChain<EvmChainIds<Config>, EvmContractNames<Config>>,
+          {
+            readonly block: { readonly number: number };
+            readonly context: EvmOnEventContext<Config>;
+          }
+        >;
       }
     : {};
 
@@ -712,6 +772,29 @@ type FuelHandlerMethods<Config extends IndexerConfigTypes> =
           },
           handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
         ) => void;
+        /** Register a Block Handler. See `EvmHandlerMethods.onBlock` for the `where` semantics. */
+        readonly onBlock: OnBlockMethod<
+          FuelChain<FuelChainIds<Config>, FuelContractNames<Config>>,
+          {
+            readonly block: { readonly height: number };
+            readonly context: FuelOnEventContext<Config>;
+          }
+        >;
+      }
+    : {};
+
+// Handler methods for SVM ecosystem. Only onBlock — SVM has no onEvent yet.
+type SvmHandlerMethods<Config extends IndexerConfigTypes> =
+  HasSvm<Config> extends true
+    ? {
+        /** Register a Block Handler. See `EvmHandlerMethods.onBlock` for the `where` semantics. */
+        readonly onBlock: OnBlockMethod<
+          SvmChain<SvmChainIds<Config>>,
+          {
+            readonly slot: number;
+            readonly context: SvmOnBlockContext<Config>;
+          }
+        >;
       }
     : {};
 
@@ -721,6 +804,8 @@ type SingleEcosystemHandlerMethods<Config extends IndexerConfigTypes> =
     ? EvmHandlerMethods<Config>
     : HasFuel<Config> extends true
     ? FuelHandlerMethods<Config>
+    : HasSvm<Config> extends true
+    ? SvmHandlerMethods<Config>
     : {};
 
 // Helper: Check if ecosystem is configured in a given config
@@ -842,7 +927,7 @@ type MultiEcosystemChains<Config extends IndexerConfigTypes> =
     (HasSvm<Config> extends true
       ? {
           /** SVM ecosystem configuration. */
-          readonly svm: SvmEcosystem<Config>;
+          readonly svm: SvmEcosystem<Config> & SvmHandlerMethods<Config>;
         }
       : {});
 
@@ -995,6 +1080,13 @@ type EvmChainIds<Config extends IndexerConfigTypes> =
 
 type FuelChainIds<Config extends IndexerConfigTypes> =
   Config["fuel"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: number }>
+      ? Chains[keyof Chains]["id"]
+      : never
+    : never;
+
+type SvmChainIds<Config extends IndexerConfigTypes> =
+  Config["svm"] extends { chains: infer Chains }
     ? Chains extends Record<string, { id: number }>
       ? Chains[keyof Chains]["id"]
       : never

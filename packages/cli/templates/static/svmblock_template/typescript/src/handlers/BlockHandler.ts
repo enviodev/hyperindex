@@ -1,7 +1,7 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { onBlock } from "generated";
+import { indexer } from "generated";
 import { createEffect, S } from "envio";
 
 const blockSchema = S.schema({
@@ -59,7 +59,7 @@ const getBlockEffect = createEffect(
   }
 );
 
-onBlock({ chain: 0, name: "BlockTracker" }, async ({ slot, context }) => {
+indexer.onBlock({ name: "BlockTracker", where: ({ chain }) => chain.id === 0 }, async ({ slot, context }) => {
   const block = await context.effect(getBlockEffect, { slot });
   if (!block) {
     context.log.info(`Slot without a block`, { slot });

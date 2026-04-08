@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2589
 expression: project_template.indexer_code
 ---
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
@@ -476,6 +475,11 @@ type indexer = {
     onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
+  /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
+  onBlock: (
+    Envio.onBlockOptions<indexerChain>,
+    Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
+  ) => unit,
 }
 
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
@@ -485,14 +489,6 @@ switch chainId {
   | #2 => indexer.chains.\"2"
 }
 }
-
-@genType /** Register a Block Handler. It'll be called for every block by default. */
-let onBlock: (
-Envio.onBlockOptions<chainId>,
-Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
-) => unit = (
-HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
-)->Utils.magic
 
 type testIndexerProcessConfigChains = {
   \"1"?: TestIndexer.evmChainConfig,
