@@ -184,6 +184,9 @@ importers:
 
   scenarios/fuel_test/generated:
     dependencies:
+      '@rescript/react':
+        specifier: 0.14.1
+        version: 0.14.1(react-dom@19.2.3(react@19.2.0))(react@19.2.0)
       '@rescript/runtime':
         specifier: 12.2.0
         version: 12.2.0
@@ -211,6 +214,9 @@ importers:
       rescript:
         specifier: 12.2.0
         version: 12.2.0
+      rescript-envsafe:
+        specifier: 5.0.0
+        version: 5.0.0(rescript-schema@9.5.1(rescript@12.2.0))(rescript@12.2.0)
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)
@@ -285,6 +291,9 @@ importers:
 
   scenarios/test_codegen/generated:
     dependencies:
+      '@rescript/react':
+        specifier: 0.14.1
+        version: 0.14.1(react-dom@19.2.3(react@19.2.0))(react@19.2.0)
       '@rescript/runtime':
         specifier: 12.2.0
         version: 12.2.0
@@ -312,6 +321,9 @@ importers:
       rescript:
         specifier: 12.2.0
         version: 12.2.0
+      rescript-envsafe:
+        specifier: 5.0.0
+        version: 5.0.0(rescript-schema@9.5.1(rescript@12.2.0))(rescript@12.2.0)
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)

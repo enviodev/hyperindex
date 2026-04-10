@@ -28,14 +28,14 @@
   "jsx": {
     "version": 4
   },
-  "bs-dependencies": [
+  "dependencies": [
     "@rescript/react",
     "generated",
     "rescript-schema",
     "helpers",
     "envio"
   ],
-  "bsc-flags": ["-open RescriptSchema"],
+  "compiler-flags": ["-open RescriptSchema"],
   "warnings": {
     "number": "-3-44"
   }

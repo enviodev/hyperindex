@@ -82,10 +82,10 @@ Main CLI commands:
 
 Generated indexer runtime locations:
 
-1. Library-ified code: `packages/envio` (ReScript/TypeScript). Use `pnpm rescript-w` for live recompilation; no `pnpm codegen` needed.
+1. Library-ified code: `packages/envio` (ReScript/TypeScript). Use `pnpm rescript watch` for live recompilation; no `pnpm codegen` needed.
 2. Static scaffold: `packages/cli/templates/static/codegen` and dynamic templates in `packages/cli/templates/dynamic/codegen` (requires `pnpm codegen` after edits).
 3. Scenario & regression tests: `scenarios/` (e.g. `scenarios/test_codegen`). Run `pnpm codegen` then `pnpm test`. (You don't need to run `pnpm codegen` when changing librariefied code).
-4. Quick-iteration trick when working with static code a lot: open `scenarios/test_codegen/generated`, run `pnpm rescript -w`, adjust files, then copy changes back into templates.
+4. Quick-iteration trick when working with static code a lot: open `scenarios/test_codegen/generated`, run `pnpm rescript watch`, adjust files, then copy changes back into templates.
 
 Navigation cheat-sheet (useful for code search / AI):
 
@@ -146,7 +146,7 @@ Monitoring & health:
 
 Quick dev tips:
 
-- Library code under `packages/envio` → hot-recompile with `pnpm rescript -w`.
+- Library code under `packages/envio` → hot-recompile with `pnpm rescript watch`.
 - Changes inside generated require rerunning `pnpm codegen` (unless you are in the quick-iteration workflow described above).
 
 ### Case study: per-address `startBlock`
@@ -163,7 +163,7 @@ Need to expose a `startBlock` setting for every contract address in `config.yaml
 8.  Add the field to `Config.res`.
 9.  Compress the two previous arrays passed to `FetchState.res` `make` function (static vs dynamic contracts) into a single `array<IndexingContract>` that already contains `startBlock`.
 10. Inside `FetchState.res` in `make` function create the initial block-partitions from the `startBlock` of each contract.
-11. Compile changes in `packages/envio` by running `pnpm rescript` or `pnpm rescript -w` if you want to see changes live.
+11. Compile changes in `packages/envio` by running `pnpm rescript` or `pnpm rescript watch` if you want to see changes live.
 12. Test changes in `scenarios/test_codegen` by running `pnpm codegen` and `pnpm test`.
 
 ## Update CLI Generated Docs
@@ -252,5 +252,5 @@ pnpm mocha --grep "test name pattern"  # Run specific tests
 
 **Development workflow:**
 
-- Changes to library code (`packages/envio`): Run `pnpm rescript -w` for live compilation
+- Changes to library code (`packages/envio`): Run `pnpm rescript watch` for live compilation
 - Changes to templates or config: Run `pnpm codegen` then `pnpm test` in `scenarios/test_codegen`

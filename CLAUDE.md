@@ -20,7 +20,7 @@
 
 Prefer Public module API for testing.
 
-Verify that tests pass by running a compiler `pnpm rescript-legacy` and tests `pnpm vitest run`.
+Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm vitest run`.
 
 ## ReScript
 

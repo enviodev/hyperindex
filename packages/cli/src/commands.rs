@@ -72,7 +72,7 @@ pub mod rescript {
     use std::path::Path;
 
     pub async fn build(path: &Path) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript-legacy"];
+        let args = vec!["rescript"];
         execute_command("pnpm", args, path).await
     }
 }

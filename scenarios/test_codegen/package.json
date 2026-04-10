@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "rescript-legacy",
-    "watch": "rescript-legacy -w",
-    "test": "rescript-legacy && tsc --noEmit && vitest run",
+    "build": "rescript",
+    "watch": "rescript watch",
+    "test": "rescript && tsc --noEmit && vitest run",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
     "codegen": "envio codegen",
     "docker-up": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- local docker up",
