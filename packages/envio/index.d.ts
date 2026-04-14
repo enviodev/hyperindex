@@ -695,7 +695,9 @@ export type EvmOnBlockOptions<Config extends IndexerConfigTypes> = {
 
 /**
  * Structured filter object returned by a Fuel `indexer.onBlock` `where`
- * predicate. `_every` alignment is relative to `_gte`.
+ * predicate. `_every` alignment is relative to `_gte` (or the chain's
+ * configured `startBlock` when `_gte` is omitted), preserving
+ * `(blockNumber - startBlock) % _every === 0`.
  */
 export type FuelOnBlockFilter = {
   readonly block?: {
@@ -757,7 +759,9 @@ export type FuelOnBlockOptions<Config extends IndexerConfigTypes> = {
 
 /**
  * Structured filter object returned by an SVM `indexer.onSlot` `where`
- * predicate. `_every` alignment is relative to `_gte`.
+ * predicate. `_every` alignment is relative to `_gte` (or the chain's
+ * configured `startBlock` when `_gte` is omitted), preserving
+ * `(slot - startBlock) % _every === 0`.
  */
 export type SvmOnSlotFilter = {
   readonly slot?: {
@@ -1141,6 +1145,16 @@ type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
   simulate?: FuelSimulateItem<Config>[];
 };
 
+/** Configuration for a single SVM chain in the test indexer. SVM has no
+ * `onEvent` handlers yet, so simulate items aren't supported — only slot
+ * range overrides for driving `indexer.onSlot` block handlers under test. */
+type SvmTestIndexerChainConfig = {
+  /** The slot number to start processing from. Defaults to config startBlock or progressBlock+1. */
+  startBlock?: number;
+  /** The slot number to stop processing at. */
+  endBlock?: number;
+};
+
 /** Entity change value containing sets and/or deleted IDs. */
 type EntityChangeValue<Entity> = {
   /** Entities that were created or updated. */
@@ -1225,12 +1239,18 @@ type FuelTestChains<Config extends IndexerConfigTypes> =
     ? { [K in FuelChainIds<Config>]?: FuelTestIndexerChainConfig<Config> }
     : {};
 
+type SvmTestChains<Config extends IndexerConfigTypes> =
+  HasSvm<Config> extends true
+    ? { [K in SvmChainIds<Config>]?: SvmTestIndexerChainConfig }
+    : {};
+
 /** Process configuration for the test indexer, with chains keyed by chain ID. */
 export type TestIndexerProcessConfig<Config extends IndexerConfigTypes> = {
   /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
   chains: Prettify<
     EvmTestChains<Config> &
-    FuelTestChains<Config>
+    FuelTestChains<Config> &
+    SvmTestChains<Config>
   >;
 };
 

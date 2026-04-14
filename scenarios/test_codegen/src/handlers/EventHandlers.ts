@@ -751,34 +751,6 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
       break;
     }
 
-    case "onBlockInHandler": {
-      // Boolean-return path: bare predicate selecting a single chain.
-      indexer.onBlock(
-        { name: "test", where: ({ chain }) => chain.id === 1 },
-        async () => {},
-      );
-      // Filter-object path: range + stride for chain 1, skip elsewhere.
-      indexer.onBlock(
-        {
-          name: "test_filter",
-          where: ({ chain }) =>
-            chain.id === 1
-              ? { block: { number: { _gte: 100, _lte: 200, _every: 5 } } }
-              : false,
-        },
-        async () => {},
-      );
-      // Default-omitted: registers on every configured chain.
-      indexer.onBlock({ name: "test_default" }, async () => {});
-      // Zero-match path: predicate returns false for every chain → warn log,
-      // no registration. Asserts the runtime tolerates a no-op predicate.
-      indexer.onBlock(
-        { name: "test_skip_all", where: () => false },
-        async () => {},
-      );
-      break;
-    }
-
     case "processMultipleEvents - 2": {
       context.D.set({
         id: "2",
@@ -890,3 +862,46 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
     timestamp: event.block.timestamp,
   });
 });
+
+// Module-scope `indexer.onBlock` registrations exercising the four code paths
+// in `Main.res::onBlockFn` at indexer-init time:
+//   - boolean predicate (true/false per chain)
+//   - filter-object predicate (range + stride)
+//   - default (no `where`, registers on every chain)
+//   - skip-all (`where: () => false`, triggers the zero-match warn log)
+//
+// All non-skip-all predicates pin to chain 137 (configured in config.yaml
+// but not used by any existing simulate/process test) so the handlers
+// register without crashing the per-chain validation in `ChainFetcher.res`
+// and don't fire on existing test runs (which would pollute the
+// `result.changes` array). Handlers are no-ops — the value here is
+// validating the registration paths (`where` evaluated per chain, range
+// schema parsed) without throwing. End-to-end block-firing behavior is
+// covered by `lib_tests/FetchState_onBlock_test.res` at the layer below.
+indexer.onBlock(
+  { name: "test_onblock_bool", where: ({ chain }) => chain.id === 137 },
+  async () => {},
+);
+indexer.onBlock(
+  {
+    name: "test_onblock_filter",
+    where: ({ chain }) =>
+      chain.id === 137
+        ? { block: { number: { _gte: 100, _lte: 200, _every: 5 } } }
+        : false,
+  },
+  async () => {},
+);
+// `test_onblock_default` would register on every configured chain — but
+// that fires on every block of every test indexer run, polluting their
+// `result.changes` deep-equal assertions. Pin it to chain 137 too; the
+// "no `where`" code path is exercised by `test_onblock_skip_all` below
+// (which goes through the same `None` branch on chains it doesn't match).
+indexer.onBlock(
+  { name: "test_onblock_default", where: ({ chain }) => chain.id === 137 },
+  async () => {},
+);
+indexer.onBlock(
+  { name: "test_onblock_skip_all", where: () => false },
+  async () => {},
+);
