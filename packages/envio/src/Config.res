@@ -86,38 +86,38 @@ type t = {
   allEnums: array<Table.enumConfig<Table.enum>>,
 }
 
-module DynamicContractRegistry = {
-  let name = "dynamic_contract_registry"
+module EnvioAddresses = {
+  let name = "envio_addresses"
   let index = -1
 
-  let makeId = (~chainId, ~contractAddress) => {
-    chainId->Belt.Int.toString ++ "-" ++ contractAddress->Address.toString
+  let makeId = (~chainId, ~address) => {
+    chainId->Belt.Int.toString ++ "-" ++ address->Address.toString
   }
 
-  @genType
   type t = {
     id: string,
     @as("chain_id") chainId: int,
-    @as("registering_event_block_number") registeringEventBlockNumber: int,
-    @as("registering_event_log_index") registeringEventLogIndex: int,
-    @as("registering_event_block_timestamp") registeringEventBlockTimestamp: int,
-    @as("registering_event_contract_name") registeringEventContractName: string,
-    @as("registering_event_name") registeringEventName: string,
-    @as("registering_event_src_address") registeringEventSrcAddress: Address.t,
-    @as("contract_address") contractAddress: Address.t,
+    @as("registration_block") registrationBlock: int,
+    // -1 when the address was registered from a block handler (no log index)
+    @as("registration_log_index") registrationLogIndex: int,
     @as("contract_name") contractName: string,
+  }
+
+  // Extract the raw contract address from the composite id ({chainId}-{address}).
+  // Inverse of makeId. Keep in sync with makeId above and the SUBSTRING SQL in
+  // InternalTable.Chains.makeGetInitialStateQuery.
+  let getAddress = (entity: t): Address.t => {
+    let sepIdx = entity.id->String.indexOf("-")
+    entity.id
+    ->String.slice(~start=sepIdx + 1, ~end=entity.id->String.length)
+    ->Address.unsafeFromString
   }
 
   let schema = S.schema(s => {
     id: s.matches(S.string),
     chainId: s.matches(S.int),
-    registeringEventBlockNumber: s.matches(S.int),
-    registeringEventLogIndex: s.matches(S.int),
-    registeringEventContractName: s.matches(S.string),
-    registeringEventName: s.matches(S.string),
-    registeringEventSrcAddress: s.matches(Address.schema),
-    registeringEventBlockTimestamp: s.matches(S.int),
-    contractAddress: s.matches(Address.schema),
+    registrationBlock: s.matches(S.int),
+    registrationLogIndex: s.matches(S.int),
     contractName: s.matches(S.string),
   })
 
@@ -128,13 +128,9 @@ module DynamicContractRegistry = {
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
       Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_block_number", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_log_index", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_block_timestamp", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_contract_name", String, ~fieldSchema=S.string),
-      Table.mkField("registering_event_name", String, ~fieldSchema=S.string),
-      Table.mkField("registering_event_src_address", String, ~fieldSchema=Address.schema),
-      Table.mkField("contract_address", String, ~fieldSchema=Address.schema),
+      Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
+      // -1 sentinel when registered from a block handler (no log index)
+      Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
       Table.mkField("contract_name", String, ~fieldSchema=S.string),
     ],
   )
@@ -289,7 +285,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
   | "bigdecimal" => (
       Table.BigDecimal({
-        config: ?(prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0)))),
+        config: ?prop["precision"]->Option.map(p => (p, prop["scale"]->Option.getOr(0))),
       }),
       BigDecimal.schema->S.toUnknown,
     )
@@ -736,7 +732,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
     ->Option.getOr([])
     ->parseEntitiesFromJson(~enumConfigsByName)
 
-  let allEntities = userEntities->Array.concat([DynamicContractRegistry.entityConfig])
+  let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
   let userEntitiesByName =
     userEntities
