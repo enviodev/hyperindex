@@ -33,25 +33,26 @@ jobs:
   # ── Gate ────────────────────────────────────────────────────────────
 
   # Security gate for pull_request_target: fork code may exfiltrate secrets,
-  # so fork PRs only run after a maintainer adds the `ok-to-test` label.
-  # The label is auto-removed on each new fork push (see revoke-approval),
-  # forcing per-commit review.
+  # so a fork PR only runs when a maintainer applies the `ok-to-test` label
+  # *right now*. Pre-existing labels never pass the gate — any other action
+  # (opened, reopened, synchronize) on a fork is a no-op. Combined with
+  # revoke-approval removing the label on each synchronize, this means:
   #
-  # Runs when:
-  #   - push to main
-  #   - same-repo PR (any action)
-  #   - `ok-to-test` label is being added right now
-  #   - PR is opened/reopened and already carries the label (rare)
-  # Explicitly does NOT run on fork `synchronize` — a new commit must be
-  # re-labeled by a maintainer.
+  #   - push after label    → synchronize → gate skip + label removed
+  #   - close/push/reopen   → reopened with stale label → gate still skips
+  #   - force-push          → synchronize → gate skip + label removed
+  #
+  # The only path to run fork CI with secrets is: maintainer reviews a
+  # specific HEAD and clicks `ok-to-test`. The checkout pins to the
+  # head.sha snapshotted in that labeled event payload, so a subsequent
+  # push cannot swap code under the run.
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 1
     if: >-
       github.event_name == 'push' ||
       github.event.pull_request.head.repo.full_name == github.repository ||
-      (github.event.action == 'labeled' && github.event.label.name == 'ok-to-test') ||
-      (github.event.action != 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ok-to-test'))
+      (github.event.action == 'labeled' && github.event.label.name == 'ok-to-test')
     steps:
       - run: echo "Gate passed (event=${{ github.event_name }} action=${{ github.event.action }})"
 
