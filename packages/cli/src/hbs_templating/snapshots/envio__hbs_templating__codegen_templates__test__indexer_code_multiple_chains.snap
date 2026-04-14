@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2589
 expression: project_template.indexer_code
 ---
 @@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
@@ -271,10 +270,9 @@ let contractName = "Contract1"
       block: block,
     }
 
-    @genType
-    type whereParams = {}
+    type onEventWhereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   module UpdatedGravatar = {
@@ -307,10 +305,9 @@ let contractName = "Contract1"
       block: block,
     }
 
-    @genType
-    type whereParams = {}
+    type onEventWhereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =
@@ -352,10 +349,9 @@ let contractName = "Contract2"
       block: block,
     }
 
-    @genType
-    type whereParams = {}
+    type onEventWhereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   module UpdatedGravatar = {
@@ -388,10 +384,9 @@ let contractName = "Contract2"
       block: block,
     }
 
-    @genType
-    type whereParams = {}
+    type onEventWhereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =

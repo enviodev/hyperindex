@@ -354,14 +354,14 @@ impl EventMod {
         //   `whereCondition` directly) — see `OnEventWhere<P>` in
         //   `packages/envio/index.d.ts`. The runtime parser handles both shapes.
         let where_type_code = match self.event_filter_type.as_str() {
-            "{}" => "@genType type onEventWhere = Internal.noOnEventWhere".to_string(),
+            "{}" => "type onEventWhere = Internal.noOnEventWhere".to_string(),
             _ => format!(
-                "@genType type whereCondition = {{params?: SingleOrMultiple.t<whereParams>}}\n\
-@genType type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
-@genType type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
-@genType type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
-@genType @unboxed type onEventWhereResult = Filter(whereCondition) | @as(false) SkipAll | @as(true) KeepAll\n\
-@genType type onEventWhere = onEventWhereArgs => onEventWhereResult",
+                "type onEventWhereCondition = {{params?: SingleOrMultiple.t<onEventWhereParams>}}\n\
+type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
+type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
+type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
+@unboxed type onEventWhereResult = Filter(onEventWhereCondition) | @as(false) SkipAll | @as(true) KeepAll\n\
+type onEventWhere = onEventWhereArgs => onEventWhereResult",
                 contract_capitalized = self.contract_name.capitalized,
             ),
         };
@@ -434,8 +434,7 @@ type event = {{
   block: block,
 }}
 
-@genType
-type whereParams = {where_params_type}
+type onEventWhereParams = {where_params_type}
 
 {where_type_code}"#
         )
