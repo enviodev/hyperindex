@@ -380,13 +380,6 @@ Helper to check if a value exists in an array
     loop(arr->Array.length - 1)
   }
 
-  /** 
-  Currently a bug in rescript if you ignore the return value of spliceInPlace 
-  https://github.com/rescript-lang/rescript-compiler/issues/6991
-  */
-  @send
-  external spliceInPlace: (array<'a>, ~pos: int, ~remove: int) => array<'a> = "splice"
-
   /**
   Interleaves an array with a separator
 
