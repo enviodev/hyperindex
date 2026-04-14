@@ -70,11 +70,13 @@ type blockRange = {
 // `S.strict` rejects unknown fields so typos like `_gt` / `_evry` surface
 // with a readable schema error pointing at the offending key, instead of
 // silently registering a broken filter. `_every` defaults to 1 inside the
-// schema so the caller always sees a plain `int`.
+// schema so the caller always sees a plain `int`, and `intMin(1)` rejects
+// zero/negative strides — `(blockNumber - startBlock) % 0` would crash and
+// any negative stride would never match.
 let blockRangeSchema: S.t<blockRange> = S.object(s => {
   _gte: s.field("_gte", S.option(S.int)),
   _lte: s.field("_lte", S.option(S.int)),
-  _every: s.field("_every", S.option(S.int)->S.Option.getOr(1)),
+  _every: s.field("_every", S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
 })->S.strict
 
 let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
@@ -367,9 +369,12 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     // `where` must be a function (unlike onEvent, which also accepts a static
     // value). A static value would have to be evaluated against every chain
     // independently, which has no useful semantic for block handlers.
-    switch raw["where"]->(Utils.magic: option<'a> => unknown) {
-    | w if w === %raw(`undefined`) || w === %raw(`null`) => ()
-    | w if typeof(w) === #function => ()
+    // Normalize undefined/null to None up front so the per-chain loop below
+    // can't accidentally call `null` as a predicate (ReScript treats a JS
+    // `null` value as `Some(null)` when the field is typed as option).
+    let where = switch raw["where"]->(Utils.magic: option<'a> => unknown) {
+    | w if w === %raw(`undefined`) || w === %raw(`null`) => None
+    | w if typeof(w) === #function => Some(raw["where"]->Option.getUnsafe)
     | w =>
       JsError.throwWithMessage(
         `\`indexer.${onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
@@ -390,7 +395,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       // any plain object → structured filter. `undefined`/`null` returns
       // are rejected — the TS type excludes `void`, so a missing return is
       // a user bug we surface early rather than silently match-all.
-      let result = switch raw["where"] {
+      let result = switch where {
       | None => %raw(`true`)
       | Some(predicate) => predicate({chain: chainObj})
       }
@@ -427,8 +432,12 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
 
     // Catches misconfigured `where` predicates that return `false` for every
     // configured chain — the handler would otherwise never fire with no hint.
+    // Includes the ecosystem-specific method name so SVM users see "onSlot"
+    // and don't get confused looking for a "Block handler" they never wrote.
     if !matchedAny.contents {
-      logger->Logging.childWarn("Block handler matched 0 chains. Check the `where` predicate.")
+      logger->Logging.childWarn(
+        `\`indexer.${onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
+      )
     }
   }
 

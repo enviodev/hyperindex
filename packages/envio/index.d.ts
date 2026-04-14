@@ -852,6 +852,18 @@ type EvmEcosystem<Config extends IndexerConfigTypes> =
                 ContractName extends string ? ContractName : never
               >;
             };
+            /**
+             * Register a block handler. `where` is evaluated once per configured
+             * chain at registration time; return `false` to skip a chain, `true`
+             * to match every block, or an {@link EvmOnBlockFilter} describing a
+             * block-number range and stride. Always available regardless of
+             * whether `contracts` are configured — block handlers don't need
+             * any contract context.
+             */
+            readonly onBlock: (
+              options: EvmOnBlockOptions<Config>,
+              handler: EvmOnBlockHandler<Config>,
+            ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
           }
@@ -894,16 +906,6 @@ type EvmEcosystem<Config extends IndexerConfigTypes> =
                   },
                   handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
                 ) => void;
-                /**
-                 * Register a block handler. `where` is evaluated once per configured
-                 * chain at registration time; return `false` to skip a chain, `true`
-                 * to match every block, or an {@link EvmOnBlockFilter} describing a
-                 * block-number range and stride.
-                 */
-                readonly onBlock: (
-                  options: EvmOnBlockOptions<Config>,
-                  handler: EvmOnBlockHandler<Config>,
-                ) => void;
               }
             : {})
         : never
@@ -933,6 +935,13 @@ type FuelEcosystem<Config extends IndexerConfigTypes> =
                 ContractName extends string ? ContractName : never
               >;
             };
+            /** Register a Fuel block handler. See `EvmEcosystem.onBlock` for
+             * `where` semantics; Fuel filters on `block.height`. Always
+             * available regardless of whether `contracts` are configured. */
+            readonly onBlock: (
+              options: FuelOnBlockOptions<Config>,
+              handler: FuelOnBlockHandler<Config>,
+            ) => void;
           } & (Config["fuel"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
           }
@@ -974,11 +983,6 @@ type FuelEcosystem<Config extends IndexerConfigTypes> =
                     >;
                   },
                   handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
-                ) => void;
-                /** Register a Fuel block handler. See `EvmEcosystem.onBlock` for `where` semantics; Fuel filters on `block.height`. */
-                readonly onBlock: (
-                  options: FuelOnBlockOptions<Config>,
-                  handler: FuelOnBlockHandler<Config>,
                 ) => void;
               }
             : {})

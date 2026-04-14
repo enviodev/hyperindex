@@ -37,6 +37,19 @@ describe("blockRangeSchema (shared inner range validation)", () => {
   it("rejects non-int _gte", t => {
     t.expect(() => %raw(`{_gte: "10"}`)->S.parseOrThrow(Main.blockRangeSchema)).toThrow()
   })
+
+  it("rejects _every: 0 (would crash the modulo math downstream)", t => {
+    t.expect(() => %raw(`{_every: 0}`)->S.parseOrThrow(Main.blockRangeSchema)).toThrow()
+  })
+
+  it("rejects negative _every", t => {
+    t.expect(() => %raw(`{_every: -1}`)->S.parseOrThrow(Main.blockRangeSchema)).toThrow()
+  })
+
+  it("accepts _every: 1 (the minimum / default)", t => {
+    let parsed = %raw(`{_every: 1}`)->S.parseOrThrow(Main.blockRangeSchema)
+    t.expect(parsed).toEqual(({_gte: None, _lte: None, _every: 1}: Main.blockRange))
+  })
 })
 
 describe("Evm ecosystem onBlockFilterSchema", () => {

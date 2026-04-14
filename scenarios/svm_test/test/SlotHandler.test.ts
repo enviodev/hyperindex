@@ -17,7 +17,12 @@ describe("indexer.onSlot (SVM)", () => {
 
   it("creates a test indexer with the SVM chain configured", () => {
     const testIndexer = createTestIndexer();
-    expect(testIndexer.chainIds).toEqual([0]);
-    expect(testIndexer.chains[0].id).toBe(0);
+    expect({
+      chainIds: testIndexer.chainIds,
+      firstChainId: testIndexer.chains[0]?.id,
+    }).toEqual({
+      chainIds: [0],
+      firstChainId: 0,
+    });
   });
 });
