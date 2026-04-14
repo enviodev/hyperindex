@@ -183,15 +183,6 @@ impl EventParam {
             indexed: param.indexed,
         })
     }
-
-    /// Create a new EventParam with the given name, type, and indexed flag.
-    pub fn new(name: String, kind: AbiType, indexed: bool) -> Self {
-        Self {
-            name,
-            kind,
-            indexed,
-        }
-    }
 }
 
 /// Parse an event signature string (e.g., "event Transfer(address indexed from, address indexed to, uint256 value)")

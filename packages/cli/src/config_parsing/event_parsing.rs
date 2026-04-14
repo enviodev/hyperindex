@@ -174,24 +174,15 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
             // Unnamed components in a mixed tuple fall back to their positional
             // index as the JS object key (e.g. `commonParams["1"]`). Fully anonymous
             // tuples (e.g. from bare signature strings) stay as positional tuples.
-            // The `!n.is_empty()` check covers test fixtures that construct
-            // `Some("".to_string())` directly — production `AbiTupleField`
-            // constructors normalise empty names to `None`, but the
-            // `test_record_type_mixed_named_tuple_uses_index_for_unnamed` test
-            // exercises the empty-string fallback path explicitly.
-            let has_named = fields
-                .iter()
-                .any(|f| f.name.as_ref().is_some_and(|n| !n.is_empty()));
+            // `AbiTupleField` constructors normalise empty source names to `None`,
+            // so `Some(_)` always carries a non-empty identifier.
+            let has_named = fields.iter().any(|f| f.name.is_some());
             if has_named {
                 let record_fields = fields
                     .iter()
                     .enumerate()
                     .map(|(i, f)| {
-                        let name = f
-                            .name
-                            .clone()
-                            .filter(|n| !n.is_empty())
-                            .unwrap_or_else(|| i.to_string());
+                        let name = f.name.clone().unwrap_or_else(|| i.to_string());
                         RecordField::new(name, abi_type_to_rescript(&f.kind))
                     })
                     .collect();
@@ -315,7 +306,9 @@ mod tests {
     fn test_record_type_mixed_named_tuple_uses_index_for_unnamed() {
         // Mixed-name tuples (some components named, others not) still render as
         // an inline record. Unnamed fields fall back to their positional index
-        // as the JS object key, with no leading underscore.
+        // as the JS object key, with no leading underscore. `AbiTupleField`
+        // constructors normalise empty source names to `None`, which is what
+        // the codegen relies on here.
         let tuple_type = AbiType::Tuple(vec![
             AbiTupleField {
                 name: Some("funder".to_string()),
@@ -326,7 +319,7 @@ mod tests {
                 kind: AbiType::Uint(256),
             },
             AbiTupleField {
-                name: Some("".to_string()),
+                name: None,
                 kind: AbiType::Bool,
             },
             AbiTupleField {

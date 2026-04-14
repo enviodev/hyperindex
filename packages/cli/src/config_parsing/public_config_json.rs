@@ -215,31 +215,19 @@ fn abi_type_to_components(
 ) -> Option<Vec<EventParamComponent>> {
     use crate::config_parsing::abi_compat::AbiType;
     match ty {
-        // The `!n.is_empty()` check mirrors `event_parsing::abi_type_to_rescript`
-        // — kept for parity so test fixtures that bypass the constructor and
-        // pass `Some("".to_string())` directly still get mapped to the
-        // positional-index fallback.
-        AbiType::Tuple(fields)
-            if fields
+        // `AbiTupleField` constructors normalise empty source names to `None`,
+        // so `Some(_)` always carries a non-empty identifier.
+        AbiType::Tuple(fields) if fields.iter().any(|f| f.name.is_some()) => Some(
+            fields
                 .iter()
-                .any(|f| f.name.as_ref().is_some_and(|n| !n.is_empty())) =>
-        {
-            Some(
-                fields
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| EventParamComponent {
-                        name: f
-                            .name
-                            .clone()
-                            .filter(|n| !n.is_empty())
-                            .unwrap_or_else(|| i.to_string()),
-                        abi_type: f.kind.to_signature_string(),
-                        components: abi_type_to_components(&f.kind),
-                    })
-                    .collect(),
-            )
-        }
+                .enumerate()
+                .map(|(i, f)| EventParamComponent {
+                    name: f.name.clone().unwrap_or_else(|| i.to_string()),
+                    abi_type: f.kind.to_signature_string(),
+                    components: abi_type_to_components(&f.kind),
+                })
+                .collect(),
+        ),
         // For arrays, descend into the element type so struct arrays still surface
         // component metadata under the param.
         AbiType::Array(inner) | AbiType::FixedArray(inner, _) => abi_type_to_components(inner),
