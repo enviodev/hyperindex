@@ -34,7 +34,6 @@ type workerPayload =
   | @as("writeBatch")
   WriteBatch({
       updatedEntities: array<serializableUpdatedEntity>,
-      addressesToWrite: array<Config.EnvioAddresses.t>,
       checkpointIds: array<bigint>,
       checkpointChainIds: array<int>,
       checkpointBlockNumbers: array<int>,
@@ -146,7 +145,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
     ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
-    ~addressesToWrite,
   ) => {
     // Encode entities to JSON for serialization across worker boundary
     let serializableEntities = updatedEntities->Array.map((
@@ -175,7 +173,6 @@ let makeStorage = (proxy: t): Persistence.storage => {
     let _ = await proxy->sendRequest(
       ~payload=WriteBatch({
         updatedEntities: serializableEntities,
-        addressesToWrite,
         checkpointIds: batch.checkpointIds,
         checkpointChainIds: batch.checkpointChainIds,
         checkpointBlockNumbers: batch.checkpointBlockNumbers,

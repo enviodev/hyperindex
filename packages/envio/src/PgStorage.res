@@ -194,8 +194,6 @@ let makeInitializeTransaction = (
     InternalTable.PersistedState.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
-    InternalTable.EnvioAddresses.table,
-    InternalTable.EnvioAddresses.historyTable,
   ]
 
   let allTables = generalTables->Array.copy
@@ -739,7 +737,6 @@ let rec writeBatch = async (
   ~setEffectCacheOrThrow,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~addressesToWrite: array<Config.EnvioAddresses.t>,
   ~sinkPromise: option<promise<option<exn>>>,
   ~escapeTables=?,
 ) => {
@@ -949,42 +946,6 @@ let rec writeBatch = async (
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
           )
           ->ignore
-          // Rollback addresses:
-          //   1. Remove from the current-state table addresses that were only ever
-          //      registered after the rollback target (i.e. no prior history row).
-          //   2. Prune history rows past the target.
-          let rollbackParam =
-            [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown)
-          promises
-          ->Js.Array2.push(
-            sql
-            ->Postgres.preparedUnsafe(
-              `DELETE FROM "${pgSchema}"."${InternalTable.EnvioAddresses.table.tableName}" main
-WHERE EXISTS (
-  SELECT 1 FROM "${pgSchema}"."${InternalTable.EnvioAddresses.historyTable.tableName}" h
-  WHERE h."id" = main."id" AND h."chain_id" = main."chain_id"
-    AND h."envio_checkpoint_id" > $1
-)
-AND NOT EXISTS (
-  SELECT 1 FROM "${pgSchema}"."${InternalTable.EnvioAddresses.historyTable.tableName}" h
-  WHERE h."id" = main."id" AND h."chain_id" = main."chain_id"
-    AND h."envio_checkpoint_id" <= $1
-);`,
-              rollbackParam,
-            )
-            ->Promise.ignoreValue,
-          )
-          ->ignore
-          promises
-          ->Js.Array2.push(
-            sql
-            ->Postgres.preparedUnsafe(
-              `DELETE FROM "${pgSchema}"."${InternalTable.EnvioAddresses.historyTable.tableName}" WHERE "envio_checkpoint_id" > $1;`,
-              rollbackParam,
-            )
-            ->Promise.ignoreValue,
-          )
-          ->ignore
           Promise.all(promises)
         },
       )
@@ -1016,50 +977,6 @@ AND NOT EXISTS (
               ),
             setRawEvents,
           ]->Belt.Array.concat(setEntities)
-
-          // Insert new addresses into both the current-state table and the history table
-          if addressesToWrite->Array.length > 0 {
-            let ids = []
-            let chainIds = []
-            let blocks = []
-            let logIndices = []
-            let contractNames = []
-            let checkpointIds = []
-            addressesToWrite->Js.Array2.forEach(addr => {
-              ids->Js.Array2.push(addr.id)->ignore
-              chainIds->Js.Array2.push(addr.chainId)->ignore
-              blocks->Js.Array2.push(addr.registeringEventBlock)->ignore
-              logIndices
-              ->Js.Array2.push(
-                addr.registeringEventLogIndex->(Utils.magic: option<int> => Js.Null.t<int>),
-              )
-              ->ignore
-              contractNames->Js.Array2.push(addr.contractName)->ignore
-              checkpointIds->Js.Array2.push(addr.checkpointId->BigInt.toString)->ignore
-            })
-
-            setOperations->Belt.Array.push(sql => {
-              sql
-              ->Postgres.preparedUnsafe(
-                `INSERT INTO "${pgSchema}"."${InternalTable.EnvioAddresses.table.tableName}" ("id", "chain_id", "registering_event_block", "registering_event_log_index", "contract_name")
-SELECT * FROM UNNEST($1::text[], $2::${(Postgres.Integer :> string)}[], $3::${(Postgres.Integer :> string)}[], $4::${(Postgres.Integer :> string)}[], $5::text[])
-ON CONFLICT ("id", "chain_id") DO NOTHING;`,
-                (ids, chainIds, blocks, logIndices, contractNames)->Obj.magic,
-              )
-              ->Promise.ignoreValue
-            })
-
-            setOperations->Belt.Array.push(sql => {
-              sql
-              ->Postgres.preparedUnsafe(
-                `INSERT INTO "${pgSchema}"."${InternalTable.EnvioAddresses.historyTable.tableName}" ("id", "chain_id", "registering_event_block", "registering_event_log_index", "contract_name", "envio_checkpoint_id")
-SELECT * FROM UNNEST($1::text[], $2::${(Postgres.Integer :> string)}[], $3::${(Postgres.Integer :> string)}[], $4::${(Postgres.Integer :> string)}[], $5::text[], $6::${(Postgres.BigInt :> string)}[])
-ON CONFLICT ("id", "chain_id", "envio_checkpoint_id") DO NOTHING;`,
-                (ids, chainIds, blocks, logIndices, contractNames, checkpointIds)->Obj.magic,
-              )
-              ->Promise.ignoreValue
-            })
-          }
 
           if shouldSaveHistory {
             setOperations->Belt.Array.push(sql =>
@@ -1132,7 +1049,6 @@ ON CONFLICT ("id", "chain_id", "envio_checkpoint_id") DO NOTHING;`,
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
-      ~addressesToWrite,
       ~sinkPromise,
     )
   }
@@ -1684,7 +1600,6 @@ let make = (
     ~allEntities,
     ~updatedEffectsCache,
     ~updatedEntities,
-    ~addressesToWrite,
   ) => {
     // Initialize sink if configured
     let sinkPromise = switch sink {
@@ -1718,7 +1633,6 @@ let make = (
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities,
-      ~addressesToWrite,
       ~sinkPromise,
     )
   }

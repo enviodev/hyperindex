@@ -8,8 +8,8 @@ describe("Test Persistence layer init", () => {
 
     t.expect(
       persistence.allEntities,
-      ~message=`All entities should be empty when no user entities are provided`,
-    ).toEqual([])
+      ~message=`All entities should automatically include the indexer core ones`,
+    ).toEqual([InternalTable.EnvioAddresses.entityConfig])
     t.expect(
       persistence.allEnums,
       ~message=`All enums should automatically include the indexer core ones`,

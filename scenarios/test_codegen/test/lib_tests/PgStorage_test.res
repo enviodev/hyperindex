@@ -265,8 +265,6 @@ CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, "registering_event_block" INTEGER NOT NULL, "registering_event_log_index" INTEGER, "contract_name" TEXT NOT NULL, PRIMARY KEY("id", "chain_id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_envio_addresses"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, "registering_event_block" INTEGER NOT NULL, "registering_event_log_index" INTEGER, "contract_name" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id", "chain_id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."B"("id" TEXT NOT NULL, "c_id" TEXT, PRIMARY KEY("id"));
@@ -277,8 +275,6 @@ CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName________________
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________6"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT NOT NULL, "optString" TEXT, "arrayOfStrings" TEXT[] NOT NULL, "int_" INTEGER NOT NULL, "optInt" INTEGER, "arrayOfInts" INTEGER[] NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[] NOT NULL, "bool" BOOLEAN NOT NULL, "optBool" BOOLEAN, "bigInt" NUMERIC NOT NULL, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[] NOT NULL, "bigDecimal" NUMERIC NOT NULL, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "arrayOfBigDecimals" TEXT[] NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB NOT NULL, "enumField" "test_schema".AccountType NOT NULL, "optEnumField" "test_schema".AccountType, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT, "optString" TEXT, "arrayOfStrings" TEXT[], "int_" INTEGER, "optInt" INTEGER, "arrayOfInts" INTEGER[], "float_" DOUBLE PRECISION, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[], "bool" BOOLEAN, "optBool" BOOLEAN, "bigInt" NUMERIC, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[], "bigDecimal" NUMERIC, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "arrayOfBigDecimals" TEXT[], "timestamp" TIMESTAMP WITH TIME ZONE NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB, "enumField" "test_schema".AccountType, "optEnumField" "test_schema".AccountType, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX IF NOT EXISTS "envio_addresses_chain_id" ON "test_schema"."envio_addresses"("chain_id");
-CREATE INDEX IF NOT EXISTS "envio_history_envio_addresses_envio_checkpoint_id" ON "test_schema"."envio_history_envio_addresses"("envio_checkpoint_id");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
@@ -346,10 +342,6 @@ CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "
 CREATE TABLE IF NOT EXISTS "test_schema"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, "registering_event_block" INTEGER NOT NULL, "registering_event_log_index" INTEGER, "contract_name" TEXT NOT NULL, PRIMARY KEY("id", "chain_id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_envio_addresses"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, "registering_event_block" INTEGER NOT NULL, "registering_event_log_index" INTEGER, "contract_name" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id", "chain_id", "envio_checkpoint_id"));
-CREATE INDEX IF NOT EXISTS "envio_addresses_chain_id" ON "test_schema"."envio_addresses"("chain_id");
-CREATE INDEX IF NOT EXISTS "envio_history_envio_addresses_envio_checkpoint_id" ON "test_schema"."envio_history_envio_addresses"("envio_checkpoint_id");
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -429,12 +421,8 @@ CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "start
 CREATE TABLE IF NOT EXISTS "public"."persisted_state"("id" SERIAL NOT NULL, "envio_version" TEXT NOT NULL, "config_hash" TEXT NOT NULL, "schema_hash" TEXT NOT NULL, "abi_files_hash" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
-CREATE TABLE IF NOT EXISTS "public"."envio_addresses"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, "registering_event_block" INTEGER NOT NULL, "registering_event_log_index" INTEGER, "contract_name" TEXT NOT NULL, PRIMARY KEY("id", "chain_id"));
-CREATE TABLE IF NOT EXISTS "public"."envio_history_envio_addresses"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, "registering_event_block" INTEGER NOT NULL, "registering_event_log_index" INTEGER, "contract_name" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, PRIMARY KEY("id", "chain_id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX IF NOT EXISTS "envio_addresses_chain_id" ON "public"."envio_addresses"("chain_id");
-CREATE INDEX IF NOT EXISTS "envio_history_envio_addresses_envio_checkpoint_id" ON "public"."envio_history_envio_addresses"("envio_checkpoint_id");
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
 CREATE VIEW "public"."_meta" AS 
 SELECT 
@@ -830,7 +818,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
 "source_block" as "sourceBlockNumber",
 (
   SELECT COALESCE(json_agg(json_build_object(
-    'address', "id",
+    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
     'startBlock', "registering_event_block",
     'registrationBlock', "registering_event_block"

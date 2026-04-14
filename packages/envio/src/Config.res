@@ -91,7 +91,11 @@ type t = {
 
 module EnvioAddresses = {
   let name = "envio_addresses"
-  let historyTableName = "envio_history_envio_addresses"
+  let index = -1
+
+  let makeId = (~chainId, ~address) => {
+    chainId->Belt.Int.toString ++ "-" ++ address->Address.toString
+  }
 
   @genType
   type t = {
@@ -100,17 +104,32 @@ module EnvioAddresses = {
     @as("registering_event_block") registeringEventBlock: int,
     @as("registering_event_log_index") registeringEventLogIndex: option<int>,
     @as("contract_name") contractName: string,
-    @as("envio_checkpoint_id") checkpointId: bigint,
   }
 
-  let getAddress = (entity: t): Address.t => entity.id->Address.unsafeFromString
+  // Extract the raw contract address from the composite id ({chainId}-{address}).
+  // Inverse of makeId.
+  let getAddress = (entity: t): Address.t => {
+    let chainIdStr = entity.chainId->Belt.Int.toString
+    entity.id
+    ->Js.String2.sliceToEnd(~from=Js.String2.length(chainIdStr) + 1)
+    ->Address.unsafeFromString
+  }
 
-  // Main table: current state of registered addresses, no checkpoint tracking
+  let schema = S.schema(s => {
+    id: s.matches(S.string),
+    chainId: s.matches(S.int),
+    registeringEventBlock: s.matches(S.int),
+    registeringEventLogIndex: s.matches(S.null(S.int)),
+    contractName: s.matches(S.string),
+  })
+
+  let rowsSchema = S.array(schema)
+
   let table = Table.mkTable(
     name,
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-      Table.mkField("chain_id", Int32, ~isPrimaryKey=true, ~isIndex=true, ~fieldSchema=S.int),
+      Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
       Table.mkField("registering_event_block", Int32, ~fieldSchema=S.int),
       Table.mkField(
         "registering_event_log_index",
@@ -122,29 +141,15 @@ module EnvioAddresses = {
     ],
   )
 
-  // History table: append-only log of address registrations, used for rollback
-  let historyTable = Table.mkTable(
-    historyTableName,
-    ~fields=[
-      Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-      Table.mkField("chain_id", Int32, ~isPrimaryKey=true, ~fieldSchema=S.int),
-      Table.mkField("registering_event_block", Int32, ~fieldSchema=S.int),
-      Table.mkField(
-        "registering_event_log_index",
-        Int32,
-        ~isNullable=true,
-        ~fieldSchema=S.null(S.int),
-      ),
-      Table.mkField("contract_name", String, ~fieldSchema=S.string),
-      Table.mkField(
-        "envio_checkpoint_id",
-        Table.UInt64,
-        ~isPrimaryKey=true,
-        ~isIndex=true,
-        ~fieldSchema=S.bigint,
-      ),
-    ],
-  )
+  external castToInternal: t => Internal.entity = "%identity"
+
+  let entityConfig = {
+    name,
+    index,
+    schema,
+    rowsSchema,
+    table,
+  }->Internal.fromGenericEntityConfig
 }
 
 // Types for parsing source config from internal.config.json
@@ -739,7 +744,7 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
     ->Option.getWithDefault([])
     ->parseEntitiesFromJson(~enumConfigsByName)
 
-  let allEntities = userEntities
+  let allEntities = userEntities->Js.Array2.concat([EnvioAddresses.entityConfig])
 
   let userEntitiesByName =
     userEntities

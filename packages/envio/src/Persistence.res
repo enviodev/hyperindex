@@ -118,7 +118,6 @@ type storage = {
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
-    ~addressesToWrite: array<Config.EnvioAddresses.t>,
   ) => promise<unit>,
 }
 
@@ -143,7 +142,7 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities
+  let allEntities = userEntities->Js.Array2.concat([InternalTable.EnvioAddresses.entityConfig])
   let allEnums =
     allEnums->Js.Array2.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
@@ -258,7 +257,6 @@ let writeBatch = (
       ~config,
       ~allEntities=persistence.allEntities,
       ~updatedEntities,
-      ~addressesToWrite=inMemoryStore.addressesToWrite,
       ~updatedEffectsCache={
         inMemoryStore.effects
         ->Js.Dict.keys

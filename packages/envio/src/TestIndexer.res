@@ -34,11 +34,13 @@ type testIndexerState = {
   entities: dict<dict<Internal.entity>>,
   entityConfigs: dict<Internal.entityConfig>,
   mutable processChanges: array<unknown>,
-  // Addresses split by chain to avoid id collision (chainIdStr -> address -> entry)
-  addressesByChain: dict<dict<Config.EnvioAddresses.t>>,
 }
 
-let toIndexingContract = (dc: Config.EnvioAddresses.t): Internal.indexingContract => {
+// Cast Internal.entity back to EnvioAddresses.t
+external castFromDcRegistry: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
+
+// Convert EnvioAddresses.t to Internal.indexingContract
+let toIndexingContract = (dc: InternalTable.EnvioAddresses.t): Internal.indexingContract => {
   address: dc->Config.EnvioAddresses.getAddress,
   contractName: dc.contractName,
   startBlock: dc.registeringEventBlock,
@@ -115,7 +117,6 @@ let handleLoadByField = (
 let handleWriteBatch = (
   state: testIndexerState,
   ~updatedEntities: array<TestIndexerProxyStorage.serializableUpdatedEntity>,
-  ~addressesToWrite: array<Config.EnvioAddresses.t>,
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
@@ -200,9 +201,6 @@ let handleWriteBatch = (
     })
   })
 
-  // Track addresses accepted in this batch to avoid emitting duplicates
-  let seenInBatch: dict<bool> = Js.Dict.empty()
-
   // Build combined checkpoint + entity changes objects
   for i in 0 to checkpointIds->Array.length - 1 {
     let checkpointId = checkpointIds->Array.getUnsafe(i)
@@ -233,70 +231,42 @@ let handleWriteBatch = (
       entityChanges
       ->Js.Dict.entries
       ->Array.forEach(((entityName, {sets, deleted})) => {
-        let entityObj: dict<unknown> = Js.Dict.empty()
-        if sets->Array.length > 0 {
-          entityObj->Js.Dict.set("sets", sets->(Utils.magic: array<unknown> => unknown))
+        // Transform envio_addresses to addresses with simplified structure
+        if entityName === InternalTable.EnvioAddresses.name {
+          let entityObj: dict<unknown> = Js.Dict.empty()
+          if sets->Array.length > 0 {
+            // Transform sets to simplified {address, contract} objects
+            let simplifiedSets = sets->Array.map(entity => {
+              let dc = entity->Utils.magic->castFromDcRegistry
+              {"address": dc->Config.EnvioAddresses.getAddress, "contract": dc.contractName}
+            })
+            entityObj->Js.Dict.set(
+              "sets",
+              simplifiedSets->(
+                Utils.magic: array<{"address": Address.t, "contract": string}> => unknown
+              ),
+            )
+          }
+          // Note: deleted is not relevant for addresses since we use address string directly
+          change->Js.Dict.set("addresses", entityObj->(Utils.magic: dict<unknown> => unknown))
+        } else {
+          let entityObj: dict<unknown> = Js.Dict.empty()
+          if sets->Array.length > 0 {
+            entityObj->Js.Dict.set("sets", sets->(Utils.magic: array<unknown> => unknown))
+          }
+          if deleted->Array.length > 0 {
+            entityObj->Js.Dict.set("deleted", deleted->(Utils.magic: array<string> => unknown))
+          }
+          change->Js.Dict.set(entityName, entityObj->(Utils.magic: dict<unknown> => unknown))
         }
-        if deleted->Array.length > 0 {
-          entityObj->Js.Dict.set("deleted", deleted->(Utils.magic: array<string> => unknown))
-        }
-        change->Js.Dict.set(entityName, entityObj->(Utils.magic: dict<unknown> => unknown))
       })
     | None => ()
-    }
-
-    // Add address changes for this checkpoint (skip already-stored addresses to match ON CONFLICT DO NOTHING)
-    let addressSets = addressesToWrite->Array.keepMap(addr => {
-      if addr.checkpointId !== checkpointId {
-        None
-      } else {
-        let chainIdStr = addr.chainId->Int.toString
-        let batchKey = chainIdStr ++ "-" ++ addr.id
-        let alreadyExists = switch state.addressesByChain->Js.Dict.get(chainIdStr) {
-        | Some(chainDict) => chainDict->Js.Dict.get(addr.id) !== None
-        | None => false
-        }
-        let alreadyInBatch = seenInBatch->Js.Dict.get(batchKey) !== None
-        alreadyExists || alreadyInBatch
-          ? None
-          : {
-              seenInBatch->Js.Dict.set(batchKey, true)
-              Some({
-                "address": addr->Config.EnvioAddresses.getAddress,
-                "contract": addr.contractName,
-              })
-            }
-      }
-    })
-    if addressSets->Array.length > 0 {
-      let entityObj: dict<unknown> = Js.Dict.empty()
-      entityObj->Js.Dict.set(
-        "sets",
-        addressSets->(Utils.magic: array<{"address": Address.t, "contract": string}> => unknown),
-      )
-      change->Js.Dict.set("addresses", entityObj->(Utils.magic: dict<unknown> => unknown))
     }
 
     state.processChanges
     ->Array.push(change->(Utils.magic: dict<unknown> => unknown))
     ->ignore
   }
-
-  // Store addresses into per-chain structure (first-write-wins to match ON CONFLICT DO NOTHING)
-  addressesToWrite->Array.forEach(addr => {
-    let chainIdStr = addr.chainId->Int.toString
-    let chainDict = switch state.addressesByChain->Js.Dict.get(chainIdStr) {
-    | Some(dict) => dict
-    | None =>
-      let dict = Js.Dict.empty()
-      state.addressesByChain->Js.Dict.set(chainIdStr, dict)
-      dict
-    }
-    switch chainDict->Js.Dict.get(addr.id) {
-    | Some(_) => ()
-    | None => chainDict->Js.Dict.set(addr.id, addr)
-    }
-  })
 }
 
 let makeInitialState = (
@@ -561,21 +531,23 @@ let makeCreateTestIndexer = (
       entities,
       entityConfigs,
       processChanges: [],
-      addressesByChain: Js.Dict.empty(),
     }
 
     // Build entity operations for each user entity
     let entityOpsDict: Js.Dict.t<entityOperations> = Js.Dict.empty()
     allEntities->Array.forEach(entityConfig => {
-      entityOpsDict->Js.Dict.set(
-        entityConfig.name,
-        {
-          get: makeEntityGet(~state, ~entityConfig),
-          getAll: makeEntityGetAll(~state, ~entityConfig),
-          getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
-          set: makeEntitySet(~state, ~entityConfig),
-        },
-      )
+      // Only create ops for user entities (not internal tables like envio_addresses)
+      if entityConfig.name !== InternalTable.EnvioAddresses.name {
+        entityOpsDict->Js.Dict.set(
+          entityConfig.name,
+          {
+            get: makeEntityGet(~state, ~entityConfig),
+            getAll: makeEntityGetAll(~state, ~entityConfig),
+            getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
+            set: makeEntitySet(~state, ~entityConfig),
+          },
+        )
+      }
     })
 
     // Build chain info from config (similar to Main.getGlobalIndexer but static)
@@ -620,15 +592,15 @@ let makeCreateTestIndexer = (
               }
               // Start with static config addresses
               let addresses = contract.addresses->Array.copy
-              // Add accumulated dynamic contract addresses from this chain
-              let chainIdStr = chainConfig.id->Int.toString
-              switch state.addressesByChain->Js.Dict.get(chainIdStr) {
-              | Some(chainDict) =>
-                chainDict
+              // Add accumulated dynamic contract addresses
+              switch state.entities->Js.Dict.get(InternalTable.EnvioAddresses.name) {
+              | Some(dcDict) =>
+                dcDict
                 ->Js.Dict.values
                 ->Array.forEach(
-                  dc => {
-                    if dc.contractName === contract.name {
+                  entity => {
+                    let dc = entity->castFromDcRegistry
+                    if dc.contractName === contract.name && dc.chainId === chainConfig.id {
                       addresses->Array.push(dc->Config.EnvioAddresses.getAddress)->ignore
                     }
                   },
@@ -738,21 +710,26 @@ let makeCreateTestIndexer = (
             let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
             chains->Js.Dict.set(chainIdStr, processChainConfig)
 
-            // Extract dynamic contracts from addressesByChain
+            // Extract dynamic contracts from state.entities for each chain
             let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Js.Dict.empty()
-            state.addressesByChain
-            ->Js.Dict.entries
-            ->Array.forEach(((dcChainIdStr, chainDict)) => {
-              let contracts = []
-              chainDict
+            switch state.entities->Js.Dict.get(InternalTable.EnvioAddresses.name) {
+            | Some(dcDict) =>
+              dcDict
               ->Js.Dict.values
-              ->Array.forEach(dc => {
+              ->Array.forEach(entity => {
+                let dc = entity->castFromDcRegistry
+                let dcChainIdStr = dc.chainId->Int.toString
+                let contracts = switch dynamicContractsByChain->Js.Dict.get(dcChainIdStr) {
+                | Some(arr) => arr
+                | None =>
+                  let arr = []
+                  dynamicContractsByChain->Js.Dict.set(dcChainIdStr, arr)
+                  arr
+                }
                 contracts->Array.push(dc->toIndexingContract)->ignore
               })
-              if contracts->Array.length > 0 {
-                dynamicContractsByChain->Js.Dict.set(dcChainIdStr, contracts)
-              }
-            })
+            | None => ()
+            }
 
             let initialState = makeInitialState(
               ~config,
@@ -803,7 +780,6 @@ let makeCreateTestIndexer = (
 
                 | WriteBatch({
                     updatedEntities,
-                    addressesToWrite,
                     checkpointIds,
                     checkpointChainIds,
                     checkpointBlockNumbers,
@@ -812,7 +788,6 @@ let makeCreateTestIndexer = (
                   }) =>
                   state->handleWriteBatch(
                     ~updatedEntities,
-                    ~addressesToWrite,
                     ~checkpointIds,
                     ~checkpointChainIds,
                     ~checkpointBlockNumbers,
