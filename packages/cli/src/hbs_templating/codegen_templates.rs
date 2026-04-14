@@ -1673,7 +1673,7 @@ module SingleOrMultiple: {{
         true
       }} else if arr->Array.length == 0 {{
         AmbiguousEmptyNestedArray->ErrorHandling.mkLogAndRaise(
-          ~msg="The given empty array could be interperated as a flat array (value) or nested array. Since it's ambiguous,
+          ~msg="The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous,
           please pass in a nested empty array if the intention is to provide an empty array as a value",
         )
       }} else {{
