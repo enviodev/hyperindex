@@ -1,4 +1,3 @@
-
 open Vitest
 
 describe("E2E tests", () => {
@@ -27,7 +26,7 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload),
       ~message="Should request items from start block to reorg threshold",
     ).toEqual([{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}])
   })
@@ -48,19 +47,19 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     t.expect(await indexerMock.metric("envio_reorg_threshold")).toEqual([
-      {value: "0", labels: Js.Dict.empty()},
+      {value: "0", labels: Dict.make()},
     ])
     t.expect(await indexerMock.metric("hyperindex_synced_to_head")).toEqual([
-      {value: "0", labels: Js.Dict.empty()},
+      {value: "0", labels: Dict.make()},
     ])
 
     await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     t.expect(await indexerMock.metric("envio_reorg_threshold")).toEqual([
-      {value: "1", labels: Js.Dict.empty()},
+      {value: "1", labels: Dict.make()},
     ])
     t.expect(await indexerMock.metric("hyperindex_synced_to_head")).toEqual([
-      {value: "0", labels: Js.Dict.empty()},
+      {value: "0", labels: Dict.make()},
     ])
 
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
@@ -69,7 +68,7 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
       ~message="should have set hyperindex_synced_to_head metric to 1",
-    ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+    ).toEqual([{value: "1", labels: Dict.make()}])
   })
 
   Async.it("Prom metrics are set independently per chain", async t => {
@@ -110,13 +109,13 @@ describe("E2E tests", () => {
       await indexerMock.metric("envio_progress_ready"),
       ~message="Only chain 1337 should be ready",
     ).toEqual([
-      {value: "0", labels: Js.Dict.fromArray([("chainId", "100")])},
-      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
+      {value: "0", labels: Dict.fromArray([("chainId", "100")])},
+      {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
     ])
     t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
       ~message="All-ready metric should not be set since chain 100 is not ready",
-    ).toEqual([{value: "0", labels: Js.Dict.empty()}])
+    ).toEqual([{value: "0", labels: Dict.make()}])
 
     // Now advance chain 100 to head
     sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
@@ -127,13 +126,13 @@ describe("E2E tests", () => {
       await indexerMock.metric("envio_progress_ready"),
       ~message="Both chains should be ready",
     ).toEqual([
-      {value: "1", labels: Js.Dict.fromArray([("chainId", "100")])},
-      {value: "1", labels: Js.Dict.fromArray([("chainId", "1337")])},
+      {value: "1", labels: Dict.fromArray([("chainId", "100")])},
+      {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
     ])
     t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
       ~message="All-ready metric should be set when both chains are ready",
-    ).toEqual([{value: "1", labels: Js.Dict.empty()}])
+    ).toEqual([{value: "1", labels: Dict.make()}])
   })
 
   Async.it("Shouldn't allow context access after hander is resolved", async t => {
@@ -160,7 +159,7 @@ describe("E2E tests", () => {
         blockNumber: 10,
         logIndex: 0,
         contractRegister: async ({context}) => {
-          let _ = Js.Global.setTimeout(
+          let _ = setTimeout(
             () => {
               try {
                 context.chain.\"Gravatar".add(
@@ -174,7 +173,7 @@ describe("E2E tests", () => {
           )
         },
         handler: async ({context}) => {
-          let _ = Js.Global.setTimeout(
+          let _ = setTimeout(
             () => {
               try {
                 context.\"SimpleEntity".set({
@@ -254,7 +253,10 @@ describe("E2E tests", () => {
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
+      {context}: Internal.genericHandlerArgs<
+        Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>,
+        Indexer.handlerContext,
+      >,
     ) => {
       context.\"SimpleEntity".set({
         id: "1",
@@ -430,11 +432,11 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "1",
-        labels: Js.Dict.fromArray([("effect", "testEffect")]),
+        labels: Dict.fromArray([("effect", "testEffect")]),
       },
       {
         value: "1",
-        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
     t.expect(
@@ -443,7 +445,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "1",
-        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
     t.expect(
@@ -468,7 +470,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "1",
-        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
 
@@ -505,19 +507,19 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
         },
       ],
       [
         {
           value: "1",
-          labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
         },
       ],
       [
         {
           value: "1",
-          labels: Js.Dict.fromArray([("operation", "testEffectWithCache.effect")]),
+          labels: Dict.fromArray([("operation", "testEffectWithCache.effect")]),
         },
       ],
     ))
@@ -531,13 +533,13 @@ describe("E2E tests", () => {
       [
         {
           value: "1",
-          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+          labels: Dict.fromArray([("effect", "testEffectWithCache")]),
         },
       ],
       [
         {
           value: "2",
-          labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+          labels: Dict.fromArray([("effect", "testEffectWithCache")]),
         },
       ],
     ))
@@ -547,10 +549,11 @@ describe("E2E tests", () => {
         name: "testEffectWithCache",
         input: S.string,
         output: S.string->S.refine(
-          s => v =>
-            if !(v->Js.String2.includes("2")) {
-              s.fail(`Expected to include '2', got ${v}`)
-            },
+          s =>
+            v =>
+              if !(v->String.includes("2")) {
+                s.fail(`Expected to include '2', got ${v}`)
+              },
         ),
         rateLimit: Disable,
         cache: true,
@@ -592,7 +595,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "2",
-        labels: Js.Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
       },
     ])
   })
@@ -645,7 +648,7 @@ describe("E2E tests", () => {
             }),
           ),
         )
-      | _ => Js.Exn.raiseError("should have called getItemsOrThrow on primary source")
+      | _ => JsError.throwWithMessage("should have called getItemsOrThrow on primary source")
       }
 
       await Utils.delay(0)
@@ -657,7 +660,9 @@ describe("E2E tests", () => {
         // Resolve the fallback source successfully
         call.resolve([], ~latestFetchedBlockNumber=100)
       | _ =>
-        Js.Exn.raiseError("fallback source should be called after primary fails with invalid data")
+        JsError.throwWithMessage(
+          "fallback source should be called after primary fails with invalid data",
+        )
       }
 
       await indexerMock.getBatchWritePromise()
@@ -753,24 +758,24 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 6 times total",
-    ).toEqual([{value: "6", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "6", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
 
     // Check that we captured metrics during execution
     // With 2 calls per window and 6 total calls: 4 items queued, max 2 active
     t.expect(
-      queueMetricDuringExecution.contents->Option.getExn,
+      queueMetricDuringExecution.contents->Option.getOrThrow,
       ~message="queue should have 4 items during execution",
-    ).toEqual([{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
     t.expect(
-      activeMetricDuringExecution.contents->Option.getExn,
+      activeMetricDuringExecution.contents->Option.getOrThrow,
       ~message="active calls should be at rate limit (2)",
-    ).toEqual([{value: "2", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "2", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
 
     // Final check - queue should be empty
     t.expect(
       await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all windows complete",
-    ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
   })
 
   Async.it("Effect rate limiting with single call per window", async t => {
@@ -855,23 +860,22 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 4 times total",
-    ).toEqual([{value: "4", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectNested")])}])
 
     // Check that we captured metrics during execution
     // With 1 call per window and 4 total calls: 3 items queued, max 1 active
     t.expect(
-      queueMetricDuringExecution.contents->Option.getExn,
+      queueMetricDuringExecution.contents->Option.getOrThrow,
       ~message="queue should have 3 items during execution",
-    ).toEqual([{value: "3", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "3", labels: Dict.fromArray([("effect", "testEffectNested")])}])
     t.expect(
-      activeMetricDuringExecution.contents->Option.getExn,
+      activeMetricDuringExecution.contents->Option.getOrThrow,
       ~message="active calls should be at rate limit (1)",
-    ).toEqual([{value: "1", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "1", labels: Dict.fromArray([("effect", "testEffectNested")])}])
 
     // Check metrics after first window
-    let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getExn
-    let queueValue2 =
-      queueMetric2->Array.get(0)->Option.map(m => m.value)->Option.getOr("0")
+    let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getOrThrow
+    let queueValue2 = queueMetric2->Array.get(0)->Option.map(m => m.value)->Option.getOr("0")
     t.expect(
       queueValue2 != "0" || executionOrder->Array.length == 4,
       ~message=`queue should have items or all should be done, queue: ${queueValue2}, executed: ${executionOrder
@@ -883,7 +887,7 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all batches complete",
-    ).toEqual([{value: "0", labels: Js.Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectNested")])}])
   })
 
   Async.it("Effect cache can be disabled per-call via context.cache", async t => {
@@ -985,8 +989,8 @@ describe("E2E tests", () => {
         cache: true,
       },
       async ({input}) => {
-        if input->Js.String2.includes("should-fail") {
-          Utils.Error.make("Effect intentionally failed")->raise
+        if input->String.includes("should-fail") {
+          Utils.Error.make("Effect intentionally failed")->throw
         }
         input ++ "-output"
       },
@@ -1007,7 +1011,7 @@ describe("E2E tests", () => {
             // Verify p1 throws with correct error message
             try {
               let _ = await p1
-              Js.Exn.raiseError("p1 should have thrown an error")
+              JsError.throwWithMessage("p1 should have thrown an error")
             } catch {
             | exn =>
               t.expect(
@@ -1152,7 +1156,7 @@ describe("E2E tests", () => {
 
     // Step 2: Query 1 — resolve at block 500 (range=501)
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Step 2 should have initial query",
     ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
@@ -1160,7 +1164,7 @@ describe("E2E tests", () => {
 
     // Step 3: Query 2 — resolve at block 800 (range=300)
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Step 3 should have follow-up query",
     ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
@@ -1169,9 +1173,7 @@ describe("E2E tests", () => {
     // Chunking activates: chunkRange=min(300,501)=300, chunkSize=ceil(300*1.8)=540
     // At least 2 chunks of size 540; extra chunks may appear later
     t.expect(
-      sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.map(c => c.payload)
-      ->Js.Array2.slice(~start=0, ~end_=2),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=2),
       ~message="Should have at least 2 chunks of size 540",
     ).toEqual([
       {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
@@ -1183,10 +1185,10 @@ describe("E2E tests", () => {
     // With the fix, full-range split chunks update block range (540 >= chunkRange 300).
     let calls = sourceMock.getItemsOrThrowCalls
     if calls->Array.length < 2 {
-      Js.Exn.raiseError("Expected at least 2 chunks")
+      JsError.throwWithMessage("Expected at least 2 chunks")
     }
-    let chunk1 = calls->Js.Array2.unsafe_get(0)
-    let chunk2 = calls->Js.Array2.unsafe_get(1)
+    let chunk1 = calls->Array.getUnsafe(0)
+    let chunk2 = calls->Array.getUnsafe(1)
     chunk1.resolve([], ~latestFetchedBlockNumber=1340)
     chunk2.resolve([], ~latestFetchedBlockNumber=1880)
     await indexerMock.getBatchWritePromise()
@@ -1195,7 +1197,7 @@ describe("E2E tests", () => {
     // chunkRange=min(540,540)=540, chunkSize=ceil(540*1.8)=972
     // Assert: new tail chunks have size 972
     let grownChunks =
-      sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
+      sourceMock.getItemsOrThrowCalls->Array.filter(
         c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(972),
       )
     t.expect(
@@ -1208,7 +1210,7 @@ describe("E2E tests", () => {
     // Phase B — chunks shrink on partial response:
     // Resolve the first pending chunk (at queue front) at partial range so the
     // partition actually advances and a batch is written.
-    let firstPending = sourceMock.getItemsOrThrowCalls->Array.get(0)->Option.getExn
+    let firstPending = sourceMock.getItemsOrThrowCalls->Array.get(0)->Option.getOrThrow
     firstPending.resolve([], ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99)
     await indexerMock.getBatchWritePromise()
 
@@ -1216,7 +1218,7 @@ describe("E2E tests", () => {
     // chunkRange=min(100,540)=100, chunkSize=ceil(100*1.8)=180
     // Assert: new tail chunks have size 180
     let shrunkChunks =
-      sourceMock.getItemsOrThrowCalls->Js.Array2.filter(
+      sourceMock.getItemsOrThrowCalls->Array.filter(
         c => c.payload["toBlock"]->Option.map(tb => tb - c.payload["fromBlock"] + 1) == Some(180),
       )
     t.expect(
@@ -1247,13 +1249,13 @@ describe("E2E tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Should have initial query",
     ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
     await indexerMock.getBatchWritePromise()
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Should have follow-up query",
     ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
@@ -1261,9 +1263,7 @@ describe("E2E tests", () => {
 
     // At least 2 chunks starting at (801,1340), (1341,1880); extra chunks may appear later
     t.expect(
-      sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.map(c => c.payload)
-      ->Js.Array2.slice(~start=0, ~end_=2),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=2),
       ~message="Should have at least 2 chunks of size 540",
     ).toEqual([
       {"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"},
@@ -1271,10 +1271,10 @@ describe("E2E tests", () => {
     ])
     let calls = sourceMock.getItemsOrThrowCalls
     if calls->Array.length < 2 {
-      Js.Exn.raiseError("Expected at least 2 chunks")
+      JsError.throwWithMessage("Expected at least 2 chunks")
     }
-    let chunk1 = calls->Js.Array2.unsafe_get(0)
-    let chunk2 = calls->Js.Array2.unsafe_get(1)
+    let chunk1 = calls->Array.getUnsafe(0)
+    let chunk2 = calls->Array.getUnsafe(1)
 
     // Step 1: Resolve chunk2 FIRST (out of order) with item at block 1500
     chunk2.resolve([
@@ -1301,9 +1301,7 @@ describe("E2E tests", () => {
     // Only chunk1's first half is consumed; chunk2 still blocked.
     // After chunk2 resolved, chunk1 should remain pending
     t.expect(
-      sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.map(c => c.payload)
-      ->Js.Array2.slice(~start=0, ~end_=1),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Array.slice(~start=0, ~end=1),
       ~message="After chunk2 resolved, chunk1 should remain pending",
     ).toEqual([{"fromBlock": 801, "toBlock": Some(1340), "retry": 0, "p": "0"}])
     chunk1.resolve(
@@ -1329,7 +1327,7 @@ describe("E2E tests", () => {
 
     // Step 3: A finishing query for the remainder of chunk1 (1071-1340) should exist.
     let finishingQuery =
-      sourceMock.getItemsOrThrowCalls->Js.Array2.find(c => c.payload["fromBlock"] === 1071)
+      sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["fromBlock"] === 1071)
     t.expect(
       finishingQuery->Option.map(c => c.payload),
       ~message="Should have a finishing query for the rest of chunk1",
@@ -1337,7 +1335,7 @@ describe("E2E tests", () => {
 
     // Step 4: Resolve the finishing query — now chunk1's full range is consumed,
     // then chunk2 is consumed too. bufferBlockNumber advances to 1880.
-    (finishingQuery->Option.getExn).resolve([], ~latestFetchedBlockNumber=1340)
+    (finishingQuery->Option.getOrThrow).resolve([], ~latestFetchedBlockNumber=1340)
     await indexerMock.getBatchWritePromise()
 
     // Both items should now be in DB
@@ -1371,7 +1369,7 @@ describe("E2E tests", () => {
     await Utils.delay(0)
 
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(c => c.payload),
+      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Step 1: initial query for partition 0",
     ).toEqual([{"fromBlock": 1, "toBlock": Some(99800), "retry": 0, "p": "0"}])
 
@@ -1407,17 +1405,15 @@ describe("E2E tests", () => {
     // (partition "1" is created from splitting existing partition for the new dynamic contract)
     t.expect(
       sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
-      ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
+      ->Array.map(c => (c.payload["p"], c.payload["fromBlock"]))
+      ->Array.toSorted(((_, a), (_, b)) => Int.compare(a, b)),
       ~message="Step 2: queries for DC1(5000), DC2(25100), P0(25101)",
     ).toEqual([("2", 5000), ("3", 25100), ("0", 25101)])
 
     // Step 3: Resolve DC2 at lfb=25600 (range=501, first chunk history entry)
     // Buffer block stays 4999 (DC1 is earliest) → no batch write
     let dc2Call1 =
-      sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.find(c => c.payload["p"] === "3")
-      ->Option.getExn
+      sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "3")->Option.getOrThrow
     dc2Call1.resolve([], ~latestFetchedBlockNumber=25600)
     await Utils.delay(0)
     await Utils.delay(0)
@@ -1425,8 +1421,8 @@ describe("E2E tests", () => {
 
     t.expect(
       sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"]))
-      ->Js.Array2.sortInPlaceWith(((_, a), (_, b)) => a - b),
+      ->Array.map(c => (c.payload["p"], c.payload["fromBlock"]))
+      ->Array.toSorted(((_, a), (_, b)) => Int.compare(a, b)),
       ~message="Step 3: DC2 new query from 25601",
     ).toEqual([("2", 5000), ("0", 25101), ("3", 25601)])
 
@@ -1435,9 +1431,7 @@ describe("E2E tests", () => {
     // Chunks: (25901,26440),(26441,26980) — concurrency limited → chunk1 only
     // Buffer block stays 4999 → no batch write
     let dc2Call2 =
-      sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.find(c => c.payload["p"] === "3")
-      ->Option.getExn
+      sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "3")->Option.getOrThrow
     dc2Call2.resolve([], ~latestFetchedBlockNumber=25900)
     await Utils.delay(0)
     await Utils.delay(0)
@@ -1445,8 +1439,8 @@ describe("E2E tests", () => {
 
     t.expect(
       sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
-      ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
+      ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
       ~message="Step 4: DC2 has 2 chunks (25901-26440, 26441-26980)",
     ).toEqual([
       ("2", 5000, Some(99800)),
@@ -1461,9 +1455,7 @@ describe("E2E tests", () => {
     // Both lfb < mergeBlock → (true,true): both get mergeBlock=26980, new partition "4"
     // Buffer empty → no batch write
     let dc1Call =
-      sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.find(c => c.payload["p"] === "2")
-      ->Option.getExn
+      sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "2")->Option.getOrThrow
     dc1Call.resolve([], ~latestFetchedBlockNumber=7000)
     await Utils.delay(0)
     await Utils.delay(0)
@@ -1477,8 +1469,8 @@ describe("E2E tests", () => {
     //   → chunkSize=ceil(300*1.8)=540, chunks: 26981→27520, 27521→28060
     t.expect(
       sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
-      ->Js.Array2.sortInPlaceWith(((_, a, _), (_, b, _)) => a - b),
+      ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
+      ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
       ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     ).toEqual([
       ("2", 7001, Some(26980)),
@@ -1491,12 +1483,10 @@ describe("E2E tests", () => {
 
     // Verify merged partition "4" has both DC addresses
     let partition4Call =
-      sourceMock.getItemsOrThrowCalls
-      ->Js.Array2.find(c => c.payload["p"] === "4")
-      ->Option.getExn
+      sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "4")->Option.getOrThrow
     let addresses = partition4Call.payload->MockIndexer.Source.CallPayload.addresses
     t.expect(
-      addresses->Js.Dict.unsafeGet("Gravatar")->Array.length,
+      addresses->Dict.getUnsafe("Gravatar")->Array.length,
       ~message="Merged partition should have addresses from both DCs",
     ).toEqual(2)
   })
@@ -1533,10 +1523,9 @@ describe("E2E tests", () => {
 
       // Update events_processed to a value > int32 max to verify uint52 column works
       let sql = PgStorage.makeClient()
-      let _ =
-        await sql->Postgres.unsafe(
-          `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
-        )
+      let _ = await sql->Postgres.unsafe(
+        `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
+      )
 
       // float4 cast in the views makes Hasura return numbers instead of strings
       // float4 has ~7 digits of precision, so large values lose precision

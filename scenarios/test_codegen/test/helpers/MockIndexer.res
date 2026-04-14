@@ -1,18 +1,15 @@
-
-
 type chainId = Indexer.chainId
 
 let config = Indexer.Generated.configWithoutRegistrations
 
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
-  ->Js.Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
-  ->Option.getExn
+  ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
+  ->Option.getOrThrow
 
 module InMemoryStore = {
   let setEntity = (inMemoryStore, ~entityConfig: Internal.entityConfig, entity) => {
-    let inMemTable =
-      inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+    let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
       Set({
@@ -20,16 +17,14 @@ module InMemoryStore = {
         checkpointId: 0n,
         entity,
       }),
-      ~shouldSaveHistory=config->Config.shouldSaveHistory(
-        ~isInReorgThreshold=false,
-      ),
+      ~shouldSaveHistory=config->Config.shouldSaveHistory(~isInReorgThreshold=false),
     )
   }
 
   let make = (~entities=[]) => {
     let inMemoryStore = InMemoryStore.make(~entities=Indexer.Generated.allEntities)
-    entities->Js.Array2.forEach(((entityConfig, items)) => {
-      items->Js.Array2.forEach(entity => {
+    entities->Array.forEach(((entityConfig, items)) => {
+      items->Array.forEach(entity => {
         inMemoryStore->setEntity(~entityConfig, entity)
       })
     })
@@ -71,18 +66,18 @@ module Storage = {
 
   let make = (methods: array<method>) => {
     let implement = (method: method, fn) => {
-      if methods->Js.Array2.includes(method) {
+      if methods->Array.includes(method) {
         fn
       } else {
-        (() => Js.Exn.raiseError(`storage.${(method :> string)} not implemented`))->Obj.magic
+        (() => JsError.throwWithMessage(`storage.${(method :> string)} not implemented`))->Obj.magic
       }
     }
 
     let implementBody = (method: method, fn) => {
-      if methods->Js.Array2.includes(method) {
+      if methods->Array.includes(method) {
         fn()
       } else {
-        Js.Exn.raiseError(`storage.${(method :> string)} not implemented`)
+        JsError.throwWithMessage(`storage.${(method :> string)} not implemented`)
       }
     }
 
@@ -104,37 +99,37 @@ module Storage = {
       dumpEffectCacheCalls,
       resumeInitialStateCalls,
       resolveLoadInitialState: (initialState: Persistence.initialState) => {
-        resumeInitialStateResolveFns->Js.Array2.forEach(resolve => resolve(initialState))
+        resumeInitialStateResolveFns->Array.forEach(resolve => resolve(initialState))
       },
       resolveIsInitialized: bool => {
-        isInitializedResolveFns->Js.Array2.forEach(resolve => resolve(bool))
+        isInitializedResolveFns->Array.forEach(resolve => resolve(bool))
       },
       resolveInitialize: (initialState: Persistence.initialState) => {
-        initializeResolveFns->Js.Array2.forEach(resolve => resolve(initialState))
+        initializeResolveFns->Array.forEach(resolve => resolve(initialState))
       },
       storage: {
         isInitialized: implement(#isInitialized, () => {
-          isInitializedCalls->Js.Array2.push(true)->ignore
+          isInitializedCalls->Array.push(true)->ignore
           Promise.make((resolve, _reject) => {
-            isInitializedResolveFns->Js.Array2.push(resolve)->ignore
+            isInitializedResolveFns->Array.push(resolve)->ignore
           })
         }),
         initialize: implement(#initialize, (~chainConfigs=[], ~entities=[], ~enums=[]) => {
           initializeCalls
-          ->Js.Array2.push({
+          ->Array.push({
             "entities": entities,
             "chainConfigs": chainConfigs,
             "enums": enums,
           })
           ->ignore
           Promise.make((resolve, _reject) => {
-            initializeResolveFns->Js.Array2.push(resolve)->ignore
+            initializeResolveFns->Array.push(resolve)->ignore
           })
         }),
         resumeInitialState: implement(#resumeInitialState, () => {
-          resumeInitialStateCalls->Js.Array2.push(true)->ignore
+          resumeInitialStateCalls->Array.push(true)->ignore
           Promise.make((resolve, _reject) => {
-            resumeInitialStateResolveFns->Js.Array2.push(resolve)->ignore
+            resumeInitialStateResolveFns->Array.push(resolve)->ignore
           })
         }),
         dumpEffectCache: implement(#dumpEffectCache, () => {
@@ -149,7 +144,7 @@ module Storage = {
         ): promise<array<item>> => {
           implementBody(#loadByIdsOrThrow, () => {
             loadByIdsOrThrowCalls
-            ->Js.Array2.push({
+            ->Array.push({
               "ids": ids,
               "tableName": table.tableName,
             })
@@ -167,7 +162,7 @@ module Storage = {
         ) => {
           implementBody(#loadByFieldOrThrow, () => {
             loadByFieldOrThrowCalls
-            ->Js.Array2.push({
+            ->Array.push({
               "fieldName": fieldName,
               "fieldValue": fieldValue->Utils.magic,
               "tableName": table.tableName,
@@ -177,17 +172,18 @@ module Storage = {
             Promise.resolve([])
           })
         },
-        reset: () => Js.Exn.raiseError("Not implemented"),
-        setChainMeta: _ => Js.Exn.raiseError("Not implemented"),
-        pruneStaleCheckpoints: (~safeCheckpointId as _) => Js.Exn.raiseError("Not implemented"),
+        reset: () => JsError.throwWithMessage("Not implemented"),
+        setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
+        pruneStaleCheckpoints: (~safeCheckpointId as _) =>
+          JsError.throwWithMessage("Not implemented"),
         pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-          Js.Exn.raiseError("Not implemented"),
+          JsError.throwWithMessage("Not implemented"),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
-          Js.Exn.raiseError("Not implemented"),
+          JsError.throwWithMessage("Not implemented"),
         getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
-          Js.Exn.raiseError("Not implemented"),
+          JsError.throwWithMessage("Not implemented"),
         getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
-          Js.Exn.raiseError("Not implemented"),
+          JsError.throwWithMessage("Not implemented"),
         writeBatch: (
           ~batch as _,
           ~rawEvents as _,
@@ -197,7 +193,7 @@ module Storage = {
           ~allEntities as _,
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
-        ) => Js.Exn.raiseError("Not implemented"),
+        ) => JsError.throwWithMessage("Not implemented"),
       },
     }
   }
@@ -210,7 +206,7 @@ module Storage = {
       ),
       storageStatus: Ready({
         cleanRun: false,
-        cache: Js.Dict.empty(),
+        cache: Dict.make(),
         chains: [],
         reorgCheckpoints: [],
         checkpointId: 0n,
@@ -222,7 +218,12 @@ module Storage = {
 // Aliases to access the generated Indexer module after the local `module Indexer` shadows it
 type eventLog<'a> = Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>
 type handlerContext = Indexer.handlerContext
-type contractRegister<'a> = Internal.genericContractRegister<Internal.genericContractRegisterArgs<Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>, Indexer.contractRegisterContext>>
+type contractRegister<'a> = Internal.genericContractRegister<
+  Internal.genericContractRegisterArgs<
+    Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>,
+    Indexer.contractRegisterContext,
+  >,
+>
 module Transaction = Indexer.Transaction
 
 module Indexer = {
@@ -238,13 +239,18 @@ module Indexer = {
     queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
-    queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
+    queryEffectCache: string => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
 
-  type chainConfig = {chain: chainId, sourceConfig: Config.sourceConfig, startBlock?: int, blockLag?: int}
+  type chainConfig = {
+    chain: chainId,
+    sourceConfig: Config.sourceConfig,
+    startBlock?: int,
+    blockLag?: int,
+  }
 
   let rec make = async (
     ~chains: array<chainConfig>,
@@ -266,14 +272,16 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let registrations = await HandlerLoader.registerAllHandlers(~config=Indexer.Generated.configWithoutRegistrations)
+    let registrations = await HandlerLoader.registerAllHandlers(
+      ~config=Indexer.Generated.configWithoutRegistrations,
+    )
 
     let config = {
       let config = Indexer.Generated.makeGeneratedConfig()
 
       let chainMap =
         chains
-        ->Js.Array2.map(chainConfig => {
+        ->Array.map(chainConfig => {
           let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
           let originalChainConfig = config.chainMap->ChainMap.get(chain)
           (
@@ -281,12 +289,8 @@ module Indexer = {
             {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
-              startBlock: chainConfig.startBlock->Option.getOr(
-                originalChainConfig.startBlock,
-              ),
-              blockLag: chainConfig.blockLag->Option.getOr(
-                originalChainConfig.blockLag,
-              ),
+              startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
+              blockLag: chainConfig.blockLag->Option.getOr(originalChainConfig.blockLag),
             },
           )
         })
@@ -305,7 +309,12 @@ module Indexer = {
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let storage = PgStorage.makeStorageFromEnv(
+      ~config,
+      ~sql,
+      ~pgSchema,
+      ~isHasuraEnabled=enableHasura,
+    )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
     let ctx = {
@@ -375,9 +384,7 @@ module Indexer = {
       query: (type entity, name: Indexer.Entities.name<entity>) => {
         let ec = entityConfig(name)
         sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName),
-        )
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
           items->S.parseOrThrow(ec.rowsSchema)
         })
@@ -436,7 +443,7 @@ module Indexer = {
         ->Promise.thenResolve(rows =>
           rows
           ->(Utils.magic: unknown => array<unknown>)
-          ->Js.Array2.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+          ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
       queryEffectCache: (effectName: string) => {
@@ -444,12 +451,12 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
         )
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": Js.Json.t}>>)
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
         switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
         | Some(m) =>
-          (await m.get())["values"]->Js.Array2.map(v => {
+          (await m.get())["values"]->Array.map(v => {
             value: v.value->Belt.Int.toString,
             labels: v.labels,
           })
@@ -462,11 +469,19 @@ module Indexer = {
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(~chains, ~enableHasura, ~enableRawEvents, ~multichain, ~saveFullHistory, ~reset=false, ~batchSize?)
+        make(
+          ~chains,
+          ~enableHasura,
+          ~enableRawEvents,
+          ~multichain,
+          ~saveFullHistory,
+          ~reset=false,
+          ~batchSize?,
+        )
       },
       graphql: query => {
         if !enableHasura {
-          Js.Exn.raiseError(
+          JsError.throwWithMessage(
             "It's require to set ~enableHasura=true during indexer mock creation to access this feature.",
           )
         }
@@ -494,9 +509,7 @@ module Source = {
   type itemMock = {
     blockNumber: int,
     logIndex: int,
-    handler?: Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<
-      unit,
-    >,
+    handler?: Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<unit>,
     contractRegister?: contractRegister<unit>,
   }
 
@@ -539,10 +552,10 @@ module Source = {
 
   let make = (methods, ~chain=#1: chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
     let implement = (method: method, fn) => {
-      if methods->Js.Array2.includes(method) {
+      if methods->Array.includes(method) {
         fn
       } else {
-        (() => Js.Exn.raiseError(`source.${(method :> string)} not implemented`))->Obj.magic
+        (() => JsError.throwWithMessage(`source.${(method :> string)} not implemented`))->Obj.magic
       }
     }
 
@@ -567,20 +580,20 @@ module Source = {
           fn(
             ~resolve=arg => {
               resolve(arg)
-              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              let indexOf = array->Array.indexOf(callRef.contents)
               if indexOf !== -1 {
-                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+                array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
               }
             },
             ~reject=arg => {
               reject(arg)
-              let indexOf = array->Js.Array2.indexOf(callRef.contents)
+              let indexOf = array->Array.indexOf(callRef.contents)
               if indexOf !== -1 {
-                array->Js.Array2.removeCountInPlace(~pos=indexOf, ~count=1)->ignore
+                array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
               }
             },
           )
-        array->Js.Array2.push(callRef.contents)->ignore
+        array->Array.push(callRef.contents)->ignore
       })
     }
 
@@ -588,7 +601,7 @@ module Source = {
       getHeightOrThrowCalls,
       resolveGetHeightOrThrow: height => {
         if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
-          Js.Exn.raiseError("getHeightOrThrowResolveFns is empty")
+          JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
         }
         getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
       },
@@ -605,13 +618,13 @@ module Source = {
         ~prevRangeLastBlock=?,
       ) => {
         let calls = switch resolveAt {
-        | #first => getItemsOrThrowCalls->Js.Array2.slice(~start=0, ~end_=1)
+        | #first => getItemsOrThrowCalls->Array.slice(~start=0, ~end=1)
         | #all => getItemsOrThrowCalls->Utils.Array.copy
-        | #last => getItemsOrThrowCalls->Js.Array2.sliceFrom(getItemsOrThrowCalls->Array.length - 1)
+        | #last => getItemsOrThrowCalls->Array.slice(~start=getItemsOrThrowCalls->Array.length - 1)
         }
 
         switch calls {
-        | [] => Js.Exn.raiseError("getItemsOrThrowCalls is empty")
+        | [] => JsError.throwWithMessage("getItemsOrThrowCalls is empty")
         | calls =>
           calls->Array.forEach(call =>
             call.resolve(
@@ -627,7 +640,7 @@ module Source = {
       getBlockHashesCalls,
       resolveGetBlockHashes: blockHashes => {
         if getBlockHashesResolveFns->Utils.Array.isEmpty {
-          Js.Exn.raiseError("getBlockHashesResolveFns is empty")
+          JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
         getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
         getBlockHashesResolveFns->Utils.Array.clearInPlace
@@ -650,16 +663,16 @@ module Source = {
           chain,
           pollingInterval,
           getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
-            getBlockHashesCalls->Js.Array2.push(blockNumbers)->ignore
+            getBlockHashesCalls->Array.push(blockNumbers)->ignore
             Promise.make((resolve, _reject) => {
-              getBlockHashesResolveFns->Js.Array2.push(resolve)->ignore
+              getBlockHashesResolveFns->Array.push(resolve)->ignore
             })
           }),
           getHeightOrThrow: implement(#getHeightOrThrow, () => {
-            getHeightOrThrowCalls->Js.Array2.push(true)->ignore
+            getHeightOrThrowCalls->Array.push(true)->ignore
             Promise.make((resolve, reject) => {
-              getHeightOrThrowResolveFns->Js.Array2.push(resolve)->ignore
-              getHeightOrThrowRejectFns->Js.Array2.push(reject)->ignore
+              getHeightOrThrowResolveFns->Array.push(resolve)->ignore
+              getHeightOrThrowRejectFns->Array.push(reject)->ignore
             })
           }),
           getItemsOrThrow: implement(#getItemsOrThrow, (
@@ -691,9 +704,7 @@ module Source = {
                   ~prevRangeLastBlock=?,
                 ) => {
                   let latestFetchedBlockNumber =
-                    latestFetchedBlockNumber->Option.getOr(
-                      toBlock->Option.getOr(fromBlock),
-                    )
+                    latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
                   resolve({
                     Source.knownHeight,
@@ -751,9 +762,9 @@ module Source = {
                             | None => None
                             },
                             contractRegister: item.contractRegister->(
-                              Utils.magic: option<
-                                contractRegister<unit>,
-                              > => option<Internal.contractRegister>
+                              Utils.magic: option<contractRegister<unit>> => option<
+                                Internal.contractRegister,
+                              >
                             ),
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
@@ -761,8 +772,10 @@ module Source = {
                             simulateParamsSchema: S.unknown
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-                            getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
-                            convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+                            getEventFiltersOrThrow: _ =>
+                              JsError.throwWithMessage("Not implemented"),
+                            convertHyperSyncEventArgs: _ =>
+                              JsError.throwWithMessage("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
                             selectedTransactionFields: Utils.Set.make(),
                           }: Internal.evmEventConfig :> Internal.eventConfig),
@@ -799,12 +812,12 @@ module Source = {
               }
             })
           }),
-          createHeightSubscription: ?switch methods->Js.Array2.includes(#createHeightSubscription) {
+          createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
           | true =>
             Some(
               (~onHeight) => {
-                heightSubscriptionCalls->Js.Array2.push(true)->ignore
-                heightSubscriptionCallbacks->Js.Array2.push(onHeight)->ignore
+                heightSubscriptionCalls->Array.push(true)->ignore
+                heightSubscriptionCallbacks->Array.push(onHeight)->ignore
                 heightSubscriptionUnsubscribed := false
                 () => {
                   heightSubscriptionUnsubscribed := true
@@ -835,12 +848,10 @@ module Helper = {
     await Utils.delay(0)
 
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Js.Array2.map(call => call.payload),
+      sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload),
       ~message="Should request items until reorg threshold",
-    ).toEqual(
-      // fromBlock 1 since it's in the config.yaml start_block is 1
-      [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}],
-    )
+    ).toEqual(// fromBlock 1 since it's in the config.yaml start_block is 1
+    [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()
   }
@@ -920,7 +931,7 @@ let evmEventConfig = (
           },
         ])
       },
-    convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
+    convertHyperSyncEventArgs: _ => JsError.throwWithMessage("Not implemented"),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
   }

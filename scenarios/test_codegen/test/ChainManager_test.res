@@ -1,4 +1,3 @@
-
 open Vitest
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
@@ -8,13 +7,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
   let chainFetchers = config.chainMap->ChainMap.map(({id}) => {
     let getCurrentTimestamp = () => {
-      let timestampMillis = Js.Date.now()
+      let timestampMillis = Date.now()
       // Convert milliseconds to seconds
       Belt.Int.fromFloat(timestampMillis /. 1000.0)
     }
     /// Generates a random number between two ints inclusive
     let getRandomInt = (min, max) => {
-      Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
+      Belt.Int.fromFloat(Math.random() *. Int.toFloat(max - min + 1) +. Int.toFloat(min))
     }
 
     let eventConfigs = [
@@ -59,11 +58,11 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           logIndex,
           eventConfig: Utils.magic("Mock eventConfig in ChainManager test"),
-          event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
+          event: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->Utils.magic,
         })
         let eventItem = batchItem->Internal.castUnsafeEventItem
 
-        allEvents->Js.Array2.push(batchItem)->ignore
+        allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
           partitionId: "0",
@@ -74,7 +73,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             dependsOnAddresses: false,
             eventConfigs,
           },
-          addressesByContractName: Js.Dict.empty(),
+          addressesByContractName: Dict.make(),
           indexingContracts: fetchState.contents.indexingContracts,
         }
 
@@ -175,13 +174,13 @@ describe("ChainManager", () => {
           } else {
             items->Array.forEach(
               item => {
-                allEventsRead->Js.Array2.push(item)->ignore
+                allEventsRead->Array.push(item)->ignore
               },
             )
             numberOfMockEventsReadFromQueues :=
               numberOfMockEventsReadFromQueues.contents + totalBatchSize
 
-            let firstEventInBlock = items[0]->Option.getExn
+            let firstEventInBlock = items[0]->Option.getOrThrow
 
             t.expect(
               firstEventInBlock->EventUtils.getOrderedBatchItemComparator >
