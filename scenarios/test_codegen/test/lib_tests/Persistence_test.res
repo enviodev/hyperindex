@@ -14,10 +14,9 @@ describe("Test Persistence layer init", () => {
       persistence.allEnums,
       ~message=`All enums should automatically include the indexer core ones`,
     ).toEqual([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
-    t.expect(
-      persistence.storageStatus,
-      ~message=`Intial storage status should be unknown`,
-    ).toEqual(Persistence.Unknown)
+    t.expect(persistence.storageStatus, ~message=`Intial storage status should be unknown`).toEqual(
+      Persistence.Unknown,
+    )
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -54,24 +53,22 @@ describe("Test Persistence layer init", () => {
         storageMock.resumeInitialStateCalls->Array.length,
       ),
       ~message=`Should initialize if storage is not initialized`,
-    ).toEqual(
-      (
-        1,
-        [
-          {
-            "entities": persistence.allEntities,
-            "chainConfigs": [],
-            "enums": persistence.allEnums,
-          },
-        ],
-        0,
-      ),
-    )
+    ).toEqual((
+      1,
+      [
+        {
+          "entities": persistence.allEntities,
+          "chainConfigs": [],
+          "enums": persistence.allEnums,
+        },
+      ],
+      0,
+    ))
 
     let initialState: Persistence.initialState = {
       cleanRun: true,
       chains: [],
-      cache: Js.Dict.empty(),
+      cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
     }
@@ -80,10 +77,9 @@ describe("Test Persistence layer init", () => {
     let _ = await Promise.resolve()
     let _ = await Promise.resolve()
 
-    t.expect(
-      persistence.storageStatus,
-      ~message=`Storage status should be ready`,
-    ).toEqual(Persistence.Ready(initialState))
+    t.expect(persistence.storageStatus, ~message=`Storage status should be ready`).toEqual(
+      Persistence.Ready(initialState),
+    )
 
     // Can resolve the promise now
     await p
@@ -103,21 +99,19 @@ describe("Test Persistence layer init", () => {
       (
         storageMock.isInitializedCalls->Array.length,
         storageMock.initializeCalls->Array.length,
-        storageMock.initializeCalls->Js.Array2.unsafe_get(1),
+        storageMock.initializeCalls->Array.getUnsafe(1),
       ),
       ~message=`Calling init with reset=true should ignore that the storage is already ready.
       It will perform initialize call with cleanRun=true without additional check for storage being initialized`,
-    ).toEqual(
-      (
-        1,
-        2,
-        {
-          "entities": persistence.allEntities,
-          "chainConfigs": [],
-          "enums": persistence.allEnums,
-        },
-      ),
-    )
+    ).toEqual((
+      1,
+      2,
+      {
+        "entities": persistence.allEntities,
+        "chainConfigs": [],
+        "enums": persistence.allEnums,
+      },
+    ))
   })
 
   Async.it("Should skip initialization when storage is already initialized", async t => {
@@ -136,17 +130,16 @@ describe("Test Persistence layer init", () => {
     let initialState: Persistence.initialState = {
       cleanRun: false,
       chains: [],
-      cache: Js.Dict.empty(),
+      cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
     }
     storageMock.resolveLoadInitialState(initialState)
     let _ = await Promise.resolve()
 
-    t.expect(
-      persistence.storageStatus,
-      ~message=`Storage status should be ready`,
-    ).toEqual(Persistence.Ready(initialState))
+    t.expect(persistence.storageStatus, ~message=`Storage status should be ready`).toEqual(
+      Persistence.Ready(initialState),
+    )
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,

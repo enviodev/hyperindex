@@ -13,14 +13,12 @@ describe("Single or Multiple", () => {
     let normalizedSingle = SingleOrMultiple.normalizeOrThrow(single, ~nestedArrayDepth=2)
     let normalizedMultiple = SingleOrMultiple.normalizeOrThrow(multiple, ~nestedArrayDepth=2)
 
-    t.expect(
-      multiple->Utils.magic,
-      ~message="Multiple should be the same as normalized",
-    ).toEqual(expectedNormalized)
+    t.expect(multiple->Utils.magic, ~message="Multiple should be the same as normalized").toEqual(
+      expectedNormalized,
+    )
     t.expect(normalizedSingle, ~message="Single should be normalized").toEqual(expectedNormalized)
-    t.expect(
-      normalizedMultiple,
-      ~message="Multiple should be normalized",
-    ).toEqual(expectedNormalized)
+    t.expect(normalizedMultiple, ~message="Multiple should be normalized").toEqual(
+      expectedNormalized,
+    )
   })
 })

@@ -103,32 +103,29 @@ let _checkContractRegisterContext = (ctx: Indexer.contractRegisterContext) => {
 
 // 6. indexer.onEvent compiles with proper GADT identity and handler
 let _registerOnEvent = () => {
-  Indexer.indexer.onEvent(
-    {event: NftFactory(SimpleNftCreated)},
-    async ({event, context}) => {
-      // event params are typed for the specific contract+event
-      let _: Address.t = event.params.contractAddress
-      let _: bool = context.isPreload
-    },
-  )
+  Indexer.indexer.onEvent({event: NftFactory(SimpleNftCreated)}, async ({event, context}) => {
+    // event params are typed for the specific contract+event
+    let _: Address.t = event.params.contractAddress
+    let _: bool = context.isPreload
+  })
 }
 
 // 7. indexer.contractRegister compiles and exposes context.chain.ContractName.add()
 let _registerContractRegister = () => {
-  Indexer.indexer.contractRegister(
-    {event: NftFactory(SimpleNftCreated)},
-    async ({event, context}) => {
-      context.chain.\"SimpleNft".add(event.params.contractAddress)
-    },
-  )
+  Indexer.indexer.contractRegister({event: NftFactory(SimpleNftCreated)}, async ({
+    event,
+    context,
+  }) => {
+    context.chain.\"SimpleNft".add(event.params.contractAddress)
+  })
 }
 
 // 8. wildcard option is supported
 let _registerWildcard = () => {
-  Indexer.indexer.onEvent(
-    {event: SimpleNft(Transfer), wildcard: true},
-    async ({event: _, context: _}) => (),
-  )
+  Indexer.indexer.onEvent({event: SimpleNft(Transfer), wildcard: true}, async ({
+    event: _,
+    context: _,
+  }) => ())
 }
 
 // 9. `where` callback returning a single filter condition — typed against

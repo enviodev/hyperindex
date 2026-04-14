@@ -27,7 +27,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
           handler: async ({context}) => {
             context.\"EntityWithTimestamp".set({
               id: "testEntity",
-              timestamp: Js.Date.fromString("1970-01-01T00:02:03.456Z"),
+              timestamp: Date.fromString("1970-01-01T00:02:03.456Z"),
             })
           },
         },
@@ -37,10 +37,10 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     await indexerMock.getBatchWritePromise()
 
     let entities = await indexerMock.query(EntityWithTimestamp)
-    switch entities->Js.Array2.find(e => e.id === "testEntity") {
+    switch entities->Array.find(e => e.id === "testEntity") {
     | Some(entity) =>
-      t.expect(entity.timestamp->Js.Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")
-    | None => Js.Exn.raiseError("Entity should exist")
+      t.expect(entity.timestamp->Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")
+    | None => JsError.throwWithMessage("Entity should exist")
     }
   })
 })
