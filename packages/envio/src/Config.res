@@ -91,6 +91,7 @@ type t = {
 
 module EnvioAddresses = {
   let name = "envio_addresses"
+  let historyTableName = "envio_history_envio_addresses"
 
   @genType
   type t = {
@@ -104,6 +105,7 @@ module EnvioAddresses = {
 
   let getAddress = (entity: t): Address.t => entity.id->Address.unsafeFromString
 
+  // Main table: current state of registered addresses, no checkpoint tracking
   let table = Table.mkTable(
     name,
     ~fields=[
@@ -117,7 +119,30 @@ module EnvioAddresses = {
         ~fieldSchema=S.null(S.int),
       ),
       Table.mkField("contract_name", String, ~fieldSchema=S.string),
-      Table.mkField("envio_checkpoint_id", Table.UInt64, ~isIndex=true, ~fieldSchema=S.bigint),
+    ],
+  )
+
+  // History table: append-only log of address registrations, used for rollback
+  let historyTable = Table.mkTable(
+    historyTableName,
+    ~fields=[
+      Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+      Table.mkField("chain_id", Int32, ~isPrimaryKey=true, ~fieldSchema=S.int),
+      Table.mkField("registering_event_block", Int32, ~fieldSchema=S.int),
+      Table.mkField(
+        "registering_event_log_index",
+        Int32,
+        ~isNullable=true,
+        ~fieldSchema=S.null(S.int),
+      ),
+      Table.mkField("contract_name", String, ~fieldSchema=S.string),
+      Table.mkField(
+        "envio_checkpoint_id",
+        Table.UInt64,
+        ~isPrimaryKey=true,
+        ~isIndex=true,
+        ~fieldSchema=S.bigint,
+      ),
     ],
   )
 }

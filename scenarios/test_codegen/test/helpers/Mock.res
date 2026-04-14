@@ -229,6 +229,15 @@ module Indexer = {
     value: string,
     labels: dict<string>,
   }
+  // Row shape returned by queryAddresses — matches the main envio_addresses
+  // table (no envio_checkpoint_id, which only lives in the history table).
+  type addressRow = {
+    id: string,
+    @as("chain_id") chainId: int,
+    @as("registering_event_block") registeringEventBlock: int,
+    @as("registering_event_log_index") registeringEventLogIndex: option<int>,
+    @as("contract_name") contractName: string,
+  }
   type graphqlResponse<'a> = {data?: {..} as 'a}
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
@@ -236,7 +245,7 @@ module Indexer = {
     query: 'entity. Indexer.Entities.name<'entity> => promise<array<'entity>>,
     queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
-    queryAddresses: unit => promise<array<Config.EnvioAddresses.t>>,
+    queryAddresses: unit => promise<array<addressRow>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": Js.Json.t}>>,
     metric: string => promise<array<metric>>,
@@ -437,7 +446,7 @@ module Indexer = {
           ),
         )
         ->Promise.thenResolve(rows => {
-          let schema: S.t<Config.EnvioAddresses.t> = S.object(
+          let schema: S.t<addressRow> = S.object(
             s =>
               (
                 {
@@ -449,8 +458,7 @@ module Indexer = {
                     S.null(S.int),
                   ),
                   contractName: s.field("contract_name", S.string),
-                  checkpointId: s.field("envio_checkpoint_id", BigInt.schema),
-                }: Config.EnvioAddresses.t
+                }: addressRow
               ),
           )
           rows
