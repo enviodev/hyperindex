@@ -1,9 +1,5 @@
-open Belt
-open Vitest
 
-// A workaround for ReScript v11 issue, where it makes the field optional
-// instead of setting a value to undefined. It's fixed in v12.
-let undefined = (%raw(`undefined`): option<'a>)
+open Vitest
 
 describe("E2E tests", () => {
   Async.it("Currectly starts indexing from a non-zero start block", async t => {
@@ -875,7 +871,7 @@ describe("E2E tests", () => {
     // Check metrics after first window
     let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getExn
     let queueValue2 =
-      queueMetric2->Array.get(0)->Option.map(m => m.value)->Option.getWithDefault("0")
+      queueMetric2->Array.get(0)->Option.map(m => m.value)->Option.getOr("0")
     t.expect(
       queueValue2 != "0" || executionOrder->Array.length == 4,
       ~message=`queue should have items or all should be done, queue: ${queueValue2}, executed: ${executionOrder

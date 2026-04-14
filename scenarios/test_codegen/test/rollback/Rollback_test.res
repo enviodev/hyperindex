@@ -1,9 +1,5 @@
-open Belt
-open Vitest
 
-// A workaround for ReScript v11 issue, where it makes the field optional
-// instead of setting a value to undefined. It's fixed in v12.
-let undefined = (%raw(`undefined`): option<'a>)
+open Vitest
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
@@ -692,7 +688,7 @@ describe("E2E rollback tests", () => {
       ),
     )
     t.expect(
-      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
+      await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<array<InternalTable.EnvioAddresses.t>>),
       ~message="Shouldn't store dynamic contracts at this point",
     ).toEqual(
       [],
@@ -733,20 +729,17 @@ describe("E2E rollback tests", () => {
       ),
     )
     t.expect(
-      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
+      await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
+        array<InternalTable.EnvioAddresses.t>,
+      >),
       ~message="Added the processed dynamic contract to the db",
     ).toEqual(
       [
         {
           id: `1337-${Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
           chainId: 1337,
-          registeringEventBlockNumber: 102,
-          registeringEventLogIndex: 2,
-          registeringEventBlockTimestamp: 102,
-          registeringEventContractName: "MockContract",
-          registeringEventName: "MockEvent",
-          registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-          contractAddress: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+          registrationBlock: 102,
+          registrationLogIndex: 2,
           contractName: "SimpleNft",
         },
       ],
@@ -755,7 +748,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
     await indexerMock.getBatchWritePromise()
     t.expect(
-      (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<array<InternalTable.EnvioAddresses.t>>))->Array.length,
       ~message="Should add the processed dynamic contracts to the db",
     ).toEqual(
       2,
@@ -818,7 +811,7 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     t.expect(
-      (await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>))->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<array<InternalTable.EnvioAddresses.t>>))->Array.length,
       ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
 This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual(
@@ -840,20 +833,17 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await (indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<array<InternalTable.DynamicContractRegistry.t>>),
+      await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
+        array<InternalTable.EnvioAddresses.t>,
+      >),
       ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
     ).toEqual(
       [
         {
           id: `1337-${Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
           chainId: 1337,
-          registeringEventBlockNumber: 102,
-          registeringEventLogIndex: 2,
-          registeringEventBlockTimestamp: 102,
-          registeringEventContractName: "MockContract",
-          registeringEventName: "MockEvent",
-          registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-          contractAddress: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+          registrationBlock: 102,
+          registrationLogIndex: 2,
           contractName: "SimpleNft",
         },
       ],
@@ -2524,8 +2514,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: event counters should NOT be negative",
@@ -2678,8 +2668,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After first rollback: all chains' counters should be 0",
@@ -2717,8 +2707,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: non-reorg chains (100, 137) must NOT go negative",

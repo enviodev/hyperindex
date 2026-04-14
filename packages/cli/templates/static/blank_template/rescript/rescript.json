@@ -15,5 +15,8 @@
     "version": 4
   },
   "suffix": ".res.mjs",
-  "bs-dependencies": ["generated", "envio", "rescript-schema"]
+  "bs-dependencies": ["generated", "envio", "rescript-schema"],
+  "warnings": {
+    "number": "-3"
+  }
 }

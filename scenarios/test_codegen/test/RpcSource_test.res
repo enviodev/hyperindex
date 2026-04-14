@@ -743,7 +743,7 @@ describe("RpcSource - fieldRegistry completeness", () => {
 
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
-  let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]
+  let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
@@ -876,7 +876,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
 
   it("Should handle retry with the range", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -909,7 +909,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Shouldn't retry on height not available", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -933,7 +933,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should retry on block range too large", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         code: 'UNKNOWN_ERROR',
         error: {
@@ -949,7 +949,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should ignore invalid range errors where toBlock is less than fromBlock", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -982,7 +982,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should handle block range limit from https://1rpc.io/eth", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -1014,7 +1014,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should handle block range limit from Alchemy", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {

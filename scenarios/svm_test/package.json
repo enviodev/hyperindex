@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "res:clean": "rescript clean",
-    "res:build": "rescript",
-    "res:watch": "rescript -w",
+    "res:clean": "rescript-legacy clean",
+    "res:build": "rescript-legacy",
+    "res:watch": "rescript-legacy -w",
     "codegen": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- codegen",
     "dev": "cargo run --manifest-path ../../packages/cli/Cargo.toml -- dev",
-    "test": "rescript && tsc --noEmit && vitest run",
+    "test": "rescript-legacy && tsc --noEmit && vitest run",
     "start": "envio start"
   },
   "devDependencies": {
@@ -18,8 +18,8 @@
   },
   "dependencies": {
     "envio": "file:../../packages/envio",
-    "rescript-schema": "9.3.4",
-    "rescript": "11.1.3"
+    "rescript-schema": "9.5.1",
+    "rescript": "12.2.0"
   },
   "optionalDependencies": {
     "generated": "./generated"

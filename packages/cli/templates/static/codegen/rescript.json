@@ -27,5 +27,8 @@
   "bsc-flags": ["-open RescriptSchema"],
   "jsx": {
     "version": 4
+  },
+  "warnings": {
+    "number": "-3"
   }
 }

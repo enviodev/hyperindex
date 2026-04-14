@@ -22,8 +22,8 @@ let subscribeRequestJson =
     "id": int,
     "method": string,
     "params": array<string>,
-  } => Js.Json.t)
-  ->Js.Json.serializeExn
+  } => JSON.t)
+  ->JSON.stringify
 
 let wsMessageSchema = S.union([
   S.object(s => {
@@ -57,12 +57,12 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let wsRef: ref<option<WebSocket.t>> = ref(None)
   let isUnsubscribed = ref(false)
   let errorCount = ref(0)
-  let staleTimeoutId: ref<option<Js.Global.timeoutId>> = ref(None)
+  let staleTimeoutId: ref<option<timeoutId>> = ref(None)
 
   let clearStaleTimeout = () => {
     switch staleTimeoutId.contents {
     | Some(id) =>
-      Js.Global.clearTimeout(id)
+      clearTimeout(id)
       staleTimeoutId := None
     | None => ()
     }
@@ -70,7 +70,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
 
   let resetStaleTimeout = () => {
     clearStaleTimeout()
-    staleTimeoutId := Some(Js.Global.setTimeout(() => {
+    staleTimeoutId := Some(setTimeout(() => {
           // Connection went stale - close to trigger reconnect
           switch wsRef.contents {
           | Some(ws) => ws->WebSocket.close
@@ -82,9 +82,8 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let rec scheduleReconnect = () => {
     if !isUnsubscribed.contents && errorCount.contents < retryCount {
       let duration =
-        baseDuration *
-        Js.Math.pow_float(~base=2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
-      let _ = Js.Global.setTimeout(() => {
+        baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Belt.Int.toFloat)->Belt.Float.toInt
+      let _ = setTimeout(() => {
         if !isUnsubscribed.contents {
           startConnection()
         }
@@ -105,7 +104,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
 
       ws->WebSocket.onmessage(event => {
         try {
-          switch event.data->Js.Json.parseExn->S.parseOrThrow(wsMessageSchema) {
+          switch event.data->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema) {
           | NewHead(blockNumber) =>
             errorCount := 0
             resetStaleTimeout()
@@ -132,7 +131,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
             "chainId": chainId,
             "data": event.data,
           })
-        | Js.Exn.Error(_) as e =>
+        | JsExn(_) as e =>
           Logging.warn({
             "msg": "WebSocket height stream failed to parse message",
             "chainId": chainId,
@@ -146,7 +145,7 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
             "err": e->Utils.prettifyExn,
             "data": event.data,
           })
-          raise(e)
+          throw(e)
         }
       })
 

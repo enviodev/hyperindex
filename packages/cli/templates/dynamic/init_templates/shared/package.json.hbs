@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
   {{#if is_rescript}}
-    "clean": "rescript clean",
-    "build": "rescript",
-    "watch": "rescript -w",
+    "clean": "rescript-legacy clean",
+    "build": "rescript-legacy",
+    "watch": "rescript-legacy -w",
   {{/if}}
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
@@ -15,7 +15,8 @@
   },
   "devDependencies": {
   {{#if is_rescript}}
-    "rescript": "11.1.3",
+    "rescript": "12.2.0",
+    "@rescript/runtime": "12.2.0",
   {{/if}}
   {{#if is_typescript}}
     "@types/node": "^24.10.1",

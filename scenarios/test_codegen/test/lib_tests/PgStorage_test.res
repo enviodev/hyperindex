@@ -817,13 +817,16 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
 "progress_block" as "progressBlockNumber",
 "source_block" as "sourceBlockNumber",
 (
+  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
+  -- Config.EnvioAddresses.makeId; extract the address by taking everything
+  -- after the first '-'. Keep in sync with makeId / getAddress.
   SELECT COALESCE(json_agg(json_build_object(
-    'address', "contract_address",
+    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', "registering_event_block_number",
-    'registrationBlock', "registering_event_block_number"
+    'startBlock', "registration_block",
+    'registrationBlock', "registration_block"
   )), '[]'::json)
-  FROM "test_schema"."dynamic_contract_registry"
+  FROM "test_schema"."envio_addresses"
   WHERE "chain_id" = chains."id"
 ) as "dynamicContracts"
 FROM "test_schema"."envio_chains" as chains;`

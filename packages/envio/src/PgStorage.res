@@ -26,8 +26,10 @@ let makeClient = () => {
 }
 
 let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
-  let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
-  let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
+  let indexName = tableName ++ "_" ++ indexFields->Array.joinUnsafe("_")
+
+  // Case for indexer before envio@2.28
+  let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
@@ -52,17 +54,16 @@ let makeCreateCompositeIndexQuery = (
     tableName ++
     "_" ++
     indexFields
-    ->Js.Array2.map(f => f.fieldName ++ directionToIndexName(f.direction))
-    ->Js.Array2.joinWith("_")
+    ->Array.map(f => f.fieldName ++ directionToIndexName(f.direction))
+    ->Array.joinUnsafe("_")
   let index =
     indexFields
     ->Belt.Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
-    ->Js.Array2.joinWith(", ")
+    ->Array.joinUnsafe(", ")
   `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
 }
 
 let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
-  open Belt
   let tableName = table.tableName
   let createIndex = indexField =>
     makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
@@ -73,12 +74,11 @@ let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
   let singleIndices = table->Table.getSingleIndices
   let compositeIndices = table->Table.getCompositeIndices
 
-  singleIndices->Array.map(createIndex)->Js.Array2.joinWith("\n") ++
-    compositeIndices->Array.map(createCompositeIndex)->Js.Array2.joinWith("\n")
+  singleIndices->Array.map(createIndex)->Array.joinUnsafe("\n") ++
+    compositeIndices->Array.map(createCompositeIndex)->Array.joinUnsafe("\n")
 }
 
 let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText) => {
-  open Belt
   let fieldsMapped =
     table
     ->Table.getFields
@@ -99,13 +99,10 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
           }}`
       }
     })
-    ->Js.Array2.joinWith(", ")
+    ->Array.joinUnsafe(", ")
 
   let primaryKeyFieldNames = table->Table.getPrimaryKeyFieldNames
-  let primaryKey =
-    primaryKeyFieldNames
-    ->Array.map(field => `"${field}"`)
-    ->Js.Array2.joinWith(", ")
+  let primaryKey = primaryKeyFieldNames->Array.map(field => `"${field}"`)->Array.joinUnsafe(", ")
 
   `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
@@ -198,10 +195,10 @@ let makeInitializeTransaction = (
 
   let allTables = generalTables->Array.copy
   let allEntityTables = []
-  entities->Js.Array2.forEach((entityConfig: Internal.entityConfig) => {
-    allEntityTables->Js.Array2.push(entityConfig.table)->ignore
-    allTables->Js.Array2.push(entityConfig.table)->ignore
-    allTables->Js.Array2.push(getEntityHistory(~entityConfig).table)->ignore
+  entities->Array.forEach((entityConfig: Internal.entityConfig) => {
+    allEntityTables->Array.push(entityConfig.table)->ignore
+    allTables->Array.push(entityConfig.table)->ignore
+    allTables->Array.push(getEntityHistory(~entityConfig).table)->ignore
   })
   let derivedSchema = Schema.make(allEntityTables)
 
@@ -221,17 +218,16 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   )
 
   // Optimized enum creation - direct when cleanRun, conditional otherwise
-  enums->Js.Array2.forEach((enumConfig: Table.enumConfig<Table.enum>) => {
-    // Create base enum creation query once
+  enums->Array.forEach((enumConfig: Table.enumConfig<Table.enum>) => {
     let enumCreateQuery = `CREATE TYPE "${pgSchema}".${enumConfig.name} AS ENUM(${enumConfig.variants
-      ->Js.Array2.map(v => `'${v->(Utils.magic: Table.enum => string)}'`)
-      ->Js.Array2.joinWith(", ")});`
+      ->Array.map(v => `'${v->(Utils.magic: Table.enum => string)}'`)
+      ->Array.joinUnsafe(", ")});`
 
     query := query.contents ++ "\n" ++ enumCreateQuery
   })
 
   // Batch all table creation first (optimal for PostgreSQL)
-  allTables->Js.Array2.forEach((table: Table.table) => {
+  allTables->Array.forEach((table: Table.table) => {
     query :=
       query.contents ++
       "\n" ++
@@ -239,7 +235,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   })
 
   // Then batch all indices (better performance when tables exist)
-  allTables->Js.Array2.forEach((table: Table.table) => {
+  allTables->Array.forEach((table: Table.table) => {
     let indices = makeCreateTableIndicesQuery(table, ~pgSchema)
     if indices !== "" {
       query := query.contents ++ "\n" ++ indices
@@ -247,10 +243,10 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   })
 
   // Add derived indices
-  entities->Js.Array2.forEach((entity: Internal.entityConfig) => {
+  entities->Array.forEach((entity: Internal.entityConfig) => {
     entity.table
     ->Table.getDerivedFromFields
-    ->Js.Array2.forEach(derivedFromField => {
+    ->Array.forEach(derivedFromField => {
       let indexField =
         derivedSchema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
       query :=
@@ -318,26 +314,26 @@ let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~is
 
   let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
 
-  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Js.Array2.joinWith(", ")})
+  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
 SELECT * FROM unnest(${arrayFieldTypes
-    ->Js.Array2.mapi((arrayFieldType, idx) => {
-      `$${(idx + 1)->Js.Int.toString}::${arrayFieldType}`
+    ->Array.mapWithIndex((arrayFieldType, idx) => {
+      `$${(idx + 1)->Int.toString}::${arrayFieldType}`
     })
-    ->Js.Array2.joinWith(",")})` ++
+    ->Array.joinUnsafe(",")})` ++
   switch (isRawEvents, primaryKeyFieldNames) {
   | (true, _)
   | (_, []) => ``
   | (false, primaryKeyFieldNames) =>
     `ON CONFLICT(${primaryKeyFieldNames
-      ->Js.Array2.map(fieldName => `"${fieldName}"`)
-      ->Js.Array2.joinWith(",")}) DO ` ++ (
+      ->Array.map(fieldName => `"${fieldName}"`)
+      ->Array.joinUnsafe(",")}) DO ` ++ (
       quotedNonPrimaryFieldNames->Utils.Array.isEmpty
         ? `NOTHING`
         : `UPDATE SET ${quotedNonPrimaryFieldNames
-            ->Js.Array2.map(fieldName => {
+            ->Array.map(fieldName => {
               `${fieldName} = EXCLUDED.${fieldName}`
             })
-            ->Js.Array2.joinWith(",")}`
+            ->Array.joinUnsafe(",")}`
     )
   } ++ ";"
 }
@@ -360,26 +356,26 @@ let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~it
       if fieldIdx > 0 {
         placeholders := placeholders.contents ++ ","
       }
-      placeholders := placeholders.contents ++ `$${(fieldIdx * itemsCount + idx)->Js.Int.toString}`
+      placeholders := placeholders.contents ++ `$${(fieldIdx * itemsCount + idx)->Int.toString}`
     }
     placeholders := placeholders.contents ++ ")"
   }
 
-  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Js.Array2.joinWith(", ")})
+  `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
 VALUES${placeholders.contents}` ++
   switch primaryKeyFieldNames {
   | [] => ``
   | primaryKeyFieldNames =>
     `ON CONFLICT(${primaryKeyFieldNames
-      ->Js.Array2.map(fieldName => `"${fieldName}"`)
-      ->Js.Array2.joinWith(",")}) DO ` ++ (
+      ->Array.map(fieldName => `"${fieldName}"`)
+      ->Array.joinUnsafe(",")}) DO ` ++ (
       quotedNonPrimaryFieldNames->Utils.Array.isEmpty
         ? `NOTHING`
         : `UPDATE SET ${quotedNonPrimaryFieldNames
-            ->Js.Array2.map(fieldName => {
+            ->Array.map(fieldName => {
               `${fieldName} = EXCLUDED.${fieldName}`
             })
-            ->Js.Array2.joinWith(",")}`
+            ->Array.joinUnsafe(",")}`
     )
   } ++ ";"
 }
@@ -401,7 +397,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
   // Currently history update table uses S.object with transformation for schema,
   // which is being lossed during conversion to dbSchema.
   // So use simple insert values for now.
-  let isHistoryUpdate = table.tableName->Js.String2.startsWith(EntityHistory.historyTablePrefix)
+  let isHistoryUpdate = table.tableName->String.startsWith(EntityHistory.historyTablePrefix)
 
   // Should experiment how much it'll affect performance
   // Although, it should be fine not to perform the validation check,
@@ -450,27 +446,21 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   let chunks = []
   let i = ref(0)
   while i.contents < arr->Array.length {
-    let chunk = arr->Js.Array2.slice(~start=i.contents, ~end_=i.contents + chunkSize)
-    chunks->Js.Array2.push(chunk)->ignore
+    let chunk = arr->Array.slice(~start=i.contents, ~end=i.contents + chunkSize)
+    chunks->Array.push(chunk)->ignore
     i := i.contents + chunkSize
   }
   chunks
 }
 
 let removeInvalidUtf8InPlace = entities =>
-  entities->Js.Array2.forEach(item => {
+  entities->Array.forEach(item => {
     let dict = item->(Utils.magic: 'a => dict<unknown>)
     dict->Utils.Dict.forEachWithKey((value, key) => {
-      if value->Js.typeof === "string" {
+      if value->typeof === #string {
         let value = value->(Utils.magic: unknown => string)
-        // We mutate here, since we don't care
-        // about the original value with \x00 anyways.
-        //
-        // This is unsafe, but we rely that it'll use
-        // the mutated reference on retry.
-        // TODO: Test it properly after we start using
-        // real pg for indexer test framework.
-        dict->Js.Dict.set(
+
+        dict->Dict.set(
           key,
           value
           ->Utils.String.replaceAll("\x00", "")
@@ -508,7 +498,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       if data["isInsertValues"] {
         let chunks = chunkArray(items, ~chunkSize=maxItemsPerQuery)
         let responses = []
-        chunks->Js.Array2.forEach(chunk => {
+        chunks->Array.forEach(chunk => {
           let chunkSize = chunk->Array.length
           let isFullChunk = chunkSize === maxItemsPerQuery
 
@@ -521,7 +511,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
                 makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
                 params,
               )
-          responses->Js.Array2.push(response)->ignore
+          responses->Array.push(response)->ignore
         })
         let _ = await Promise.all(responses)
       } else {
@@ -533,14 +523,14 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
       }
     } catch {
     | S.Raised(_) as exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed to convert items for table "${table.tableName}"`,
           reason: exn,
         }),
       )
     | exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed to insert items into table "${table.tableName}"`,
           reason: exn->Utils.prettifyExn,
@@ -613,7 +603,7 @@ let getConnectedPsqlExec = {
                     | Null =>
                       resolve(
                         Ok(
-                          `${binary} -h ${pgHost} -p ${pgDockerServicePort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                          `${binary} -h ${pgHost} -p ${pgDockerServicePort->Int.toString} -U ${pgUser} -d ${pgDatabase}`,
                         ),
                       )
                     }
@@ -623,7 +613,7 @@ let getConnectedPsqlExec = {
             | Null =>
               resolve(
                 Ok(
-                  `${binary} -h ${pgHost} -p ${pgPort->Js.Int.toString} -U ${pgUser} -d ${pgDatabase}`,
+                  `${binary} -h ${pgHost} -p ${pgPort->Int.toString} -U ${pgUser} -d ${pgDatabase}`,
                 ),
               )
             }
@@ -657,7 +647,7 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
     }
   ) {
   | exception exn =>
-    raise(
+    throw(
       Persistence.StorageError({
         message: `Failed deleting "${table.tableName}" from storage by ids`,
         reason: exn,
@@ -680,11 +670,11 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
     | DerivedFrom(_) => None
     }
   )
-  allHistoryFieldNames->Js.Array2.push(EntityHistory.checkpointIdFieldName)->ignore
-  allHistoryFieldNames->Js.Array2.push(EntityHistory.changeFieldName)->ignore
+  allHistoryFieldNames->Array.push(EntityHistory.checkpointIdFieldName)->ignore
+  allHistoryFieldNames->Array.push(EntityHistory.changeFieldName)->ignore
 
   let allHistoryFieldNamesStr =
-    allHistoryFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
+    allHistoryFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
   let selectParts = allHistoryFieldNames->Belt.Array.map(fieldName => {
@@ -697,7 +687,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
     | _ => "NULL"
     }
   })
-  let selectPartsStr = selectParts->Js.Array2.joinWith(", ")
+  let selectPartsStr = selectParts->Array.joinUnsafe(", ")
 
   // Get the PostgreSQL type for the checkpoint ID field
   let checkpointIdPgType = Table.getPgFieldType(
@@ -762,7 +752,7 @@ let rec writeBatch = async (
       let entitiesToSet = []
       let idsToDelete = []
 
-      updates->Js.Array2.forEach(row => {
+      updates->Array.forEach(row => {
         switch row {
         | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
         | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
@@ -785,15 +775,12 @@ let rec writeBatch = async (
             let batchDeleteCheckpointIds = []
             let batchDeleteEntityIds = []
 
-            updates->Js.Array2.forEach(update => {
+            updates->Array.forEach(update => {
               switch update {
               | {history, containsRollbackDiffChange} =>
-                history->Js.Array2.forEach(
+                history->Array.forEach(
                   (change: Change.t<'a>) => {
                     if !containsRollbackDiffChange {
-                      // For every update we want to make sure that there's an existing history item
-                      // with the current entity state. So we backfill history with checkpoint id 0,
-                      // before writing updates. Don't do this if the update has a rollback diff change.
                       backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
                     }
                     switch change {
@@ -803,7 +790,7 @@ let rec writeBatch = async (
                         ->Belt.Array.push(change->Change.getCheckpointId)
                         ->ignore
                       }
-                    | Set(_) => batchSetUpdates->Js.Array2.push(change)->ignore
+                    | Set(_) => batchSetUpdates->Array.push(change)->ignore
                     }
                   },
                 )
@@ -828,19 +815,19 @@ let rec writeBatch = async (
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
                   (
                     batchDeleteEntityIds,
-                    batchDeleteCheckpointIds->BigInt.arrayToStringArray,
+                    batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
                   )->Obj.magic,
                 )
-                ->Promise.ignoreValue,
+                ->Utils.Promise.ignoreValue,
               )
             }
 
             if batchSetUpdates->Utils.Array.notEmpty {
               if shouldRemoveInvalidUtf8 {
-                let entities = batchSetUpdates->Js.Array2.map(batchSetUpdate => {
+                let entities = batchSetUpdates->Array.map(batchSetUpdate => {
                   switch batchSetUpdate {
                   | Set({entity}) => entity
-                  | _ => Js.Exn.raiseError("Expected Set action")
+                  | _ => JsError.throwWithMessage("Expected Set action")
                   }
                 })
                 entities->removeInvalidUtf8InPlace
@@ -849,7 +836,7 @@ let rec writeBatch = async (
               let entityHistory = getEntityHistory(~entityConfig)
 
               promises
-              ->Js.Array2.push(
+              ->Array.push(
                 sql->setOrThrow(
                   ~items=batchSetUpdates,
                   ~itemSchema=entityHistory.setChangeSchema,
@@ -889,13 +876,13 @@ let rec writeBatch = async (
         | exn => {
             /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
             let normalizedExn = switch exn {
-            | JsError(_) => exn
+            | JsExn(_) => exn
             | Persistence.StorageError({reason: exn}) => exn
             | _ => exn
-            }->Js.Exn.anyToExnInternal
+            }->JsExn.anyToExnInternal
 
             switch normalizedExn {
-            | JsError(error) =>
+            | JsExn(error) =>
               // Workaround for https://github.com/enviodev/hyperindex/issues/446
               // We do escaping only when we actually got an error writing for the first time.
               // This is not perfect, but an optimization to avoid escaping for every single item.
@@ -913,7 +900,7 @@ let rec writeBatch = async (
               | _ => specificError.contents = Some(exn->Utils.prettifyExn)
               | exception _ => ()
               }
-            | S.Raised(_) => raise(normalizedExn) // But rethrow this one, since it's not a PG error
+            | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
             | _ => ()
             }
 
@@ -933,7 +920,7 @@ let rec writeBatch = async (
     | Some(rollbackTargetCheckpointId) =>
       Some(
         sql => {
-          let promises = allEntities->Js.Array2.map(entityConfig => {
+          let promises = allEntities->Array.map(entityConfig => {
             sql->EntityHistory.rollback(
               ~pgSchema,
               ~entityName=entityConfig.name,
@@ -942,7 +929,7 @@ let rec writeBatch = async (
             )
           })
           promises
-          ->Js.Array2.push(
+          ->Array.push(
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
           )
           ->ignore
@@ -994,12 +981,12 @@ let rec writeBatch = async (
           await setOperations
           ->Belt.Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
-          ->Promise.ignoreValue
+          ->Utils.Promise.ignoreValue
 
           switch sinkPromise {
           | Some(sinkPromise) =>
             switch await sinkPromise {
-            | Some(exn) => raise(exn)
+            | Some(exn) => throw(exn)
             | None => ()
             }
           | None => ()
@@ -1016,12 +1003,12 @@ let rec writeBatch = async (
 
       // Just in case, if there's a not PG-specific error.
       switch specificError.contents {
-      | Some(specificError) => raise(specificError)
+      | Some(specificError) => throw(specificError)
       | None => ()
       }
     } catch {
     | exn =>
-      raise(
+      throw(
         switch specificError.contents {
         | Some(specificError) => specificError
         | None => exn
@@ -1065,7 +1052,7 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
   )
 
   let dataFieldsCommaSeparated =
-    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Js.Array2.joinWith(", ")
+    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
@@ -1118,7 +1105,7 @@ let make = (
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
   let psqlExecOptions: NodeJs.ChildProcess.execOptions = {
-    env: Js.Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
+    env: Dict.fromArray([("PGPASSWORD", pgPassword), ("PATH", %raw(`process.env.PATH`))]),
   }
 
   let cacheDirPath = NodeJs.Path.resolve([
@@ -1147,14 +1134,14 @@ let make = (
         getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName),
       )) {
       | (Ok(entries), Ok(psqlExec)) => {
-          let cacheFiles = entries->Js.Array2.filter(entry => {
-            entry->Js.String2.endsWith(".tsv")
+          let cacheFiles = entries->Array.filter(entry => {
+            entry->String.endsWith(".tsv")
           })
 
           let _ =
             await cacheFiles
-            ->Js.Array2.map(entry => {
-              let effectName = entry->Js.String2.slice(~from=0, ~to_=-4) // Remove .tsv extension
+            ->Array.map(entry => {
+              let effectName = entry->String.slice(~start=0, ~end=-4)
               let table = Internal.makeCacheTable(~effectName)
 
               sql
@@ -1202,7 +1189,7 @@ let make = (
       switch onNewTables {
       | Some(onNewTables) =>
         await onNewTables(
-          ~tableNames=cacheTableInfo->Js.Array2.map(info => {
+          ~tableNames=cacheTableInfo->Array.map(info => {
             info.tableName
           }),
         )
@@ -1210,10 +1197,10 @@ let make = (
       }
     }
 
-    let cache = Js.Dict.empty()
-    cacheTableInfo->Js.Array2.forEach(({tableName, count}) => {
-      let effectName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
-      cache->Js.Dict.set(effectName, ({effectName, count}: Persistence.effectCacheRecord))
+    let cache = Dict.make()
+    cacheTableInfo->Array.forEach(({tableName, count}) => {
+      let effectName = tableName->String.slice(~start=cacheTablePrefixLength)
+      cache->Dict.set(effectName, ({effectName, count}: Persistence.effectCacheRecord))
     })
     cache
   }
@@ -1232,14 +1219,13 @@ let make = (
         // Otherwise should throw if there's a table, but no envio specific one
         // This means that the schema is used for something else than envio.
         !(
-          schemaTableNames->Js.Array2.some(table =>
+          schemaTableNames->Array.some(table =>
             table.tableName === InternalTable.Chains.table.tableName ||
-              // Case for indexer before envio@2.28
               table.tableName === "event_sync_state"
           )
         )
     ) {
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Cannot run Envio migrations on PostgreSQL schema "${pgSchema}" because it contains non-Envio tables. Running migrations would delete all data in this schema.\n\nTo resolve this:\n1. If you want to use this schema, first backup any important data, then drop it with: "pnpm envio local db-migrate down"\n2. Or specify a different schema name by setting the "ENVIO_PG_SCHEMA" environment variable\n3. Or manually drop the schema in your database if you're certain the data is not needed.`,
       )
     }
@@ -1263,7 +1249,7 @@ let make = (
     let _ = await sql->Postgres.beginSql(sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
-      Promise.all(queries->Js.Array2.map(query => sql->Postgres.unsafe(query)))
+      Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
     })
 
     let cache = await restoreEffectCache(~withUpload=true)
@@ -1278,7 +1264,7 @@ let make = (
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
-      chains: chainConfigs->Js.Array2.map((chainConfig): Persistence.initialChainState => {
+      chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
         endBlock: chainConfig.endBlock,
@@ -1310,7 +1296,7 @@ let make = (
       }
     ) {
     | exception exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed loading "${table.tableName}" from storage by ids`,
           reason: exn,
@@ -1319,7 +1305,7 @@ let make = (
     | rows =>
       try rows->S.parseOrThrow(rowsSchema) catch {
       | exn =>
-        raise(
+        throw(
           Persistence.StorageError({
             message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
             reason: exn,
@@ -1339,7 +1325,7 @@ let make = (
   ) => {
     let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Obj.magic catch {
     | exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
           reason: exn,
@@ -1356,7 +1342,7 @@ let make = (
       params,
     ) {
     | exception exn =>
-      raise(
+      throw(
         Persistence.StorageError({
           message: `Failed loading "${table.tableName}" from storage by field "${fieldName}"`,
           reason: exn,
@@ -1365,7 +1351,7 @@ let make = (
     | rows =>
       try rows->S.parseOrThrow(rowsSchema) catch {
       | exn =>
-        raise(
+        throw(
           Persistence.StorageError({
             message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
             reason: exn,
@@ -1417,7 +1403,7 @@ let make = (
       let cacheTableInfo: array<schemaCacheTableInfo> =
         (await sql
         ->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))
-        ->Js.Array2.filter(i => i.count > 0)
+        ->Array.filter(i => i.count > 0)
 
       if cacheTableInfo->Utils.Array.notEmpty {
         // Create .envio/cache directory if it doesn't exist
@@ -1436,14 +1422,14 @@ let make = (
         | Ok(psqlExec) => {
             Logging.info(
               `Dumping cache: ${cacheTableInfo
-                ->Js.Array2.map(({tableName, count}) =>
+                ->Array.map(({tableName, count}) =>
                   tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
                 )
-                ->Js.Array2.joinWith(", ")}`,
+                ->Array.joinUnsafe(", ")}`,
             )
 
-            let promises = cacheTableInfo->Js.Array2.map(async ({tableName}) => {
-              let cacheName = tableName->Js.String2.sliceToEnd(~from=cacheTablePrefixLength)
+            let promises = cacheTableInfo->Array.map(async ({tableName}) => {
+              let cacheName = tableName->String.slice(~start=cacheTablePrefixLength)
               let outputFile =
                 NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
 
@@ -1484,10 +1470,10 @@ let make = (
         rawInitialStates->Belt.Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
           startBlock: rawInitialState.startBlock,
-          endBlock: rawInitialState.endBlock->Js.Null.toOption,
+          endBlock: rawInitialState.endBlock->Null.toOption,
           maxReorgDepth: rawInitialState.maxReorgDepth,
-          firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Js.Null.toOption,
-          timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Js.Null.toOption,
+          firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Null.toOption,
+          timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
           numEventsProcessed: rawInitialState.numEventsProcessed,
           progressBlockNumber: rawInitialState.progressBlockNumber,
           dynamicContracts: rawInitialState.dynamicContracts,
@@ -1511,11 +1497,11 @@ let make = (
       ),
     ))
 
-    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringUnsafe
+    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
 
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
-      checkpointId: raw["id"]->BigInt.fromStringUnsafe,
+      checkpointId: raw["id"]->BigInt.fromStringOrThrow,
       chainId: raw["chain_id"],
       blockNumber: raw["block_number"],
       blockHash: raw["block_hash"],
@@ -1538,7 +1524,7 @@ let make = (
 
   let reset = async () => {
     let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
-    await sql->Postgres.unsafe(query)->Promise.ignoreValue
+    await sql->Postgres.unsafe(query)->Utils.Promise.ignoreValue
   }
 
   let setChainMeta = chainsData =>
@@ -1615,7 +1601,7 @@ let make = (
             None
           })
           // Otherwise it fails with unhandled exception
-          ->Promise.catchResolve(exn => Some(exn)),
+          ->Utils.Promise.catchResolve(exn => Some(exn)),
         )
       }
     | None => None
