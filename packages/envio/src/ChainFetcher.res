@@ -1,4 +1,4 @@
-open Belt
+
 
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
@@ -152,14 +152,14 @@ let make = (
     // TODO: Move it to the HandlerRegister module
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
-      if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
+      if onBlockConfig.startBlock->Option.getOr(startBlock) < startBlock {
         Js.Exn.raiseError(
           `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
         )
       }
       switch endBlock {
       | Some(chainEndBlock) =>
-        if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
+        if onBlockConfig.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
           Js.Exn.raiseError(
             `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
           )
@@ -189,7 +189,7 @@ let make = (
     ~firstEventBlock,
   )
 
-  let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
+  let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
     if reorgCheckpoint.chainId === chainConfig.id {
       Some(reorgCheckpoint)
     } else {

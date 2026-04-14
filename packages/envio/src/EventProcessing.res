@@ -1,4 +1,4 @@
-open Belt
+
 
 let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
   chainFetchers

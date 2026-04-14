@@ -1,4 +1,4 @@
-open Belt
+
 
 type contractConfig = {filterByAddresses: bool}
 
@@ -1702,7 +1702,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
         let rollbackedAddressesByContractName = Js.Dict.empty()
         addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
           let keptAddresses =
-            addresses->Array.keep(address => !(addressesToRemove->Utils.Set.has(address)))
+            addresses->Array.filter(address => !(addressesToRemove->Utils.Set.has(address)))
           if keptAddresses->Array.length > 0 {
             rollbackedAddressesByContractName->Js.Dict.set(contractName, keptAddresses)
           }
@@ -1748,7 +1748,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   }->updateInternal(
     ~optimizedPartitions,
     ~indexingContracts,
-    ~mutItems=fetchState.buffer->Array.keep(item =>
+    ~mutItems=fetchState.buffer->Array.filter(item =>
       switch item {
       | Event({blockNumber})
       | Block({blockNumber}) => blockNumber
@@ -1770,7 +1770,7 @@ let resetPendingQueries = (fetchState: t) => {
 
     if partition.mutPendingQueries->Array.length > 0 {
       // Keep only completed queries (with fetchedBlock)
-      let kept = partition.mutPendingQueries->Array.keep(pq => pq.fetchedBlock !== None)
+      let kept = partition.mutPendingQueries->Array.filter(pq => pq.fetchedBlock !== None)
       newEntities->Js.Dict.set(partitionId, {...partition, mutPendingQueries: kept})
     }
   }

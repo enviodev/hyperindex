@@ -1,4 +1,4 @@
-open Belt
+
 
 //Manage clients in cache so we don't need to reinstantiate each time
 //Ideally client should be passed in as a param to the functions but
@@ -163,7 +163,7 @@ module GetLogs = {
     let page: logsQueryPage = {
       items: res.data->decodeLogQueryPageItems,
       nextBlock,
-      archiveHeight: archiveHeight->Option.getWithDefault(0), // TODO: FIXME: Shouldn't have a default here
+      archiveHeight: archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
     }
     page
   }

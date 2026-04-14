@@ -1,4 +1,4 @@
-open Belt
+
 
 type evmChainConfig = {
   startBlock?: int,
@@ -55,7 +55,7 @@ let handleLoadByIds = (
   ~tableName: string,
   ~ids: array<string>,
 ): Js.Json.t => {
-  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
+  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getOr(Js.Dict.empty())
   let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(tableName)
   let results = []
   ids->Array.forEach(id => {
@@ -77,7 +77,7 @@ let handleLoadByField = (
   ~fieldValue: Js.Json.t,
   ~operator: Persistence.operator,
 ): Js.Json.t => {
-  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getWithDefault(Js.Dict.empty())
+  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getOr(Js.Dict.empty())
   let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(tableName)
   let results = []
 
@@ -267,7 +267,7 @@ let makeInitialState = (
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Js.Dict.keys
   let chains = chainKeys->Array.map(chainIdStr => {
-    let chainId = chainIdStr->Int.fromString->Option.getWithDefault(0)
+    let chainId = chainIdStr->Int.fromString->Option.getOr(0)
     let chain = ChainMap.Chain.makeUnsafe(~chainId)
 
     if !(config.chainMap->ChainMap.has(chain)) {
@@ -278,12 +278,12 @@ let makeInitialState = (
     let dynamicContracts =
       dynamicContractsByChain
       ->Js.Dict.get(chainIdStr)
-      ->Option.getWithDefault([])
+      ->Option.getOr([])
     {
       Persistence.id: chainId,
       startBlock: processChainConfig.startBlock,
       endBlock: processChainConfig.endBlock,
-      sourceBlockNumber: processChainConfig.endBlock->Option.getWithDefault(0),
+      sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
       maxReorgDepth: 0, // No reorg support in test indexer
       progressBlockNumber: -1,
       numEventsProcessed: 0.,
@@ -431,7 +431,7 @@ let getEntityFromState = (
     )
   }
   let entityDict =
-    state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
+    state.entities->Js.Dict.get(entityConfig.name)->Option.getOr(Js.Dict.empty())
   entityDict->Js.Dict.get(entityId)
 }
 
@@ -489,7 +489,7 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
       )
     }
     let entityDict =
-      state.entities->Js.Dict.get(entityConfig.name)->Option.getWithDefault(Js.Dict.empty())
+      state.entities->Js.Dict.get(entityConfig.name)->Option.getOr(Js.Dict.empty())
     Promise.resolve(entityDict->Js.Dict.values)
   }
 }
@@ -670,8 +670,8 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             chainKeys
             ->Array.copy
             ->Js.Array2.sortInPlaceWith((a, b) => {
-              let aId = a->Int.fromString->Option.getWithDefault(0)
-              let bId = b->Int.fromString->Option.getWithDefault(0)
+              let aId = a->Int.fromString->Option.getOr(0)
+              let bId = b->Int.fromString->Option.getOr(0)
               aId - bId
             })
 

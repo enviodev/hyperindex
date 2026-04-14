@@ -1,5 +1,3 @@
-open Belt
-
 type eventParam = {
   name: string,
   abiType: string,
@@ -64,7 +62,7 @@ let rec abiTypeToSchema = (abiType: string): S.t<unknown> => {
     let components = splitTupleComponents(inner)
     let schemas = components->Array.map(c => abiTypeToSchema(c->Js.String2.trim))
     S.tuple(s => {
-      schemas->Array.mapWithIndex((i, schema) => s.item(i, schema))
+      schemas->Array.mapWithIndex((schema, i) => s.item(i, schema))
     })->S.toUnknown
   } else {
     switch abiType {
@@ -90,7 +88,7 @@ let rec abiTypeToSimulateSchema = (abiType: string): S.t<unknown> => {
     let components = splitTupleComponents(inner)
     let schemas = components->Array.map(c => abiTypeToSimulateSchema(c->Js.String2.trim))
     S.tuple(s => {
-      schemas->Array.mapWithIndex((i, schema) => s.item(i, schema))
+      schemas->Array.mapWithIndex((schema, i) => s.item(i, schema))
     })->S.toUnknown
   } else {
     switch abiType {
@@ -193,10 +191,10 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
     let bodyParams = params->Js.Array2.filter(p => !p.indexed)
 
     let fields = []
-    indexedParams->Array.forEachWithIndex((i, p) => {
+    indexedParams->Array.forEachWithIndex((p, i) => {
       fields->Js.Array2.push(`"${p.name}": t(d.indexed[${i->Int.toString}])`)->ignore
     })
-    bodyParams->Array.forEachWithIndex((i, p) => {
+    bodyParams->Array.forEachWithIndex((p, i) => {
       fields->Js.Array2.push(`"${p.name}": t(d.body[${i->Int.toString}])`)->ignore
     })
     // Generate: function(t) { return function(d) { return { ... } } }
@@ -262,7 +260,7 @@ let buildTopicGetter = (p: eventParam) => {
   (eventFilter: Js.Dict.t<Js.Json.t>) =>
     eventFilter
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
-    ->Option.mapWithDefault([], topicFilters =>
+    ->Option.mapOr([], topicFilters =>
       topicFilters
       ->(Utils.magic: Js.Json.t => unknown)
       ->normalizeOrThrow

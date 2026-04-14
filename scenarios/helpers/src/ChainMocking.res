@@ -148,7 +148,7 @@ module Make = () => {
       )
     }
     let logConstructors =
-      makeLogConstructors->Array.mapWithIndex((i, x) =>
+      makeLogConstructors->Array.mapWithIndex((x, i) =>
         x(
           ~transactionIndex=i,
           ~logIndex=i,
@@ -186,18 +186,18 @@ module Make = () => {
   let getHeight = (self: t) =>
     self.blocks
     ->getLast
-    ->Option.mapWithDefault(0, b => b.blockNumber)
+    ->Option.mapOr(0, b => b.blockNumber)
 
   let getBlocks = (self: t, ~fromBlock, ~toBlock) => {
     self.blocks
-    ->Array.keep(b =>
+    ->Array.filter(b =>
       b.blockNumber >= fromBlock &&
         switch toBlock {
         | Some(toBlock) => b.blockNumber <= toBlock
         | None => true
         }
     )
-    ->Array.keepWithIndex((_, i) => i < self.maxBlocksReturned)
+    ->Array.filterWithIndex((_, i) => i < self.maxBlocksReturned)
   }
 
   let getBlock = (self: t, ~blockNumber) =>
@@ -219,7 +219,7 @@ module Make = () => {
     ~addressesAndEventNames: array<contractAddressesAndEventNames>,
   ) => {
     blocks->Array.flatMap(b =>
-      b.logs->Array.keepMap(l => {
+      b.logs->Array.filterMap(l => {
         let isLogInConfig = addressesAndEventNames->Array.reduce(
           false,
           (prev, {addresses, eventKeys}) => {
@@ -249,7 +249,7 @@ module Make = () => {
     let knownHeight = self->getHeight
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
-      let addresses = query.addressesByContractName->Js.Dict.get(c.name)->Option.getWithDefault([])
+      let addresses = query.addressesByContractName->Js.Dict.get(c.name)->Option.getOr([])
       {
         addresses,
         eventKeys: c.events->Belt.Array.map(eventConfig => {
@@ -282,7 +282,7 @@ module Make = () => {
   }
 
   let getBlockHashes = (self: t, ~blockNumbers) => {
-    blockNumbers->Array.keepMap(blockNumber =>
+    blockNumbers->Array.filterMap(blockNumber =>
       self
       ->getBlock(~blockNumber)
       ->Option.map(({

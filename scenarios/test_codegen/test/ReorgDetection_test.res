@@ -1,6 +1,6 @@
 open Vitest
 
-open Belt
+
 
 describe("Validate reorg detection functions", () => {
   let scannedHashesFixture = [(1, "0x123"), (50, "0x456"), (300, "0x789"), (500, "0x5432")]

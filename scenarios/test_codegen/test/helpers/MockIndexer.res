@@ -1,4 +1,4 @@
-open Belt
+
 
 type chainId = Indexer.chainId
 
@@ -281,10 +281,10 @@ module Indexer = {
             {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
-              startBlock: chainConfig.startBlock->Option.getWithDefault(
+              startBlock: chainConfig.startBlock->Option.getOr(
                 originalChainConfig.startBlock,
               ),
-              blockLag: chainConfig.blockLag->Option.getWithDefault(
+              blockLag: chainConfig.blockLag->Option.getOr(
                 originalChainConfig.blockLag,
               ),
             },
@@ -299,7 +299,7 @@ module Indexer = {
         enableRawEvents,
         chainMap,
         multichain,
-        batchSize: batchSize->Option.getWithDefault(config.batchSize),
+        batchSize: batchSize->Option.getOr(config.batchSize),
       }
     }
 
@@ -691,8 +691,8 @@ module Source = {
                   ~prevRangeLastBlock=?,
                 ) => {
                   let latestFetchedBlockNumber =
-                    latestFetchedBlockNumber->Option.getWithDefault(
-                      toBlock->Option.getWithDefault(fromBlock),
+                    latestFetchedBlockNumber->Option.getOr(
+                      toBlock->Option.getOr(fromBlock),
                     )
 
                   resolve({
