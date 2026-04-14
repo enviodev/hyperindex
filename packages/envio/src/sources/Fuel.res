@@ -19,4 +19,11 @@ let ecosystem: Ecosystem.t = {
   getTimestamp,
   getId,
   cleanUpRawEventFieldsInPlace,
+  onBlockMethodName: "onBlock",
+  // Fuel filter shape: `{block: {height: {_gte?, _lte?, _every?}}}`.
+  extractOnBlockNumberFilter: filter =>
+    filter
+    ->(Utils.magic: unknown => {"block": option<{"height": option<unknown>}>})
+    ->(r => r["block"])
+    ->Belt.Option.flatMap(b => b["height"]),
 }

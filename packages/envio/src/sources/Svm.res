@@ -19,6 +19,10 @@ let ecosystem: Ecosystem.t = {
   getTimestamp,
   getId,
   cleanUpRawEventFieldsInPlace,
+  onBlockMethodName: "onSlot",
+  // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
+  extractOnBlockNumberFilter: filter =>
+    filter->(Utils.magic: unknown => {"slot": option<unknown>})->(r => r["slot"]),
 }
 
 module GetFinalizedSlot = {

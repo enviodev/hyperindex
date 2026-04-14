@@ -630,23 +630,22 @@ export type FuelContractRegisterHandler<Event extends EventLike, Context> = EvmO
 // ============== EVM onBlock types ==============
 
 /**
- * Filter on `block.number` for an `indexer.onBlock` `where` predicate (EVM).
- * Alignment for `_every` is relative to `_gte` (or the chain's configured
- * `startBlock` when `_gte` is omitted), preserving
+ * Structured filter object returned by an EVM `indexer.onBlock` `where`
+ * predicate. `_every` alignment is relative to `_gte` (or the chain's
+ * configured `startBlock` when `_gte` is omitted), preserving
  * `(blockNumber - startBlock) % _every === 0`.
  */
-export type EvmOnBlockNumberFilter = {
-  /** Matches blocks whose number is greater than or equal to the given value. */
-  readonly _gte?: number;
-  /** Matches blocks whose number is less than or equal to the given value. */
-  readonly _lte?: number;
-  /** Match every Nth block. Alignment is relative to `_gte`. */
-  readonly _every?: number;
-};
-
-/** Structured filter object returned by an EVM `indexer.onBlock` `where` predicate. */
 export type EvmOnBlockFilter = {
-  readonly block?: { readonly number?: EvmOnBlockNumberFilter };
+  readonly block?: {
+    readonly number?: {
+      /** Matches blocks whose number is greater than or equal to the given value. */
+      readonly _gte?: number;
+      /** Matches blocks whose number is less than or equal to the given value. */
+      readonly _lte?: number;
+      /** Match every Nth block. Alignment is relative to `_gte`. */
+      readonly _every?: number;
+    };
+  };
 };
 
 /**
@@ -685,21 +684,20 @@ export type EvmOnBlockOptions<Config extends IndexerConfigTypes> = {
 // ============== Fuel onBlock types ==============
 
 /**
- * Filter on `block.height` for a Fuel `indexer.onBlock` `where` predicate.
- * `_every` alignment is relative to `_gte`.
+ * Structured filter object returned by a Fuel `indexer.onBlock` `where`
+ * predicate. `_every` alignment is relative to `_gte`.
  */
-export type FuelOnBlockHeightFilter = {
-  /** Matches blocks whose height is greater than or equal to the given value. */
-  readonly _gte?: number;
-  /** Matches blocks whose height is less than or equal to the given value. */
-  readonly _lte?: number;
-  /** Match every Nth block. Alignment is relative to `_gte`. */
-  readonly _every?: number;
-};
-
-/** Structured filter object returned by a Fuel `indexer.onBlock` `where` predicate. */
 export type FuelOnBlockFilter = {
-  readonly block?: { readonly height?: FuelOnBlockHeightFilter };
+  readonly block?: {
+    readonly height?: {
+      /** Matches blocks whose height is greater than or equal to the given value. */
+      readonly _gte?: number;
+      /** Matches blocks whose height is less than or equal to the given value. */
+      readonly _lte?: number;
+      /** Match every Nth block. Alignment is relative to `_gte`. */
+      readonly _every?: number;
+    };
+  };
 };
 
 /**
@@ -738,21 +736,18 @@ export type FuelOnBlockOptions<Config extends IndexerConfigTypes> = {
 // ============== SVM onSlot types ==============
 
 /**
- * Filter on the SVM slot number for an `indexer.onSlot` `where` predicate.
- * `_every` alignment is relative to `_gte`.
+ * Structured filter object returned by an SVM `indexer.onSlot` `where`
+ * predicate. `_every` alignment is relative to `_gte`.
  */
-export type SvmOnSlotNumberFilter = {
-  /** Matches slots whose number is greater than or equal to the given value. */
-  readonly _gte?: number;
-  /** Matches slots whose number is less than or equal to the given value. */
-  readonly _lte?: number;
-  /** Match every Nth slot. Alignment is relative to `_gte`. */
-  readonly _every?: number;
-};
-
-/** Structured filter object returned by an SVM `indexer.onSlot` `where` predicate. */
 export type SvmOnSlotFilter = {
-  readonly slot?: SvmOnSlotNumberFilter;
+  readonly slot?: {
+    /** Matches slots whose number is greater than or equal to the given value. */
+    readonly _gte?: number;
+    /** Matches slots whose number is less than or equal to the given value. */
+    readonly _lte?: number;
+    /** Match every Nth slot. Alignment is relative to `_gte`. */
+    readonly _every?: number;
+  };
 };
 
 /**

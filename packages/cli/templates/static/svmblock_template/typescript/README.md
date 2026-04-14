@@ -8,11 +8,11 @@ For more information, see the [block handlers documentation](https://docs.envio.
 
 ## Slot Handler
 
-The `indexer.onSlot` handler is triggered for each slot on the matching chain. The `where` predicate is evaluated once per configured chain and can restrict handlers to specific chains or slot ranges. This example uses an effect to fetch additional block data from the Solana RPC:
+The `indexer.onSlot` handler is triggered for each slot on every configured chain. This example uses an effect to fetch additional block data from the Solana RPC:
 
 ```ts
 indexer.onSlot(
-  { name: "BlockTracker", where: ({ chain }) => chain.id === 0 },
+  { name: "BlockTracker" },
   async ({ slot, context }) => {
     const block = await context.effect(getBlockEffect, { slot });
     // Process block data...

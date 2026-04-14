@@ -298,30 +298,13 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     )
   }
 
-  // Extract {_gte, _lte, _every} from the user-returned filter. Path differs
-  // per ecosystem to match the handler-arg shape users see:
-  //   - EVM:  raw.block.number.{_gte,_lte,_every}   (matches `block.number`)
-  //   - Fuel: raw.block.height.{_gte,_lte,_every}   (matches `block.height`)
-  //   - SVM:  raw.slot.{_gte,_lte,_every}           (matches `slot`)
-  // Full TS-level schemas live in `packages/envio/index.d.ts`.
+  // Decode the inner `{_gte, _lte, _every}` triple from the user-returned
+  // filter. The outer wrapper (`block.number` / `block.height` / `slot`) is
+  // unwrapped by the ecosystem-specific `extractOnBlockNumberFilter` so this
+  // function stays ecosystem-agnostic. Full TS schemas live in
+  // `packages/envio/index.d.ts`.
   let extractRange = (filter: unknown): (option<int>, option<int>, int) => {
-    let numberFilter = switch config.ecosystem.name {
-    | Evm =>
-      filter
-      ->(Utils.magic: unknown => {"block": option<{"number": option<unknown>}>})
-      ->(r => r["block"])
-      ->Belt.Option.flatMap(b => b["number"])
-    | Fuel =>
-      filter
-      ->(Utils.magic: unknown => {"block": option<{"height": option<unknown>}>})
-      ->(r => r["block"])
-      ->Belt.Option.flatMap(b => b["height"])
-    | Svm =>
-      filter
-      ->(Utils.magic: unknown => {"slot": option<unknown>})
-      ->(r => r["slot"])
-    }
-    switch numberFilter {
+    switch config.ecosystem.extractOnBlockNumberFilter(filter) {
     | None => (None, None, 1)
     | Some(n) =>
       let typed =
@@ -332,19 +315,17 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     }
   }
 
+  // SVM exposes the block handler as `indexer.onSlot`; EVM/Fuel expose it as
+  // `indexer.onBlock`. The choice lives on the ecosystem record so adding a
+  // new ecosystem doesn't require editing this file. Used both as the
+  // attached property name and in error messages so the cited call-site
+  // matches what the user wrote.
+  let onBlockMethodName = config.ecosystem.onBlockMethodName
+
   // `where` is evaluated once per configured chain at registration time.
   // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
   // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
   // math at `FetchState.res:619` stays untouched.
-  // SVM exposes the block handler as `indexer.onSlot` (blocks on SVM are
-  // slots); EVM/Fuel expose it as `indexer.onBlock`. Used for both the
-  // attached property name and any user-facing error messages so the cited
-  // call-site matches what the user wrote.
-  let onBlockMethodName = switch config.ecosystem.name {
-  | Svm => "onSlot"
-  | Evm | Fuel => "onBlock"
-  }
-
   let onBlockHandlerFn = (rawOptions: 'a, handler: 'b) => {
     let raw =
       rawOptions->(

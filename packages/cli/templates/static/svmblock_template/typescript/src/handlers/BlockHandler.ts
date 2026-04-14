@@ -59,7 +59,7 @@ const getBlockEffect = createEffect(
   }
 );
 
-indexer.onSlot({ name: "BlockTracker", where: ({ chain }) => chain.id === 0 }, async ({ slot, context }) => {
+indexer.onSlot({ name: "BlockTracker" }, async ({ slot, context }) => {
   const block = await context.effect(getBlockEffect, { slot });
   if (!block) {
     context.log.info(`Slot without a block`, { slot });

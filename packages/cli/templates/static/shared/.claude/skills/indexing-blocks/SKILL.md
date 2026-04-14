@@ -2,16 +2,19 @@
 name: indexing-blocks
 description: >-
   Use when processing every block (or every Nth block) for time-series data,
-  periodic snapshots, or block-level aggregations. indexer.onBlock (EVM/Fuel)
-  and indexer.onSlot (SVM) APIs, where filter with range and stride, and
-  handler context.
+  periodic snapshots, or block-level aggregations. indexer.onBlock API, where
+  filter with block-number range and stride, and block handler context.
 ---
 
-# Block / Slot Handlers
+# Block Handlers
 
-Process every block (or every Nth block) using `indexer.onBlock` on EVM/Fuel, or every slot using `indexer.onSlot` on SVM. No contract address or config.yaml entry needed.
+Process every block (or every Nth block) using `indexer.onBlock`. No contract
+address or `config.yaml` entry needed.
 
-## EVM handler
+## Handler
+
+Branch by `chain.id` with a `switch` so the type system flags any
+unconfigured chain via the `default: never` exhaustiveness check:
 
 ```ts
 import { indexer } from "generated";
@@ -20,8 +23,18 @@ indexer.onBlock(
   {
     name: "BlockTracker",
     where: ({ chain }) => {
-      if (chain.id !== 1) return false;
-      return { block: { number: { _gte: 18000000, _every: 100 } } };
+      switch (chain.id) {
+        case 1:
+          return { block: { number: { _gte: 18000000, _every: 100 } } };
+        case 8453:
+          return { block: { number: { _every: 50 } } };
+        default: {
+          // Exhaustiveness check: TypeScript errors here if a new chain ID
+          // is added to config.yaml but not handled above.
+          const _exhaustive: never = chain.id;
+          return false;
+        }
+      }
     },
   },
   async ({ block, context }) => {
@@ -33,49 +46,23 @@ indexer.onBlock(
 );
 ```
 
-## Fuel handler
-
-Fuel filters on `block.height` (not `number`), matching the handler-arg field:
-
-```ts
-indexer.onBlock(
-  {
-    name: "FuelHeightSampler",
-    where: ({ chain }) =>
-      chain.id === 9889 ? { block: { height: { _every: 10 } } } : false,
-  },
-  async ({ block, context }) => { /* block.height */ }
-);
-```
-
-## SVM handler
-
-SVM uses `indexer.onSlot` with a `slot`-keyed filter:
-
-```ts
-indexer.onSlot(
-  {
-    name: "SlotSampler",
-    where: ({ chain }) =>
-      chain.id === 0 ? { slot: { _gte: 250_000_000, _every: 100 } } : false,
-  },
-  async ({ slot, context }) => { /* slot is a number */ }
-);
-```
-
 ## Options
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
 | `name` | `string` | yes | Handler name for logging |
-| `where` | `({ chain }) => boolean \| filter` | no | Predicate evaluated once per configured chain at registration. Return `false` to skip a chain, `true` / omit to match every block/slot. Filter shape: EVM `{block: {number: {_gte?, _lte?, _every?}}}`, Fuel `{block: {height: {_gte?, _lte?, _every?}}}`, SVM `{slot: {_gte?, _lte?, _every?}}`. `_every` aligns relative to `_gte`, preserving `(n - _gte) % _every === 0`. |
+| `where` | `({ chain }) => boolean \| filter` | no | Predicate evaluated once per configured chain at registration. Return `false` to skip a chain, `true` / omit to match every block, or `{block: {number: {_gte?, _lte?, _every?}}}` to restrict range and stride. `_every` aligns relative to `_gte`, preserving `(blockNumber - _gte) % _every === 0`. |
+
+## Other ecosystems
+
+- **Fuel**: same `indexer.onBlock` API; filter is keyed by `block.height` instead of `block.number`.
+- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}` (no `block` wrapper).
 
 ## Notes
 
-- `indexer.onBlock` / `indexer.onSlot` self-register — no config.yaml entry needed
+- `indexer.onBlock` self-registers — no `config.yaml` entry needed
 - No events or contract address required
 - The handler context has the same entity API as event handlers
-- `block` object provides `number` (EVM) or `height` (Fuel); SVM provides `slot: number` at the top level
 - If `where` returns `false` for every configured chain, a warning is logged at registration time
 
 ## Deep Documentation

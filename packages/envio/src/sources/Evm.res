@@ -81,4 +81,11 @@ let ecosystem: Ecosystem.t = {
   getTimestamp,
   getId,
   cleanUpRawEventFieldsInPlace,
+  onBlockMethodName: "onBlock",
+  // EVM filter shape: `{block: {number: {_gte?, _lte?, _every?}}}`.
+  extractOnBlockNumberFilter: filter =>
+    filter
+    ->(Utils.magic: unknown => {"block": option<{"number": option<unknown>}>})
+    ->(r => r["block"])
+    ->Belt.Option.flatMap(b => b["number"]),
 }

@@ -17,7 +17,10 @@ type onBlockArgs<'block, 'context> = {
   context: 'context,
 }
 
-@genType
+// Internal-only types for the `indexer.onBlock` (and SVM `onSlot`) plumbing.
+// User-facing TypeScript declarations live in `packages/envio/index.d.ts` —
+// keep these out of `genType` so the canonical TS shape isn't shadowed by a
+// generated `unknown`-typed stub in `Envio.gen.ts`.
 type onBlockWhereArgs<'chain> = {chain: 'chain}
 
 // `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:
@@ -25,9 +28,6 @@ type onBlockWhereArgs<'chain> = {chain: 'chain}
 //   - `true` / omit → register on this chain with no extra filter
 //   - a filter object whose shape is ecosystem-specific (see the `Evm*` /
 //     `Fuel*` / `Svm*` `OnBlock`/`OnSlot` types in `packages/envio/index.d.ts`)
-// Typed as `unknown` here because ReScript has no way to express the
-// ecosystem-dependent union; end-user types come from `index.d.ts`.
-@genType
 type onBlockOptions<'chain> = {
   name: string,
   where?: onBlockWhereArgs<'chain> => unknown,
