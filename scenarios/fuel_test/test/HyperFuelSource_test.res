@@ -1,5 +1,5 @@
 open Vitest
-open Belt
+
 
 describe("HyperFuelSource - getNormalRecieptsSelection", () => {
   let contractName1 = "TestContract"
@@ -13,7 +13,7 @@ describe("HyperFuelSource - getNormalRecieptsSelection", () => {
     let selectionConfig = {
       dependsOnAddresses: true,
       eventConfigs: contracts->Array.flatMap(c => {
-        c.events->Array.keepMap(
+        c.events->Array.filterMap(
           e => {
             if e.isWildcard {
               None
@@ -828,7 +828,7 @@ describe("HyperFuelSource - makeWildcardRecieptsSelection", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: contracts->Array.flatMap(c => {
-        c.events->Array.keepMap(
+        c.events->Array.filterMap(
           e => {
             if e.isWildcard {
               Some((e :> Internal.eventConfig))

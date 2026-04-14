@@ -62,7 +62,6 @@ let makeCreateCompositeIndexQuery = (
 }
 
 let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
-  open Belt
   let tableName = table.tableName
   let createIndex = indexField =>
     makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
@@ -78,7 +77,6 @@ let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
 }
 
 let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText) => {
-  open Belt
   let fieldsMapped =
     table
     ->Table.getFields
@@ -1511,12 +1509,11 @@ let make = (
       ),
     ))
 
-    let checkpointId =
-      (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->Utils.BigInt.fromStringUnsafe
+    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
 
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
-      checkpointId: raw["id"]->Utils.BigInt.fromStringUnsafe,
+      checkpointId: raw["id"]->BigInt.fromStringOrThrow,
       chainId: raw["chain_id"],
       blockNumber: raw["block_number"],
       blockHash: raw["block_hash"],
@@ -1579,18 +1576,14 @@ let make = (
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->Utils.BigInt.toString]->(
-          Utils.magic: array<string> => unknown
-        ),
+        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
       // Get entities that should be restored to their state at or before rollback target
       sql
       ->Postgres.preparedUnsafe(
         makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->Utils.BigInt.toString]->(
-          Utils.magic: array<string> => unknown
-        ),
+        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
@@ -1704,10 +1697,7 @@ let makeStorageFromEnv = (
               ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
-              Logging.errorWithExn(
-                err->Utils.prettifyExn,
-                `Error tracking tables`,
-              )->Promise.resolve
+              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
             })
           },
         )

@@ -1,4 +1,4 @@
-open Belt
+
 open Vitest
 
 let simulateItem = Indexer.makeSimulateItem(OnEvent({event: Gravatar(EmptyEvent)}))
@@ -73,7 +73,7 @@ Async.it("Optional block params: startBlock defaults to progressBlock+1 on secon
   })
 
   let entities = await (indexer.\"SimulateTestEvent").getAll()
-  let entities = entities->SortArray.stableSortBy((a, b) => compare(a.blockNumber, b.blockNumber))
+  let entities = entities->Belt.SortArray.stableSortBy((a, b) => compare(a.blockNumber, b.blockNumber))
   t.expect(entities).toEqual([
     {id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0},
     {id: "101_0", blockNumber: 101, logIndex: 0, timestamp: 0},

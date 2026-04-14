@@ -1,4 +1,4 @@
-open Belt
+
 let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash) =>
   {
     number: blockNumber,

@@ -1,4 +1,4 @@
-open Belt
+
 type t = dict<Table.table>
 
 let make = (tables: array<Table.table>) => {

@@ -1,5 +1,3 @@
-open Belt
-
 type primitive
 type derived
 
@@ -173,7 +171,7 @@ let mkTable = (tableName, ~compositeIndices=[], ~fields) => {
 }
 
 let getPrimaryKeyFieldNames = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field({isPrimaryKey: true, fieldName}) => Some(fieldName)
     | _ => None
@@ -181,7 +179,7 @@ let getPrimaryKeyFieldNames = table =>
   )
 
 let getFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) => Some(field)
     | DerivedFrom(_) => None
@@ -193,7 +191,7 @@ let getFieldNames = table => {
 }
 
 let getNonDefaultFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.defaultValue->Option.isNone => Some(field)
     | _ => None
@@ -201,7 +199,7 @@ let getNonDefaultFields = table =>
   )
 
 let getLinkedEntityFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field({linkedEntity: Some(linkedEntityName)} as field) => Some((field, linkedEntityName))
     | Field({linkedEntity: None})
@@ -211,7 +209,7 @@ let getLinkedEntityFields = table =>
   )
 
 let getDerivedFromFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | DerivedFrom(field) => Some(field)
     | Field(_) => None
@@ -350,7 +348,7 @@ Gets all single indicies
 And maps the fields defined to their actual db name (some have _id suffix)
 */
 let getSingleIndices = (table): array<string> => {
-  let indexFields = table.fields->Array.keepMap(field =>
+  let indexFields = table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.isIndex => Some(field->getDbFieldName)
     | _ => None
@@ -361,16 +359,16 @@ let getSingleIndices = (table): array<string> => {
   ->getUnfilteredCompositeIndicesUnsafe
   //get all composite indices with only 1 field defined
   //this is still a single index
-  ->Array.keepMap(cidx =>
+  ->Array.filterMap(cidx =>
     switch cidx {
     | [{fieldName}] => Some([fieldName])
     | _ => None
     }
   )
   ->Array.concat([indexFields])
-  ->Array.concatMany
-  ->Set.String.fromArray
-  ->Set.String.toArray
+  ->Array.flat
+  ->Set.fromArray
+  ->Set.toArray
   ->Js.Array2.sortInPlace
 }
 
@@ -381,5 +379,5 @@ And maps the fields defined to their actual db name (some have _id suffix)
 let getCompositeIndices = (table): array<array<compositeIndexField>> => {
   table
   ->getUnfilteredCompositeIndicesUnsafe
-  ->Array.keep(ind => ind->Array.length > 1)
+  ->Array.filter(ind => ind->Array.length > 1)
 }

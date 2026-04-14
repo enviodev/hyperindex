@@ -1,9 +1,5 @@
-open Belt
-open Vitest
 
-// A workaround for ReScript v11 issue, where it makes the field optional
-// instead of setting a value to undefined. It's fixed in v12.
-let undefined = (%raw(`undefined`): option<'a>)
+open Vitest
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
@@ -115,7 +111,7 @@ describe("E2E rollback tests", () => {
             eventsProcessed: 2,
           },
           {
-            id: firstHistoryCheckpointId->Utils.BigInt.add(1n),
+            id: firstHistoryCheckpointId->BigInt.add(1n),
             blockHash: Js.Null.Value("0x102"),
             blockNumber: 102,
             chainId: 1337,
@@ -154,7 +150,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(1n),
+            checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
             entityId: "3",
             entity: {
               Indexer.Entities.SimpleEntity.id: "3",
@@ -170,7 +166,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Delete({
-            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(1n),
+            checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
             entityId: "4",
           }),
         ],
@@ -269,7 +265,7 @@ describe("E2E rollback tests", () => {
       (
         [
           {
-            id: firstHistoryCheckpointId->Utils.BigInt.add(3n),
+            id: firstHistoryCheckpointId->BigInt.add(3n),
             blockHash: Js.Null.Value("0x101"),
             blockNumber: 101,
             chainId: 1337,
@@ -288,7 +284,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(3n),
+            checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
             entityId: "1",
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
@@ -296,7 +292,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: firstHistoryCheckpointId->Utils.BigInt.add(3n),
+            checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
             entityId: "2",
             entity: {
               Indexer.Entities.SimpleEntity.id: "2",
@@ -2524,8 +2520,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: event counters should NOT be negative",
@@ -2678,8 +2674,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After first rollback: all chains' counters should be 0",
@@ -2717,8 +2713,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: non-reorg chains (100, 137) must NOT go negative",

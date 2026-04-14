@@ -20,6 +20,6 @@
   },
   "bs-dependencies": ["generated", "envio", "rescript-schema"],
   "warnings": {
-    "number": "-3-44"
+    "number": "-3"
   }
 }

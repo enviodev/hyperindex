@@ -1,5 +1,5 @@
 open Ink
-open Belt
+
 
 let isIndexerFullySynced = (chains: array<TuiData.chain>) => {
   chains->Array.reduce(true, (accum, current) => {

@@ -1,4 +1,4 @@
-open Belt
+
 
 // EVM simulate block schema — all fields present with defaults for non-nullable ones.
 // Nullable fields (from Internal.evmNullableBlockFields) use S.null → option<T>.

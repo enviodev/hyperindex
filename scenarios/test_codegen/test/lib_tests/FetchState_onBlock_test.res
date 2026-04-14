@@ -1,4 +1,4 @@
-open Belt
+
 open Vitest
 
 let chainId = 0

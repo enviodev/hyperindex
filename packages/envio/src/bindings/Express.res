@@ -2,9 +2,6 @@
 
 type app
 
-// "default" &  seem to conflict a bit right now
-// https://github.com/rescript-lang/rescript-compiler/issues/5004
-@module external makeCjs: unit => app = "express"
 @module("express") external make: unit => app = "default"
 
 type req = private {

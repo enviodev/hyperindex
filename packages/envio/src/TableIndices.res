@@ -1,5 +1,4 @@
 module FieldValue = {
-  open Belt
   @unboxed
   type rec tNonOptional =
     | String(string)
@@ -12,11 +11,11 @@ module FieldValue = {
   let rec toString = tNonOptional =>
     switch tNonOptional {
     | String(v) => v
-    | BigInt(v) => v->Utils.BigInt.toString
+    | BigInt(v) => v->BigInt.toString
     | Int(v) => v->Int.toString
     | BigDecimal(v) => v->BigDecimal.toString
     | Bool(v) => v ? "true" : "false"
-    | Array(v) => `[${v->Array.joinWith(",", toString)}]`
+    | Array(v) => `[${v->Belt.Array.joinWith(",", toString)}]`
     }
 
   //This needs to be a castable type from any type that we

@@ -1,4 +1,4 @@
-open Belt
+
 open Vitest
 
 let chainId = 0
@@ -141,10 +141,6 @@ let makeIndexingContractsWithDynamics = (
   dict
 }
 
-// A workaround for ReScript v11 issue, where it makes the field optional
-// instead of setting a value to undefined. It's fixed in v12.
-let undefined = (%raw(`undefined`): option<'a>)
-
 describe("FetchState.make", () => {
   it("Creates FetchState with a single static address", t => {
     let fetchState = makeInitial()
@@ -173,7 +169,7 @@ describe("FetchState.make", () => {
           ~dynamicContracts=Utils.Set.make(),
         ),
         startBlock: 0,
-        endBlock: undefined,
+        endBlock: None,
         latestOnBlockBlockNumber: -1,
         targetBufferSize: 5000,
         buffer: [],
@@ -253,7 +249,7 @@ describe("FetchState.make", () => {
           latestOnBlockBlockNumber: -1,
           buffer: [],
           startBlock: 0,
-          endBlock: undefined,
+          endBlock: None,
           normalSelection: fetchState.normalSelection,
           chainId,
           indexingContracts: fetchState.indexingContracts,
@@ -326,7 +322,7 @@ describe("FetchState.make", () => {
           latestOnBlockBlockNumber: -1,
           buffer: [],
           startBlock: 0,
-          endBlock: undefined,
+          endBlock: None,
           normalSelection: fetchState.normalSelection,
           chainId,
           indexingContracts: fetchState.indexingContracts,
@@ -441,7 +437,7 @@ describe("FetchState.make", () => {
           latestOnBlockBlockNumber: -1,
           buffer: [],
           startBlock: 0,
-          endBlock: undefined,
+          endBlock: None,
           normalSelection: fetchState.normalSelection,
           chainId,
           indexingContracts: fetchState.indexingContracts,
@@ -1353,7 +1349,7 @@ describe("FetchState.registerDynamicContracts", () => {
             ~dynamicContracts=Utils.Set.fromArray(["NftFactory"]),
           ),
           startBlock: 0,
-          endBlock: undefined,
+          endBlock: None,
           latestOnBlockBlockNumber: -1,
           targetBufferSize,
           buffer: [],
@@ -1472,7 +1468,7 @@ describe("FetchState.getNextQuery & integration", () => {
       targetBufferSize,
       buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
       startBlock: 0,
-      endBlock: undefined,
+      endBlock: None,
       normalSelection,
       chainId,
       indexingContracts: makeIndexingContractsWithDynamics([dc3, dc2, dc1], ~static=[mockAddress0]),
@@ -2027,7 +2023,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           partitionId: "1",
           fromBlock: 0,
-          toBlock: undefined,
+          toBlock: None,
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("ContractA", [mockAddress1])]),
@@ -2036,7 +2032,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           partitionId: "2",
           fromBlock: 2,
-          toBlock: undefined,
+          toBlock: None,
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress2])]),

@@ -1,4 +1,4 @@
-open Belt
+
 
 // Message types for communication between worker and main thread
 type requestId = int

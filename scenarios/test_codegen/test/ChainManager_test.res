@@ -1,4 +1,4 @@
-open Belt
+
 open Vitest
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
