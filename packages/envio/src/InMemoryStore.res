@@ -100,7 +100,7 @@ let isRollingBack = (inMemoryStore: t) => inMemoryStore.rollbackTargetCheckpoint
 
 let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
   let inMemTable =
-    inMemoryStore->getInMemTable(~entityConfig=InternalTable.DynamicContractRegistry.entityConfig)
+    inMemoryStore->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
 
   let itemIdx = ref(0)
 
@@ -118,24 +118,19 @@ let setBatchDcs = (inMemoryStore: t, ~batch: Batch.t, ~shouldSaveHistory) => {
         let eventItem = item->Internal.castUnsafeEventItem
         for dcIdx in 0 to dcs->Array.length - 1 {
           let dc = dcs->Array.getUnsafe(dcIdx)
-          let entity: InternalTable.DynamicContractRegistry.t = {
-            id: InternalTable.DynamicContractRegistry.makeId(~chainId, ~contractAddress=dc.address),
+          let entity: InternalTable.EnvioAddresses.t = {
+            id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
             chainId,
-            contractAddress: dc.address,
             contractName: dc.contractName,
-            registeringEventBlockNumber: eventItem.blockNumber,
-            registeringEventLogIndex: eventItem.logIndex,
-            registeringEventBlockTimestamp: eventItem.timestamp,
-            registeringEventContractName: eventItem.eventConfig.contractName,
-            registeringEventName: eventItem.eventConfig.name,
-            registeringEventSrcAddress: eventItem.event.srcAddress,
+            registrationBlock: eventItem.blockNumber,
+            registrationLogIndex: eventItem.logIndex,
           }
 
           inMemTable->InMemoryTable.Entity.set(
             Set({
               entityId: entity.id,
               checkpointId,
-              entity: entity->InternalTable.DynamicContractRegistry.castToInternal,
+              entity: entity->InternalTable.EnvioAddresses.castToInternal,
             }),
             ~shouldSaveHistory,
           )

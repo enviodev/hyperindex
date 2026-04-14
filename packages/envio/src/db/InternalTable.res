@@ -5,7 +5,7 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module DynamicContractRegistry = Config.DynamicContractRegistry
+module EnvioAddresses = Config.EnvioAddresses
 
 module Chains = {
   type progressFields = [
@@ -192,13 +192,16 @@ WHERE "${(#id: field :> string)}" = $1;`
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
 "${(#source_block: field :> string)}" as "sourceBlockNumber",
 (
+  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
+  -- Config.EnvioAddresses.makeId; extract the address by taking everything
+  -- after the first '-'. Keep in sync with makeId / getAddress.
   SELECT COALESCE(json_agg(json_build_object(
-    'address', "contract_address",
+    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', "registering_event_block_number",
-    'registrationBlock', "registering_event_block_number"
+    'startBlock', "registration_block",
+    'registrationBlock', "registration_block"
   )), '[]'::json)
-  FROM "${pgSchema}"."${DynamicContractRegistry.table.tableName}"
+  FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
   WHERE "chain_id" = chains."${(#id: field :> string)}"
 ) as "dynamicContracts"
 FROM "${pgSchema}"."${table.tableName}" as chains;`

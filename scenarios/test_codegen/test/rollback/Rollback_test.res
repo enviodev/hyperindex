@@ -667,11 +667,7 @@ describe("E2E rollback tests", () => {
       ],
     ))
     t.expect(
-      await (
-        indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<
-          array<InternalTable.DynamicContractRegistry.t>,
-        >
-      ),
+      await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<array<InternalTable.EnvioAddresses.t>>),
       ~message="Shouldn't store dynamic contracts at this point",
     ).toEqual([])
 
@@ -690,57 +686,46 @@ describe("E2E rollback tests", () => {
     t.expect(
       (calls, sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)),
       ~message=`Should process the block 102 after DC partition finished fetching it`,
-    ).toEqual((
-      ["101-0", "102-0", "102-1", "102-2"],
+    ).toEqual(
+      (
+        ["101-0", "102-0", "102-1", "102-2"],
+        [
+          {
+            "fromBlock": 105,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
+          {
+            "fromBlock": 103,
+            "toBlock": None,
+            "retry": 0,
+            "p": "2",
+          },
+        ],
+      ),
+    )
+    t.expect(
+      await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
+        array<InternalTable.EnvioAddresses.t>,
+      >),
+      ~message="Added the processed dynamic contract to the db",
+    ).toEqual(
       [
         {
-          "fromBlock": 105,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        },
-        {
-          "fromBlock": 103,
-          "toBlock": None,
-          "retry": 0,
-          "p": "2",
+          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
+          chainId: 1337,
+          registrationBlock: 102,
+          registrationLogIndex: 2,
+          contractName: "SimpleNft",
         },
       ],
-    ))
-    t.expect(
-      await (
-        indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<
-          array<InternalTable.DynamicContractRegistry.t>,
-        >
-      ),
-      ~message="Added the processed dynamic contract to the db",
-    ).toEqual([
-      {
-        id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
-          ->Array.getUnsafe(0)
-          ->Address.toString}`,
-        chainId: 1337,
-        registeringEventBlockNumber: 102,
-        registeringEventLogIndex: 2,
-        registeringEventBlockTimestamp: 102,
-        registeringEventContractName: "MockContract",
-        registeringEventName: "MockEvent",
-        registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-        contractAddress: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
-        contractName: "SimpleNft",
-      },
-    ])
+    )
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
     await indexerMock.getBatchWritePromise()
     t.expect(
-      (
-        await (
-          indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<
-            array<InternalTable.DynamicContractRegistry.t>,
-          >
-        )
-      )->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<array<InternalTable.EnvioAddresses.t>>))->Array.length,
       ~message="Should add the processed dynamic contracts to the db",
     ).toEqual(2)
 
@@ -797,13 +782,7 @@ describe("E2E rollback tests", () => {
     await Utils.delay(0)
     await Utils.delay(0)
     t.expect(
-      (
-        await (
-          indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<
-            array<InternalTable.DynamicContractRegistry.t>,
-          >
-        )
-      )->Array.length,
+      (await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<array<InternalTable.EnvioAddresses.t>>))->Array.length,
       ~message=`Nothing won't be rollbacked at this point. Since we need to process an event for this (rollback db only on batch write).
 This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual(2)
@@ -823,28 +802,21 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await (
-        indexerMock.queryRaw(InternalTable.DynamicContractRegistry.entityConfig): promise<
-          array<InternalTable.DynamicContractRegistry.t>,
-        >
-      ),
+      await (indexerMock.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
+        array<InternalTable.EnvioAddresses.t>,
+      >),
       ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
-    ).toEqual([
-      {
-        id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
-          ->Array.getUnsafe(0)
-          ->Address.toString}`,
-        chainId: 1337,
-        registeringEventBlockNumber: 102,
-        registeringEventLogIndex: 2,
-        registeringEventBlockTimestamp: 102,
-        registeringEventContractName: "MockContract",
-        registeringEventName: "MockEvent",
-        registeringEventSrcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-        contractAddress: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
-        contractName: "SimpleNft",
-      },
-    ])
+    ).toEqual(
+      [
+        {
+          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)->Address.toString}`,
+          chainId: 1337,
+          registrationBlock: 102,
+          registrationLogIndex: 2,
+          contractName: "SimpleNft",
+        },
+      ],
+    )
     // After the db rollback, both partitions continue from block 105 (no chunk history yet)
     let payloads = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
     t.expect(
