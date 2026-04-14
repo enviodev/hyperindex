@@ -333,6 +333,15 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
   // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
   // math at `FetchState.res:619` stays untouched.
+  // SVM exposes the block handler as `indexer.onSlot` (blocks on SVM are
+  // slots); EVM/Fuel expose it as `indexer.onBlock`. Used for both the
+  // attached property name and any user-facing error messages so the cited
+  // call-site matches what the user wrote.
+  let onBlockMethodName = switch config.ecosystem.name {
+  | Svm => "onSlot"
+  | Evm | Fuel => "onBlock"
+  }
+
   let onBlockHandlerFn = (rawOptions: 'a, handler: 'b) => {
     let raw =
       rawOptions->(
@@ -343,6 +352,23 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       )
     let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
     let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
+    let name = raw["name"]
+    let logger = Logging.createChild(~params={"onBlock": name})
+
+    // `where` must be a function (unlike onEvent, which also accepts a static
+    // value). A static value would have to be evaluated against every chain
+    // independently, which has no useful semantic for block handlers.
+    switch raw["where"]->(Utils.magic: option<'a> => unknown) {
+    | w if w === %raw(`undefined`) || w === %raw(`null`) => ()
+    | w if Js.typeof(w) === "function" => ()
+    | w =>
+      Js.Exn.raiseError(
+        `\`indexer.${onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${Js.typeof(
+            w,
+          )}.`,
+      )
+    }
+
     let matchedAny = ref(false)
 
     config.chainMap
@@ -352,28 +378,35 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       let chainObj = chainsDict->Js.Dict.unsafeGet(chainId->Int.toString)
 
       // Predicate returns `undefined`/`true` → match with no filter;
-      // `false` → skip; any object → structured filter.
+      // `false` → skip; any plain object → structured filter.
       let result = switch raw["where"] {
       | None => %raw(`true`)
       | Some(predicate) => predicate({chain: chainObj})
       }
 
-      let (shouldRegister, startBlock, endBlock, interval) = if result === %raw(`false`) {
-        (false, None, None, 1)
-      } else if (
-        Js.typeof(result) !== "object" || result === %raw(`null`) || result === %raw(`undefined`)
+      let (shouldRegister, startBlock, endBlock, interval) = if (
+        result === %raw(`true`) || result === %raw(`undefined`) || result === %raw(`null`)
       ) {
-        // `true`, `undefined`, or anything non-object → register with no filter.
         (true, None, None, 1)
-      } else {
+      } else if result === %raw(`false`) {
+        (false, None, None, 1)
+      } else if Js.typeof(result) === "object" && !(result->Js.Array2.isArray) {
         let (gte, lte, every) = extractRange(result)
         (true, gte, lte, every)
+      } else {
+        // Reject numbers, strings, functions, arrays, etc. — anything that
+        // isn't bool/undefined/null/plain-object would silently misregister.
+        Js.Exn.raiseError(
+          `\`indexer.${onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${Js.typeof(
+              result,
+            )}. Expected boolean, undefined, or a filter object.`,
+        )
       }
 
       if shouldRegister {
         matchedAny := true
         HandlerRegister.registerOnBlock(
-          ~name=raw["name"],
+          ~name,
           ~chainId,
           ~interval,
           ~startBlock,
@@ -386,17 +419,8 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     // Catches misconfigured `where` predicates that return `false` for every
     // configured chain — the handler would otherwise never fire with no hint.
     if !matchedAny.contents {
-      Logging.warn(
-        `Block handler "${raw["name"]}" matched 0 chains. Check the \`where\` predicate.`,
-      )
+      logger->Logging.childWarn("Block handler matched 0 chains. Check the `where` predicate.")
     }
-  }
-
-  // SVM exposes this as `indexer.onSlot` (blocks on SVM are slots);
-  // EVM/Fuel expose it as `indexer.onBlock`.
-  let onBlockMethodName = switch config.ecosystem.name {
-  | Svm => "onSlot"
-  | Evm | Fuel => "onBlock"
   }
 
   indexer
