@@ -298,20 +298,52 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     )
   }
 
+  // Extract {_gte, _lte, _every} from the user-returned filter. Path differs
+  // per ecosystem to match the handler-arg shape users see:
+  //   - EVM:  raw.block.number.{_gte,_lte,_every}   (matches `block.number`)
+  //   - Fuel: raw.block.height.{_gte,_lte,_every}   (matches `block.height`)
+  //   - SVM:  raw.{_gte,_lte,_every}                (flat; matches `slot`)
+  // Full TS-level schemas live in `packages/envio/index.d.ts`.
+  let extractRange = (filter: unknown): (option<int>, option<int>, int) => {
+    let numberFilter = switch config.ecosystem.name {
+    | Evm =>
+      filter
+      ->(Utils.magic: unknown => {"block": option<{"number": option<unknown>}>})
+      ->(r => r["block"])
+      ->Belt.Option.flatMap(b => b["number"])
+    | Fuel =>
+      filter
+      ->(Utils.magic: unknown => {"block": option<{"height": option<unknown>}>})
+      ->(r => r["block"])
+      ->Belt.Option.flatMap(b => b["height"])
+    | Svm => Some(filter)
+    }
+    switch numberFilter {
+    | None => (None, None, 1)
+    | Some(n) =>
+      let typed =
+        n->(
+          Utils.magic: unknown => {"_gte": option<int>, "_lte": option<int>, "_every": option<int>}
+        )
+      (typed["_gte"], typed["_lte"], typed["_every"]->Belt.Option.getWithDefault(1))
+    }
+  }
+
   // `where` is evaluated once per configured chain at registration time.
   // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
   // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
   // math at `FetchState.res:619` stays untouched.
-  let onBlockFn = (rawOptions: 'a, handler: 'b) => {
+  let onBlockHandlerFn = (rawOptions: 'a, handler: 'b) => {
     let raw =
       rawOptions->(
         Utils.magic: 'a => {
           "name": string,
-          "where": option<Envio.onBlockWhereArgs<unknown> => Envio.onBlockWhereResult>,
+          "where": option<Envio.onBlockWhereArgs<unknown> => unknown>,
         }
       )
     let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
     let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
+    let matchedAny = ref(false)
 
     config.chainMap
     ->ChainMap.values
@@ -319,34 +351,27 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       let chainId = chainConfig.id
       let chainObj = chainsDict->Js.Dict.unsafeGet(chainId->Int.toString)
 
-      // A `false` return skips this chain; anything else (true, undefined, or
-      // a filter object) registers. Nullish is coerced to the `true` variant
-      // so the unboxed-variant `switch` stays exhaustive.
-      let normalized = switch raw["where"] {
-      | None => Envio.OnBlockWhereBool(true)
-      | Some(predicate) =>
-        let result = predicate({chain: chainObj})
-        if result === %raw(`undefined`) || result === %raw(`null`) {
-          OnBlockWhereBool(true)
-        } else {
-          result
-        }
+      // Predicate returns `undefined`/`true` → match with no filter;
+      // `false` → skip; any object → structured filter.
+      let result = switch raw["where"] {
+      | None => %raw(`true`)
+      | Some(predicate) => predicate({chain: chainObj})
       }
 
-      let (shouldRegister, startBlock, endBlock, interval) = switch normalized {
-      | OnBlockWhereBool(false) => (false, None, None, 1)
-      | OnBlockWhereBool(true) => (true, None, None, 1)
-      | OnBlockWhereFilter(filter) =>
-        let numberFilter = filter.block->Belt.Option.flatMap(b => b.number)
-        let gte = numberFilter->Belt.Option.flatMap(n => n._gte)
-        let lte = numberFilter->Belt.Option.flatMap(n => n._lte)
-        let every =
-          numberFilter
-          ->Belt.Option.flatMap(n => n._every)
-          ->Belt.Option.getWithDefault(1)
+      let (shouldRegister, startBlock, endBlock, interval) = if result === %raw(`false`) {
+        (false, None, None, 1)
+      } else if (
+        Js.typeof(result) !== "object" || result === %raw(`null`) || result === %raw(`undefined`)
+      ) {
+        // `true`, `undefined`, or anything non-object → register with no filter.
+        (true, None, None, 1)
+      } else {
+        let (gte, lte, every) = extractRange(result)
         (true, gte, lte, every)
       }
+
       if shouldRegister {
+        matchedAny := true
         HandlerRegister.registerOnBlock(
           ~name=raw["name"],
           ~chainId,
@@ -357,6 +382,21 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
         )
       }
     })
+
+    // Catches misconfigured `where` predicates that return `false` for every
+    // configured chain — the handler would otherwise never fire with no hint.
+    if !matchedAny.contents {
+      Logging.warn(
+        `Block handler "${raw["name"]}" matched 0 chains. Check the \`where\` predicate.`,
+      )
+    }
+  }
+
+  // SVM exposes this as `indexer.onSlot` (blocks on SVM are slots);
+  // EVM/Fuel expose it as `indexer.onBlock`.
+  let onBlockMethodName = switch config.ecosystem.name {
+  | Svm => "onSlot"
+  | Evm | Fuel => "onBlock"
   }
 
   indexer
@@ -365,7 +405,10 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     "contractRegister",
     {enumerable: true, value: contractRegisterFn},
   )
-  ->Utils.Object.definePropertyWithValue("onBlock", {enumerable: true, value: onBlockFn})
+  ->Utils.Object.definePropertyWithValue(
+    onBlockMethodName,
+    {enumerable: true, value: onBlockHandlerFn},
+  )
   ->ignore
 
   indexer->(Utils.magic: 'a => 'indexer)

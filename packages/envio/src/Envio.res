@@ -18,35 +18,19 @@ type onBlockArgs<'block, 'context> = {
 }
 
 @genType
-type onBlockNumberFilter = {
-  _gte?: int,
-  _lte?: int,
-  /** Match every Nth block relative to _gte (or chain startBlock). */
-  _every?: int,
-}
-
-@genType
-type onBlockBlockFilter = {number?: onBlockNumberFilter}
-
-@genType
-type onBlockFilter = {block?: onBlockBlockFilter}
-
-// Unboxed union: `bool | onBlockFilter`. `where` returns one of:
-//   - `false` → skip this chain
-//   - `true` / omit → register on this chain with no extra filter
-//   - an `onBlockFilter` object → register with the given range/stride
-@genType @unboxed
-type onBlockWhereResult =
-  | OnBlockWhereBool(bool)
-  | OnBlockWhereFilter(onBlockFilter)
-
-@genType
 type onBlockWhereArgs<'chain> = {chain: 'chain}
 
+// `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:
+//   - `false` → skip this chain
+//   - `true` / omit → register on this chain with no extra filter
+//   - a filter object whose shape is ecosystem-specific (see the `Evm*` /
+//     `Fuel*` / `Svm*` `OnBlock`/`OnSlot` types in `packages/envio/index.d.ts`)
+// Typed as `unknown` here because ReScript has no way to express the
+// ecosystem-dependent union; end-user types come from `index.d.ts`.
 @genType
 type onBlockOptions<'chain> = {
   name: string,
-  where?: onBlockWhereArgs<'chain> => onBlockWhereResult,
+  where?: onBlockWhereArgs<'chain> => unknown,
 }
 
 type whereOperator<'fieldType> = {

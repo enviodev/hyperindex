@@ -752,8 +752,28 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
     }
 
     case "onBlockInHandler": {
+      // Boolean-return path: bare predicate selecting a single chain.
       indexer.onBlock(
         { name: "test", where: ({ chain }) => chain.id === 1 },
+        async () => {},
+      );
+      // Filter-object path: range + stride for chain 1, skip elsewhere.
+      indexer.onBlock(
+        {
+          name: "test_filter",
+          where: ({ chain }) =>
+            chain.id === 1
+              ? { block: { number: { _gte: 100, _lte: 200, _every: 5 } } }
+              : false,
+        },
+        async () => {},
+      );
+      // Default-omitted: registers on every configured chain.
+      indexer.onBlock({ name: "test_default" }, async () => {});
+      // Zero-match path: predicate returns false for every chain → warn log,
+      // no registration. Asserts the runtime tolerates a no-op predicate.
+      indexer.onBlock(
+        { name: "test_skip_all", where: () => false },
         async () => {},
       );
       break;

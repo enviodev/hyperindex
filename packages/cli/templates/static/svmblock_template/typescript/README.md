@@ -6,12 +6,12 @@ This example demonstrates how to index **Solana blocks** using a block handler. 
 
 For more information, see the [block handlers documentation](https://docs.envio.dev/docs/HyperIndex/block-handlers).
 
-## Block Handler
+## Slot Handler
 
-The `indexer.onBlock` handler is triggered for each block on the matching chain. The `where` predicate is evaluated once per configured chain and can restrict handlers to specific chains or block ranges. This example uses an effect to fetch additional block data from the Solana RPC:
+The `indexer.onSlot` handler is triggered for each slot on the matching chain. The `where` predicate is evaluated once per configured chain and can restrict handlers to specific chains or slot ranges. This example uses an effect to fetch additional block data from the Solana RPC:
 
 ```ts
-indexer.onBlock(
+indexer.onSlot(
   { name: "BlockTracker", where: ({ chain }) => chain.id === 0 },
   async ({ slot, context }) => {
     const block = await context.effect(getBlockEffect, { slot });

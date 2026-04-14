@@ -51,34 +51,6 @@ export type WhereOperator<T> = {
 };
 
 /**
- * Filter on block number for `indexer.onBlock` `where` predicate. Reuses
- * `_gte`/`_lte` from {@link WhereOperator} and adds a block-specific `_every`.
- */
-export type OnBlockNumberFilter = Pick<WhereOperator<number>, "_gte" | "_lte"> & {
-  /**
-   * Match every Nth block. Alignment is relative to `_gte` (or the chain's
-   * configured startBlock when `_gte` is omitted), preserving the semantic
-   * `(blockNumber - startBlock) % _every === 0`.
-   */
-  readonly _every?: number;
-};
-
-/** Structured filter object returned by an `indexer.onBlock` `where` predicate. */
-export type OnBlockFilter = {
-  readonly block?: {
-    readonly number?: OnBlockNumberFilter;
-  };
-};
-
-/**
- * Return type of an `indexer.onBlock` `where` predicate.
- * - `false` → skip this chain entirely.
- * - `true` / `undefined` → register on the chain with no extra filter.
- * - {@link OnBlockFilter} → register with the given range/stride.
- */
-export type OnBlockWhereResult = boolean | OnBlockFilter | void;
-
-/**
  * Constructs a getWhere filter type from an entity type.
  * Each field can be filtered using {@link WhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`).
  *
@@ -506,8 +478,8 @@ export type FuelOnEventContext<Config extends IndexerConfigTypes> = Prettify<
   BaseHandlerContext<Config, FuelChainIds<Config>>
 >;
 
-/** Context for `indexer.onBlock` handlers in SVM ecosystem. */
-export type SvmOnBlockContext<Config extends IndexerConfigTypes> = Prettify<
+/** Context for `indexer.onSlot` handlers in SVM ecosystem. */
+export type SvmOnSlotContext<Config extends IndexerConfigTypes> = Prettify<
   BaseHandlerContext<Config, SvmChainIds<Config>>
 >;
 
@@ -655,20 +627,160 @@ export type FuelContractRegisterOptions<Event extends EventLike, Params = {}> = 
 /** Handler function for a Fuel contractRegister registration. */
 export type FuelContractRegisterHandler<Event extends EventLike, Context> = EvmOnEventHandler<Event, Context>;
 
-// ============== Indexer Handler Methods ==============
+// ============== EVM onBlock types ==============
 
 /**
- * Shared shape for `indexer.onBlock` across ecosystems. The `HandlerArgs`
- * parameter lets each ecosystem supply its own block-identifier field
- * (`block.number` on EVM/Fuel, `slot` on SVM) alongside the context.
+ * Filter on `block.number` for an `indexer.onBlock` `where` predicate (EVM).
+ * Alignment for `_every` is relative to `_gte` (or the chain's configured
+ * `startBlock` when `_gte` is omitted), preserving
+ * `(blockNumber - startBlock) % _every === 0`.
  */
-type OnBlockMethod<Chain, HandlerArgs> = (
-  options: {
-    readonly name: string;
-    readonly where?: (args: { readonly chain: Chain }) => OnBlockWhereResult;
-  },
-  handler: (args: HandlerArgs) => Promise<void>,
-) => void;
+export type EvmOnBlockNumberFilter = {
+  /** Matches blocks whose number is greater than or equal to the given value. */
+  readonly _gte?: number;
+  /** Matches blocks whose number is less than or equal to the given value. */
+  readonly _lte?: number;
+  /** Match every Nth block. Alignment is relative to `_gte`. */
+  readonly _every?: number;
+};
+
+/** Structured filter object returned by an EVM `indexer.onBlock` `where` predicate. */
+export type EvmOnBlockFilter = {
+  readonly block?: { readonly number?: EvmOnBlockNumberFilter };
+};
+
+/**
+ * Return type of an EVM `indexer.onBlock` `where` predicate.
+ * - `false` → skip this chain entirely.
+ * - `true` / `undefined` → register on the chain with no extra filter.
+ * - {@link EvmOnBlockFilter} → register with the given range/stride.
+ */
+export type EvmOnBlockWhereResult = boolean | EvmOnBlockFilter | void;
+
+/** Argument passed to an EVM `indexer.onBlock` `where` predicate. */
+export type EvmOnBlockWhereArgs<Config extends IndexerConfigTypes> = {
+  readonly chain: EvmChain<EvmChainIds<Config>, EvmContractNames<Config>>;
+};
+
+/** Context for EVM `indexer.onBlock` handlers. Alias of {@link EvmOnEventContext}. */
+export type EvmOnBlockContext<Config extends IndexerConfigTypes> = EvmOnEventContext<Config>;
+
+/** Arguments passed to an EVM block handler. */
+export type EvmOnBlockHandlerArgs<Config extends IndexerConfigTypes> = {
+  readonly block: { readonly number: number };
+  readonly context: EvmOnBlockContext<Config>;
+};
+
+/** Handler function for an EVM `indexer.onBlock` registration. */
+export type EvmOnBlockHandler<Config extends IndexerConfigTypes> = (
+  args: EvmOnBlockHandlerArgs<Config>,
+) => Promise<void>;
+
+/** Options for an EVM `indexer.onBlock` registration. */
+export type EvmOnBlockOptions<Config extends IndexerConfigTypes> = {
+  readonly name: string;
+  readonly where?: (args: EvmOnBlockWhereArgs<Config>) => EvmOnBlockWhereResult;
+};
+
+// ============== Fuel onBlock types ==============
+
+/**
+ * Filter on `block.height` for a Fuel `indexer.onBlock` `where` predicate.
+ * `_every` alignment is relative to `_gte`.
+ */
+export type FuelOnBlockHeightFilter = {
+  /** Matches blocks whose height is greater than or equal to the given value. */
+  readonly _gte?: number;
+  /** Matches blocks whose height is less than or equal to the given value. */
+  readonly _lte?: number;
+  /** Match every Nth block. Alignment is relative to `_gte`. */
+  readonly _every?: number;
+};
+
+/** Structured filter object returned by a Fuel `indexer.onBlock` `where` predicate. */
+export type FuelOnBlockFilter = {
+  readonly block?: { readonly height?: FuelOnBlockHeightFilter };
+};
+
+/**
+ * Return type of a Fuel `indexer.onBlock` `where` predicate.
+ * - `false` → skip this chain.
+ * - `true` / `undefined` → register on the chain with no extra filter.
+ * - {@link FuelOnBlockFilter} → register with the given range/stride.
+ */
+export type FuelOnBlockWhereResult = boolean | FuelOnBlockFilter | void;
+
+/** Argument passed to a Fuel `indexer.onBlock` `where` predicate. */
+export type FuelOnBlockWhereArgs<Config extends IndexerConfigTypes> = {
+  readonly chain: FuelChain<FuelChainIds<Config>, FuelContractNames<Config>>;
+};
+
+/** Context for Fuel `indexer.onBlock` handlers. Alias of {@link FuelOnEventContext}. */
+export type FuelOnBlockContext<Config extends IndexerConfigTypes> = FuelOnEventContext<Config>;
+
+/** Arguments passed to a Fuel block handler. */
+export type FuelOnBlockHandlerArgs<Config extends IndexerConfigTypes> = {
+  readonly block: { readonly height: number };
+  readonly context: FuelOnBlockContext<Config>;
+};
+
+/** Handler function for a Fuel `indexer.onBlock` registration. */
+export type FuelOnBlockHandler<Config extends IndexerConfigTypes> = (
+  args: FuelOnBlockHandlerArgs<Config>,
+) => Promise<void>;
+
+/** Options for a Fuel `indexer.onBlock` registration. */
+export type FuelOnBlockOptions<Config extends IndexerConfigTypes> = {
+  readonly name: string;
+  readonly where?: (args: FuelOnBlockWhereArgs<Config>) => FuelOnBlockWhereResult;
+};
+
+// ============== SVM onSlot types ==============
+
+/**
+ * Filter on slot number for an `indexer.onSlot` `where` predicate (SVM).
+ * `_every` alignment is relative to `_gte`.
+ */
+export type SvmOnSlotFilter = {
+  /** Matches slots whose number is greater than or equal to the given value. */
+  readonly _gte?: number;
+  /** Matches slots whose number is less than or equal to the given value. */
+  readonly _lte?: number;
+  /** Match every Nth slot. Alignment is relative to `_gte`. */
+  readonly _every?: number;
+};
+
+/**
+ * Return type of an SVM `indexer.onSlot` `where` predicate.
+ * - `false` → skip this chain.
+ * - `true` / `undefined` → register on the chain with no extra filter.
+ * - {@link SvmOnSlotFilter} → register with the given range/stride.
+ */
+export type SvmOnSlotWhereResult = boolean | SvmOnSlotFilter | void;
+
+/** Argument passed to an SVM `indexer.onSlot` `where` predicate. */
+export type SvmOnSlotWhereArgs<Config extends IndexerConfigTypes> = {
+  readonly chain: SvmChain<SvmChainIds<Config>>;
+};
+
+/** Arguments passed to an SVM slot handler. */
+export type SvmOnSlotHandlerArgs<Config extends IndexerConfigTypes> = {
+  readonly slot: number;
+  readonly context: SvmOnSlotContext<Config>;
+};
+
+/** Handler function for an SVM `indexer.onSlot` registration. */
+export type SvmOnSlotHandler<Config extends IndexerConfigTypes> = (
+  args: SvmOnSlotHandlerArgs<Config>,
+) => Promise<void>;
+
+/** Options for an SVM `indexer.onSlot` registration. */
+export type SvmOnSlotOptions<Config extends IndexerConfigTypes> = {
+  readonly name: string;
+  readonly where?: (args: SvmOnSlotWhereArgs<Config>) => SvmOnSlotWhereResult;
+};
+
+// ============== Indexer Handler Methods ==============
 
 // onEvent/contractRegister methods for EVM ecosystem
 // NOTE: options use inline { contract: C; event: E } shape for TypeScript inference.
@@ -717,18 +829,15 @@ type EvmHandlerMethods<Config extends IndexerConfigTypes> =
           handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
         ) => void;
         /**
-         * Register a Block Handler. `where` is evaluated once per configured
+         * Register a block handler. `where` is evaluated once per configured
          * chain at registration time; return `false` to skip a chain, `true` /
-         * `undefined` to match every block, or a filter object describing a
-         * block-number range and stride.
+         * `undefined` to match every block, or an {@link EvmOnBlockFilter}
+         * describing a block-number range and stride.
          */
-        readonly onBlock: OnBlockMethod<
-          EvmChain<EvmChainIds<Config>, EvmContractNames<Config>>,
-          {
-            readonly block: { readonly number: number };
-            readonly context: EvmOnEventContext<Config>;
-          }
-        >;
+        readonly onBlock: (
+          options: EvmOnBlockOptions<Config>,
+          handler: EvmOnBlockHandler<Config>,
+        ) => void;
       }
     : {};
 
@@ -772,29 +881,28 @@ type FuelHandlerMethods<Config extends IndexerConfigTypes> =
           },
           handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
         ) => void;
-        /** Register a Block Handler. See `EvmHandlerMethods.onBlock` for the `where` semantics. */
-        readonly onBlock: OnBlockMethod<
-          FuelChain<FuelChainIds<Config>, FuelContractNames<Config>>,
-          {
-            readonly block: { readonly height: number };
-            readonly context: FuelOnEventContext<Config>;
-          }
-        >;
+        /** Register a Fuel block handler. See `EvmHandlerMethods.onBlock` for `where` semantics; Fuel filters on `block.height`. */
+        readonly onBlock: (
+          options: FuelOnBlockOptions<Config>,
+          handler: FuelOnBlockHandler<Config>,
+        ) => void;
       }
     : {};
 
-// Handler methods for SVM ecosystem. Only onBlock — SVM has no onEvent yet.
+// Handler methods for SVM ecosystem. Only onSlot — SVM has no onEvent yet.
 type SvmHandlerMethods<Config extends IndexerConfigTypes> =
   HasSvm<Config> extends true
     ? {
-        /** Register a Block Handler. See `EvmHandlerMethods.onBlock` for the `where` semantics. */
-        readonly onBlock: OnBlockMethod<
-          SvmChain<SvmChainIds<Config>>,
-          {
-            readonly slot: number;
-            readonly context: SvmOnBlockContext<Config>;
-          }
-        >;
+        /**
+         * Register a slot handler. `where` is evaluated once per configured
+         * chain at registration time; return `false` to skip a chain, `true` /
+         * `undefined` to match every slot, or an {@link SvmOnSlotFilter}
+         * describing a slot range and stride.
+         */
+        readonly onSlot: (
+          options: SvmOnSlotOptions<Config>,
+          handler: SvmOnSlotHandler<Config>,
+        ) => void;
       }
     : {};
 
