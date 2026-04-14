@@ -92,11 +92,10 @@ indexer.onEvent(
     wildcard: true,
     where: ({ chain }) => {
       if (chain.id !== 100 && chain.id !== 137) return false;
-      const addresses = chain.ERC20.addresses;
       return {
         params: [
-          { from: ZERO_ADDRESS, to: addresses },
-          { from: addresses, to: ZERO_ADDRESS },
+          { from: ZERO_ADDRESS, to: chain.ERC20.addresses },
+          { from: chain.ERC20.addresses, to: ZERO_ADDRESS },
         ],
       };
     },

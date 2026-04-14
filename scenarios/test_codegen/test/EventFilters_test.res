@@ -56,7 +56,13 @@ describe("Test eventFilters", () => {
   })
 
   it("Supports filter depending on addresses", t => {
-    let eventConfig = getEvmEventConfig(~contractName="EventFiltersTest", ~eventName="WildcardWithAddress")
+    // Per-chain where-callback probing: pick the chain 137 event config so
+    // the probe exercises the branch that accesses addresses.
+    let eventConfig = getEvmEventConfig(
+      ~contractName="EventFiltersTest",
+      ~eventName="WildcardWithAddress",
+      ~chain=ChainMap.Chain.makeUnsafe(~chainId=137),
+    )
 
     t.expect(
       switch eventConfig.getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=137)) {

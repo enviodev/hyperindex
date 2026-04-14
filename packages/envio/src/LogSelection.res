@@ -95,6 +95,7 @@ let parseEventFiltersOrThrow = {
     ~sighash,
     ~params,
     ~contractName: string,
+    ~probeChainId: int,
     ~topic1=noopGetter,
     ~topic2=noopGetter,
     ~topic3=noopGetter,
@@ -206,30 +207,22 @@ let parseEventFiltersOrThrow = {
         // trigger, since users may destructure or alias before reading
         // `.addresses`).
         //
-        // Callbacks often branch on `chain.id` and only touch addresses on
-        // chains they actually care about. A single probe with chainId=0
-        // would miss those, so we probe with a small set of common chain
-        // IDs (0/1, popular mainnets, common test IDs). Best effort — if a
-        // user's IDs miss the probe set, the worst case for a wildcard
-        // event is fetching eagerly when it could have waited for dynamic
-        // registration; correctness is preserved by re-running the
-        // callback per batch in the Dynamic path below.
-        let probeChainIds = [0, 1, 100, 137, 8453, 42161, 10, 56, 31337, 11155111]
-        probeChainIds->Js.Array2.forEach(probeId => {
-          if !filterByAddresses.contents {
-            try {
-              let chain = makeChainArg(~contractName, ~chainId=probeId, ~getContractObj=() => {
-                filterByAddresses := true
-                // Provide an empty contract object so that subsequent
-                // `.addresses` / destructuring access doesn't throw.
-                makeContractObj(~getAddresses=() => [])
-              })
-              let _ = fn({chain: chain->Obj.magic})
-            } catch {
-            | _ => ()
-            }
-          }
-        })
+        // The probe uses this chain's real configured id, so handlers that
+        // branch on `chain.id` are exercised along the path they take for
+        // this chain. Event configs are built per-chain, so each chain gets
+        // a `filterByAddresses` verdict that matches its own callback
+        // behaviour.
+        try {
+          let chain = makeChainArg(~contractName, ~chainId=probeChainId, ~getContractObj=() => {
+            filterByAddresses := true
+            // Provide an empty contract object so subsequent `.addresses`
+            // / destructuring access doesn't throw.
+            makeContractObj(~getAddresses=() => [])
+          })
+          let _ = fn({chain: chain->Obj.magic})
+        } catch {
+        | _ => ()
+        }
         if filterByAddresses.contents {
           chain => Internal.Dynamic(
             addresses => {
