@@ -1,21 +1,28 @@
 name: Build & Verify
 
 on:
-  pull_request:
+  # pull_request_target lets fork PRs run with repo secrets under a label
+  # gate. Check runs attach to the PR head SHA automatically, so branch
+  # protection sees them without a separate reporter workflow.
+  #
+  # Types:
+  #   - opened/reopened/synchronize: PR lifecycle; gate blocks fork runs
+  #     until a maintainer adds `ok-to-test`.
+  #   - labeled: fires when the gate label is added, unblocking the run.
+  #
+  # Security: the workflow definition is always taken from the base branch,
+  # so forks cannot modify gate logic. Jobs explicitly check out the PR
+  # head SHA (github.event.pull_request.head.sha) — pinned at checkout so
+  # a mid-run force-push on the fork cannot swap code under us.
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches:
       - main
-  # Manual trigger for running full CI (with repo secrets) against a specific
-  # commit — e.g. a fork PR from an external contributor whose runs would
-  # otherwise execute without secrets. Only users with write access to this
-  # repo can dispatch this workflow. The provided SHA is pinned at checkout
-  # time so a mid-run force-push on the fork cannot swap code under us.
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: "Exact 40-character commit SHA to run CI against (immutable; do not pass a ref like refs/pull/<N>/head)"
-        required: true
-        type: string
+
+# Default to read-only; jobs opt into write scopes as needed.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,23 +32,57 @@ env:
 jobs:
   # ── Gate ────────────────────────────────────────────────────────────
 
-  # Validate workflow_dispatch.sha is an immutable 40-char commit SHA.
-  # Runs on every event so downstream `needs:` is satisfied without skipped-
-  # dependency gymnastics; the check itself is a no-op outside of dispatch.
-  validate-dispatch-sha:
+  # Security gate for pull_request_target: fork code may exfiltrate secrets,
+  # so fork PRs only run after a maintainer adds the `ok-to-test` label.
+  # The label is auto-removed on each new fork push (see revoke-approval),
+  # forcing per-commit review.
+  #
+  # Runs when:
+  #   - push to main
+  #   - same-repo PR (any action)
+  #   - `ok-to-test` label is being added right now
+  #   - PR is opened/reopened and already carries the label (rare)
+  # Explicitly does NOT run on fork `synchronize` — a new commit must be
+  # re-labeled by a maintainer.
+  gate:
     runs-on: ubuntu-latest
     timeout-minutes: 1
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      (github.event.action == 'labeled' && github.event.label.name == 'ok-to-test') ||
+      (github.event.action != 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ok-to-test'))
     steps:
-      - name: Validate sha
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          SHA: ${{ inputs.sha }}
-        run: |
-          [[ "$SHA" =~ ^[0-9a-fA-F]{40}$ ]] || {
-            echo "::error::inputs.sha must be a 40-character hex commit SHA (got: $SHA)"
-            exit 1
-          }
+      - run: echo "Gate passed (event=${{ github.event_name }} action=${{ github.event.action }})"
+
+  # Revoke approval on each fork push: removes `ok-to-test` so a maintainer
+  # must re-approve new commits before CI runs with secrets again.
+  # No-op for same-repo PRs (gate admits them unconditionally anyway).
+  revoke-approval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'synchronize' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove ok-to-test label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                name: 'ok-to-test',
+              });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              core.info('Label not present; nothing to remove.');
+            }
 
   # ── Build ───────────────────────────────────────────────────────────
 
@@ -49,12 +90,12 @@ jobs:
   build-linux-package:
     runs-on: ubuntu-22.04
     timeout-minutes: 9
-    needs: validate-dispatch-sha
+    needs: gate
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -101,7 +142,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: pnpm/action-setup@v5
         with:
@@ -135,12 +176,12 @@ jobs:
   cargo-test:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: validate-dispatch-sha
+    needs: gate
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -160,12 +201,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 9
     continue-on-error: true
-    needs: validate-dispatch-sha
+    needs: gate
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -184,7 +225,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
@@ -230,7 +271,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -310,7 +351,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
