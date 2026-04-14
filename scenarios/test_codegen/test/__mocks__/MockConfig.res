@@ -6,13 +6,13 @@ let getEventConfig = (
   ~config=Indexer.Generated.configWithoutRegistrations,
   ~contractName,
   ~eventName,
-  ~chain=?,
+  ~chainId=?,
 ) =>
   config
-  ->Config.getEventConfig(~contractName, ~eventName, ~chain?)
+  ->Config.getEventConfig(~contractName, ~eventName, ~chainId?)
   ->Belt.Option.getExn
 
-let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chain=?) =>
-  getEventConfig(~config?, ~contractName, ~eventName, ~chain?)
+let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) =>
+  getEventConfig(~config?, ~contractName, ~eventName, ~chainId?)
   ->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
 

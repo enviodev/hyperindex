@@ -61,7 +61,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="WildcardWithAddress",
-      ~chain=ChainMap.Chain.makeUnsafe(~chainId=137),
+      ~chainId=137,
     )
 
     t.expect(

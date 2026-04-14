@@ -786,20 +786,19 @@ let fromPublic = (publicConfigJson: Js.Json.t, ~maxAddrInPartition=5000) => {
   }
 }
 
-// Look up an event config by (contract, event) name. When `chain` is given,
+// Look up an event config by (contract, event) name. When `chainId` is given,
 // returns that chain's per-chain event config (matters for where-callback
-// probe detection, which runs with the chain's real id). Without `chain`,
+// probe detection, which runs with the chain's real id). Without `chainId`,
 // falls back to the first chain that declares this event.
-let getEventConfig = (config: t, ~contractName, ~eventName, ~chain: option<ChainMap.Chain.t>=?) => {
-  let chains = switch chain {
-  | Some(chain) =>
+let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<int>=?) => {
+  let chains = switch chainId {
+  | Some(chainId) =>
+    let chain = ChainMap.Chain.makeUnsafe(~chainId)
     switch config.chainMap->ChainMap.get(chain) {
     | chainConfig => [chainConfig]
     | exception _ =>
       Js.Exn.raiseError(
-        `Chain ${chain
-          ->ChainMap.Chain.toChainId
-          ->Int.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
+        `Chain ${chainId->Int.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
       )
     }
   | None => config.chainMap->ChainMap.values

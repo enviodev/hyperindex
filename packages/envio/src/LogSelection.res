@@ -63,26 +63,22 @@ type parsedEventFilters = {
 }
 
 // Build the runtime `chain` argument passed into a `where` callback.
-// Exposes `chain.id` and `chain.<ContractName>.addresses` as plain values.
+// Exposes `chain.id` and `chain.<ContractName>.addresses` as plain values
+// on a normal (Object.prototype) JS object. `Js.Dict` is used so the
+// contract name can be a dynamic property key without defineProperty
+// ceremony.
 let makeChainArg = (~contractName: string, ~chainId: int, ~addresses: array<Address.t>) => {
-  let contractObj = Utils.Object.createNullObject()
-  contractObj
-  ->Utils.Object.definePropertyWithValue("addresses", {enumerable: true, value: addresses})
-  ->ignore
-  let chainObj = Utils.Object.createNullObject()
-  chainObj
-  ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainId})
-  ->ignore
-  chainObj
-  ->Utils.Object.definePropertyWithValue(contractName, {enumerable: true, value: contractObj})
-  ->ignore
+  let chainObj = Js.Dict.empty()
+  chainObj->Js.Dict.set("id", chainId->Obj.magic)
+  chainObj->Js.Dict.set(contractName, {"addresses": addresses}->Obj.magic)
   chainObj
 }
 
 // Build the detection-time `chain` argument. `chain.<ContractName>.addresses`
-// is a getter that flips `filterByAddresses` only when actually read — the
-// contract sub-object itself is a plain value so destructuring without
-// reading `.addresses` doesn't mark the callback as address-dependent.
+// is a getter so the runtime can tell whether the callback actually reads
+// it; the contract sub-object itself is built via `defineProperty` only
+// because its `addresses` field needs the getter — the enclosing chainObj
+// is a plain JS object.
 let makeDetectionChainArg = (
   ~contractName: string,
   ~chainId: int,
@@ -92,13 +88,9 @@ let makeDetectionChainArg = (
   contractObj
   ->Utils.Object.defineProperty("addresses", {enumerable: true, get: getAddresses})
   ->ignore
-  let chainObj = Utils.Object.createNullObject()
-  chainObj
-  ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainId})
-  ->ignore
-  chainObj
-  ->Utils.Object.definePropertyWithValue(contractName, {enumerable: true, value: contractObj})
-  ->ignore
+  let chainObj = Js.Dict.empty()
+  chainObj->Js.Dict.set("id", chainId->Obj.magic)
+  chainObj->Js.Dict.set(contractName, contractObj->Obj.magic)
   chainObj
 }
 
@@ -251,11 +243,17 @@ let parseEventFiltersOrThrow = {
         } else {
           // No probed chain referenced the contract — cache as Static
           // per chain to avoid recomputing topic selections each batch.
+          // The addresses getter throws: if a code path the probe didn't
+          // exercise reads `chain.<Contract>.addresses` at runtime, silent
+          // [] would produce wrong topics — throw a user-friendly error
+          // instead so the user rewrites the callback to surface the
+          // dependency up-front.
           chain => {
-            let chainArg = makeChainArg(
-              ~contractName,
-              ~chainId=chain->ChainMap.Chain.toChainId,
-              ~addresses=[],
+            let chainId = chain->ChainMap.Chain.toChainId
+            let chainArg = makeDetectionChainArg(~contractName, ~chainId, ~getAddresses=() =>
+              Js.Exn.raiseError(
+                `Invalid where configuration. Event callback for contract "${contractName}" read \`chain.${contractName}.addresses\` at runtime but the probe didn't detect the access on chainId ${chainId->Belt.Int.toString}. Move the \`chain.${contractName}.addresses\` read above any \`chain.id\` branching so the probe picks up the dependency and switches to the dynamic fetch path.`,
+              )
             )
             Internal.Static(fn({chain: chainArg->Obj.magic})->parse)
           }
