@@ -10,16 +10,16 @@ type t = {
   getNumber: Internal.eventBlock => int,
   getTimestamp: Internal.eventBlock => int,
   getId: Internal.eventBlock => string,
-  cleanUpRawEventFieldsInPlace: Js.Json.t => unit,
+  cleanUpRawEventFieldsInPlace: JSON.t => unit,
 }
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
   switch ecosystem.name {
   | Svm => {slot: blockNumber, context}
   | _ => {
-      let blockEvent = Js.Dict.empty()
-      blockEvent->Js.Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
-      {block: blockEvent->(Utils.magic: Js.Dict.t<unknown> => Internal.blockEvent), context}
+      let blockEvent = Dict.make()
+      blockEvent->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
+      {block: blockEvent->(Utils.magic: dict<unknown> => Internal.blockEvent), context}
     }
   }
 }

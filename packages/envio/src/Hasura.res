@@ -27,7 +27,14 @@ let clearMetadataRoute = Rest.route(() => {
   path: "",
   input: s => {
     let _ = s.field("type", S.literal("clear_metadata"))
-    let _ = s.field("args", S.literal(Js.Obj.empty()))
+    let _ = s.field(
+      "args",
+      S.literal(
+        Object.make(),
+
+        // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
+      ),
+    )
     s->auth
   },
   responses,
@@ -58,13 +65,13 @@ let rawBodyRoute = Rest.route(() => {
   responses,
 })
 
-let sendOperation = async (~endpoint, ~auth, ~operation: Js.Json.t) => {
+let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
   let maxRetries = 3
   let rec retry = async (~attempt) => {
     try {
       let _ = await rawBodyRoute->Rest.fetch(
         {
-          "bodyString": operation->Js.Json.stringify,
+          "bodyString": operation->JSON.stringify,
           "auth": auth,
         },
         ~client=Rest.client(endpoint),
@@ -72,7 +79,7 @@ let sendOperation = async (~endpoint, ~auth, ~operation: Js.Json.t) => {
     } catch {
     | exn =>
       if attempt < maxRetries {
-        let backoffMs = Js.Math.pow_float(~base=2.0, ~exp=attempt->Belt.Int.toFloat)->Belt.Float.toInt * 1000
+        let backoffMs = Math.pow(2.0, ~exp=attempt->Belt.Int.toFloat)->Belt.Float.toInt * 1000
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
         await retry(~attempt=attempt + 1)
       } else {
@@ -111,19 +118,18 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableNames: array<string>
         "args": {
           // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
           "allow_warnings": false,
-          "tables": tableNames->Js.Array2.map(tableName =>
+          "tables": tableNames->Array.map(tableName =>
             {
               "table": {
                 "name": tableName,
                 "schema": pgSchema,
               },
               "configuration": {
-                // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
                 "custom_name": tableName,
               },
             }
           ),
-        }->(Utils.magic: 'a => Js.Json.t),
+        }->(Utils.magic: 'a => JSON.t),
       },
       ~client=Rest.client(endpoint),
     )
@@ -167,12 +173,12 @@ let createSelectPermission = async (
         "source": "default",
         "permission": {
           "columns": "*",
-          "filter": Js.Obj.empty(),
+          "filter": Object.make(),
           "limit": responseLimit,
-          "allow_aggregations": aggregateEntities->Js.Array2.includes(tableName),
+          "allow_aggregations": aggregateEntities->Array.includes(tableName),
         },
       },
-    }->(Utils.magic: 'a => Js.Json.t),
+    }->(Utils.magic: 'a => JSON.t),
   )
 }
 
@@ -207,11 +213,11 @@ let createEntityRelationship = async (
               "schema": pgSchema,
               "name": mappedEntity,
             },
-            "column_mapping": Js.Json.parseExn(`{${derivedFromTo}}`),
+            "column_mapping": JSON.parseOrThrow(`{${derivedFromTo}}`),
           },
         },
       },
-    }->(Utils.magic: 'a => Js.Json.t),
+    }->(Utils.magic: 'a => JSON.t),
   )
 }
 
@@ -229,7 +235,7 @@ let trackDatabase = async (
     InternalTable.Views.metaViewName,
     InternalTable.Views.chainMetadataViewName,
   ]
-  let userTableNames = userEntities->Js.Array2.map(entity => entity.table.tableName)
+  let userTableNames = userEntities->Array.map(entity => entity.table.tableName)
   let tableNames = [exposedInternalTableNames, userTableNames]->Belt.Array.concatMany
 
   Logging.info("Tracking tables in Hasura")
@@ -238,19 +244,26 @@ let trackDatabase = async (
 
   await trackTables(~endpoint, ~auth, ~pgSchema, ~tableNames)
 
-  for i in 0 to tableNames->Js.Array2.length - 1 {
-    let tableName = tableNames->Js.Array2.unsafe_get(i)
-    await createSelectPermission(~endpoint, ~auth, ~tableName, ~pgSchema, ~responseLimit, ~aggregateEntities)
+  for i in 0 to tableNames->Array.length - 1 {
+    let tableName = tableNames->Array.getUnsafe(i)
+    await createSelectPermission(
+      ~endpoint,
+      ~auth,
+      ~tableName,
+      ~pgSchema,
+      ~responseLimit,
+      ~aggregateEntities,
+    )
   }
 
-  for i in 0 to userEntities->Js.Array2.length - 1 {
-    let entityConfig = userEntities->Js.Array2.unsafe_get(i)
+  for i in 0 to userEntities->Array.length - 1 {
+    let entityConfig = userEntities->Array.getUnsafe(i)
     let {tableName} = entityConfig.table
 
     //Set array relationships
     let derivedFromFields = entityConfig.table->Table.getDerivedFromFields
-    for j in 0 to derivedFromFields->Js.Array2.length - 1 {
-      let derivedFromField = derivedFromFields->Js.Array2.unsafe_get(j)
+    for j in 0 to derivedFromFields->Array.length - 1 {
+      let derivedFromField = derivedFromFields->Array.getUnsafe(j)
       //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
       let relationalFieldName =
         schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
@@ -270,8 +283,8 @@ let trackDatabase = async (
 
     //Set object relationships
     let linkedEntityFields = entityConfig.table->Table.getLinkedEntityFields
-    for j in 0 to linkedEntityFields->Js.Array2.length - 1 {
-      let (field, linkedEntityName) = linkedEntityFields->Js.Array2.unsafe_get(j)
+    for j in 0 to linkedEntityFields->Array.length - 1 {
+      let (field, linkedEntityName) = linkedEntityFields->Array.getUnsafe(j)
       await createEntityRelationship(
         ~endpoint,
         ~auth,

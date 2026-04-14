@@ -74,53 +74,53 @@ type entityContextParams = {
   entityConfig: Internal.entityConfig,
 }
 
-let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<unknown>>) => {
+let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
-  let filterKeys = filter->Js.Dict.keys
+  let filterKeys = filter->Dict.keysToArray
 
   if filterKeys->Array.length === 0 {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Empty filter passed to context.${entityConfig.name}.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
     )
   }
   if filterKeys->Array.length > 1 {
-    Js.Exn.raiseError(
-      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Js.Array2.joinWith(
+    JsError.throwWithMessage(
+      `Multiple filter fields passed to context.${entityConfig.name}.getWhere(). Currently only one filter field per call is supported. Received fields: ${filterKeys->Array.joinUnsafe(
           ", ",
         )}.`,
     )
   }
 
-  let dbFieldName = filterKeys->Js.Array2.unsafe_get(0)
-  let operatorObj = filter->Js.Dict.unsafeGet(dbFieldName)
-  let operatorKeys = operatorObj->Js.Dict.keys
+  let dbFieldName = filterKeys->Array.getUnsafe(0)
+  let operatorObj = filter->Dict.getUnsafe(dbFieldName)
+  let operatorKeys = operatorObj->Dict.keysToArray
 
   if operatorKeys->Array.length === 0 {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Empty operator passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: {} }). Please provide an operator like { _eq: value }, { _gt: value }, { _lt: value }, { _gte: value }, { _lte: value }, or { _in: [values] }.`,
     )
   }
   if operatorKeys->Array.length > 1 {
-    Js.Exn.raiseError(
-      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Js.Array2.joinWith(
+    JsError.throwWithMessage(
+      `Multiple operators passed to context.${entityConfig.name}.getWhere({ ${dbFieldName}: ... }). Currently only one operator per filter field is supported. Received operators: ${operatorKeys->Array.joinUnsafe(
           ", ",
         )}.`,
     )
   }
 
-  let operatorKey = operatorKeys->Js.Array2.unsafe_get(0)
+  let operatorKey = operatorKeys->Array.getUnsafe(0)
 
   let fieldSchema = switch entityConfig.table->Table.getFieldByDbName(dbFieldName) {
   | None =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Invalid field "${dbFieldName}" in context.${entityConfig.name}.getWhere(). The field doesn't exist. ${codegenHelpMessage}`,
     )
   | Some(DerivedFrom(_)) =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
     )
   | Some(Field({isIndex: false, linkedEntity: None})) =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `The field "${dbFieldName}" on entity "${entityConfig.name}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${dbFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
     )
   | Some(Field({fieldSchema})) => fieldSchema
@@ -129,11 +129,11 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
   if operatorKey === "_in" {
     let fieldValues =
       operatorObj
-      ->Js.Dict.unsafeGet(operatorKey)
+      ->Dict.getUnsafe(operatorKey)
       ->(Utils.magic: unknown => array<unknown>)
 
     fieldValues
-    ->Js.Array2.map(fieldValue =>
+    ->Array.map(fieldValue =>
       LoadLayer.loadByField(
         ~loadManager=params.loadManager,
         ~persistence=params.persistence,
@@ -152,7 +152,7 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
   } else if operatorKey === "_gte" || operatorKey === "_lte" {
     // _gte and _lte are composed from Eq + Gt/Lt
     let rangeOperator: TableIndices.Operator.t = operatorKey === "_gte" ? Gt : Lt
-    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
 
     let loadWithOperator = operator =>
       LoadLayer.loadByField(
@@ -177,12 +177,12 @@ let getWhereHandler = (params: entityContextParams, filter: Js.Dict.t<Js.Dict.t<
     | "_gt" => Gt
     | "_lt" => Lt
     | _ =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Invalid operator "${operatorKey}" in context.${entityConfig.name}.getWhere({ ${dbFieldName}: { ${operatorKey}: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
       )
     }
 
-    let fieldValue = operatorObj->Js.Dict.unsafeGet(operatorKey)
+    let fieldValue = operatorObj->Dict.getUnsafe(operatorKey)
 
     LoadLayer.loadByField(
       ~loadManager=params.loadManager,
@@ -236,10 +236,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           )
       )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
     | "getWhere" =>
-      (
-        filter =>
-          getWhereHandler(params, filter->(Utils.magic: unknown => Js.Dict.t<Js.Dict.t<unknown>>))
-      )->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
+      (filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>)))->(
+        Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
+      )
     | "getOrThrow" =>
       (
         (entityId, ~message=?) =>
@@ -255,7 +254,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             switch entity {
             | Some(entity) => entity
             | None =>
-              Js.Exn.raiseError(
+              JsError.throwWithMessage(
                 message->Belt.Option.getWithDefault(
                   `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
                 ),
@@ -301,7 +300,8 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           )
         }
       }->(Utils.magic: (string => unit) => unknown)
-    | _ => Js.Exn.raiseError(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
+    | _ =>
+      JsError.throwWithMessage(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
     }
   },
 }
@@ -352,7 +352,9 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         ->Utils.Proxy.make(entityTraps)
         ->(Utils.magic: entityContextParams => unknown)
       | None =>
-        Js.Exn.raiseError(`Invalid context access by '${prop}' property. ${codegenHelpMessage}`)
+        JsError.throwWithMessage(
+          `Invalid context access by '${prop}' property. ${codegenHelpMessage}`,
+        )
       }
     }
   },
@@ -414,12 +416,14 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
       let isValidContract =
         params.config.chainMap
         ->ChainMap.values
-        ->Js.Array2.some(chain => chain.contracts->Js.Array2.some(c => c.name === contractName))
+        ->Array.some(chain => chain.contracts->Array.some(c => c.name === contractName))
       if isValidContract {
         let addFn = makeAddFunction(~params, ~contractName)
         {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
       } else {
-        Js.Exn.raiseError(`Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`)
+        JsError.throwWithMessage(
+          `Invalid contract name '${prop}' on context.chain. ${codegenHelpMessage}`,
+        )
       }
     }
   },
@@ -440,7 +444,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
       ->Utils.Proxy.make(contractRegisterChainTraps)
       ->(Utils.magic: contractRegisterParams => unknown)
     | _ =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${codegenHelpMessage}`,
       )
     }

@@ -8,9 +8,9 @@ module Chain = {
   let makeUnsafe = (~chainId) => chainId
 }
 
-module ChainIdCmp = Belt.Id.MakeComparableU({
+module ChainIdCmp = Belt.Id.MakeComparable({
   type t = Chain.t
-  let cmp = (a, b) => Pervasives.compare(a->Chain.toChainId, b->Chain.toChainId)
+  let cmp = (a, b) => Int.compare(a->Chain.toChainId, b->Chain.toChainId)->Int.fromFloat
 })
 
 type t<'a> = Belt.Map.t<ChainIdCmp.t, 'a, ChainIdCmp.identity>
@@ -25,7 +25,7 @@ let get: (t<'a>, Chain.t) => 'a = (self, chain) =>
   | None =>
     // Should be unreachable, since we validate on Chain.t creation
     // Still throw just in case something went wrong
-    Js.Exn.raiseError("No chain with id " ++ chain->Chain.toString ++ " found in chain map")
+    JsError.throwWithMessage("No chain with id " ++ chain->Chain.toString ++ " found in chain map")
   }
 
 let set: (t<'a>, Chain.t, 'a) => t<'a> = (map, chain, v) => Belt.Map.set(map, chain, v)

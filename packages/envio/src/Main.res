@@ -1,11 +1,9 @@
-
-
 type chainData = {
   chainId: float,
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   numEventsProcessed: float,
   latestFetchedBlockNumber: int,
   // Need this for API backwards compatibility
@@ -24,7 +22,7 @@ type state =
   Active({
       envioVersion: string,
       chains: array<chainData>,
-      indexerStartTime: Js.Date.t,
+      indexerStartTime: Date.t,
       isPreRegisteringDynamicContracts: bool,
       isUnorderedMultichainMode: bool,
       rollbackOnReorg: bool,
@@ -69,7 +67,7 @@ let getInitialChainState = (~chainId: int): option<Persistence.initialChainState
   switch globalPersistenceRef.contents {
   | Some(persistence) =>
     switch persistence.storageStatus {
-    | Ready(initialState) => initialState.chains->Js.Array2.find(c => c.id === chainId)
+    | Ready(initialState) => initialState.chains->Array.find(c => c.id === chainId)
     | _ => None
     }
   | None => None
@@ -96,7 +94,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->Array.forEach(chainConfig => {
     let chainIdStr = chainConfig.id->Int.toString
 
-    chainIds->Js.Array2.push(chainConfig.id)->ignore
+    chainIds->Array.push(chainConfig.id)->ignore
 
     let chainObj = Utils.Object.createNullObject()
     chainObj
@@ -175,9 +173,9 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
 
                 // Collect all addresses for this contract name from indexingContracts
                 let addresses = []
-                let values = indexingContracts->Js.Dict.values
+                let values = indexingContracts->Dict.valuesToArray
                 for idx in 0 to values->Array.length - 1 {
-                  let indexingContract = values->Js.Array2.unsafe_get(idx)
+                  let indexingContract = values->Array.getUnsafe(idx)
                   if indexingContract.contractName === contract.name {
                     addresses->Array.push(indexingContract.address)->ignore
                   }
@@ -240,11 +238,11 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
           "contract": unknown,
           "event": unknown,
           "wildcard": option<bool>,
-          "where": option<Js.Json.t>,
+          "where": option<JSON.t>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
-    let (contractName, eventName) = if Js.typeof(raw["contract"]) === "string" {
+    let (contractName, eventName) = if typeof(raw["contract"]) === #string {
       // TS format: { contract: "X", event: "Y" }
       (
         raw["contract"]->(Utils.magic: unknown => string),
@@ -262,7 +260,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     | (wildcard, where) =>
       Some({
         ?wildcard,
-        where: ?where->(Utils.magic: option<Js.Json.t> => option<_>),
+        where: ?where->(Utils.magic: option<JSON.t> => option<_>),
       })
     }
     (contractName, eventName, eventOptions)
@@ -315,7 +313,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   let app = make()
 
   let consoleCorsMiddleware = (req, res, next) => {
-    switch req.headers->Js.Dict.get("origin") {
+    switch req.headers->Dict.get("origin") {
     | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
       res->setHeader("Access-Control-Allow-Origin", origin)
     | _ => ()
@@ -354,7 +352,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     if isDevelopmentMode {
       (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
-      ->Promise.done
+      ->Promise.ignore
     } else {
       res->json(Boolean(false))
     }
@@ -381,7 +379,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
 
   let server = app->listen(Env.serverPort)
   server->Express.onError(err => {
-    let code = (err->(Utils.magic: Js.Exn.t => {..}))["code"]
+    let code = (err->(Utils.magic: JsExn.t => {..}))["code"]
     if code === "EADDRINUSE" {
       Logging.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
@@ -473,7 +471,7 @@ let start = async (
                   : cf.fetchState.knownHeight
 
               {
-                chainId: cf.chainConfig.id->Js.Int.toFloat,
+                chainId: cf.chainConfig.id->Int.toFloat,
                 poweredByHyperSync: (
                   cf.sourceManager->SourceManager.getActiveSource
                 ).poweredByHyperSync,
