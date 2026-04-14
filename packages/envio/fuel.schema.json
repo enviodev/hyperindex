@@ -45,6 +45,17 @@
       "format": "uint64",
       "minimum": 0
     },
+    "storage": {
+      "description": "Configuration for the storage backends the indexer writes to. Defaults to `postgres: true` when omitted. ClickHouse requires Postgres to be enabled; it is not supported as a single storage yet.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StorageConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "$ref": "#/$defs/EcosystemTag"
@@ -81,6 +92,26 @@
     "chains"
   ],
   "$defs": {
+    "StorageConfig": {
+      "type": "object",
+      "properties": {
+        "postgres": {
+          "description": "Whether to use Postgres as a storage backend (default: true).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "clickhouse": {
+          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "EcosystemTag": {
       "type": "string",
       "enum": [

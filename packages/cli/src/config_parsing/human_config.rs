@@ -87,6 +87,27 @@ pub struct BaseConfig {
         description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Configuration for the storage backends the indexer writes to. Defaults to \
+                       `postgres: true` when omitted. ClickHouse requires Postgres to be enabled; \
+                       it is not supported as a single storage yet."
+    )]
+    pub storage: Option<StorageConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StorageConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Whether to use Postgres as a storage backend (default: true).")]
+    pub postgres: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Whether to additionally sync the indexed data to ClickHouse. Requires \
+                       Postgres to be enabled (default: false)."
+    )]
+    pub clickhouse: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1012,6 +1033,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1063,6 +1085,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,

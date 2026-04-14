@@ -441,9 +441,36 @@ pub struct SystemConfig {
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
+    pub storage: Storage,
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub handlers: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Storage {
+    pub postgres: bool,
+    pub clickhouse: bool,
+}
+
+impl Storage {
+    pub fn resolve(config: Option<&human_config::StorageConfig>) -> Result<Self> {
+        let (postgres, clickhouse) = match config {
+            // Default: only Postgres enabled
+            None => (true, false),
+            Some(s) => (s.postgres.unwrap_or(true), s.clickhouse.unwrap_or(false)),
+        };
+        if clickhouse && !postgres {
+            return Err(anyhow!(
+                "ClickHouse is not supported as a single storage yet. Please enable Postgres \
+                 alongside ClickHouse in the `storage` config."
+            ));
+        }
+        Ok(Self {
+            postgres,
+            clickhouse,
+        })
+    }
 }
 
 //Getter methods for system config
@@ -550,6 +577,7 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
+        let storage = Storage::resolve(base_config.storage.as_ref())?;
 
         // Create a new ParsedProjectPaths that uses the output field from config if specified
         let final_project_paths = {
@@ -745,6 +773,7 @@ impl SystemConfig {
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
+                    storage,
                     lowercase_addresses: matches!(
                         evm_config.address_format,
                         Some(super::human_config::evm::AddressFormat::Lowercase)
@@ -889,6 +918,7 @@ impl SystemConfig {
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
+                    storage,
                     lowercase_addresses: false,
                     handlers: base_config.handlers.clone(),
                     human_config,
@@ -930,6 +960,7 @@ impl SystemConfig {
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: false,
+                    storage,
                     lowercase_addresses: false,
                     handlers: None,
                     human_config,
@@ -2382,6 +2413,7 @@ mod test {
                 output: None,
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: None,
             contracts: None,
@@ -2430,6 +2462,7 @@ mod test {
                 output: Some("custom/output".to_string()),
                 handlers: None,
                 full_batch_size: None,
+                storage: None,
             },
             ecosystem: None,
             contracts: None,
@@ -2462,6 +2495,58 @@ mod test {
         assert_eq!(
             system_config_with_output.parsed_project_paths.generated,
             expected_custom_path
+        );
+    }
+
+    #[test]
+    fn test_storage_resolve() {
+        use super::human_config::StorageConfig;
+
+        // Default (None) -> postgres only
+        assert_eq!(
+            super::Storage::resolve(None).unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: false
+            }
+        );
+
+        // Empty struct -> defaults
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: None,
+                clickhouse: None,
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: false
+            }
+        );
+
+        // Both enabled -> ok
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: true,
+                clickhouse: true
+            }
+        );
+
+        // ClickHouse without Postgres -> user-friendly error
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: Some(false),
+            clickhouse: Some(true),
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ClickHouse is not supported as a single storage yet"),
+            "Unexpected error: {err}"
         );
     }
 }
