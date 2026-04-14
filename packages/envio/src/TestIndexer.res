@@ -53,36 +53,7 @@ let handleLoadByIds = (
   ~tableName: string,
   ~ids: array<string>,
 ): JSON.t => {
-  let entityDict =
-    state.entities
-    ->Dict.get(tableName)
-    ->Option.getOr(
-      Dict.make(),
-
-      // Check if already processing
-
-      // Parse and validate processConfig
-
-      // Sort chain keys by chain ID for deterministic ordering
-
-      // Parse and validate all chain configs upfront before starting any workers
-
-      // Reset processChanges for this run
-
-      // Build initialState from resolved block range
-
-      // Extract dynamic contracts from state.entities for each chain
-
-      // Explicitly forward parent env so handlers running in
-      // the worker observe the same environment as the test
-      // process (e.g. E2E_EXPECTED_END_BLOCK).
-
-      // Handle messages from worker
-
-      // Set flag before starting workers
-
-      // Run worker threads sequentially, one chain at a time
-    )
+  let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
   let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
   ids->Array.forEach(id => {
@@ -665,12 +636,14 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
       "process",
       (
         processConfig => {
+          // Check if already processing
           if state.processInProgress {
             JsError.throwWithMessage(
               "createTestIndexer process is already running. Only one process call is allowed at a time",
             )
           }
 
+          // Parse and validate processConfig
           let parsedConfig = try processConfig->S.parseOrThrow(processConfigSchema) catch {
           | S.Raised(exn) =>
             JsError.throwWithMessage(
@@ -684,6 +657,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             JsError.throwWithMessage("createTestIndexer requires at least one chain to be defined")
           }
 
+          // Sort chain keys by chain ID for deterministic ordering
           let sortedChainKeys = chainKeys->Array.copy
           sortedChainKeys->Array.sort((a, b) => {
             let aId = a->Int.fromString->Option.getOr(0)
@@ -691,6 +665,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             Int.compare(aId, bId)
           })
 
+          // Parse and validate all chain configs upfront before starting any workers
           let chainEntries = sortedChainKeys->Array.map(chainIdStr => {
             let rawChainConfig = rawChains->Dict.getUnsafe(chainIdStr)
             let chainId = switch chainIdStr->Int.fromString {
@@ -709,6 +684,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             (chainIdStr, chainId, rawChainConfig, processChainConfig)
           })
 
+          // Reset processChanges for this run
           state.processChanges = []
 
           let runChainWorker = ((
@@ -717,9 +693,11 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             rawChainConfig: rawChainConfig,
             processChainConfig,
           )) => {
+            // Build initialState from resolved block range
             let chains: dict<chainConfig> = Dict.make()
             chains->Dict.set(chainIdStr, processChainConfig)
 
+            // Extract dynamic contracts from state.entities for each chain
             let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Dict.make()
             switch state.entities->Dict.get(InternalTable.DynamicContractRegistry.name) {
             | Some(dcDict) =>
@@ -759,6 +737,9 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   workerPath,
                   {
                     workerData: workerData->(Utils.magic: workerData => JSON.t),
+                    // Explicitly forward parent env so handlers running in
+                    // the worker observe the same environment as the test
+                    // process (e.g. E2E_EXPECTED_END_BLOCK).
                     env: %raw(`process.env`),
                   },
                 )
@@ -768,6 +749,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                 throw(exn)
               }
 
+              // Handle messages from worker
               worker->NodeJs.WorkerThreads.onMessage((
                 msg: TestIndexerProxyStorage.workerMessage,
               ) => {
@@ -821,8 +803,10 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             })
           }
 
+          // Set flag before starting workers
           state.processInProgress = true
 
+          // Run worker threads sequentially, one chain at a time
           let rec runChains = idx => {
             if idx >= chainEntries->Array.length {
               state.processInProgress = false

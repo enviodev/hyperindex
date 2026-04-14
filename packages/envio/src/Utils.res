@@ -458,7 +458,7 @@ module Url = {
     let regex = /https?:\/\/([^\/?]+).*/
     switch RegExp.exec(regex, url) {
     | Some(result) =>
-      switch RegExp.Result.matches(result)->Belt.Array.get(1) {
+      switch RegExp.Result.matches(result)->Belt.Array.get(0) {
       | Some(Some(host)) => Some(host)
       | Some(None) | None => None
       }

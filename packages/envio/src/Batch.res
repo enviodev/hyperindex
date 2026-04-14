@@ -196,16 +196,16 @@ let addReorgCheckpoints = (
     let prevCheckpointId = ref(prevCheckpointId)
     for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
       switch reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber) {
-      | Js.Null.Value(hash) =>
+      | Null.Value(hash) =>
         let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
         prevCheckpointId := checkpointId
 
-        mutCheckpointIds->Array.push(checkpointId)->ignore
-        mutCheckpointChainIds->Array.push(chainId)->ignore
-        mutCheckpointBlockNumbers->Array.push(blockNumber)->ignore
-        mutCheckpointBlockHashes->Array.push(Js.Null.Value(hash))->ignore
-        mutCheckpointEventsProcessed->Array.push(0)->ignore
-      | Js.Null.Null => ()
+        mutCheckpointIds->Array.push(checkpointId)
+        mutCheckpointChainIds->Array.push(chainId)
+        mutCheckpointBlockNumbers->Array.push(blockNumber)
+        mutCheckpointBlockHashes->Array.push(Null.Value(hash))
+        mutCheckpointEventsProcessed->Array.push(0)
+      | Null.Null => ()
       }
     }
     prevCheckpointId.contents

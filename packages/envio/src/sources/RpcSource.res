@@ -120,7 +120,7 @@ let getSuggestedBlockIntervalFromExn = {
     // Helper to extract block range from regex match
     let extractBlockRange = (execResult, ~isMaxRange) =>
       switch execResult->RegExp.Result.matches {
-      | [_, Some(blockRangeLimit)] =>
+      | [Some(blockRangeLimit)] =>
         switch blockRangeLimit->Int.fromString {
         | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit, isMaxRange)
         | _ => None
@@ -132,7 +132,7 @@ let getSuggestedBlockIntervalFromExn = {
     switch suggestedRangeRegExp->RegExp.exec(message) {
     | Some(execResult) =>
       switch execResult->RegExp.Result.matches {
-      | [_, Some(fromBlock), Some(toBlock)] =>
+      | [Some(fromBlock), Some(toBlock)] =>
         switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
         | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
           Some(toBlock - fromBlock + 1, false)

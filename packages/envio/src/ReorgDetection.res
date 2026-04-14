@@ -262,7 +262,7 @@ let getThresholdBlockNumbersBelowBlock = (self: t, ~blockNumber: int, ~knownHeig
 
 let getHashByBlockNumber = (reorgDetection: t, ~blockNumber) => {
   switch reorgDetection.dataByBlockNumber->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber) {
-  | Some(v) => Js.Null.Value(v.blockHash)
-  | None => Js.Null.Null
+  | Some(v) => Null.Value(v.blockHash)
+  | None => Null.Null
   }
 }
