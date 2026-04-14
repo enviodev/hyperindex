@@ -1,11 +1,9 @@
-open Belt
-
 type chainData = {
   chainId: float,
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   numEventsProcessed: float,
   latestFetchedBlockNumber: int,
   // Need this for API backwards compatibility
@@ -24,7 +22,7 @@ type state =
   Active({
       envioVersion: string,
       chains: array<chainData>,
-      indexerStartTime: Js.Date.t,
+      indexerStartTime: Date.t,
       isPreRegisteringDynamicContracts: bool,
       isUnorderedMultichainMode: bool,
       rollbackOnReorg: bool,
@@ -60,6 +58,22 @@ let stateSchema = S.union([
 
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
+// Persistence is set by Main.start before handler modules load, so that
+// the exported indexer value can lazily expose DB state (startBlock,
+// endBlock, isLive, dynamic contract addresses) once it's ready.
+let globalPersistenceRef: ref<option<Persistence.t>> = ref(None)
+
+let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
+  switch globalPersistenceRef.contents {
+  | Some(persistence) =>
+    switch persistence.storageStatus {
+    | Ready(initialState) => initialState.chains->Array.find(c => c.id === chainId)
+    | _ => None
+    }
+  | None => None
+  }
+}
+
 let getGlobalIndexer = (~config: Config.t): 'indexer => {
   let indexer = Utils.Object.createNullObject()
 
@@ -80,18 +94,37 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->Array.forEach(chainConfig => {
     let chainIdStr = chainConfig.id->Int.toString
 
-    chainIds->Js.Array2.push(chainConfig.id)->ignore
+    chainIds->Array.push(chainConfig.id)->ignore
 
     let chainObj = Utils.Object.createNullObject()
     chainObj
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {
+        enumerable: true,
+        get: () => {
+          switch getInitialChainState(~chainId=chainConfig.id) {
+          | Some(chainState) => chainState.startBlock
+          | None => chainConfig.startBlock
+          }
+        },
+      },
     )
-    ->Utils.Object.definePropertyWithValue(
+    ->Utils.Object.defineProperty(
       "endBlock",
-      {enumerable: true, value: chainConfig.endBlock},
+      {
+        enumerable: true,
+        get: () => {
+          // Persistence may store endBlock=None (eg the test indexer's
+          // auto-exit mode where the user didn't specify an endBlock).
+          // Only override the config when persistence has an explicit value.
+          switch getInitialChainState(~chainId=chainConfig.id) {
+          | Some({endBlock: Some(_) as eb}) => eb
+          | _ => chainConfig.endBlock
+          }
+        },
+      },
     )
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: chainConfig.name})
     ->Utils.Object.defineProperty(
@@ -100,12 +133,20 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
         enumerable: true,
         get: () => {
           switch globalGsManagerRef.contents {
-          | None => false
           | Some(gsManager) =>
             let state = gsManager->GlobalStateManager.getState
             let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
             let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
             chainFetcher->ChainFetcher.isReady
+          // Before the GlobalStateManager is available (eg during handler
+          // module load after resume), derive liveness from persistence:
+          // a chain is considered live when it previously caught up to head
+          // or endBlock (timestampCaughtUpToHeadOrEndblock is set).
+          | None =>
+            switch getInitialChainState(~chainId=chainConfig.id) {
+            | Some(chainState) => chainState.timestampCaughtUpToHeadOrEndblock->Option.isSome
+            | None => false
+            }
           }
         },
       },
@@ -124,7 +165,6 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
           enumerable: true,
           get: () => {
             switch globalGsManagerRef.contents {
-            | None => contract.addresses
             | Some(gsManager) => {
                 let state = gsManager->GlobalStateManager.getState
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
@@ -133,14 +173,31 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
 
                 // Collect all addresses for this contract name from indexingContracts
                 let addresses = []
-                let values = indexingContracts->Js.Dict.values
+                let values = indexingContracts->Dict.valuesToArray
                 for idx in 0 to values->Array.length - 1 {
-                  let indexingContract = values->Js.Array2.unsafe_get(idx)
+                  let indexingContract = values->Array.getUnsafe(idx)
                   if indexingContract.contractName === contract.name {
                     addresses->Array.push(indexingContract.address)->ignore
                   }
                 }
                 addresses
+              }
+            // Before the GlobalStateManager is available (eg during handler
+            // module load after resume), combine static addresses from config
+            // with dynamic contracts persisted in the database.
+            | None =>
+              switch getInitialChainState(~chainId=chainConfig.id) {
+              | Some(chainState) =>
+                let addresses = contract.addresses->Array.copy
+                chainState.dynamicContracts->Array.forEach(
+                  dc => {
+                    if dc.contractName === contract.name {
+                      addresses->Array.push(dc.address)->ignore
+                    }
+                  },
+                )
+                addresses
+              | None => contract.addresses
               }
             }
           },
@@ -170,6 +227,83 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   ->ignore
   indexer->Utils.Object.definePropertyWithValue("chains", {enumerable: true, value: chains})->ignore
 
+  // Parse eventIdentity config to extract contractName, eventName, and options.
+  // Supports two runtime formats:
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where? }
+  let parseIdentityConfig = (identityConfig: 'a) => {
+    let raw =
+      identityConfig->(
+        Utils.magic: 'a => {
+          "contract": unknown,
+          "event": unknown,
+          "wildcard": option<bool>,
+          "where": option<JSON.t>,
+        }
+      )
+    // Detect format: if "contract" is a string, it's the TS format
+    let (contractName, eventName) = if typeof(raw["contract"]) === #string {
+      // TS format: { contract: "X", event: "Y" }
+      (
+        raw["contract"]->(Utils.magic: unknown => string),
+        raw["event"]->(Utils.magic: unknown => string),
+      )
+    } else {
+      // ReScript GADT format: { event: { contract: "X", _0: "Y" } }
+      let event = raw["event"]->(Utils.magic: unknown => {"contract": string, "_0": string})
+      (event["contract"], event["_0"])
+    }
+    let wildcard = raw["wildcard"]
+    let where = raw["where"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where) {
+    | (None, None) => None
+    | (wildcard, where) =>
+      Some({
+        ?wildcard,
+        where: ?where->(Utils.magic: option<JSON.t> => option<_>),
+      })
+    }
+    (contractName, eventName, eventOptions)
+  }
+
+  // onEvent: delegates to HandlerRegister.setHandler
+  let onEventFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setHandler(
+      ~contractName,
+      ~eventName,
+      handler->(
+        Utils.magic: 'b => Internal.genericHandler<
+          Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>,
+        >
+      ),
+      ~eventOptions,
+    )
+  }
+
+  // contractRegister: delegates to HandlerRegister.setContractRegister
+  let contractRegisterFn = (identityConfig: 'a, handler: 'b) => {
+    let (contractName, eventName, eventOptions) = parseIdentityConfig(identityConfig)
+    HandlerRegister.setContractRegister(
+      ~contractName,
+      ~eventName,
+      handler->(
+        Utils.magic: 'b => Internal.genericContractRegister<
+          Internal.genericContractRegisterArgs<Internal.event, Internal.contractRegisterContext>,
+        >
+      ),
+      ~eventOptions,
+    )
+  }
+
+  indexer
+  ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
+  ->Utils.Object.definePropertyWithValue(
+    "contractRegister",
+    {enumerable: true, value: contractRegisterFn},
+  )
+  ->ignore
+
   indexer->(Utils.magic: 'a => 'indexer)
 }
 
@@ -179,7 +313,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
   let app = make()
 
   let consoleCorsMiddleware = (req, res, next) => {
-    switch req.headers->Js.Dict.get("origin") {
+    switch req.headers->Dict.get("origin") {
     | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
       res->setHeader("Access-Control-Allow-Origin", origin)
     | _ => ()
@@ -218,7 +352,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
     if isDevelopmentMode {
       (ctx.persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
       ->Promise.thenResolve(_ => res->json(Boolean(true)))
-      ->Promise.done
+      ->Promise.ignore
     } else {
       res->json(Boolean(false))
     }
@@ -245,7 +379,7 @@ let startServer = (~getState, ~ctx: Ctx.t, ~isDevelopmentMode: bool) => {
 
   let server = app->listen(Env.serverPort)
   server->Express.onError(err => {
-    let code = (err->(Utils.magic: Js.Exn.t => {..}))["code"]
+    let code = (err->(Utils.magic: JsExn.t => {..}))["code"]
     if code === "EADDRINUSE" {
       Logging.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
@@ -268,8 +402,9 @@ type mainArgs = Yargs.parsedArgs<args>
 
 let start = async (
   ~makeGeneratedConfig: unit => Config.t,
-  ~persistence: Persistence.t,
+  ~persistence: option<Persistence.t>=?,
   ~isTest=false,
+  ~exitAfterFirstEventBlock=false,
   ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
@@ -279,8 +414,19 @@ let start = async (
   // Note: isTest overrides isDevelopmentMode to ensure proper process exit in test mode.
   let isDevelopmentMode = !isTest && Env.Db.password === "testing"
 
-  // Register all handlers first, then get the config with registrations
+  // Initialize persistence first so the exported indexer value contains state from the database
+  // when handler files are loaded (they may access the indexer at module top level).
   let configWithoutRegistrations = makeGeneratedConfig()
+  let persistence = switch persistence {
+  | Some(p) => p
+  | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
+  }
+  globalPersistenceRef := Some(persistence)
+  await persistence->Persistence.init(
+    ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
+  )
+
+  // Register all handlers, then get the config with registrations
   let registrations = await HandlerLoader.registerAllHandlers(~config=configWithoutRegistrations)
   let config = makeGeneratedConfig()
   let config = if isTest {
@@ -321,11 +467,11 @@ let start = async (
               )
               let knownHeight =
                 cf->ChainFetcher.hasProcessedToEndblock
-                  ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+                  ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
                   : cf.fetchState.knownHeight
 
               {
-                chainId: cf.chainConfig.id->Js.Int.toFloat,
+                chainId: cf.chainConfig.id->Int.toFloat,
                 poweredByHyperSync: (
                   cf.sourceManager->SourceManager.getActiveSource
                 ).poweredByHyperSync,
@@ -359,14 +505,18 @@ let start = async (
     )
   }
 
-  await ctx.persistence->Persistence.init(~chainConfigs=ctx.config.chainMap->ChainMap.values)
-
   let chainManager = await ChainManager.makeFromDbState(
     ~initialState=ctx.persistence->Persistence.getInitializedState,
     ~config=ctx.config,
     ~registrations=ctx.registrations,
   )
-  let globalState = GlobalState.make(~ctx, ~chainManager, ~isDevelopmentMode, ~shouldUseTui)
+  let globalState = GlobalState.make(
+    ~ctx,
+    ~chainManager,
+    ~isDevelopmentMode,
+    ~shouldUseTui,
+    ~exitAfterFirstEventBlock,
+  )
   let gsManager = globalState->GlobalStateManager.make
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => gsManager->GlobalStateManager.getState)

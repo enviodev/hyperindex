@@ -28,9 +28,9 @@ When using RPC as a data source, tune these parameters per chain:
 chains:
   - id: 1
     rpc:
-      - url: ${RPC_URL}
+      - url: ${ENVIO_RPC_URL}
         for: sync                    # sync | live | fallback
-        ws: ${WS_URL}               # WebSocket for lower-latency live block detection
+        ws: ${ENVIO_WS_URL}               # WebSocket for lower-latency live block detection
         initial_block_interval: 5000 # Starting blocks per query
         backoff_multiplicative: 0.8  # Scale factor after RPC error (0.5-0.9)
         acceleration_additive: 1000  # Blocks added per successful query

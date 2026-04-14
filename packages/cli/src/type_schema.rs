@@ -17,6 +17,10 @@ pub enum SchemaMode {
 }
 
 impl TypeDeclMulti {
+    pub fn type_declarations(&self) -> &[TypeDecl] {
+        &self.0
+    }
+
     pub fn new(type_declarations: Vec<TypeDecl>) -> Self {
         // TODO: validation
         //no duplicates,
@@ -180,6 +184,22 @@ impl TypeDecl {
         }
     }
 
+    /// Renders a TypeScript type declaration with namespace-qualified references.
+    /// Mirrors `to_string_no_type_keyword()` but for TS namespace syntax.
+    pub fn to_ts_type_decl(&self, ns: &str) -> String {
+        let parameters = if self.parameters.is_empty() {
+            "".to_string()
+        } else {
+            let param_names_joined = self.parameters.iter().join(", ");
+            format!("<{param_names_joined}>")
+        };
+        format!(
+            "type {name}{parameters} = {type_expr};",
+            name = &self.name,
+            type_expr = self.type_expr.to_ts_type_string_with_namespace(ns)
+        )
+    }
+
     pub fn to_usage(&self, arguments: Vec<String>) -> Result<String> {
         if self.parameters.len() != arguments.len() {
             Err(anyhow!(
@@ -284,6 +304,46 @@ impl TypeExpr {
                     format!("S.object((s): {type_name} => {{{inner_str}}})")
                 }
             }
+        }
+    }
+
+    /// Renders TypeScript with type references qualified by namespace (e.g., `FuelTypes.Greeter.type5`).
+    pub fn to_ts_type_string_with_namespace(&self, ns: &str) -> String {
+        match self {
+            Self::Identifier(type_ident) => type_ident.to_ts_type_string_with_namespace(ns),
+            Self::Record(fields) => {
+                if fields.is_empty() {
+                    "{}".to_string()
+                } else {
+                    let fields_str = fields
+                        .iter()
+                        .map(|field| {
+                            let field_name = field
+                                .as_name
+                                .as_ref()
+                                .map_or(field.name.as_str(), |name| name.as_str());
+                            format!(
+                                "readonly {}: {}",
+                                field_name,
+                                field.type_ident.to_ts_type_string_with_namespace(ns)
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("; ");
+                    format!("{{ {} }}", fields_str)
+                }
+            }
+            Self::Variant(constructors) => constructors
+                .iter()
+                .map(|constr| {
+                    format!(
+                        "{{ case: \"{}\"; payload: {} }}",
+                        constr.name,
+                        constr.payload.to_ts_type_string_with_namespace(ns)
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join(" | "),
         }
     }
 
@@ -492,6 +552,46 @@ impl TypeIdent {
         }
     }
 
+    /// Renders TypeScript with type references qualified by namespace (e.g., `FuelTypes.Greeter.type5`).
+    /// Generic params render as bare names since they're in scope from the type declaration.
+    pub fn to_ts_type_string_with_namespace(&self, ns: &str) -> String {
+        match self {
+            Self::TypeApplication { name, type_params } => {
+                if type_params.is_empty() {
+                    format!("{}.{}", ns, name)
+                } else {
+                    let params_joined = type_params
+                        .iter()
+                        .map(|p| p.to_ts_type_string_with_namespace(ns))
+                        .join(", ");
+                    format!("{}.{}<{}>", ns, name, params_joined)
+                }
+            }
+            // Generic params are in scope from the type declaration, no namespace needed
+            Self::GenericParam(name) => name.clone(),
+            Self::Array(inner) => {
+                let inner_ts = inner.to_ts_type_string_with_namespace(ns);
+                if inner.is_option() {
+                    format!("readonly ({})[]", inner_ts)
+                } else {
+                    format!("readonly {}[]", inner_ts)
+                }
+            }
+            Self::Option(inner) => {
+                format!("{} | undefined", inner.to_ts_type_string_with_namespace(ns))
+            }
+            Self::Tuple(types) => {
+                let inner = types
+                    .iter()
+                    .map(|t| t.to_ts_type_string_with_namespace(ns))
+                    .join(", ");
+                format!("[{}]", inner)
+            }
+            // Primitive types don't need namespace resolution
+            _ => self.to_ts_type_string(),
+        }
+    }
+
     /// Recursively builds the TypeScript string representation of the type
     pub fn to_ts_type_string(&self) -> String {
         match self {
@@ -552,8 +652,8 @@ impl TypeIdent {
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
-                SchemaMode::ForDb => "BigInt.schema".to_string(),
-                SchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
+                SchemaMode::ForDb => "Utils.BigInt.schema".to_string(),
+                SchemaMode::ForFieldSelection => "Utils.BigInt.nativeSchema".to_string(),
             },
             Self::BigDecimal => "BigDecimal.schema".to_string(),
             Self::Address => "Address.schema".to_string(),
@@ -832,12 +932,12 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "BigInt.schema".to_string()
+            "Utils.BigInt.schema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
-            "BigInt.nativeSchema".to_string()
+            "Utils.BigInt.nativeSchema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigDecimal)
@@ -867,12 +967,12 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "S.null(BigInt.schema)".to_string()
+            "S.null(Utils.BigInt.schema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
-            "S.nullable(BigInt.nativeSchema)".to_string()
+            "S.nullable(Utils.BigInt.nativeSchema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::Tuple(vec![TypeIdent::Int, TypeIdent::Bool]))

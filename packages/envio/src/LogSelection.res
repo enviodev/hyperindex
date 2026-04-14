@@ -12,7 +12,7 @@ let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
   }
 
 let hasFilters = ({topic1, topic2, topic3}: Internal.topicSelection) => {
-  [topic1, topic2, topic3]->Js.Array2.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
+  [topic1, topic2, topic3]->Array.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
 }
 
 /**
@@ -26,10 +26,10 @@ let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) 
 
   topicSelections->Belt.Array.forEach(selection => {
     if selection->hasFilters {
-      selectionsWithFilters->Js.Array2.push(selection)->ignore
+      selectionsWithFilters->Array.push(selection)->ignore
     } else {
       selection.topic0->Belt.Array.forEach(topic0 => {
-        topic0sOfSelectionsWithoutFilters->Js.Array2.push(topic0)->ignore
+        topic0sOfSelectionsWithoutFilters->Array.push(topic0)->ignore
       })
     }
   })
@@ -67,7 +67,7 @@ let parseEventFiltersOrThrow = {
   let noopGetter = _ => emptyTopics
 
   (
-    ~eventFilters: option<Js.Json.t>,
+    ~eventFilters: option<JSON.t>,
     ~sighash,
     ~params,
     ~topic1=noopGetter,
@@ -83,44 +83,87 @@ let parseEventFiltersOrThrow = {
       topic3: emptyTopics,
     }
 
-    let parse = (eventFilters: Js.Json.t): array<Internal.topicSelection> => {
-      if eventFilters === Obj.magic(true) {
+    // Build a single topic selection from one indexed-param record (the
+    // inside of `params`). Validates that the keys are actual indexed
+    // parameters of the event — TS type checking doesn't catch this when
+    // `where` is a callback.
+    let paramsRecordToTopicSelection = (paramsFilter: dict<JSON.t>) => {
+      let filterKeys = paramsFilter->Dict.keysToArray
+      switch filterKeys {
+      | [] => default
+      | _ => {
+          filterKeys->Array.forEach(key => {
+            if params->Array.includes(key)->not {
+              JsError.throwWithMessage(
+                `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
+              )
+            }
+          })
+          {
+            Internal.topic0,
+            topic1: topic1(paramsFilter),
+            topic2: topic2(paramsFilter),
+            topic3: topic3(paramsFilter),
+          }
+        }
+      }
+    }
+
+    // Parse a `where` value (or the result of calling the dynamic callback)
+    // into a list of topic selections.
+    //
+    // Accepted shapes:
+    // - `true`  → KeepAll → match the event signature with no narrowing
+    // - `false` → SkipAll → no events
+    // - `{}` (or `{params: undefined}`) → no narrowing
+    // - `{params: {...}}` → single AND-conjunction
+    // - `{params: [{...}, {...}]}` → OR of multiple AND-conjunctions
+    //
+    // The runtime accepts both the function form (the only form ReScript
+    // exposes) and a top-level static object form (TypeScript convenience).
+    let parse = (where: JSON.t): array<Internal.topicSelection> => {
+      if where === Obj.magic(true) {
         [default]
-      } else if eventFilters === Obj.magic(false) {
+      } else if where === Obj.magic(false) {
         []
       } else {
-        switch eventFilters {
-        | Array([]) => [%raw(`{}`)]
-        | Array(a) => a
-        | _ => [eventFilters]
-        }->Js.Array2.map(eventFilter => {
-          switch eventFilter {
-          | Object(eventFilter) => {
-              let filterKeys = eventFilter->Js.Dict.keys
-              switch filterKeys {
-              | [] => default
-              | _ => {
-                  filterKeys->Js.Array2.forEach(key => {
-                    if params->Js.Array2.includes(key)->not {
-                      // In TS type validation doesn't catch this
-                      // when we have eventFilters as a callback
-                      Js.Exn.raiseError(
-                        `Invalid event filters configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
-                      )
-                    }
-                  })
-                  {
-                    Internal.topic0,
-                    topic1: topic1(eventFilter),
-                    topic2: topic2(eventFilter),
-                    topic3: topic3(eventFilter),
-                  }
-                }
-              }
+        // A `where` condition is shaped as `{params?: ..., ...}` where
+        // `params` carries the indexed-parameter filter record. Future
+        // filter dimensions (block, transaction, …) can slot in as sibling
+        // fields alongside `params`.
+        switch where {
+        | Object(obj) =>
+          switch obj->Dict.get("params") {
+          | None =>
+            // Reject non-empty objects without `params` — almost always a
+            // typo (e.g. `parmas:`) or the legacy flat-filter shape
+            // (`{from: ...}`). Empty `{}` is fine and means "match all".
+            if obj->Dict.keysToArray->Array.length > 0 {
+              JsError.throwWithMessage(
+                "Invalid where configuration. Indexed parameter filters must be nested under `params`",
+              )
+            } else {
+              [default]
             }
-          | _ => Js.Exn.raiseError("Invalid event filters configuration. Expected an object")
+          | Some(Object(p)) => [paramsRecordToTopicSelection(p)]
+          | Some(Array([])) => [default]
+          | Some(Array(arr)) =>
+            arr->Array.map(item =>
+              switch item {
+              | Object(p) => paramsRecordToTopicSelection(p)
+              | _ =>
+                JsError.throwWithMessage(
+                  "Invalid where configuration. Each entry in `params` must be an object",
+                )
+              }
+            )
+          | Some(_) =>
+            JsError.throwWithMessage(
+              "Invalid where configuration. Expected `params` to be an object or an array of objects",
+            )
           }
-        })
+        | _ => JsError.throwWithMessage("Invalid where configuration. Expected an object")
+        }
       }
     }
 
@@ -130,8 +173,8 @@ let parseEventFiltersOrThrow = {
         _ => static
       }
     | Some(eventFilters) =>
-      if Js.typeof(eventFilters) === "function" {
-        let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t)
+      if typeof(eventFilters) === #function {
+        let fn = eventFilters->(Utils.magic: JSON.t => Internal.eventFiltersArgs => JSON.t)
         // When user passess a function to event filters we need to
         // first determine whether it uses addresses or not
         // Because the fetching logic will be different for wildcard events

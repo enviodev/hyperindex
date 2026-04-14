@@ -1,4 +1,4 @@
-open Belt
+
 open Vitest
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
@@ -18,7 +18,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     }
 
     let eventConfigs = [
-      (Mock.evmEventConfig(
+      (MockIndexer.evmEventConfig(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,
@@ -100,7 +100,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let chainConfig = config.defaultChain->Option.getUnsafe
     // For this test we don't need real sources - just testing ChainManager event ordering
     // Create a mock source that satisfies SourceManager requirements (chain ID doesn't matter here)
-    let mockSource = Mock.Source.make([], ~chain=#1)
+    let mockSource = MockIndexer.Source.make([], ~chain=#1)
     let sources = [mockSource.source]
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,

@@ -1,15 +1,11 @@
-open Belt
-open Vitest
 
-// A workaround for ReScript v11 issue, where it makes the field optional
-// instead of setting a value to undefined. It's fixed in v12.
-let undefined = (%raw(`undefined`): option<'a>)
+open Vitest
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
     ~t,
-    ~sourceMock: Mock.Source.t,
-    ~indexerMock: Mock.Indexer.t,
+    ~sourceMock: MockIndexer.Source.t,
+    ~indexerMock: MockIndexer.Indexer.t,
     ~firstHistoryCheckpointId=2n,
   ) => {
     t.expect(
@@ -311,30 +307,30 @@ describe("E2E rollback tests", () => {
   Async.it(
     "Should stay in reorg threshold on restart when progress is past threshold",
     async t => {
-      let sourceMock1337 = Mock.Source.make(
+      let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock100 = Mock.Source.make(
+      let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
       let chains = [
         {
-          Mock.Indexer.chain: #1337,
+          MockIndexer.Indexer.chain: #1337,
           sourceConfig: Config.CustomSources([sourceMock1337.source]),
         },
         {
-          Mock.Indexer.chain: #100,
+          MockIndexer.Indexer.chain: #100,
           sourceConfig: Config.CustomSources([sourceMock100.source]),
         },
       ]
-      let indexerMock = await Mock.Indexer.make(~chains)
+      let indexerMock = await MockIndexer.Indexer.make(~chains)
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       t.expect(
@@ -422,11 +418,11 @@ describe("E2E rollback tests", () => {
   )
 
   Async.it("Rollback of a single chain indexer", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -436,18 +432,18 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
     await testSingleChainRollback(~t, ~sourceMock, ~indexerMock)
   })
 
   Async.it(
     "Stores checkpoints inside of the reorg threshold for batches without items",
     async t => {
-      let sourceMock = Mock.Source.make(
+      let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -457,7 +453,7 @@ describe("E2E rollback tests", () => {
       )
       await Utils.delay(0)
 
-      await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+      await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
       sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
 
@@ -481,11 +477,11 @@ describe("E2E rollback tests", () => {
   )
 
   Async.it("Shouldn't detect reorg for rollbacked block", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -495,7 +491,7 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
     await indexerMock.getBatchWritePromise()
@@ -564,15 +560,15 @@ describe("E2E rollback tests", () => {
   Async.it(
     "Single chain rollback should also work for unordered multichain indexer when another chains are stale",
     async t => {
-      let sourceMock1 = Mock.Source.make(
+      let sourceMock1 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock2 = Mock.Source.make(
+      let sourceMock2 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -587,8 +583,8 @@ describe("E2E rollback tests", () => {
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
       ))
 
       await testSingleChainRollback(
@@ -601,11 +597,11 @@ describe("E2E rollback tests", () => {
   )
 
   Async.it("Rollback Dynamic Contract", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -615,11 +611,11 @@ describe("E2E rollback tests", () => {
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     let calls = []
     let handler = async (
-      {event}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+      {event}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
     ) => {
       calls->Array.push(event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString)
     }
@@ -640,7 +636,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 102,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
+            context.chain.\"SimpleNft".add(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
           },
           handler,
         },
@@ -648,7 +644,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 103,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1))
+            context.chain.\"SimpleNft".add(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1))
           },
           handler,
         },
@@ -656,7 +652,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 104,
           logIndex: 2,
           contractRegister: async ({context}) => {
-            context.addSimpleNft(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2))
+            context.chain.\"SimpleNft".add(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2))
           },
           handler,
         },
@@ -863,15 +859,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
   })
 
   Async.it("Rollback of unordered multichain indexer (single entity id change)", async t => {
-    let sourceMock1337 = Mock.Source.make(
+    let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let sourceMock100 = Mock.Source.make(
+    let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#100,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -886,8 +882,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await Utils.delay(0)
 
     let _ = await Promise.all2((
-      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-      Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+      MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+      MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
 
     let callCount = ref(0)
@@ -900,7 +896,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // For this test only work with a single changing entity
     // with the same id. Use call counter to see how it's different to entity history order
     let handler = async (
-      {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+      {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
     ) => {
       context.\"SimpleEntity".set({
         id: "1",
@@ -1324,15 +1320,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it(
     "Rollback of unordered multichain indexer (single entity id change + another entity on non-reorg chain)",
     async t => {
-      let sourceMock1337 = Mock.Source.make(
+      let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock100 = Mock.Source.make(
+      let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -1347,8 +1343,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1361,7 +1357,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
       ) => {
         context.\"SimpleEntity".set({
           id: "1",
@@ -1767,15 +1763,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it(
     "Rollback of ordered multichain indexer (single entity id change + another entity on non-reorg chain)",
     async t => {
-      let sourceMock1337 = Mock.Source.make(
+      let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock100 = Mock.Source.make(
+      let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -1791,8 +1787,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1805,7 +1801,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // For this test only work with a single changing entity
       // with the same id. Use call counter to see how it's different to entity history order
       let handler = async (
-        {context}: Internal.genericHandlerArgs<Indexer.eventLog<unknown>, Indexer.handlerContext>,
+        {context}: Internal.genericHandlerArgs<Internal.genericEvent<unknown, Indexer.Block.t, Indexer.Transaction.t>, Indexer.handlerContext>,
       ) => {
         context.\"SimpleEntity".set({
           id: "1",
@@ -2201,11 +2197,11 @@ Sorted by timestamp and chain id`,
   )
 
   Async.it("Double reorg should NOT cause negative event counter (regression test)", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -2215,7 +2211,7 @@ Sorted by timestamp and chain id`,
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()
@@ -2322,12 +2318,12 @@ Sorted by timestamp and chain id`,
   Async.it(
     "Should NOT be in reorg threshold on restart when DB is only initialized (sourceBlockNumber=0, progressBlockNumber=-1)",
     async t => {
-      let sourceMock = Mock.Source.make(
+      let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
 
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -2366,15 +2362,15 @@ Sorted by timestamp and chain id`,
       // 3. Second rollback subtracts events that were already rolled back → counter goes negative
       // The root cause: only the reorg chain's counter is restored (line 412-424 in GlobalState),
       // but the non-reorg chain's counter stays at 0 while DB still has the old checkpoints.
-      let sourceMock1337 = Mock.Source.make(
+      let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock100 = Mock.Source.make(
+      let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -2390,8 +2386,8 @@ Sorted by timestamp and chain id`,
 
       // Both chains enter reorg threshold (blocks 1-100 fetched, knownHeight=300)
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
       ))
 
       // Both chains process events at blocks 102-103
@@ -2518,8 +2514,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: event counters should NOT be negative",
@@ -2539,19 +2535,19 @@ Sorted by timestamp and chain id`,
       // for every chain when re-reorging from RollbackReady state.
       // Without the fix, only the reorg chain's counter is restored,
       // causing non-reorg chains to go negative on the second rollback.
-      let sourceMock1337 = Mock.Source.make(
+      let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock100 = Mock.Source.make(
+      let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
-      let sourceMock137 = Mock.Source.make(
+      let sourceMock137 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#137,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -2571,9 +2567,9 @@ Sorted by timestamp and chain id`,
 
       // All three chains enter reorg threshold
       let _ = await Promise.all3((
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock137),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1337),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock137),
       ))
 
       // Each chain processes events at blocks 102-103
@@ -2672,8 +2668,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After first rollback: all chains' counters should be 0",
@@ -2711,8 +2707,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: non-reorg chains (100, 137) must NOT go negative",
@@ -2728,11 +2724,11 @@ Sorted by timestamp and chain id`,
 
   Async.it("Should NOT have duplicate queries after rollback with chunked partitions", async t => {
     // 1. Setup mock source and indexer
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,
@@ -2742,7 +2738,7 @@ Sorted by timestamp and chain id`,
     )
     await Utils.delay(0)
 
-    await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     // 3. Process 2 queries to build chunk history (3+ block ranges each)
     // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
@@ -2889,11 +2885,11 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
     "Should efficiently refetch only blocks after rollback target with chunked partitions",
     async t => {
       // Setup mock source and indexer
-      let sourceMock = Mock.Source.make(
+      let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -2903,7 +2899,7 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       )
       await Utils.delay(0)
 
-      await Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+      await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
       // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
       switch sourceMock.getItemsOrThrowCalls {
@@ -3027,18 +3023,18 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
   Async.it(
     "Should not enter infinite reorg loop when reorg chain has no events processed since target checkpoint",
     async t => {
-      let sourceMock1 = Mock.Source.make(
+      let sourceMock1 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
       )
-      let sourceMock2 = Mock.Source.make(
+      let sourceMock2 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
       // batchSize=1 ensures that chain 100's single event fills the batch,
       // causing chain 1337 to be SKIPPED in prepareUnorderedBatch.
       // This means chain 1337 gets no checkpoint at block 101.
-      let indexerMock = await Mock.Indexer.make(
+      let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
           {
             chain: #1337,
@@ -3054,8 +3050,8 @@ The 3-4 chunks are not really expected, but created since we call fetchNextQuery
       await Utils.delay(0)
 
       let _ = await Promise.all2((
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
-        Mock.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
       ))
 
       // Chain 1337 fetches block 101 with 0 events.

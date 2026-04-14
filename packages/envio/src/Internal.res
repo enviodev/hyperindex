@@ -244,18 +244,20 @@ type evmTransactionInput = {
   type_?: int,
   root?: string,
   status?: int,
-  accessList?: Js.Json.t,
+  accessList?: JSON.t,
   // L2 specific fields (Optimism, Arbitrum, etc.)
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
   l1FeeScalar?: float,
   gasUsedForL1?: bigint,
-  authorizationList?: Js.Json.t,
+  authorizationList?: JSON.t,
 }
 
 @genType
 type genericEvent<'params, 'block, 'transaction> = {
+  contractName: string,
+  eventName: string,
   params: 'params,
   chainId: int,
   srcAddress: Address.t,
@@ -326,11 +328,11 @@ type handlerArgs = {
 type handler = genericHandler<handlerArgs>
 
 @genType
-type genericHandlerWithLoader<'loader, 'handler, 'eventFilters> = {
+type genericHandlerWithLoader<'loader, 'handler, 'where> = {
   loader: 'loader,
   handler: 'handler,
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
 }
 
 // This is private so it's not manually constructed internally
@@ -350,6 +352,7 @@ type eventConfig = private {
   handler: option<handler>,
   contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
+  simulateParamsSchema: S.schema<eventParams>,
 }
 
 type fuelEventKind =
@@ -471,9 +474,9 @@ external getItemDcs: item => option<dcs> = "dcs"
 external setItemDcs: (item, dcs) => unit = "dcs"
 
 @genType
-type eventOptions<'eventFilters> = {
+type eventOptions<'where> = {
   wildcard?: bool,
-  eventFilters?: 'eventFilters,
+  where?: 'where,
 }
 
 @genType
@@ -483,7 +486,7 @@ type fuelSupplyParams = {
 }
 let fuelSupplyParamsSchema = S.schema(s => {
   subId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
 @genType
 type fuelTransferParams = {
@@ -494,7 +497,7 @@ type fuelTransferParams = {
 let fuelTransferParamsSchema = S.schema(s => {
   to: s.matches(Address.schema),
   assetId: s.matches(S.string),
-  amount: s.matches(BigInt.schema),
+  amount: s.matches(Utils.BigInt.schema),
 })
 
 type multichain = | @as("ordered") Ordered | @as("unordered") Unordered
@@ -545,7 +548,7 @@ type effect = {
   rateLimit: option<rateLimitState>,
 }
 let cacheTablePrefix = "envio_effect_"
-let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)
+let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
 let effectCacheItemRowsSchema = S.array(
   S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
 )
@@ -560,7 +563,7 @@ let makeCacheTable = (~effectName) => {
 }
 
 @genType.import(("./Types.ts", "Invalid"))
-type noEventFilters
+type noOnEventWhere
 
 type checkpointId = bigint
 

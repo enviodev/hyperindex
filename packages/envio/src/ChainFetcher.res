@@ -1,5 +1,3 @@
-open Belt
-
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
 type processingFilter = {
@@ -13,7 +11,7 @@ type t = {
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   isProgressAtHead: bool,
-  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   committedProgressBlockNumber: int,
   numEventsProcessed: float,
   reorgDetection: ReorgDetection.t,
@@ -80,7 +78,8 @@ let make = (
         isRegistered
       }
 
-      // Check if event has Static([]) filters (from eventFilters: false)
+      // Check if event has Static([]) filters (from a dynamic where
+      // callback returning `false` / SkipAll for this chain).
       // If so, skip it entirely - it should never be fetched
       let shouldSkip = try {
         let getEventFiltersOrThrow = (
@@ -111,7 +110,7 @@ let make = (
 
     switch contract.startBlock {
     | Some(startBlock) if startBlock < chainConfig.startBlock =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `The start block for contract "${contractName}" is less than the chain start block. This is not supported yet.`,
       )
     | _ => ()
@@ -140,7 +139,7 @@ let make = (
           ""
         }} ${notRegisteredEvents
         ->Array.map(eventConfig => `${eventConfig.contractName}.${eventConfig.name}`)
-        ->Js.Array2.joinWith(", ")} don't have an event handler and skipped for indexing.`,
+        ->Array.joinUnsafe(", ")} don't have an event handler and skipped for indexing.`,
     )
   }
 
@@ -151,15 +150,15 @@ let make = (
     // TODO: Move it to the HandlerRegister module
     // so the error is thrown with better stack trace
     onBlockConfigs->Array.forEach(onBlockConfig => {
-      if onBlockConfig.startBlock->Option.getWithDefault(startBlock) < startBlock {
-        Js.Exn.raiseError(
+      if onBlockConfig.startBlock->Option.getOr(startBlock) < startBlock {
+        JsError.throwWithMessage(
           `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Belt.Int.toString}). This is not supported yet.`,
         )
       }
       switch endBlock {
       | Some(chainEndBlock) =>
-        if onBlockConfig.endBlock->Option.getWithDefault(chainEndBlock) > chainEndBlock {
-          Js.Exn.raiseError(
+        if onBlockConfig.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
+          JsError.throwWithMessage(
             `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Belt.Int.toString}). This is not supported yet.`,
           )
         }
@@ -188,7 +187,7 @@ let make = (
     ~firstEventBlock,
   )
 
-  let chainReorgCheckpoints = reorgCheckpoints->Array.keepMapU(reorgCheckpoint => {
+  let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
     if reorgCheckpoint.chainId === chainConfig.id {
       Some(reorgCheckpoint)
     } else {
@@ -348,7 +347,7 @@ let getContractStartBlock = (
 ): option<int> => {
   let chainConfig = config.chainMap->ChainMap.get(chain)
   chainConfig.contracts
-  ->Js.Array2.find(contract => contract.name === contractName)
+  ->Array.find(contract => contract.name === contractName)
   ->Option.flatMap(contract => contract.startBlock)
 }
 
@@ -393,7 +392,7 @@ let runContractRegistersOrThrow = async (
     | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
     | {eventConfig: {contractRegister: None, name: eventName}} =>
       // Unexpected case, since we should pass only events with contract register to this function
-      Js.Exn.raiseError("Contract register is not set for event " ++ eventName)
+      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
@@ -410,7 +409,7 @@ let runContractRegistersOrThrow = async (
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Promise.isCatchable {
+      if result->Utils.Promise.isCatchable {
         promises->Array.push(
           result
           ->Promise.thenResolve(r => {

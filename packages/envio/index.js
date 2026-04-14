@@ -3,7 +3,8 @@
 // on the JS side, so we need to do it here
 
 import * as Sury from "rescript-schema";
-import { schema as bigintSchema } from "./src/bindings/BigInt.res.mjs";
+import { $$BigInt as UtilsBigInt } from "./src/Utils.res.mjs";
+const bigintSchema = UtilsBigInt.schema;
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 
 // Re-export everything from envioGen

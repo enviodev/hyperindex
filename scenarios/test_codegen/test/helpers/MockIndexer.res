@@ -1,4 +1,4 @@
-open Belt
+
 
 type chainId = Indexer.chainId
 
@@ -204,8 +204,10 @@ module Storage = {
 
   let toPersistence = (storageMock: t) => {
     {
-      ...Indexer.Generated.codegenPersistence,
-      storage: storageMock.storage,
+      ...PgStorage.makePersistenceFromConfig(
+        ~config=Indexer.Generated.configWithoutRegistrations,
+        ~storage=storageMock.storage,
+      ),
       storageStatus: Ready({
         cleanRun: false,
         cache: Js.Dict.empty(),
@@ -218,9 +220,9 @@ module Storage = {
 }
 
 // Aliases to access the generated Indexer module after the local `module Indexer` shadows it
-type eventLog<'a> = Indexer.eventLog<'a>
+type eventLog<'a> = Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>
 type handlerContext = Indexer.handlerContext
-type contractRegister<'a> = Indexer.HandlerTypes.contractRegister<'a>
+type contractRegister<'a> = Internal.genericContractRegister<Internal.genericContractRegisterArgs<Internal.genericEvent<'a, Indexer.Block.t, Indexer.Transaction.t>, Indexer.contractRegisterContext>>
 module Transaction = Indexer.Transaction
 
 module Indexer = {
@@ -251,6 +253,7 @@ module Indexer = {
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
     ~enableHasura=false,
+    ~enableRawEvents=false,
     ~reset=true,
     ~batchSize=?,
   ) => {
@@ -278,10 +281,10 @@ module Indexer = {
             {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
-              startBlock: chainConfig.startBlock->Option.getWithDefault(
+              startBlock: chainConfig.startBlock->Option.getOr(
                 originalChainConfig.startBlock,
               ),
-              blockLag: chainConfig.blockLag->Option.getWithDefault(
+              blockLag: chainConfig.blockLag->Option.getOr(
                 originalChainConfig.blockLag,
               ),
             },
@@ -293,21 +296,17 @@ module Indexer = {
         ...config,
         shouldRollbackOnReorg: true,
         shouldSaveFullHistory: saveFullHistory,
-        enableRawEvents: false,
+        enableRawEvents,
         chainMap,
         multichain,
-        batchSize: batchSize->Option.getWithDefault(config.batchSize),
+        batchSize: batchSize->Option.getOr(config.batchSize),
       }
     }
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
-    let storage = Indexer.Generated.makeStorage(~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
-    let persistence = {
-      ...Indexer.Generated.codegenPersistence,
-      storageStatus: Persistence.Unknown,
-      storage,
-    }
+    let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura)
+    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
     let ctx = {
       Ctx.registrations,
@@ -350,7 +349,7 @@ module Indexer = {
 
     {
       getBatchWritePromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
+        Utils.Promise.makeAsync(async (resolve, _reject) => {
           let before = (gsManager->GlobalStateManager.getState).processedBatches
           while before >= (gsManager->GlobalStateManager.getState).processedBatches {
             await Utils.delay(1)
@@ -359,7 +358,7 @@ module Indexer = {
         })
       },
       getRollbackReadyPromise: () => {
-        Promise.makeAsync(async (resolve, _reject) => {
+        Utils.Promise.makeAsync(async (resolve, _reject) => {
           while (
             switch (gsManager->GlobalStateManager.getState).rollbackState {
             | RollbackReady(_) => false
@@ -463,7 +462,7 @@ module Indexer = {
           ...gsManager->GlobalStateManager.getState,
           id: state.id + 1,
         })
-        make(~chains, ~enableHasura, ~multichain, ~saveFullHistory, ~reset=false, ~batchSize?)
+        make(~chains, ~enableHasura, ~enableRawEvents, ~multichain, ~saveFullHistory, ~reset=false, ~batchSize?)
       },
       graphql: query => {
         if !enableHasura {
@@ -692,8 +691,8 @@ module Source = {
                   ~prevRangeLastBlock=?,
                 ) => {
                   let latestFetchedBlockNumber =
-                    latestFetchedBlockNumber->Option.getWithDefault(
-                      toBlock->Option.getWithDefault(fromBlock),
+                    latestFetchedBlockNumber->Option.getOr(
+                      toBlock->Option.getOr(fromBlock),
                     )
 
                   resolve({
@@ -759,6 +758,9 @@ module Source = {
                             paramsRawEventSchema: S.literal(%raw(`null`))
                             ->S.shape(_ => ())
                             ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+                            simulateParamsSchema: S.unknown
+                            ->S.shape(_ => ())
+                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
                             getEventFiltersOrThrow: _ => Js.Exn.raiseError("Not implemented"),
                             convertHyperSyncEventArgs: _ => Js.Exn.raiseError("Not implemented"),
                             selectedBlockFields: Utils.Set.make(),
@@ -769,6 +771,8 @@ module Source = {
                           blockNumber: item.blockNumber,
                           logIndex: item.logIndex,
                           event: {
+                            contractName: "MockContract",
+                            eventName: "MockEvent",
                             params: %raw(`{}`),
                             chainId: chain->ChainMap.Chain.toChainId,
                             srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
@@ -842,7 +846,6 @@ module Helper = {
   }
 }
 
-@genType
 let mockRawEventRow: InternalTable.RawEvents.t = {
   chainId: 1,
   eventId: 1234567890n,
@@ -883,6 +886,9 @@ let evmEventConfig = (
     handler: None,
     contractRegister: None,
     paramsRawEventSchema: S.literal(%raw(`null`))
+    ->S.shape(_ => ())
+    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+    simulateParamsSchema: S.unknown
     ->S.shape(_ => ())
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
     getEventFiltersOrThrow: _ =>

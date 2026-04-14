@@ -244,12 +244,21 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
     let envio_version = get_envio_version()?;
 
+    let extra_dependencies = match &init_config.ecosystem {
+        Ecosystem::Evm {
+            init_flow:
+                init_config::evm::InitFlow::Template(init_config::evm::Template::FeatureExternalCalls),
+        } => vec![("viem".to_string(), "^2.0.0".to_string())],
+        _ => vec![],
+    };
+
     let hbs_template = InitTemplates::new(
         init_config.name.clone(),
         &init_config.language,
         &parsed_project_paths,
         envio_version.clone(),
         init_config.api_token,
+        extra_dependencies,
     )
     .context("Failed creating init templates")?;
 

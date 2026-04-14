@@ -1,11 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it } from "vitest";
 import { createTestIndexer } from "generated";
 
 describe("Indexer Testing", () => {
-  it("Should register pool and handle swap events", async () => {
+  it("Should register pool and handle swap events", async (t) => {
     const indexer = createTestIndexer();
 
-    expect(
+    t.expect(
       await indexer.process({
         chains: { 1: { startBlock: 12_369_739, endBlock: 12_369_739 } },
       }),
@@ -23,7 +23,6 @@ describe("Indexer Testing", () => {
               ],
             },
             "block": 12369739,
-            "blockHash": "0xe8228e3e736a42c7357d2ce6882a1662c588ce608897dd53c3053bcbefb4309a",
             "chainId": 1,
             "eventsProcessed": 1,
           },
@@ -31,7 +30,7 @@ describe("Indexer Testing", () => {
       }
     `);
 
-    expect(
+    t.expect(
       await indexer.process({
         chains: { 1: { startBlock: 12_373_187, endBlock: 12_373_187 } },
       }),
@@ -56,7 +55,6 @@ describe("Indexer Testing", () => {
               ],
             },
             "block": 12373187,
-            "blockHash": "0xa59d3514ffb6d938a263cd99a34c715f21ea8446d29c21a5b15e619d783f563e",
             "chainId": 1,
             "eventsProcessed": 1,
           },

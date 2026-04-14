@@ -1,7 +1,7 @@
-import { Greeter, type User } from "generated";
+import { indexer, type User } from "generated";
 
 // Handler for the NewGreeting event
-Greeter.NewGreeting.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Greeter", event: "NewGreeting" }, async ({ event, context }) => {
   const userId = event.params.user;
   const latestGreeting = event.params.greeting;
   const currentUserEntity: User | undefined = await context.User.get(userId);
@@ -25,7 +25,7 @@ Greeter.NewGreeting.handler(async ({ event, context }) => {
 });
 
 // Handler for the ClearGreeting event
-Greeter.ClearGreeting.handler(async ({ event, context }) => {
+indexer.onEvent({ contract: "Greeter", event: "ClearGreeting" }, async ({ event, context }) => {
   const userId = event.params.user;
   const currentUserEntity: User | undefined = await context.User.get(userId);
 

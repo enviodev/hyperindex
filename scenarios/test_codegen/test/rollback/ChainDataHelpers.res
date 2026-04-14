@@ -1,4 +1,4 @@
-open Belt
+
 let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash) =>
   {
     number: blockNumber,
@@ -30,7 +30,7 @@ module Gravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
         ~eventConfig=MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="NewGravatar"),
-        ~params=params->(Utils.magic: Indexer.Gravatar.NewGravatar.eventArgs => Internal.eventParams),
+        ~params=params->(Utils.magic: Indexer.Gravatar.NewGravatar.params => Internal.eventParams),
         ...
       )
   }
@@ -40,7 +40,7 @@ module Gravatar = {
       makeEventConstructorWithDefaultSrcAddress(
         ~eventConfig=MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="UpdatedGravatar"),
         ~params=params->(
-          Utils.magic: Indexer.Gravatar.UpdatedGravatar.eventArgs => Internal.eventParams
+          Utils.magic: Indexer.Gravatar.UpdatedGravatar.params => Internal.eventParams
         ),
         ...
       )

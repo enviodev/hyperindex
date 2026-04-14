@@ -743,12 +743,12 @@ describe("RpcSource - fieldRegistry completeness", () => {
 
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
-  let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]
+  let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
 
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
       dependsOnAddresses: true,
-      eventConfigs: [(Mock.evmEventConfig() :> Internal.eventConfig)],
+      eventConfigs: [(MockIndexer.evmEventConfig() :> Internal.eventConfig)],
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
@@ -759,7 +759,7 @@ describe("RpcSource - getSelectionConfig", () => {
     ).toEqual(
       {
         addresses: Some([mockAddress0]),
-        topicQuery: [Single(Mock.eventId)],
+        topicQuery: [Single(MockIndexer.eventId)],
       },
     )
   })
@@ -768,8 +768,8 @@ describe("RpcSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
-        (Mock.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
-        (Mock.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
+        (MockIndexer.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -788,7 +788,7 @@ describe("RpcSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
-        (Mock.evmEventConfig(
+        (MockIndexer.evmEventConfig(
           ~id="event 2",
           ~isWildcard=true,
           ~dependsOnAddresses=true,
@@ -812,7 +812,7 @@ describe("RpcSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: false,
       eventConfigs: [
-        (Mock.evmEventConfig(
+        (MockIndexer.evmEventConfig(
           ~id="event 2",
           ~isWildcard=false,
           ~dependsOnAddresses=true,
@@ -855,8 +855,8 @@ describe("RpcSource - getSelectionConfig", () => {
       let _ = {
         dependsOnAddresses: true,
         eventConfigs: [
-          (Mock.evmEventConfig(~id="1") :> Internal.eventConfig),
-          (Mock.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="1") :> Internal.eventConfig),
+          (MockIndexer.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
         ],
       }->RpcSource.getSelectionConfig(~chain)
       Js.Exn.raiseError("Should have thrown")
@@ -876,7 +876,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
 
   it("Should handle retry with the range", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -909,7 +909,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Shouldn't retry on height not available", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -933,7 +933,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should retry on block range too large", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         code: 'UNKNOWN_ERROR',
         error: {
@@ -949,7 +949,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should ignore invalid range errors where toBlock is less than fromBlock", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -982,7 +982,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should handle block range limit from https://1rpc.io/eth", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {
@@ -1014,7 +1014,7 @@ describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
   })
 
   it("Should handle block range limit from Alchemy", t => {
-    let error = JsError(
+    let error = JsExn(
       %raw(`{
         "code": "UNKNOWN_ERROR",
         "error": {

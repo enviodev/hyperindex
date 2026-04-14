@@ -40,6 +40,8 @@ enum EvmInitOption {
     TemplateErc20,
     #[strum(serialize = "Template: Greeter")]
     TemplateGreeter,
+    #[strum(serialize = "Feature: External Calls")]
+    FeatureExternalCalls,
     #[strum(serialize = "Feature: Factory Contract")]
     FeatureFactory,
 }
@@ -54,6 +56,7 @@ impl EvmInitOption {
                 Self::ContractImportLocal,
                 Self::TemplateErc20,
                 Self::TemplateGreeter,
+                Self::FeatureExternalCalls,
                 Self::FeatureFactory,
             ],
         }
@@ -230,6 +233,9 @@ async fn prompt_evm_init_option(language: &Language) -> Result<Ecosystem> {
         }
         EvmInitOption::TemplateErc20 => evm::InitFlow::Template(evm::Template::Erc20),
         EvmInitOption::TemplateGreeter => evm::InitFlow::Template(evm::Template::Greeter),
+        EvmInitOption::FeatureExternalCalls => {
+            evm::InitFlow::Template(evm::Template::FeatureExternalCalls)
+        }
         EvmInitOption::FeatureFactory => evm::InitFlow::Template(evm::Template::FeatureFactory),
     };
 

@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/contract_import_templates.rs
-assertion_line: 1056
 expression: content
 ---
 open Vitest
@@ -45,4 +44,21 @@ describe("Contract1 contract NewGravatar event tests", () => {
       ~message="Actual Contract1_NewGravatar should be the same as the expected Contract1_NewGravatar",
     ).toEqual(expectedContract1NewGravatar)
   })
+})
+
+describe("Indexer smoke test", () => {
+  Async.it("processes the first block with events on chain 1", async t => {
+    let indexer = createTestIndexer()
+
+    let result = await indexer.process({
+      chains: {
+        \"1": ({} : TestIndexer.evmChainConfig),
+      },
+    })
+
+    t.expect(
+      result.changes->Array.length,
+      ~message="Should have at least one change",
+    ).toBeGreaterThan(0)
+  }, ~timeout=60_000)
 })

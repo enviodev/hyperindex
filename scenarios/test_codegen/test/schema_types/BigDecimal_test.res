@@ -2,11 +2,11 @@ open Vitest
 
 describe("Load and save an entity with a BigDecimal from DB", () => {
   Async.it("be able to set and read entities with BigDecimal from DB", async t => {
-    let sourceMock = Mock.Source.make(
+    let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chain=#1337,
     )
-    let indexerMock = await Mock.Indexer.make(
+    let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {
           chain: #1337,

@@ -1,8 +1,8 @@
 open Vitest
 
 let mockChain = ChainMap.Chain.makeUnsafe(~chainId=1)
-let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[0]
-let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[1]
+let mockAddress1 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
+let mockAddress2 = Envio.TestHelpers.Addresses.mockAddresses[1]->Option.getExn
 
 let mockFromArray = (array): EventRouter.t<'a> => {
   Js.Dict.fromArray(array)

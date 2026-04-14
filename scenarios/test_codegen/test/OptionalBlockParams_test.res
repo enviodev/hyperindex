@@ -1,4 +1,4 @@
-open Belt
+
 open Vitest
 
 let simulateItem = Indexer.makeSimulateItem(OnEvent({event: Gravatar(EmptyEvent)}))
@@ -73,7 +73,7 @@ Async.it("Optional block params: startBlock defaults to progressBlock+1 on secon
   })
 
   let entities = await (indexer.\"SimulateTestEvent").getAll()
-  let entities = entities->SortArray.stableSortBy((a, b) => compare(a.blockNumber, b.blockNumber))
+  let entities = entities->Belt.SortArray.stableSortBy((a, b) => compare(a.blockNumber, b.blockNumber))
   t.expect(entities).toEqual([
     {id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0},
     {id: "101_0", blockNumber: 101, logIndex: 0, timestamp: 0},
@@ -175,24 +175,40 @@ Async.it("Optional block params: raises error for invalid startBlock type", asyn
   )
 })
 
-// Test: no simulate, no endBlock → error
-Async.it("Optional block params: raises error when endBlock is missing without simulate", async t => {
-  let indexer = Indexer.createTestIndexer()
+// Test: no simulate, no endBlock → auto-exit mode (no validation error)
+// Validation passes synchronously before worker spawn, so we only need to check
+// parseBlockRange doesn't throw. The worker may hang without API token, so we
+// race with a short timeout.
+Async.it(
+  "Optional block params: no endBlock without simulate enters auto-exit mode",
+  async t => {
+    let indexer = Indexer.createTestIndexer()
 
-  let error = try {
-    let _ = await indexer.process({
-      chains: {
-        \"1337": {startBlock: 1},
-      },
-    })
-    None
-  } catch {
-  | Js.Exn.Error(err) => err->Js.Exn.message
-  }
+    let error = try {
+      let _ = await Promise.race([
+        indexer.process({
+          chains: {
+            \"1337": {startBlock: 1},
+          },
+        }),
+        Promise.make((_, reject) =>
+          Js.Global.setTimeout(
+            () => reject(Utils.Error.make("timeout")),
+            3000,
+          )->ignore
+        ),
+      ])
+      None
+    } catch {
+    | Js.Exn.Error(err) => err->Js.Exn.message
+    }
 
-  t.expect(error).toEqual(
-    Some(
-      "endBlock is required for chain 1337 when simulate is not provided",
-    ),
-  )
-})
+    // Should not raise "endBlock is required" error.
+    // May fail with timeout or missing API token — both are acceptable.
+    switch error {
+    | Some(msg) =>
+      t.expect(msg->Js.String2.includes("endBlock is required")).toEqual(false)
+    | None => t.expect(true).toEqual(true)
+    }
+  },
+)

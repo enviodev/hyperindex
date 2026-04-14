@@ -35,5 +35,8 @@
     "helpers",
     "envio"
   ],
-  "bsc-flags": ["-open RescriptSchema"]
+  "bsc-flags": ["-open RescriptSchema"],
+  "warnings": {
+    "number": "-3"
+  }
 }

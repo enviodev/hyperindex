@@ -7,5 +7,6 @@ pub mod field_types;
 pub mod graph_migration;
 pub mod human_config;
 pub mod hypersync_endpoints;
+pub mod public_config_json;
 pub mod system_config;
 pub mod validation;

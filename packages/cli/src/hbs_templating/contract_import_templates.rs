@@ -269,11 +269,8 @@ impl Contract {
         content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
         content.push_str(" */\n");
 
-        // Import statement for contract module
-        content.push_str(&format!(
-            "import {{ {} }} from \"generated\";\n",
-            self.name.capitalized
-        ));
+        // Import the indexer instance
+        content.push_str("import { indexer } from \"generated\";\n");
 
         // Import type statement for entity types
         if !self.imported_events.is_empty() {
@@ -284,11 +281,11 @@ impl Contract {
             content.push_str("} from \"generated\";\n");
         }
 
-        // Handler registrations
+        // Handler registrations using indexer.onEvent
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "{}.{}.handler(async ({{ event, context }}) => {{\n",
+                "indexer.onEvent({{ contract: \"{}\", event: \"{}\" }}, async ({{ event, context }}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -335,11 +332,11 @@ impl Contract {
         content.push('\n');
         content.push_str("open Indexer\n");
 
-        // Handler registrations
+        // Handler registrations using indexer.onEvent + GADT event identity
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "{}.{}.handler(async ({{event, context}}) => {{\n",
+                "indexer.onEvent({{event: {}({})}}, async ({{event, context}}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -384,7 +381,7 @@ impl Contract {
         content
     }
     /// Generates TypeScript test file content for this contract
-    pub fn generate_typescript_test_content(&self, _is_fuel: bool, chain_id: u64) -> String {
+    pub fn generate_typescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
         let first_event = match self.imported_events.first() {
             Some(event) => event,
             None => return String::new(),
@@ -400,99 +397,130 @@ impl Contract {
         let mut content = String::new();
 
         // Imports
-        content.push_str("import { describe, it, expect } from \"vitest\";\n");
-        content.push_str(&format!(
-            "import {{ createTestIndexer, type {} }} from \"generated\";\n",
-            entity_name
-        ));
-        if has_address_param {
-            content.push_str("import { TestHelpers } from \"envio\";\n");
+        content.push_str("import { describe, it } from \"vitest\";\n");
+        if is_fuel {
+            content.push_str("import { createTestIndexer } from \"generated\";\n");
+        } else {
+            content.push_str(&format!(
+                "import {{ createTestIndexer, type {} }} from \"generated\";\n",
+                entity_name
+            ));
+            if has_address_param {
+                content.push_str("import { TestHelpers } from \"envio\";\n");
+            }
         }
 
-        content.push_str(&format!(
-            "\ndescribe(\"{} contract {} event tests\", () => {{\n",
-            contract_name, event_name
-        ));
-        content.push_str(&format!(
-            "  it(\"{}_{} is created correctly\", async () => {{\n",
-            contract_name, event_name
-        ));
-        content.push_str("    const indexer = createTestIndexer();\n");
+        // Mock event test — skip for Fuel because Fuel event params can't be
+        // extracted from the ABI yet, so the generated mock may be incomplete.
+        if !is_fuel {
+            content.push_str(&format!(
+                "\ndescribe(\"{} contract {} event tests\", () => {{\n",
+                contract_name, event_name
+            ));
+            content.push_str(&format!(
+                "  it(\"{}_{} is created correctly\", async (t) => {{\n",
+                contract_name, event_name
+            ));
+            content.push_str("    const indexer = createTestIndexer();\n");
 
-        // Mock event
-        content.push_str(&format!(
-            "\n    // Creating mock for {} contract {} event\n",
-            contract_name, event_name
-        ));
-        content.push_str("    const event = {\n");
-        content.push_str(&format!(
-            "      contract: \"{}\" as const,\n",
-            contract_name
-        ));
-        content.push_str(&format!("      event: \"{}\" as const,\n", event_name));
-        if !first_event.params.is_empty() {
-            content.push_str("      params: {\n");
+            // Mock event
+            content.push_str(&format!(
+                "\n    // Creating mock for {} contract {} event\n",
+                contract_name, event_name
+            ));
+            content.push_str("    const event = {\n");
+            content.push_str(&format!(
+                "      contract: \"{}\" as const,\n",
+                contract_name
+            ));
+            content.push_str(&format!("      event: \"{}\" as const,\n", event_name));
+            if !first_event.params.is_empty() {
+                content.push_str("      params: {\n");
+                for param in &first_event.params {
+                    content.push_str(&format!(
+                        "        {}: {},\n",
+                        param.js_name, param.default_value_typescript
+                    ));
+                }
+                content.push_str("      },\n");
+            }
+            content.push_str("    };\n");
+
+            // Process
+            content.push_str("\n    await indexer.process({\n");
+            content.push_str("      chains: {\n");
+            content.push_str(&format!("        {}: {{\n", chain_id));
+            content.push_str("          simulate: [event],\n");
+            content.push_str("        },\n");
+            content.push_str("      },\n");
+            content.push_str("    });\n");
+
+            // Get actual entity
+            content.push_str("\n    // Getting the actual entity from the test indexer\n");
+            content.push_str(&format!(
+                "    let actual{}{} = await indexer.{}_{}.getOrThrow(\"{}\");\n",
+                contract_name, event_name, contract_name, event_name, entity_id
+            ));
+
+            // Expected entity
+            content.push_str("\n    // Creating the expected entity\n");
+            content.push_str(&format!(
+                "    const expected{}{}: {}_{} = {{\n",
+                contract_name, event_name, contract_name, event_name
+            ));
+            content.push_str(&format!("      id: \"{}\",\n", entity_id));
             for param in &first_event.params {
                 content.push_str(&format!(
-                    "        {}: {},\n",
-                    param.js_name, param.default_value_typescript
+                    "      {}: event.params.{},\n",
+                    param.entity_key.uncapitalized, param.js_name
                 ));
             }
-            content.push_str("      },\n");
-        }
-        content.push_str("    };\n");
+            content.push_str("    };\n");
 
-        // Process
-        content.push_str("\n    await indexer.process({\n");
-        content.push_str("      chains: {\n");
-        content.push_str(&format!("        {}: {{\n", chain_id));
-        content.push_str("          simulate: [event],\n");
-        content.push_str("        },\n");
-        content.push_str("      },\n");
-        content.push_str("    });\n");
-
-        // Get actual entity
-        content.push_str("\n    // Getting the actual entity from the test indexer\n");
-        content.push_str(&format!(
-            "    let actual{}{} = await indexer.{}_{}.getOrThrow(\"{}\");\n",
-            contract_name, event_name, contract_name, event_name, entity_id
-        ));
-
-        // Expected entity
-        content.push_str("\n    // Creating the expected entity\n");
-        content.push_str(&format!(
-            "    const expected{}{}: {}_{} = {{\n",
-            contract_name, event_name, contract_name, event_name
-        ));
-        content.push_str(&format!("      id: \"{}\",\n", entity_id));
-        for param in &first_event.params {
+            // Assert
+            content.push_str(
+                "    // Asserting that the entity in the mock database is the same as the expected entity\n",
+            );
             content.push_str(&format!(
-                "      {}: event.params.{},\n",
-                param.entity_key.uncapitalized, param.js_name
+                "    t.expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
+                contract_name, event_name,
+                contract_name, event_name,
+                contract_name, event_name,
+                contract_name, event_name,
             ));
+
+            content.push_str("  });\n");
+            content.push_str("});\n");
         }
-        content.push_str("    };\n");
 
-        // Assert
-        content.push_str(
-            "    // Asserting that the entity in the mock database is the same as the expected entity\n",
-        );
+        // Auto-exit smoke test: fetches first block with events from HyperSync and exits
+        content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
         content.push_str(&format!(
-            "    expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
-            contract_name, event_name,
-            contract_name, event_name,
-            contract_name, event_name,
-            contract_name, event_name,
+            "  it(\"processes the first block with events on chain {}\", async (t) => {{\n",
+            chain_id
         ));
-
-        content.push_str("  });\n");
+        content.push_str("    const indexer = createTestIndexer();\n\n");
+        content.push_str(&format!(
+            "    const result = await indexer.process({{ chains: {{ {}: {{}} }} }});\n\n",
+            chain_id
+        ));
+        content.push_str(
+            "    t.expect(result.changes.length, \"Should have at least one change\").toBeGreaterThan(0);\n",
+        );
+        content.push_str("    const firstChange = result.changes[0]!;\n");
+        content.push_str(&format!(
+            "    t.expect(firstChange.chainId).toBe({});\n",
+            chain_id
+        ));
+        content.push_str("    t.expect(firstChange.eventsProcessed).toBeGreaterThan(0);\n");
+        content.push_str("  }, 60_000);\n");
         content.push_str("});\n");
 
         content
     }
 
     /// Generates ReScript test file content for this contract
-    pub fn generate_rescript_test_content(&self, _is_fuel: bool, chain_id: u64) -> String {
+    pub fn generate_rescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
         let first_event = match self.imported_events.first() {
             Some(event) => event,
             None => return String::new(),
@@ -507,83 +535,111 @@ impl Contract {
 
         content.push_str("open Vitest\n");
         content.push_str("open Indexer\n");
-        content.push_str(&format!(
-            "\ndescribe(\"{} contract {} event tests\", () => {{\n",
-            contract_name, event_name
-        ));
-        content.push_str(&format!(
-            "  Async.it(\"{} handler creates {} entity\", async t => {{\n",
-            event_name, entity_name
-        ));
-        content.push_str("    let indexer = createTestIndexer()\n");
 
-        // Process with simulate item using makeSimulateItem
-        content.push_str("\n    let _ = await indexer.process({\n");
-        content.push_str("      chains: {\n");
-        content.push_str(&format!("        \\\"{}\": {{\n", chain_id));
-
-        // Generate makeSimulateItem call using GADT-based eventIdentity
-        if first_event.params.is_empty() {
+        // Mock event test — skip for Fuel because Fuel event params can't be
+        // extracted from the ABI yet, so the generated mock may be incomplete.
+        if !is_fuel {
             content.push_str(&format!(
-                "          simulate: [makeSimulateItem(OnEvent({{event: {}({})}}))],\n",
+                "\ndescribe(\"{} contract {} event tests\", () => {{\n",
                 contract_name, event_name
             ));
-        } else {
             content.push_str(&format!(
-                "          simulate: [\n\
-                 \x20           makeSimulateItem(\n\
-                 \x20             OnEvent({{\n\
-                 \x20               event: {}({}),\n\
-                 \x20               params: {{\n",
-                contract_name, event_name
+                "  Async.it(\"{} handler creates {} entity\", async t => {{\n",
+                event_name, entity_name
+            ));
+            content.push_str("    let indexer = createTestIndexer()\n");
+
+            // Process with simulate item using makeSimulateItem
+            content.push_str("\n    let _ = await indexer.process({\n");
+            content.push_str("      chains: {\n");
+            content.push_str(&format!("        \\\"{}\": {{\n", chain_id));
+
+            // Generate makeSimulateItem call using GADT-based eventIdentity
+            if first_event.params.is_empty() {
+                content.push_str(&format!(
+                    "          simulate: [makeSimulateItem(OnEvent({{event: {}({})}}))],\n",
+                    contract_name, event_name
+                ));
+            } else {
+                content.push_str(&format!(
+                    "          simulate: [\n\
+                     \x20           makeSimulateItem(\n\
+                     \x20             OnEvent({{\n\
+                     \x20               event: {}({}),\n\
+                     \x20               params: {{\n",
+                    contract_name, event_name
+                ));
+                for param in &first_event.params {
+                    content.push_str(&format!(
+                        "                  {}: {},\n",
+                        param.res_name, param.default_value_rescript
+                    ));
+                }
+                content.push_str("              },\n");
+                content.push_str("            }),\n");
+                content.push_str("          ),\n");
+                content.push_str("          ],\n");
+            }
+
+            content.push_str("        },\n");
+            content.push_str("      },\n");
+            content.push_str("    })\n");
+
+            // Get actual entity and assert against expected
+            content.push_str(&format!(
+                "\n    let actual{contract_name}{event_name} = await indexer.\\\"{entity_name}\".getOrThrow(\"{entity_id}\")\n",
+            ));
+
+            content.push_str(&format!(
+                "\n    let expected{contract_name}{event_name}: Entities.{entity_name}.t = {{\n\
+                 \x20     id: \"{entity_id}\",\n",
             ));
             for param in &first_event.params {
+                let value = if param.is_eth_address {
+                    format!("{}->Address.toString", param.default_value_rescript)
+                } else {
+                    param.default_value_rescript.clone()
+                };
                 content.push_str(&format!(
-                    "                  {}: {},\n",
-                    param.res_name, param.default_value_rescript
+                    "      {}: {},\n",
+                    param.entity_key.uncapitalized, value
                 ));
             }
-            content.push_str("              },\n");
-            content.push_str("            }),\n");
-            content.push_str("          ),\n");
-            content.push_str("          ],\n");
-        }
+            content.push_str("    }\n");
 
-        content.push_str("        },\n");
-        content.push_str("      },\n");
-        content.push_str("    })\n");
-
-        // Get actual entity and assert against expected
-        content.push_str(&format!(
-            "\n    let actual{contract_name}{event_name} = await indexer.\\\"{entity_name}\".getOrThrow(\"{entity_id}\")\n",
-        ));
-
-        content.push_str(&format!(
-            "\n    let expected{contract_name}{event_name}: Entities.{entity_name}.t = {{\n\
-             \x20     id: \"{entity_id}\",\n",
-        ));
-        for param in &first_event.params {
-            let value = if param.is_eth_address {
-                format!("{}->Address.toString", param.default_value_rescript)
-            } else {
-                param.default_value_rescript.clone()
-            };
+            // Assert
             content.push_str(&format!(
-                "      {}: {},\n",
-                param.entity_key.uncapitalized, value
+                "\n    t.expect(\n\
+                 \x20     actual{contract_name}{event_name},\n\
+                 \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
+                 \x20   ).toEqual(expected{contract_name}{event_name})\n",
             ));
+
+            content.push_str("  })\n");
+            content.push_str("})\n");
         }
-        content.push_str("    }\n");
 
-        // Assert
+        // Auto-exit smoke test: fetches first block with events from HyperSync and exits
+        let chain_config_type = if is_fuel {
+            "fuelChainConfig"
+        } else {
+            "evmChainConfig"
+        };
+        content.push_str("\ndescribe(\"Indexer smoke test\", () => {\n");
         content.push_str(&format!(
-            "\n    t.expect(\n\
-             \x20     actual{contract_name}{event_name},\n\
-             \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
-             \x20   ).toEqual(expected{contract_name}{event_name})\n",
+            "  Async.it(\"processes the first block with events on chain {}\", async t => {{\n",
+            chain_id
         ));
-
-        content.push_str("  })\n");
+        content.push_str("    let indexer = createTestIndexer()\n\n");
+        content.push_str(&format!(
+            "    let result = await indexer.process({{\n      chains: {{\n        \\\"{}\": ({{}} : TestIndexer.{}),\n      }},\n    }})\n\n",
+            chain_id, chain_config_type
+        ));
+        content.push_str("    t.expect(\n");
+        content.push_str("      result.changes->Array.length,\n");
+        content.push_str("      ~message=\"Should have at least one change\",\n");
+        content.push_str("    ).toBeGreaterThan(0)\n");
+        content.push_str("  }, ~timeout=60_000)\n");
         content.push_str("})\n");
 
         content
