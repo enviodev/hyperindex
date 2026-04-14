@@ -1,4 +1,4 @@
-open Belt
+
 
 type t<'key, 'val> = {
   dict: dict<'val>,
@@ -275,7 +275,7 @@ module Entity = {
               let res =
                 relatedEntityIds
                 ->Utils.Set.toArray
-                ->Array.keepMap(entityId => {
+                ->Array.filterMap(entityId => {
                   switch hasByHash(inMemTable.table, entityId) {
                   | true => getEntity(entityId)
                   | false => None
@@ -344,7 +344,7 @@ module Entity = {
   let updates = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.keepMapU(v =>
+    ->Array.filterMap(v =>
       switch v.status {
       | Updated(update) => Some(update)
       | Loaded => None
@@ -355,7 +355,7 @@ module Entity = {
   let values = (inMemTable: t<'entity>) => {
     inMemTable.table
     ->values
-    ->Array.keepMap(rowToEntity)
+    ->Array.filterMap(rowToEntity)
   }
 
   let clone = ({table, fieldNameIndices}: t<'entity>) => {

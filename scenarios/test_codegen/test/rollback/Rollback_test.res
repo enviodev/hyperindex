@@ -1,4 +1,4 @@
-open Belt
+
 open Vitest
 
 describe("E2E rollback tests", () => {
@@ -2520,8 +2520,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: event counters should NOT be negative",
@@ -2674,8 +2674,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After first rollback: all chains' counters should be 0",
@@ -2713,8 +2713,8 @@ Sorted by timestamp and chain id`,
         {
           let metrics = await indexerMock.metric("envio_progress_events")
           metrics->Js.Array2.sortInPlaceWith((a, b) =>
-            (a.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic -
-              (b.labels->Js.Dict.get("chainId")->Option.getWithDefault(""))->Obj.magic
+            (a.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic -
+              (b.labels->Js.Dict.get("chainId")->Option.getOr(""))->Obj.magic
           )
         },
         ~message="After second rollback: non-reorg chains (100, 137) must NOT go negative",

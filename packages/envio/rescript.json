@@ -25,6 +25,6 @@
   "bs-dependencies": ["rescript-schema", "@rescript/react", "rescript-envsafe"],
   "bsc-flags": ["-open RescriptSchema"],
   "warnings": {
-    "number": "-3-44"
+    "number": "-3"
   }
 }

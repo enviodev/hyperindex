@@ -1,5 +1,3 @@
-open Belt
-
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -160,8 +158,8 @@ let rec executeWithRateLimit = (
 
     // Split into immediate and queued
     let immediateCount = Js.Math.min_int(state.availableCalls, effectArgs->Array.length)
-    let immediateArgs = effectArgs->Array.slice(~offset=0, ~len=immediateCount)
-    let queuedArgs = effectArgs->Array.sliceToEnd(immediateCount)
+    let immediateArgs = effectArgs->Belt.Array.slice(~offset=0, ~len=immediateCount)
+    let queuedArgs = effectArgs->Belt.Array.sliceToEnd(immediateCount)
 
     // Update available calls
     state.availableCalls = state.availableCalls - immediateCount

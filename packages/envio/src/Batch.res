@@ -1,5 +1,3 @@
-open Belt
-
 @@warning("-44")
 open Utils.UnsafeIntOperators
 
@@ -136,7 +134,7 @@ let getProgressedChainsById = {
     // - Trigger onBlock pointer update
     chainsBeforeBatch
     ->ChainMap.values
-    ->Array.forEachU(chainBeforeBatch => {
+    ->Array.forEach(chainBeforeBatch => {
       let fetchState = chainBeforeBatch.fetchState
 
       let progressBlockNumberAfterBatch = switch progressBlockNumberPerChain->Utils.Dict.dangerouslyGetNonOption(

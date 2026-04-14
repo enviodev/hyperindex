@@ -62,7 +62,6 @@ let makeCreateCompositeIndexQuery = (
 }
 
 let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
-  open Belt
   let tableName = table.tableName
   let createIndex = indexField =>
     makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
@@ -78,7 +77,6 @@ let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
 }
 
 let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText) => {
-  open Belt
   let fieldsMapped =
     table
     ->Table.getFields
