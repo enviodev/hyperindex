@@ -5,6 +5,17 @@ on:
   push:
     branches:
       - main
+  # Manual trigger for running full CI (with repo secrets) against a specific
+  # commit — e.g. a fork PR from an external contributor whose runs would
+  # otherwise execute without secrets. Only users with write access to this
+  # repo can dispatch this workflow. The provided SHA is pinned at checkout
+  # time so a mid-run force-push on the fork cannot swap code under us.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Exact commit SHA to run CI against (paste from the PR; must be reachable, e.g. via refs/pull/<N>/head)"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +32,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.ref }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -66,6 +79,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.ref }}
 
       - uses: pnpm/action-setup@v5
         with:
@@ -102,6 +117,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.ref }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -124,6 +141,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.ref }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -141,6 +160,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.ref }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
@@ -185,6 +206,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.ref }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -263,6 +286,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha || github.ref }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
