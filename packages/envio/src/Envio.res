@@ -138,7 +138,7 @@ let createEffect = (
         callsPerDuration: calls,
         durationMs: per->durationToMs,
         availableCalls: calls,
-        windowStartTime: Js.Date.now(),
+        windowStartTime: Date.now(),
         queueCount: 0,
         nextWindowPromise: None,
       })
@@ -157,7 +157,7 @@ type fuelTransactionInput = {id?: string}
 type evmSimulateItem = {
   contract: string,
   event: string,
-  params?: Js.Json.t,
+  params?: JSON.t,
   srcAddress?: Address.t,
   logIndex?: int,
   block?: Internal.evmBlockInput,
@@ -167,7 +167,7 @@ type evmSimulateItem = {
 type fuelSimulateItem = {
   contract: string,
   event: string,
-  params: Js.Json.t,
+  params: JSON.t,
   srcAddress?: Address.t,
   logIndex?: int,
   block?: fuelBlockInput,

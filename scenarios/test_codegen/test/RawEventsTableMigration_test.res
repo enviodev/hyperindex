@@ -17,14 +17,14 @@ describe("Raw Events Table Migrations", () => {
     )
 
     let sql = PgStorage.makeClient()
-    let rawEventsColumnsRes: array<{"column_name": string, "data_type": string}> =
-      await sql->Postgres.unsafe(
-        `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
+    let rawEventsColumnsRes: array<{
+      "column_name": string,
+      "data_type": string,
+    }> = await sql->Postgres.unsafe(`SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
          FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = 'public'
            AND TABLE_NAME = 'raw_events'
-         ORDER BY ORDINAL_POSITION;`,
-      )
+         ORDER BY ORDINAL_POSITION;`)
 
     t.expect(rawEventsColumnsRes).toEqual([
       {"column_name": "chain_id", "data_type": "integer"},

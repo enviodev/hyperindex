@@ -1,4 +1,3 @@
-
 let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash) =>
   {
     number: blockNumber,
@@ -14,22 +13,25 @@ let makeTransaction = (~transactionIndex, ~transactionHash) =>
 
 module Gravatar = {
   let contractName = "Gravatar"
-  let chainConfig = Indexer.Generated.makeGeneratedConfig().chainMap->ChainMap.get(MockConfig.chain1337)
-  let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
-  let defaultAddress = contract.addresses[0]->Option.getExn
+  let chainConfig =
+    Indexer.Generated.makeGeneratedConfig().chainMap->ChainMap.get(MockConfig.chain1337)
+  let contract = chainConfig.contracts->Array.find(c => c.name == contractName)->Option.getOrThrow
+  let defaultAddress = contract.addresses[0]->Option.getOrThrow
 
-  let makeEventConstructorWithDefaultSrcAddress =
-    MockChainData.makeEventConstructor(
-      ~srcAddress=defaultAddress,
-      ~makeBlock,
-      ~makeTransaction,
-      ...
-    )
+  let makeEventConstructorWithDefaultSrcAddress = MockChainData.makeEventConstructor(
+    ~srcAddress=defaultAddress,
+    ~makeBlock,
+    ~makeTransaction,
+    ...
+  )
 
   module NewGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="NewGravatar"),
+        ~eventConfig=MockConfig.getEvmEventConfig(
+          ~contractName="Gravatar",
+          ~eventName="NewGravatar",
+        ),
         ~params=params->(Utils.magic: Indexer.Gravatar.NewGravatar.params => Internal.eventParams),
         ...
       )
@@ -38,7 +40,10 @@ module Gravatar = {
   module UpdatedGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="UpdatedGravatar"),
+        ~eventConfig=MockConfig.getEvmEventConfig(
+          ~contractName="Gravatar",
+          ~eventName="UpdatedGravatar",
+        ),
         ~params=params->(
           Utils.magic: Indexer.Gravatar.UpdatedGravatar.params => Internal.eventParams
         ),

@@ -13,8 +13,5 @@
   "dependencies": ["rescript-schema", "envio"],
   "jsx": {
     "version": 4
-  },
-  "warnings": {
-    "number": "-3"
   }
 }

@@ -19,7 +19,7 @@ let make = (
     let checkpointBlockNumbers = Belt.Array.makeUninitializedUnsafe(
       chainReorgCheckpoints->Array.length,
     )
-    chainReorgCheckpoints->Js.Array2.forEachi((checkpoint, idx) => {
+    chainReorgCheckpoints->Array.forEachWithIndex((checkpoint, idx) => {
       checkpointIds->Belt.Array.setUnsafe(idx, checkpoint.checkpointId)
       checkpointBlockNumbers->Belt.Array.setUnsafe(idx, checkpoint.blockNumber)
     })
@@ -84,9 +84,9 @@ let updateOnNewBatch = (
   for idx in 0 to safeCheckpointTracking.checkpointIds->Array.length - 1 {
     let checkpointId = safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx)
     if checkpointId >= safeCheckpointId {
-      mutCheckpointIds->Js.Array2.push(checkpointId)->ignore
+      mutCheckpointIds->Array.push(checkpointId)->ignore
       mutCheckpointBlockNumbers
-      ->Js.Array2.push(safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx))
+      ->Array.push(safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx))
       ->ignore
     }
   }
@@ -94,9 +94,9 @@ let updateOnNewBatch = (
   // Append new checkpoints
   for idx in 0 to batchCheckpointIds->Array.length - 1 {
     if batchCheckpointChainIds->Belt.Array.getUnsafe(idx) === chainId {
-      mutCheckpointIds->Js.Array2.push(batchCheckpointIds->Belt.Array.getUnsafe(idx))->ignore
+      mutCheckpointIds->Array.push(batchCheckpointIds->Belt.Array.getUnsafe(idx))->ignore
       mutCheckpointBlockNumbers
-      ->Js.Array2.push(batchCheckpointBlockNumbers->Belt.Array.getUnsafe(idx))
+      ->Array.push(batchCheckpointBlockNumbers->Belt.Array.getUnsafe(idx))
       ->ignore
     }
   }
@@ -116,10 +116,10 @@ let rollback = (safeCheckpointTracking: t, ~targetBlockNumber: int) => {
     let blockNumber = safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx)
     if blockNumber <= targetBlockNumber {
       mutCheckpointIds
-      ->Js.Array2.push(safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx))
+      ->Array.push(safeCheckpointTracking.checkpointIds->Belt.Array.getUnsafe(idx))
       ->ignore
       mutCheckpointBlockNumbers
-      ->Js.Array2.push(safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx))
+      ->Array.push(safeCheckpointTracking.checkpointBlockNumbers->Belt.Array.getUnsafe(idx))
       ->ignore
     }
   }

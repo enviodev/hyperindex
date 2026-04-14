@@ -1,7 +1,7 @@
 type eventRegistration = {
   handler: option<Internal.handler>,
   contractRegister: option<Internal.contractRegister>,
-  eventOptions: option<Internal.eventOptions<Js.Json.t>>,
+  eventOptions: option<Internal.eventOptions<JSON.t>>,
 }
 
 let empty = {
@@ -10,7 +10,7 @@ let empty = {
   eventOptions: None,
 }
 
-let eventRegistrations: Js.Dict.t<eventRegistration> = Js.Dict.empty()
+let eventRegistrations: dict<eventRegistration> = Dict.make()
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
@@ -22,7 +22,7 @@ let get = (~contractName, ~eventName) => {
 }
 
 let set = (~contractName, ~eventName, registration) => {
-  eventRegistrations->Js.Dict.set(getKey(~contractName, ~eventName), registration)
+  eventRegistrations->Dict.set(getKey(~contractName, ~eventName), registration)
 }
 
 type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
@@ -50,7 +50,7 @@ let withRegistration = (fn: activeRegistration => unit) => {
   | None => preRegistered->Belt.Array.push(fn)
   | Some(r) =>
     if r.finished {
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         "The indexer finished initializing, so no more handlers can be registered. Make sure the handlers are registered on the top level of the file.",
       )
     } else {
@@ -64,14 +64,14 @@ let startRegistration = (~ecosystem, ~multichain) => {
     ecosystem,
     multichain,
     registrations: {
-      onBlockByChainId: Js.Dict.empty(),
+      onBlockByChainId: Dict.make(),
     },
     finished: false,
   }
   activeRegistration.contents = Some(r)
-  while preRegistered->Js.Array2.length > 0 {
+  while preRegistered->Array.length > 0 {
     // Loop + cleanup in one go
-    switch preRegistered->Js.Array2.pop {
+    switch preRegistered->Array.pop {
     | Some(fn) => fn(r)
     | None => ()
     }
@@ -85,7 +85,9 @@ let finishRegistration = () => {
       r.registrations
     }
   | None =>
-    Js.Exn.raiseError("The indexer has not started registering handlers, so can't finish it.")
+    JsError.throwWithMessage(
+      "The indexer has not started registering handlers, so can't finish it.",
+    )
   }
 }
 
@@ -112,7 +114,7 @@ let onBlock = (rawOptions: unknown, handler: Internal.onBlockArgs => promise<uni
     switch registration.multichain {
     | Unordered => ()
     | Ordered =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         "Block Handlers are not supported for ordered multichain mode. Please reach out to the Envio team if you need this feature. Or enable unordered multichain mode by removing `multichain: ordered` from the config.yaml file.",
       )
     }
@@ -187,7 +189,7 @@ type eventNamespace = {contractName: string, eventName: string}
 let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
   let fullMsg = msg ++ " for " ++ contractName ++ "." ++ eventName
   Logging.createChildFrom(~logger, ~params={contractName, eventName})->Logging.childError(fullMsg)
-  Js.Exn.raiseError(fullMsg)
+  JsError.throwWithMessage(fullMsg)
 }
 
 // Compare two raw `where` configs as the user passed them (object/array/bool/function).
@@ -195,11 +197,11 @@ let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
 // so structural equality on the raw JSON shape is what users actually wrote. For a
 // dynamic callback (a function value) structural equality is meaningless, so fall
 // back to referential equality on the function reference.
-let whereMatch = (a: option<Js.Json.t>, b: option<Js.Json.t>) => {
+let whereMatch = (a: option<JSON.t>, b: option<JSON.t>) => {
   switch (a, b) {
   | (None, None) => true
   | (Some(a), Some(b)) =>
-    if Js.typeof(a) === "function" || Js.typeof(b) === "function" {
+    if typeof(a) === #function || typeof(b) === #function {
       a === b
     } else {
       a == b
@@ -209,8 +211,8 @@ let whereMatch = (a: option<Js.Json.t>, b: option<Js.Json.t>) => {
 }
 
 let eventOptionsMatch = (
-  existing: option<Internal.eventOptions<Js.Json.t>>,
-  incoming: option<Internal.eventOptions<Js.Json.t>>,
+  existing: option<Internal.eventOptions<JSON.t>>,
+  incoming: option<Internal.eventOptions<JSON.t>>,
 ) => {
   switch (existing, incoming) {
   | (None, None) => true
@@ -222,8 +224,7 @@ let eventOptionsMatch = (
 let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging.getLogger()) => {
   switch eventOptions {
   | Some(value) =>
-    let value =
-      value->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<Js.Json.t>)
+    let value = value->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
     let t = get(~contractName, ~eventName)
     switch t.eventOptions {
     | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
@@ -266,7 +267,7 @@ let setHandler = (
     | Some(prevHandler) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<Js.Json.t>)
+          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedHandler: Internal.handler = async args => {
@@ -323,7 +324,7 @@ let setContractRegister = (
     | Some(prevContractRegister) =>
       let incomingEventOptions =
         eventOptions->Belt.Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<Js.Json.t>)
+          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
         )
       if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
         let composedContractRegister: Internal.contractRegister = async args => {

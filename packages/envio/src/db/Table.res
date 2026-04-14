@@ -221,10 +221,12 @@ let getNonDefaultFieldNames = table => {
 }
 
 let getFieldByName = (table, fieldName) =>
-  table.fields->Js.Array2.find(field => field->getUserDefinedFieldName === fieldName)
+  table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
+
+// TODO: Test whether it should be passed via args and match the column type
 
 let getFieldByDbName = (table, dbFieldName) =>
-  table.fields->Js.Array2.find(field =>
+  table.fields->Array.find(field =>
     switch field {
     | Field(f) => f->getDbFieldName
     | DerivedFrom({fieldName}) => fieldName
@@ -242,7 +244,7 @@ let getUnfilteredCompositeIndicesUnsafe = (table): array<array<compositeIndexFie
     compositeIndex->Array.map(indexField => {
       let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
       | Some(field) => field->getFieldName
-      | None => raise(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
+      | None => throw(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
       }
       {fieldName: dbFieldName, direction: indexField.direction}
     })
@@ -263,10 +265,10 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
   let arrayFieldTypes = []
   let hasArrayField = ref(false)
 
-  let dbSchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
+  let dbSchema: S.t<dict<unknown>> = S.schema(s =>
     switch schema->S.classify {
     | Object({items}) =>
-      let dict = Js.Dict.empty()
+      let dict = Dict.make()
       items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
         let rec coerceSchema = schema =>
           switch schema->S.classify {
@@ -293,22 +295,22 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
 
         let field = switch table->getFieldByDbName(location) {
         | Some(field) => field
-        | None => raise(NonExistingTableField(location))
+        | None => throw(NonExistingTableField(location))
         }
 
         quotedFieldNames
-        ->Js.Array2.push(inlinedLocation)
+        ->Array.push(inlinedLocation)
         ->ignore
         switch field {
         | Field({isPrimaryKey: false}) =>
           quotedNonPrimaryFieldNames
-          ->Js.Array2.push(inlinedLocation)
+          ->Array.push(inlinedLocation)
           ->ignore
         | _ => ()
         }
 
         arrayFieldTypes
-        ->Js.Array2.push(
+        ->Array.push(
           switch field {
           | Field(f) =>
             let pgFieldType = getPgFieldType(
@@ -316,7 +318,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               ~pgSchema,
               ~isArray=true,
               ~isNullable=f.isNullable,
-              ~isNumericArrayAsText=false, // TODO: Test whether it should be passed via args and match the column type
+              ~isNumericArrayAsText=false,
             )
             switch f.fieldType {
             | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
@@ -327,10 +329,11 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
           },
         )
         ->ignore
-        dict->Js.Dict.set(location, s.matches(schema->coerceSchema))
+        dict->Dict.set(location, s.matches(schema->coerceSchema))
       })
       dict
-    | _ => Js.Exn.raiseError("Failed creating db schema. Expected an object schema for table")
+    | _ =>
+      JsError.throwWithMessage("Failed creating db schema. Expected an object schema for table")
     }
   )
 
@@ -369,7 +372,7 @@ let getSingleIndices = (table): array<string> => {
   ->Array.flat
   ->Set.fromArray
   ->Set.toArray
-  ->Js.Array2.sortInPlace
+  ->Array.toSorted(String.compare)
 }
 
 /*

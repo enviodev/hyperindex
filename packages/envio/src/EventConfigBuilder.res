@@ -12,7 +12,7 @@ let eventParamSchema = S.object(s => {
 
 // Normalize a value that could be a single item or an array into an array
 let normalizeOrThrow: 'a => array<'a> = value => {
-  if Js.Array2.isArray(value->Obj.magic) {
+  if Array.isArray(value->Obj.magic) {
     value->Obj.magic
   } else {
     [value]
@@ -27,22 +27,22 @@ let splitTupleComponents = (inner: string): array<string> => {
   let components = []
   let depth = ref(0)
   let start = ref(0)
-  for i in 0 to inner->Js.String2.length - 1 {
-    let ch = inner->Js.String2.charAt(i)
+  for i in 0 to inner->String.length - 1 {
+    let ch = inner->String.charAt(i)
     if ch == "(" {
       depth := depth.contents + 1
     } else if ch == ")" {
       depth := depth.contents - 1
     } else if ch == "," && depth.contents == 0 {
-      components->Js.Array2.push(inner->Js.String2.slice(~from=start.contents, ~to_=i))->ignore
+      components->Array.push(inner->String.slice(~start=start.contents, ~end=i))->ignore
       start := i + 1
     }
   }
 
   // Last component
-  if start.contents < inner->Js.String2.length {
+  if start.contents < inner->String.length {
     components
-    ->Js.Array2.push(inner->Js.String2.sliceToEnd(~from=start.contents))
+    ->Array.push(inner->String.slice(~start=start.contents))
     ->ignore
   }
   components
@@ -52,15 +52,15 @@ let splitTupleComponents = (inner: string): array<string> => {
 
 let rec abiTypeToSchema = (abiType: string): S.t<unknown> => {
   // Handle array types: "type[]" or "type[N]"
-  if abiType->Js.String2.endsWith("]") {
-    let bracketIdx = abiType->Js.String2.lastIndexOf("[")
-    let baseType = abiType->Js.String2.slice(~from=0, ~to_=bracketIdx)
+  if abiType->String.endsWith("]") {
+    let bracketIdx = abiType->String.lastIndexOf("[")
+    let baseType = abiType->String.slice(~start=0, ~end=bracketIdx)
     S.array(abiTypeToSchema(baseType))->S.toUnknown
-  } else if abiType->Js.String2.startsWith("(") && abiType->Js.String2.endsWith(")") {
+  } else if abiType->String.startsWith("(") && abiType->String.endsWith(")") {
     // Tuple type: "(type1,type2,...)"
-    let inner = abiType->Js.String2.slice(~from=1, ~to_=abiType->Js.String2.length - 1)
+    let inner = abiType->String.slice(~start=1, ~end=abiType->String.length - 1)
     let components = splitTupleComponents(inner)
-    let schemas = components->Array.map(c => abiTypeToSchema(c->Js.String2.trim))
+    let schemas = components->Array.map(c => abiTypeToSchema(c->String.trim))
     S.tuple(s => {
       schemas->Array.mapWithIndex((schema, i) => s.item(i, schema))
     })->S.toUnknown
@@ -69,24 +69,24 @@ let rec abiTypeToSchema = (abiType: string): S.t<unknown> => {
     | "address" => Address.schema->S.toUnknown
     | "bool" => S.bool->S.toUnknown
     | "string" | "bytes" => S.string->S.toUnknown
-    | t if t->Js.String2.startsWith("uint") => Utils.BigInt.schema->S.toUnknown
-    | t if t->Js.String2.startsWith("int") => Utils.BigInt.schema->S.toUnknown
-    | t if t->Js.String2.startsWith("bytes") => S.string->S.toUnknown
-    | other => Js.Exn.raiseError(`Unsupported ABI type: ${other}`)
+    | t if t->String.startsWith("uint") => Utils.BigInt.schema->S.toUnknown
+    | t if t->String.startsWith("int") => Utils.BigInt.schema->S.toUnknown
+    | t if t->String.startsWith("bytes") => S.string->S.toUnknown
+    | other => JsError.throwWithMessage(`Unsupported ABI type: ${other}`)
     }
   }
 }
 
 // ABI type → schema for simulate items (accepts native JS values, not string-encoded)
 let rec abiTypeToSimulateSchema = (abiType: string): S.t<unknown> => {
-  if abiType->Js.String2.endsWith("]") {
-    let bracketIdx = abiType->Js.String2.lastIndexOf("[")
-    let baseType = abiType->Js.String2.slice(~from=0, ~to_=bracketIdx)
+  if abiType->String.endsWith("]") {
+    let bracketIdx = abiType->String.lastIndexOf("[")
+    let baseType = abiType->String.slice(~start=0, ~end=bracketIdx)
     S.array(abiTypeToSimulateSchema(baseType))->S.toUnknown
-  } else if abiType->Js.String2.startsWith("(") && abiType->Js.String2.endsWith(")") {
-    let inner = abiType->Js.String2.slice(~from=1, ~to_=abiType->Js.String2.length - 1)
+  } else if abiType->String.startsWith("(") && abiType->String.endsWith(")") {
+    let inner = abiType->String.slice(~start=1, ~end=abiType->String.length - 1)
     let components = splitTupleComponents(inner)
-    let schemas = components->Array.map(c => abiTypeToSimulateSchema(c->Js.String2.trim))
+    let schemas = components->Array.map(c => abiTypeToSimulateSchema(c->String.trim))
     S.tuple(s => {
       schemas->Array.mapWithIndex((schema, i) => s.item(i, schema))
     })->S.toUnknown
@@ -95,10 +95,10 @@ let rec abiTypeToSimulateSchema = (abiType: string): S.t<unknown> => {
     | "address" => S.string->S.toUnknown
     | "bool" => S.bool->S.toUnknown
     | "string" | "bytes" => S.string->S.toUnknown
-    | t if t->Js.String2.startsWith("uint") => S.bigint->S.toUnknown
-    | t if t->Js.String2.startsWith("int") => S.bigint->S.toUnknown
-    | t if t->Js.String2.startsWith("bytes") => S.string->S.toUnknown
-    | other => Js.Exn.raiseError(`Unsupported ABI type: ${other}`)
+    | t if t->String.startsWith("uint") => S.bigint->S.toUnknown
+    | t if t->String.startsWith("int") => S.bigint->S.toUnknown
+    | t if t->String.startsWith("bytes") => S.string->S.toUnknown
+    | other => JsError.throwWithMessage(`Unsupported ABI type: ${other}`)
     }
   }
 }
@@ -106,13 +106,13 @@ let rec abiTypeToSimulateSchema = (abiType: string): S.t<unknown> => {
 // ============== ABI type → default value for simulate ==============
 
 let rec abiTypeToDefaultValue = (abiType: string): unknown => {
-  if abiType->Js.String2.endsWith("]") {
+  if abiType->String.endsWith("]") {
     []->(Utils.magic: array<unknown> => unknown)
-  } else if abiType->Js.String2.startsWith("(") && abiType->Js.String2.endsWith(")") {
-    let inner = abiType->Js.String2.slice(~from=1, ~to_=abiType->Js.String2.length - 1)
+  } else if abiType->String.startsWith("(") && abiType->String.endsWith(")") {
+    let inner = abiType->String.slice(~start=1, ~end=abiType->String.length - 1)
     let components = splitTupleComponents(inner)
     components
-    ->Array.map(c => abiTypeToDefaultValue(c->Js.String2.trim))
+    ->Array.map(c => abiTypeToDefaultValue(c->String.trim))
     ->(Utils.magic: array<unknown> => unknown)
   } else {
     switch abiType {
@@ -123,9 +123,9 @@ let rec abiTypeToDefaultValue = (abiType: string): unknown => {
 
     | "bool" => false->(Utils.magic: bool => unknown)
     | "string" | "bytes" => ""->(Utils.magic: string => unknown)
-    | t if t->Js.String2.startsWith("uint") => 0n->(Utils.magic: bigint => unknown)
-    | t if t->Js.String2.startsWith("int") => 0n->(Utils.magic: bigint => unknown)
-    | t if t->Js.String2.startsWith("bytes") => ""->(Utils.magic: string => unknown)
+    | t if t->String.startsWith("uint") => 0n->(Utils.magic: bigint => unknown)
+    | t if t->String.startsWith("int") => 0n->(Utils.magic: bigint => unknown)
+    | t if t->String.startsWith("bytes") => ""->(Utils.magic: string => unknown)
     | _ => %raw(`undefined`)->(Utils.magic: 'a => unknown)
     }
   }
@@ -140,9 +140,9 @@ let buildParamsSchema = (params: array<eventParam>): S.t<Internal.eventParams> =
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>)
   } else {
     S.object(s => {
-      let dict = Js.Dict.empty()
+      let dict = Dict.make()
       params->Array.forEach(p => {
-        dict->Js.Dict.set(p.name, s.field(p.name, abiTypeToSchema(p.abiType)))
+        dict->Dict.set(p.name, s.field(p.name, abiTypeToSchema(p.abiType)))
       })
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.eventParams>)
@@ -158,9 +158,9 @@ let buildSimulateParamsSchema = (params: array<eventParam>): S.t<Internal.eventP
     ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>)
   } else {
     S.schema(s => {
-      let dict = Js.Dict.empty()
+      let dict = Dict.make()
       params->Array.forEach(p => {
-        dict->Js.Dict.set(
+        dict->Dict.set(
           p.name,
           s.matches(
             S.null(abiTypeToSimulateSchema(p.abiType))->S.Option.getOr(
@@ -187,18 +187,18 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
   if params->Array.length == 0 {
     _ => ()->(Utils.magic: unit => Internal.eventParams)
   } else {
-    let indexedParams = params->Js.Array2.filter(p => p.indexed)
-    let bodyParams = params->Js.Array2.filter(p => !p.indexed)
+    let indexedParams = params->Array.filter(p => p.indexed)
+    let bodyParams = params->Array.filter(p => !p.indexed)
 
     let fields = []
     indexedParams->Array.forEachWithIndex((p, i) => {
-      fields->Js.Array2.push(`"${p.name}": t(d.indexed[${i->Int.toString}])`)->ignore
+      fields->Array.push(`"${p.name}": t(d.indexed[${i->Int.toString}])`)->ignore
     })
     bodyParams->Array.forEachWithIndex((p, i) => {
-      fields->Js.Array2.push(`"${p.name}": t(d.body[${i->Int.toString}])`)->ignore
+      fields->Array.push(`"${p.name}": t(d.body[${i->Int.toString}])`)->ignore
     })
     // Generate: function(t) { return function(d) { return { ... } } }
-    let body = `return function(d) { return {${fields->Js.Array2.joinWith(", ")}} }`
+    let body = `return function(d) { return {${fields->Array.joinUnsafe(", ")}} }`
 
     let factory: (
       HyperSyncClient.Decoder.decodedRaw => HyperSyncClient.Decoder.decodedUnderlying
@@ -217,7 +217,7 @@ let buildHyperSyncDecoder = (params: array<eventParam>): (
 
 let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
   // Handle array/tuple types - these get keccak256'd
-  if abiType->Js.String2.endsWith("]") || abiType->Js.String2.startsWith("(") {
+  if abiType->String.endsWith("]") || abiType->String.startsWith("(") {
     TopicFilter.castToHexUnsafe->(Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
   } else {
     switch abiType {
@@ -238,33 +238,30 @@ let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
         Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
       )
 
-    | t if t->Js.String2.startsWith("uint") =>
+    | t if t->String.startsWith("uint") =>
       TopicFilter.fromBigInt->(Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | t if t->Js.String2.startsWith("int") =>
+    | t if t->String.startsWith("int") =>
       TopicFilter.fromSignedBigInt->(
         Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
       )
 
-    | t if t->Js.String2.startsWith("bytes") =>
+    | t if t->String.startsWith("bytes") =>
       TopicFilter.castToHexUnsafe->(
         Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
       )
 
-    | other => Js.Exn.raiseError(`Unsupported topic filter ABI type: ${other}`)
+    | other => JsError.throwWithMessage(`Unsupported topic filter ABI type: ${other}`)
     }
   }
 }
 
 let buildTopicGetter = (p: eventParam) => {
   let encoder = getTopicEncoder(p.abiType)
-  (eventFilter: Js.Dict.t<Js.Json.t>) =>
+  (eventFilter: dict<JSON.t>) =>
     eventFilter
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
     ->Option.mapOr([], topicFilters =>
-      topicFilters
-      ->(Utils.magic: Js.Json.t => unknown)
-      ->normalizeOrThrow
-      ->Js.Array2.map(encoder)
+      topicFilters->(Utils.magic: JSON.t => unknown)->normalizeOrThrow->Array.map(encoder)
     )
 }
 
@@ -301,14 +298,14 @@ let buildEvmEventConfig = (
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
-  ~eventFilters: option<Js.Json.t>,
+  ~eventFilters: option<JSON.t>,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
-  let indexedParams = params->Js.Array2.filter(p => p.indexed)
+  let indexedParams = params->Array.filter(p => p.indexed)
 
   let {getEventFiltersOrThrow, filterByAddresses} = LogSelection.parseEventFiltersOrThrow(
     ~eventFilters,
@@ -351,7 +348,7 @@ let buildFuelEventConfig = (
   ~eventName: string,
   ~kind: string,
   ~sighash: string,
-  ~rawAbi: Js.Json.t,
+  ~rawAbi: JSON.t,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
@@ -368,7 +365,7 @@ let buildFuelEventConfig = (
   | "burn" => Burn
   | "transfer" => Transfer
   | "call" => Call
-  | other => Js.Exn.raiseError(`Unsupported Fuel event kind: ${other}`)
+  | other => JsError.throwWithMessage(`Unsupported Fuel event kind: ${other}`)
   }
   let paramsSchema = switch kind {
   | "mint" | "burn" =>
@@ -384,8 +381,8 @@ let buildFuelEventConfig = (
   | "logData" =>
     S.json(~validate=false)
     ->Utils.Schema.coerceToJsonPgType
-    ->(Utils.magic: S.t<Js.Json.t> => S.t<Internal.eventParams>)
-  | other => Js.Exn.raiseError(`Unsupported Fuel event kind: ${other}`)
+    ->(Utils.magic: S.t<JSON.t> => S.t<Internal.eventParams>)
+  | other => JsError.throwWithMessage(`Unsupported Fuel event kind: ${other}`)
   }
   {
     id: switch kind {

@@ -1,5 +1,3 @@
-
-
 // EVM simulate block schema — all fields present with defaults for non-nullable ones.
 // Nullable fields (from Internal.evmNullableBlockFields) use S.null → option<T>.
 let evmSimulateBlockSchema = S.schema(s =>
@@ -44,13 +42,13 @@ type evmSimulateBlock = {number: int, timestamp: int}
 
 let parseEvmSimulateBlock = (
   ~defaultBlockNumber: int,
-  ~blockJson: option<Js.Json.t>,
+  ~blockJson: option<JSON.t>,
 ): Internal.eventBlock => {
   let block = switch blockJson {
   | Some(json) => json->S.convertOrThrow(evmSimulateBlockSchema)
   | None =>
-    Js.Dict.empty()
-    ->(Utils.magic: dict<unit> => Js.Json.t)
+    Dict.make()
+    ->(Utils.magic: dict<unit> => JSON.t)
     ->S.convertOrThrow(evmSimulateBlockSchema)
   }
   let block = block->(Utils.magic: _ => Internal.eventBlock)
@@ -58,8 +56,8 @@ let parseEvmSimulateBlock = (
 
   // Only set block number when user didn't provide one (schema defaults to 0)
   if blockJson->Option.isNone || blockFields.number === 0 {
-    let blockDict = block->(Utils.magic: Internal.eventBlock => Js.Dict.t<unknown>)
-    blockDict->Js.Dict.set("number", defaultBlockNumber->(Utils.magic: int => unknown))
+    let blockDict = block->(Utils.magic: Internal.eventBlock => dict<unknown>)
+    blockDict->Dict.set("number", defaultBlockNumber->(Utils.magic: int => unknown))
   }
   block
 }
@@ -78,7 +76,7 @@ let evmSimulateTransactionSchema = S.schema(s =>
     "effectiveGasPrice": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
     "gasUsed": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
     "logsBloom": s.matches(S.null(S.string)->S.Option.getOr("")),
-    "accessList": s.matches(S.null(S.json(~validate=false))->S.Option.getOr(Js.Json.null)),
+    "accessList": s.matches(S.null(S.json(~validate=false))->S.Option.getOr(JSON.Encode.null)),
     // Signature fields
     "v": s.matches(S.null(S.string)),
     "r": s.matches(S.null(S.string)),
@@ -107,14 +105,12 @@ let evmSimulateTransactionSchema = S.schema(s =>
   }
 )
 
-let parseEvmSimulateTransaction = (
-  ~transactionJson: option<Js.Json.t>,
-): Internal.eventTransaction => {
+let parseEvmSimulateTransaction = (~transactionJson: option<JSON.t>): Internal.eventTransaction => {
   let transaction = switch transactionJson {
   | Some(json) => json->S.convertOrThrow(evmSimulateTransactionSchema)
   | None =>
-    Js.Dict.empty()
-    ->(Utils.magic: dict<unit> => Js.Json.t)
+    Dict.make()
+    ->(Utils.magic: dict<unit> => JSON.t)
     ->S.convertOrThrow(evmSimulateTransactionSchema)
   }
   transaction->(Utils.magic: _ => Internal.eventTransaction)
@@ -133,13 +129,13 @@ type fuelSimulateBlock = {height: int, time: int}
 
 let parseFuelSimulateBlock = (
   ~defaultBlockNumber: int,
-  ~blockJson: option<Js.Json.t>,
+  ~blockJson: option<JSON.t>,
 ): Internal.eventBlock => {
   let block = switch blockJson {
   | Some(json) => json->S.convertOrThrow(fuelSimulateBlockSchema)
   | None =>
-    Js.Dict.empty()
-    ->(Utils.magic: dict<unit> => Js.Json.t)
+    Dict.make()
+    ->(Utils.magic: dict<unit> => JSON.t)
     ->S.convertOrThrow(fuelSimulateBlockSchema)
   }
   let block = block->(Utils.magic: _ => Internal.eventBlock)
@@ -147,8 +143,8 @@ let parseFuelSimulateBlock = (
 
   // Only set block height when user didn't provide one (schema defaults to 0)
   if blockJson->Option.isNone || blockFields.height === 0 {
-    let blockDict = block->(Utils.magic: Internal.eventBlock => Js.Dict.t<unknown>)
-    blockDict->Js.Dict.set("height", defaultBlockNumber->(Utils.magic: int => unknown))
+    let blockDict = block->(Utils.magic: Internal.eventBlock => dict<unknown>)
+    blockDict->Dict.set("height", defaultBlockNumber->(Utils.magic: int => unknown))
   }
   block
 }
@@ -161,13 +157,13 @@ let fuelSimulateTransactionSchema = S.schema(s =>
 )
 
 let parseFuelSimulateTransaction = (
-  ~transactionJson: option<Js.Json.t>,
+  ~transactionJson: option<JSON.t>,
 ): Internal.eventTransaction => {
   let transaction = switch transactionJson {
   | Some(json) => json->S.convertOrThrow(fuelSimulateTransactionSchema)
   | None =>
-    Js.Dict.empty()
-    ->(Utils.magic: dict<unit> => Js.Json.t)
+    Dict.make()
+    ->(Utils.magic: dict<unit> => JSON.t)
     ->S.convertOrThrow(fuelSimulateTransactionSchema)
   }
   transaction->(Utils.magic: _ => Internal.eventTransaction)
@@ -199,11 +195,9 @@ let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: str
   found.contents
 }
 
-let parse = (
-  ~simulateItems: array<Js.Json.t>,
-  ~config: Config.t,
-  ~chainConfig: Config.chain,
-): array<Internal.item> => {
+let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
+  Internal.item,
+> => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let chainId = chainConfig.id
   let startBlock = chainConfig.startBlock
@@ -213,7 +207,7 @@ let parse = (
   let items = []
 
   simulateItems->Array.forEach(rawJson => {
-    let raw = rawJson->(Utils.magic: Js.Json.t => rawSimulateItem)
+    let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (raw->getContract, raw->getEvent) {
     | (Some(contractName), Some(eventName)) =>
@@ -221,18 +215,18 @@ let parse = (
       let eventConfig = switch findEventConfig(~config, ~contractName, ~eventName) {
       | Some(ec) => ec
       | None =>
-        Js.Exn.raiseError(
+        JsError.throwWithMessage(
           `simulate: Event "${eventName}" not found on contract "${contractName}". ` ++ `Check that the contract and event names match your config.yaml.`,
         )
       }
 
       // Parse event item fields
-      let item = rawJson->(Utils.magic: Js.Json.t => Envio.evmSimulateItem)
+      let item = rawJson->(Utils.magic: JSON.t => Envio.evmSimulateItem)
 
       // Parse params using the simulate schema — fills missing fields with defaults
-      let paramsJson: Js.Json.t = switch item.params {
+      let paramsJson: JSON.t = switch item.params {
       | Some(json) => json
-      | None => Js.Dict.empty()->(Utils.magic: dict<unit> => Js.Json.t)
+      | None => Dict.make()->(Utils.magic: dict<unit> => JSON.t)
       }
       let params = paramsJson->S.convertOrThrow(eventConfig.simulateParamsSchema)
 
@@ -260,11 +254,11 @@ let parse = (
         addr.contents
       }
 
-      let rawItem = rawJson->(Utils.magic: Js.Json.t => {..})
-      let blockJson: option<Js.Json.t> =
-        rawItem["block"]->(Utils.magic: 'a => Js.Nullable.t<Js.Json.t>)->Js.Nullable.toOption
-      let transactionJson: option<Js.Json.t> =
-        rawItem["transaction"]->(Utils.magic: 'a => Js.Nullable.t<Js.Json.t>)->Js.Nullable.toOption
+      let rawItem = rawJson->(Utils.magic: JSON.t => {..})
+      let blockJson: option<JSON.t> =
+        rawItem["block"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
+      let transactionJson: option<JSON.t> =
+        rawItem["transaction"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
       let (block, blockNumber, timestamp) = switch config.ecosystem.name {
       | Fuel =>
         let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
@@ -274,12 +268,12 @@ let parse = (
         let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
         (block, blockFields.number, blockFields.timestamp)
-      | Svm => Js.Exn.raiseError("simulate is not supported for SVM ecosystem")
+      | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
       let transaction = switch config.ecosystem.name {
       | Fuel => parseFuelSimulateTransaction(~transactionJson)
       | Evm => parseEvmSimulateTransaction(~transactionJson)
-      | Svm => Js.Exn.raiseError("simulate is not supported for SVM ecosystem")
+      | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
 
       // Update currentBlock for subsequent items
@@ -308,7 +302,7 @@ let parse = (
       ->ignore
 
     | _ =>
-      Js.Exn.raiseError(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)
+      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)
     }
   })
 
@@ -317,29 +311,27 @@ let parse = (
 
 // Apply simulate source config from processConfig JSON to a Config.t
 // This patches chainMap entries that have simulate items with CustomSources
-let patchConfig = (~config: Config.t, ~processConfig: Js.Json.t): Config.t => {
-  let processChains: option<Js.Dict.t<Js.Json.t>> =
-    (processConfig->(Utils.magic: Js.Json.t => {..}))["chains"]->Js.Nullable.toOption
+let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
+  let processChains: option<dict<JSON.t>> =
+    (processConfig->(Utils.magic: JSON.t => {..}))["chains"]->Nullable.toOption
   switch processChains {
   | Some(chainsDict) =>
     let newChainMap = config.chainMap->ChainMap.mapWithKey((chain, chainConfig) => {
       let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
-      switch chainsDict->Js.Dict.get(chainIdStr) {
+      switch chainsDict->Dict.get(chainIdStr) {
       | Some(processChainJson) =>
-        let simulateRaw: option<array<Js.Json.t>> =
-          (processChainJson->(Utils.magic: Js.Json.t => {..}))["simulate"]->Js.Nullable.toOption
+        let simulateRaw: option<array<JSON.t>> =
+          (processChainJson->(Utils.magic: JSON.t => {..}))["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
           let items = parse(~simulateItems, ~config, ~chainConfig)
           // Use endBlock from processConfig (the user-specified range)
           let startBlock: int =
-            (processChainJson->(Utils.magic: Js.Json.t => {..}))["startBlock"]->(
+            (processChainJson->(Utils.magic: JSON.t => {..}))["startBlock"]->(
               Utils.magic: 'a => int
             )
           let endBlock: int =
-            (processChainJson->(Utils.magic: Js.Json.t => {..}))["endBlock"]->(
-              Utils.magic: 'a => int
-            )
+            (processChainJson->(Utils.magic: JSON.t => {..}))["endBlock"]->(Utils.magic: 'a => int)
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig

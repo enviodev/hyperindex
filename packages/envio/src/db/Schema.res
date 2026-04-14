@@ -1,8 +1,7 @@
-
 type t = dict<Table.table>
 
 let make = (tables: array<Table.table>) => {
-  tables->Array.map(table => (table.tableName, table))->Js.Dict.fromArray
+  tables->Array.map(table => (table.tableName, table))->Dict.fromArray
 }
 
 exception UndefinedEntity(Table.derivedFromField)
