@@ -22,30 +22,18 @@ import type {
   FuelOnEventHandler as GFuelOnEventHandler,
   FuelContractRegisterOptions as GFuelContractRegisterOptions,
   FuelContractRegisterHandler as GFuelContractRegisterHandler,
-  OnEventWhere as GOnEventWhere,
-  OnEventWhereFilter as GOnEventWhereFilter,
-  OnEventWhereArgs as GOnEventWhereArgs,
-  OnEventWhereChain as GOnEventWhereChain,
 } from "envio";
-export type { SingleOrMultiple } from "envio";
-
-/** The `where` option value for `indexer.onEvent` / `indexer.contractRegister` in the EVM ecosystem. */
-export type EvmOnEventWhere<Params, ContractName extends string> = GOnEventWhere<Params, ContractName>;
-/** A single `where` filter condition in the EVM ecosystem. */
-export type EvmOnEventWhereFilter<Params> = GOnEventWhereFilter<Params>;
-/** Arguments passed to the dynamic `where` callback form in the EVM ecosystem. */
-export type EvmOnEventWhereArgs<ContractName extends string> = GOnEventWhereArgs<ContractName>;
-/** The `chain` object exposed to the dynamic `where` callback in the EVM ecosystem. */
-export type EvmOnEventWhereChain<ContractName extends string> = GOnEventWhereChain<ContractName>;
-
-/** The `where` option value for `indexer.onEvent` / `indexer.contractRegister` in the Fuel ecosystem. */
-export type FuelOnEventWhere<Params, ContractName extends string> = GOnEventWhere<Params, ContractName>;
-/** A single `where` filter condition in the Fuel ecosystem. */
-export type FuelOnEventWhereFilter<Params> = GOnEventWhereFilter<Params>;
-/** Arguments passed to the dynamic `where` callback form in the Fuel ecosystem. */
-export type FuelOnEventWhereArgs<ContractName extends string> = GOnEventWhereArgs<ContractName>;
-/** The `chain` object exposed to the dynamic `where` callback in the Fuel ecosystem. */
-export type FuelOnEventWhereChain<ContractName extends string> = GOnEventWhereChain<ContractName>;
+export type {
+  SingleOrMultiple,
+  EvmOnEventWhere,
+  EvmOnEventWhereFilter,
+  EvmOnEventWhereArgs,
+  EvmOnEventWhereChain,
+  FuelOnEventWhere,
+  FuelOnEventWhereFilter,
+  FuelOnEventWhereArgs,
+  FuelOnEventWhereChain,
+} from "envio";
 import type { EvmChains, EvmContracts, EvmEventFilters, FuelChains, FuelContracts, FuelEventFilters, SvmChains, Entities, Enums } from "../envio.d.ts";
 export type { EvmEventFilters, FuelEventFilters } from "../envio.d.ts";
 export type { EvmChainId, FuelChainId, SvmChainId } from "../envio.d.ts";

@@ -62,28 +62,44 @@ type parsedEventFilters = {
   filterByAddresses: bool,
 }
 
-// Build the `chain` argument passed into a `where` callback. Exposes
-// `chain.id` and `chain.<ContractName>.addresses` for the event's own
-// contract. Both the contract sub-object and its `addresses` are getters
-// so that detection mode can intercept access at either layer (handlers
-// might destructure the contract before reading addresses).
-let makeChainArg = (~contractName: string, ~chainId: int, ~getContractObj: unit => 'a) => {
+// Build the runtime `chain` argument passed into a `where` callback.
+// Exposes `chain.id` and `chain.<ContractName>.addresses` as plain values.
+let makeChainArg = (~contractName: string, ~chainId: int, ~addresses: array<Address.t>) => {
+  let contractObj = Utils.Object.createNullObject()
+  contractObj
+  ->Utils.Object.definePropertyWithValue("addresses", {enumerable: true, value: addresses})
+  ->ignore
   let chainObj = Utils.Object.createNullObject()
   chainObj
   ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainId})
   ->ignore
   chainObj
-  ->Utils.Object.defineProperty(contractName, {enumerable: true, get: getContractObj})
+  ->Utils.Object.definePropertyWithValue(contractName, {enumerable: true, value: contractObj})
   ->ignore
   chainObj
 }
 
-let makeContractObj = (~getAddresses: unit => array<Address.t>) => {
+// Build the detection-time `chain` argument. `chain.<ContractName>.addresses`
+// is a getter that flips `filterByAddresses` only when actually read — the
+// contract sub-object itself is a plain value so destructuring without
+// reading `.addresses` doesn't mark the callback as address-dependent.
+let makeDetectionChainArg = (
+  ~contractName: string,
+  ~chainId: int,
+  ~getAddresses: unit => array<Address.t>,
+) => {
   let contractObj = Utils.Object.createNullObject()
   contractObj
   ->Utils.Object.defineProperty("addresses", {enumerable: true, get: getAddresses})
   ->ignore
-  contractObj
+  let chainObj = Utils.Object.createNullObject()
+  chainObj
+  ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainId})
+  ->ignore
+  chainObj
+  ->Utils.Object.definePropertyWithValue(contractName, {enumerable: true, value: contractObj})
+  ->ignore
+  chainObj
 }
 
 let parseEventFiltersOrThrow = {
@@ -202,23 +218,21 @@ let parseEventFiltersOrThrow = {
       if Js.typeof(eventFilters) === "function" {
         let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.onEventWhereArgs<_> => Js.Json.t)
         // Determine whether the callback uses addresses by probing it with
-        // a detection chain arg whose `chain.<ContractName>` getter flips a
-        // flag (catching the contract sub-object access — the soonest
-        // trigger, since users may destructure or alias before reading
-        // `.addresses`).
-        //
-        // The probe uses this chain's real configured id, so handlers that
-        // branch on `chain.id` are exercised along the path they take for
-        // this chain. Event configs are built per-chain, so each chain gets
-        // a `filterByAddresses` verdict that matches its own callback
-        // behaviour.
+        // a detection chain arg whose `chain.<ContractName>.addresses` getter
+        // flips a flag. The probe uses this chain's real configured id, so
+        // handlers that branch on `chain.id` are exercised along the path
+        // they take for this chain. Event configs are built per-chain, so
+        // each chain gets a `filterByAddresses` verdict that matches its
+        // own callback behaviour.
         try {
-          let chain = makeChainArg(~contractName, ~chainId=probeChainId, ~getContractObj=() => {
-            filterByAddresses := true
-            // Provide an empty contract object so subsequent `.addresses`
-            // / destructuring access doesn't throw.
-            makeContractObj(~getAddresses=() => [])
-          })
+          let chain = makeDetectionChainArg(
+            ~contractName,
+            ~chainId=probeChainId,
+            ~getAddresses=() => {
+              filterByAddresses := true
+              []
+            },
+          )
           let _ = fn({chain: chain->Obj.magic})
         } catch {
         | _ => ()
@@ -229,7 +243,7 @@ let parseEventFiltersOrThrow = {
               let chainArg = makeChainArg(
                 ~contractName,
                 ~chainId=chain->ChainMap.Chain.toChainId,
-                ~getContractObj=() => makeContractObj(~getAddresses=() => addresses),
+                ~addresses,
               )
               fn({chain: chainArg->Obj.magic})->parse
             },
@@ -241,7 +255,7 @@ let parseEventFiltersOrThrow = {
             let chainArg = makeChainArg(
               ~contractName,
               ~chainId=chain->ChainMap.Chain.toChainId,
-              ~getContractObj=() => makeContractObj(~getAddresses=() => []),
+              ~addresses=[],
             )
             Internal.Static(fn({chain: chainArg->Obj.magic})->parse)
           }

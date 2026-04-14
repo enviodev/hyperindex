@@ -795,7 +795,12 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chain: option<Chain
   | Some(chain) =>
     switch config.chainMap->ChainMap.get(chain) {
     | chainConfig => [chainConfig]
-    | exception _ => []
+    | exception _ =>
+      Js.Exn.raiseError(
+        `Chain ${chain
+          ->ChainMap.Chain.toChainId
+          ->Int.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
+      )
     }
   | None => config.chainMap->ChainMap.values
   }
