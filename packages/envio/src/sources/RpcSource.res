@@ -1,4 +1,4 @@
-open Belt
+
 open Source
 
 exception QueryTimout(string)
@@ -1107,11 +1107,11 @@ let make = (
     let parsedQueueItems =
       await logs
       ->Array.zip(parsedEvents)
-      ->Array.keepMap(((
+      ->Array.filterMap(((
         log: Rpc.GetLogs.log,
         maybeDecodedEvent: Js.Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
       )) => {
-        let topic0 = log.topics[0]->Option.getWithDefault("0x0")
+        let topic0 = log.topics[0]->Option.getOr("0x0")
         let routedAddress = if lowercaseAddresses {
           log.address->Address.Evm.fromAddressLowercaseOrThrow
         } else {

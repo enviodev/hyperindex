@@ -239,7 +239,7 @@ let writeBatch = (
   | Initializing(_) =>
     Js.Exn.raiseError(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
   | Ready({cache}) =>
-    let updatedEntities = persistence.allEntities->Belt.Array.keepMapU(entityConfig => {
+    let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
       let updates =
         inMemoryStore
         ->InMemoryStore.getInMemTable(~entityConfig)
@@ -261,7 +261,7 @@ let writeBatch = (
       ~updatedEffectsCache={
         inMemoryStore.effects
         ->Js.Dict.keys
-        ->Belt.Array.keepMapU(effectName => {
+        ->Belt.Array.keepMap(effectName => {
           let inMemTable = inMemoryStore.effects->Js.Dict.unsafeGet(effectName)
           let {idsToStore, dict, effect, invalidationsCount} = inMemTable
           switch idsToStore {

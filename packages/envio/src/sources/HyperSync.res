@@ -1,4 +1,4 @@
-open Belt
+
 
 module Log = {
   type t = {
@@ -115,7 +115,7 @@ module GetLogs = {
 
     //Topics can be nullable and still need to be filtered
     let logUnsanitized: Log.t = event.log->(Utils.magic: HyperSyncClient.ResponseTypes.log => Log.t)
-    let topics = event.log.topics->Option.getUnsafe->Array.keepMap(Js.Nullable.toOption)
+    let topics = event.log.topics->Option.getUnsafe->Array.filterMap(Js.Nullable.toOption)
     let address = event.log.address->Option.getUnsafe
     let log = {
       ...logUnsanitized,
@@ -149,7 +149,7 @@ module GetLogs = {
     let page: logsQueryPage = {
       items,
       nextBlock,
-      archiveHeight: archiveHeight->Option.getWithDefault(0), //Archive Height is only None if height is 0
+      archiveHeight: archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       events: res.data,
       rollbackGuard,
     }
@@ -226,7 +226,7 @@ module BlockData = {
             block.number->Utils.Option.mapNone("block.number"),
             block.timestamp->Utils.Option.mapNone("block.timestamp"),
             block.hash->Utils.Option.mapNone("block.hash"),
-          ]->Array.keepMap(p => p)
+          ]->Array.filterMap(p => p)
 
         Error(
           UnexpectedMissingParams({
@@ -331,7 +331,7 @@ module BlockData = {
           ~logger,
         )
         let filtered = res->Result.map(datas => {
-          datas->Array.keep(data => set->Utils.Set.delete(data.blockNumber))
+          datas->Array.filter(data => set->Utils.Set.delete(data.blockNumber))
         })
         if set->Utils.Set.size > 0 {
           Js.Exn.raiseError(

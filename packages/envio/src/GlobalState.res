@@ -1,4 +1,4 @@
-open Belt
+
 
 type chain = ChainMap.Chain.t
 type rollbackState =
@@ -1003,7 +1003,7 @@ let injectedTaskReducer = (
         dispatchAction(UpdateQueues({progressedChainsById, shouldEnterReorgThreshold}))
 
         let inMemoryStore =
-          rollbackInMemStore->Option.getWithDefault(
+          rollbackInMemStore->Option.getOr(
             InMemoryStore.make(~entities=state.ctx.persistence.allEntities),
           )
 
@@ -1184,7 +1184,7 @@ let injectedTaskReducer = (
       let diff =
         await state.ctx.persistence->Persistence.prepareRollbackDiff(
           ~rollbackTargetCheckpointId,
-          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->Utils.BigInt.add(1n),
+          ~rollbackDiffCheckpointId=state.chainManager.committedCheckpointId->BigInt.add(1n),
         )
 
       let chainManager = {

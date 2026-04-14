@@ -204,7 +204,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
     for idx in 0 to checkpointsCount - 1 {
       checkpointRows
       ->Js.Array2.push((
-        batch.checkpointIds->Belt.Array.getUnsafe(idx)->Utils.BigInt.toString,
+        batch.checkpointIds->Belt.Array.getUnsafe(idx)->BigInt.toString,
         batch.checkpointChainIds->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockNumbers->Belt.Array.getUnsafe(idx),
         batch.checkpointBlockHashes->Belt.Array.getUnsafe(idx),
@@ -467,14 +467,14 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
       tables->Belt.Array.map(table => {
         let tableName = table["name"]
         client->exec({
-          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->Utils.BigInt.toString}`,
+          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
         })
       }),
     )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
     await client->exec({
-      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->Utils.BigInt.toString}`,
+      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
     })
   } catch {
   | Persistence.StorageError(_) as exn => raise(exn)

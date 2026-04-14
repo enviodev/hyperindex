@@ -1,5 +1,5 @@
 open Source
-open Belt
+
 
 type selectionConfig = {
   getLogSelectionOrThrow: (
@@ -110,7 +110,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
           logSelections->Array.push(
             LogSelection.make(
               ~addresses,
-              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+              ~topicSelections=fns->Array.flatMap(fn => fn(addresses)),
             ),
           )
         }
@@ -122,7 +122,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
           logSelections->Array.push(
             LogSelection.make(
               ~addresses=[],
-              ~topicSelections=fns->Array.flatMapU(fn => fn(addresses)),
+              ~topicSelections=fns->Array.flatMap(fn => fn(addresses)),
             ),
           )
         }
@@ -284,7 +284,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
-            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
+            attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: switch error {
             | WrongInstance =>
               let backoffMillis = switch retry {
@@ -310,7 +310,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
-            attemptedToBlock: toBlock->Option.getWithDefault(knownHeight),
+            attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
               message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
               backoffMillis: switch retry {

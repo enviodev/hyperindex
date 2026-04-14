@@ -1,4 +1,4 @@
-open Belt
+
 
 type chainData = {
   chainId: float,
@@ -469,7 +469,7 @@ let start = async (
               )
               let knownHeight =
                 cf->ChainFetcher.hasProcessedToEndblock
-                  ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+                  ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
                   : cf.fetchState.knownHeight
 
               {

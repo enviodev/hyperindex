@@ -1,53 +1,53 @@
 let newGravatar1: Indexer.Gravatar.NewGravatar.params = {
-  id: 1001->Utils.BigInt.fromInt,
+  id: 1001->BigInt.fromInt,
   owner: "0x1230000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "gravatar1",
   imageUrl: "https://gravatar1.com",
 }
 
 let newGravatar2: Indexer.Gravatar.NewGravatar.params = {
-  id: 1002->Utils.BigInt.fromInt,
+  id: 1002->BigInt.fromInt,
   owner: "0x4560000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "gravatar2",
   imageUrl: "https://gravatar2.com",
 }
 
 let newGravatar3: Indexer.Gravatar.NewGravatar.params = {
-  id: 1003->Utils.BigInt.fromInt,
+  id: 1003->BigInt.fromInt,
   owner: "0x7890000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "gravatar3",
   imageUrl: "https://gravatar3.com",
 }
 
 let newGravatar4_deleted: Indexer.Gravatar.NewGravatar.params = {
-  id: 1004->Utils.BigInt.fromInt,
+  id: 1004->BigInt.fromInt,
   owner: "0x9990000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "gravatar4_deleted",
   imageUrl: "https://gravatar4.com",
 }
 
 let setGravatar1: Indexer.Gravatar.UpdatedGravatar.params = {
-  id: 1001->Utils.BigInt.fromInt,
+  id: 1001->BigInt.fromInt,
   owner: "0x1230000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "update1",
   imageUrl: "https://gravatar1.com",
 }
 
 let setGravatar2: Indexer.Gravatar.UpdatedGravatar.params = {
-  id: 1002->Utils.BigInt.fromInt,
+  id: 1002->BigInt.fromInt,
   owner: "0x4560000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "update2",
   imageUrl: "https://gravatar2.com",
 }
 
 let setGravatar3: Indexer.Gravatar.UpdatedGravatar.params = {
-  id: 1003->Utils.BigInt.fromInt,
+  id: 1003->BigInt.fromInt,
   owner: "0x7890000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "update3",
   imageUrl: "https://gravatar3.com",
 }
 let setGravatar4: Indexer.Gravatar.UpdatedGravatar.params = {
-  id: 1004->Utils.BigInt.fromInt,
+  id: 1004->BigInt.fromInt,
   owner: "0x9990000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
   displayName: "update4",
   imageUrl: "https://gravatar4.com",

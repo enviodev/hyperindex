@@ -3,7 +3,7 @@ let gravatarEntity1: Indexer.Entities.Gravatar.t = {
   owner_id: "0x123",
   displayName: "gravatar1",
   imageUrl: "https://gravatar1.com",
-  updatesCount: Utils.BigInt.fromInt(0),
+  updatesCount: BigInt.fromInt(0),
   size: LARGE,
 }
 
@@ -12,6 +12,6 @@ let gravatarEntity2: Indexer.Entities.Gravatar.t = {
   owner_id: "0x678",
   displayName: "gravatar2",
   imageUrl: "https://gravatar2.com",
-  updatesCount: Utils.BigInt.fromInt(1),
+  updatesCount: BigInt.fromInt(1),
   size: MEDIUM,
 }

@@ -1,5 +1,3 @@
-open Belt
-
 @@warning("-44")
 open Utils.UnsafeIntOperators
 
@@ -136,7 +134,7 @@ let getProgressedChainsById = {
     // - Trigger onBlock pointer update
     chainsBeforeBatch
     ->ChainMap.values
-    ->Array.forEachU(chainBeforeBatch => {
+    ->Array.forEach(chainBeforeBatch => {
       let fetchState = chainBeforeBatch.fetchState
 
       let progressBlockNumberAfterBatch = switch progressBlockNumberPerChain->Utils.Dict.dangerouslyGetNonOption(
@@ -199,7 +197,7 @@ let addReorgCheckpoints = (
     for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
       switch reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber) {
       | Js.Null.Value(hash) =>
-        let checkpointId = prevCheckpointId.contents->Utils.BigInt.add(1n)
+        let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
         prevCheckpointId := checkpointId
 
         mutCheckpointIds->Js.Array2.push(checkpointId)->ignore
@@ -280,7 +278,7 @@ let prepareOrderedBatch = (
               ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
             )
 
-          let checkpointId = prevCheckpointId.contents->Utils.BigInt.add(1n)
+          let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
 
           items
           ->Js.Array2.push(item0)
@@ -424,7 +422,7 @@ let prepareUnorderedBatch = (
               ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
             )
 
-          let checkpointId = prevCheckpointId.contents->Utils.BigInt.add(1n)
+          let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
 
           checkpointIds->Js.Array2.push(checkpointId)->ignore
           checkpointChainIds->Js.Array2.push(fetchState.chainId)->ignore
