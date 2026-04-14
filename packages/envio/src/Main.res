@@ -302,7 +302,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   // per ecosystem to match the handler-arg shape users see:
   //   - EVM:  raw.block.number.{_gte,_lte,_every}   (matches `block.number`)
   //   - Fuel: raw.block.height.{_gte,_lte,_every}   (matches `block.height`)
-  //   - SVM:  raw.{_gte,_lte,_every}                (flat; matches `slot`)
+  //   - SVM:  raw.slot.{_gte,_lte,_every}           (matches `slot`)
   // Full TS-level schemas live in `packages/envio/index.d.ts`.
   let extractRange = (filter: unknown): (option<int>, option<int>, int) => {
     let numberFilter = switch config.ecosystem.name {
@@ -316,7 +316,10 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       ->(Utils.magic: unknown => {"block": option<{"height": option<unknown>}>})
       ->(r => r["block"])
       ->Belt.Option.flatMap(b => b["height"])
-    | Svm => Some(filter)
+    | Svm =>
+      filter
+      ->(Utils.magic: unknown => {"slot": option<unknown>})
+      ->(r => r["slot"])
     }
     switch numberFilter {
     | None => (None, None, 1)

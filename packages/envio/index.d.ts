@@ -738,16 +738,21 @@ export type FuelOnBlockOptions<Config extends IndexerConfigTypes> = {
 // ============== SVM onSlot types ==============
 
 /**
- * Filter on slot number for an `indexer.onSlot` `where` predicate (SVM).
+ * Filter on the SVM slot number for an `indexer.onSlot` `where` predicate.
  * `_every` alignment is relative to `_gte`.
  */
-export type SvmOnSlotFilter = {
+export type SvmOnSlotNumberFilter = {
   /** Matches slots whose number is greater than or equal to the given value. */
   readonly _gte?: number;
   /** Matches slots whose number is less than or equal to the given value. */
   readonly _lte?: number;
   /** Match every Nth slot. Alignment is relative to `_gte`. */
   readonly _every?: number;
+};
+
+/** Structured filter object returned by an SVM `indexer.onSlot` `where` predicate. */
+export type SvmOnSlotFilter = {
+  readonly slot?: SvmOnSlotNumberFilter;
 };
 
 /**

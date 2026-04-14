@@ -50,14 +50,14 @@ indexer.onBlock(
 
 ## SVM handler
 
-SVM uses `indexer.onSlot` and a flat filter on the slot number:
+SVM uses `indexer.onSlot` with a `slot`-keyed filter:
 
 ```ts
 indexer.onSlot(
   {
     name: "SlotSampler",
     where: ({ chain }) =>
-      chain.id === 0 ? { _gte: 250_000_000, _every: 100 } : false,
+      chain.id === 0 ? { slot: { _gte: 250_000_000, _every: 100 } } : false,
   },
   async ({ slot, context }) => { /* slot is a number */ }
 );
@@ -68,7 +68,7 @@ indexer.onSlot(
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
 | `name` | `string` | yes | Handler name for logging |
-| `where` | `({ chain }) => boolean \| filter` | no | Predicate evaluated once per configured chain at registration. Return `false` to skip a chain, `true` / omit to match every block/slot. Filter shape: EVM `{block: {number: {_gte?, _lte?, _every?}}}`, Fuel `{block: {height: {_gte?, _lte?, _every?}}}`, SVM `{_gte?, _lte?, _every?}`. `_every` aligns relative to `_gte`, preserving `(n - _gte) % _every === 0`. |
+| `where` | `({ chain }) => boolean \| filter` | no | Predicate evaluated once per configured chain at registration. Return `false` to skip a chain, `true` / omit to match every block/slot. Filter shape: EVM `{block: {number: {_gte?, _lte?, _every?}}}`, Fuel `{block: {height: {_gte?, _lte?, _every?}}}`, SVM `{slot: {_gte?, _lte?, _every?}}`. `_every` aligns relative to `_gte`, preserving `(n - _gte) % _every === 0`. |
 
 ## Notes
 
