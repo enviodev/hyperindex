@@ -1,10 +1,6 @@
 open Belt
 open Vitest
 
-// A workaround for ReScript v11 issue, where it makes the field optional
-// instead of setting a value to undefined. It's fixed in v12.
-let undefined = (%raw(`undefined`): option<'a>)
-
 describe("E2E tests", () => {
   Async.it("Currectly starts indexing from a non-zero start block", async t => {
     let sourceMock = MockIndexer.Source.make(
