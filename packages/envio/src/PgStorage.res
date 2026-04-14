@@ -503,7 +503,8 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let isFullChunk = chunkSize === maxItemsPerQuery
 
           let params = data["convertOrThrow"](chunk->(Utils.magic: array<'item> => array<unknown>))
-
+          // Use prepared query only for full batches where the cached query is reused.
+          // Partial chunks generate unique SQL each time, so preparation has no benefit.
           let response = isFullChunk
             ? sql->Postgres.preparedUnsafe(data["query"], params)
             : sql->Postgres.unpreparedUnsafe(

@@ -9,7 +9,7 @@ describe("Test Persistence layer init", () => {
     t.expect(
       persistence.allEntities,
       ~message=`All entities should automatically include the indexer core ones`,
-    ).toEqual([InternalTable.DynamicContractRegistry.entityConfig])
+    ).toEqual([InternalTable.EnvioAddresses.entityConfig])
     t.expect(
       persistence.allEnums,
       ~message=`All enums should automatically include the indexer core ones`,

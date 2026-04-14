@@ -34,18 +34,15 @@ type testIndexerState = {
   mutable processChanges: array<unknown>,
 }
 
-// Cast Internal.entity back to DynamicContractRegistry.t
-external castFromDcRegistry: Internal.entity => InternalTable.DynamicContractRegistry.t =
-  "%identity"
+// Cast Internal.entity back to EnvioAddresses.t
+external castToEnvioAddresses: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
 
-// Convert DynamicContractRegistry.t to Internal.indexingContract
-let toIndexingContract = (
-  dc: InternalTable.DynamicContractRegistry.t,
-): Internal.indexingContract => {
-  address: dc.contractAddress,
+// Convert EnvioAddresses.t to Internal.indexingContract
+let toIndexingContract = (dc: InternalTable.EnvioAddresses.t): Internal.indexingContract => {
+  address: dc->Config.EnvioAddresses.getAddress,
   contractName: dc.contractName,
-  startBlock: dc.registeringEventBlockNumber,
-  registrationBlock: Some(dc.registeringEventBlockNumber),
+  startBlock: dc.registrationBlock,
+  registrationBlock: Some(dc.registrationBlock),
 }
 
 let handleLoadByIds = (
@@ -224,34 +221,41 @@ let handleWriteBatch = (
       entityChanges
       ->Dict.toArray
       ->Array.forEach(((entityName, {sets, deleted})) => {
-        // Transform dynamic_contract_registry to addresses with simplified structure
-        if entityName === InternalTable.DynamicContractRegistry.name {
+        // Transform envio_addresses to addresses with simplified structure
+        if entityName === InternalTable.EnvioAddresses.name {
           let entityObj: dict<unknown> = Dict.make()
           if sets->Array.length > 0 {
             // Transform sets to simplified {address, contract} objects
             let simplifiedSets = sets->Array.map(entity => {
-              let dc = entity->Utils.magic->castFromDcRegistry
-              {"address": dc.contractAddress, "contract": dc.contractName}
+              let dc = entity->Utils.magic->castToEnvioAddresses
+              {"address": dc->Config.EnvioAddresses.getAddress, "contract": dc.contractName}
             })
-            entityObj->Dict.set("sets", simplifiedSets->Utils.magic)
+            entityObj->Dict.set(
+              "sets",
+              simplifiedSets->(
+                Utils.magic: array<{"address": Address.t, "contract": string}> => unknown
+              ),
+            )
           }
           // Note: deleted is not relevant for addresses since we use address string directly
-          change->Dict.set("addresses", entityObj->Utils.magic)
+          change->Dict.set("addresses", entityObj->(Utils.magic: dict<unknown> => unknown))
         } else {
           let entityObj: dict<unknown> = Dict.make()
           if sets->Array.length > 0 {
-            entityObj->Dict.set("sets", sets->Utils.magic)
+            entityObj->Dict.set("sets", sets->(Utils.magic: array<unknown> => unknown))
           }
           if deleted->Array.length > 0 {
-            entityObj->Dict.set("deleted", deleted->Utils.magic)
+            entityObj->Dict.set("deleted", deleted->(Utils.magic: array<string> => unknown))
           }
-          change->Dict.set(entityName, entityObj->Utils.magic)
+          change->Dict.set(entityName, entityObj->(Utils.magic: dict<unknown> => unknown))
         }
       })
     | None => ()
     }
 
-    state.processChanges->Array.push(change->Utils.magic)->ignore
+    state.processChanges
+    ->Array.push(change->(Utils.magic: dict<unknown> => unknown))
+    ->ignore
   }
 }
 
@@ -523,8 +527,8 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
     // Build entity operations for each user entity
     let entityOpsDict: dict<entityOperations> = Dict.make()
     allEntities->Array.forEach(entityConfig => {
-      // Only create ops for user entities (not internal tables like dynamic_contract_registry)
-      if entityConfig.name !== InternalTable.DynamicContractRegistry.name {
+      // Only create ops for user entities (not internal tables like envio_addresses)
+      if entityConfig.name !== InternalTable.EnvioAddresses.name {
         entityOpsDict->Dict.set(
           entityConfig.name,
           {
@@ -580,15 +584,15 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
               // Start with static config addresses
               let addresses = contract.addresses->Array.copy
               // Add accumulated dynamic contract addresses
-              switch state.entities->Dict.get(InternalTable.DynamicContractRegistry.name) {
+              switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
               | Some(dcDict) =>
                 dcDict
                 ->Dict.valuesToArray
                 ->Array.forEach(
                   entity => {
-                    let dc = entity->castFromDcRegistry
+                    let dc = entity->castToEnvioAddresses
                     if dc.contractName === contract.name && dc.chainId === chainConfig.id {
-                      addresses->Array.push(dc.contractAddress)->ignore
+                      addresses->Array.push(dc->Config.EnvioAddresses.getAddress)->ignore
                     }
                   },
                 )
@@ -699,12 +703,12 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
 
             // Extract dynamic contracts from state.entities for each chain
             let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Dict.make()
-            switch state.entities->Dict.get(InternalTable.DynamicContractRegistry.name) {
+            switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
             | Some(dcDict) =>
               dcDict
               ->Dict.valuesToArray
               ->Array.forEach(entity => {
-                let dc = entity->castFromDcRegistry
+                let dc = entity->castToEnvioAddresses
                 let dcChainIdStr = dc.chainId->Int.toString
                 let contracts = switch dynamicContractsByChain->Dict.get(dcChainIdStr) {
                 | Some(arr) => arr
