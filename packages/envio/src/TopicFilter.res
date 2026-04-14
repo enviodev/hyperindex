@@ -1,7 +1,7 @@
 let toTwosComplement = (num: bigint, ~bytesLen: int) => {
-  let maxValue = 1n->Utils.BigInt.Bitwise.shift_left(Utils.BigInt.fromInt(bytesLen * 8))
-  let mask = maxValue->Utils.BigInt.sub(1n)
-  num->Utils.BigInt.add(maxValue)->Utils.BigInt.Bitwise.logand(mask)
+  let maxValue = 1n->BigInt.shiftLeft(BigInt.fromInt(bytesLen * 8))
+  let mask = maxValue->BigInt.sub(1n)
+  num->BigInt.add(maxValue)->BigInt.bitwiseAnd(mask)
 }
 
 let fromSignedBigInt = val => {

@@ -159,7 +159,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
     | {kind: Call} =>
       Js.Exn.raiseError("Call receipt indexing currently supported only in wildcard mode")
     | {kind: LogData({logId}), isWildcard} => {
-        let rb = logId->Utils.BigInt.fromStringUnsafe
+        let rb = logId->BigInt.fromStringOrThrow
         if isWildcard {
           wildcardLogDataRbs->Array.push(rb)->ignore
         } else {
@@ -356,7 +356,7 @@ let make = ({chain, endpointUrl}: options): t => {
 
       let chainId = chain->ChainMap.Chain.toChainId
       let eventId = switch receipt {
-      | LogData({rb}) => Utils.BigInt.toString(rb)
+      | LogData({rb}) => BigInt.toString(rb)
       | Mint(_) => mintEventTag
       | Burn(_) => burnEventTag
       | Transfer(_)
