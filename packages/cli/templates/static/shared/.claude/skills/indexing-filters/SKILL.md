@@ -50,7 +50,7 @@ Each entry in the `params` array is **OR'd** together. Within a single entry, fi
 
 ## Function Form — Dynamic Per-Chain
 
-Return a filter based on `chainId`. Return `false` to skip the chain entirely (no events processed), or `true` to allow all events. To filter, return a `{params: ...}` object where `params` is a single record or an array of records:
+Return a filter based on the current `chain`. The callback receives `{ chain }` where `chain.id` is the chain ID and `chain.<ContractName>.addresses` exposes the indexed addresses of the event's own contract on that chain. Return `false` to skip the chain entirely (no events processed), or `true` to allow all events. To filter, return a `{params: ...}` object where `params` is a single record or an array of records:
 
 ```ts
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -64,12 +64,12 @@ indexer.onEvent(
     contract: "ERC20",
     event: "Transfer",
     wildcard: true,
-    where: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) return false;
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) return false;
       return {
         params: [
-          { from: ZERO_ADDRESS, to: WHITELISTED[chainId] },
-          { from: WHITELISTED[chainId], to: ZERO_ADDRESS },
+          { from: ZERO_ADDRESS, to: WHITELISTED[chain.id] },
+          { from: WHITELISTED[chain.id], to: ZERO_ADDRESS },
         ],
       };
     },
@@ -80,9 +80,9 @@ indexer.onEvent(
 );
 ```
 
-## Function with `addresses` — Filter by Registered Contracts
+## Function with `chain.<Contract>.addresses` — Filter by Registered Contracts
 
-For dynamically registered contracts, use `addresses` to filter by their addresses:
+For dynamically registered contracts, use `chain.<ContractName>.addresses` to filter by their addresses. Only the event's own contract is exposed:
 
 ```ts
 indexer.onEvent(
@@ -90,8 +90,9 @@ indexer.onEvent(
     contract: "ERC20",
     event: "Transfer",
     wildcard: true,
-    where: ({ chainId, addresses }) => {
-      if (chainId !== 100 && chainId !== 137) return false;
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) return false;
+      const addresses = chain.ERC20.addresses;
       return {
         params: [
           { from: ZERO_ADDRESS, to: addresses },

@@ -62,6 +62,30 @@ type parsedEventFilters = {
   filterByAddresses: bool,
 }
 
+// Build the `chain` argument passed into a `where` callback. Exposes
+// `chain.id` and `chain.<ContractName>.addresses` for the event's own
+// contract. Both the contract sub-object and its `addresses` are getters
+// so that detection mode can intercept access at either layer (handlers
+// might destructure the contract before reading addresses).
+let makeChainArg = (~contractName: string, ~chainId: int, ~getContractObj: unit => 'a) => {
+  let chainObj = Utils.Object.createNullObject()
+  chainObj
+  ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainId})
+  ->ignore
+  chainObj
+  ->Utils.Object.defineProperty(contractName, {enumerable: true, get: getContractObj})
+  ->ignore
+  chainObj
+}
+
+let makeContractObj = (~getAddresses: unit => array<Address.t>) => {
+  let contractObj = Utils.Object.createNullObject()
+  contractObj
+  ->Utils.Object.defineProperty("addresses", {enumerable: true, get: getAddresses})
+  ->ignore
+  contractObj
+}
+
 let parseEventFiltersOrThrow = {
   let emptyTopics = []
   let noopGetter = _ => emptyTopics
@@ -70,6 +94,7 @@ let parseEventFiltersOrThrow = {
     ~eventFilters: option<Js.Json.t>,
     ~sighash,
     ~params,
+    ~contractName: string,
     ~topic1=noopGetter,
     ~topic2=noopGetter,
     ~topic3=noopGetter,
@@ -174,45 +199,59 @@ let parseEventFiltersOrThrow = {
       }
     | Some(eventFilters) =>
       if Js.typeof(eventFilters) === "function" {
-        let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs => Js.Json.t)
-        // When user passess a function to event filters we need to
-        // first determine whether it uses addresses or not
-        // Because the fetching logic will be different for wildcard events
-        // 1. If wildcard event doesn't use addresses,
-        //    it should start fetching even without static addresses in the config
-        // 2. If wildcard event uses addresses in event filters,
-        //    it should first wait for dynamic contract registration
-        // So to deterimine which case we run the function with dummy args
-        // and check if it uses addresses by using the getter.
-        try {
-          let args = (
-            {
-              chainId: 0,
-              addresses: [],
-            }: Internal.eventFiltersArgs
-          )->Utils.Object.defineProperty(
-            "addresses",
-            {
-              get: () => {
+        let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs<_> => Js.Json.t)
+        // Determine whether the callback uses addresses by probing it with
+        // a detection chain arg whose `chain.<ContractName>` getter flips a
+        // flag (catching the contract sub-object access — the soonest
+        // trigger, since users may destructure or alias before reading
+        // `.addresses`).
+        //
+        // Callbacks often branch on `chain.id` and only touch addresses on
+        // chains they actually care about. A single probe with chainId=0
+        // would miss those, so we probe with a small set of common chain
+        // IDs (0/1, popular mainnets, common test IDs). Best effort — if a
+        // user's IDs miss the probe set, the worst case for a wildcard
+        // event is fetching eagerly when it could have waited for dynamic
+        // registration; correctness is preserved by re-running the
+        // callback per batch in the Dynamic path below.
+        let probeChainIds = [0, 1, 100, 137, 8453, 42161, 10, 56, 31337, 11155111]
+        probeChainIds->Js.Array2.forEach(probeId => {
+          if !filterByAddresses.contents {
+            try {
+              let chain = makeChainArg(~contractName, ~chainId=probeId, ~getContractObj=() => {
                 filterByAddresses := true
-                []
-              },
-            },
-          )
-          let _ = fn(args)
-        } catch {
-        | _ => ()
-        }
+                // Provide an empty contract object so that subsequent
+                // `.addresses` / destructuring access doesn't throw.
+                makeContractObj(~getAddresses=() => [])
+              })
+              let _ = fn({chain: chain->Obj.magic})
+            } catch {
+            | _ => ()
+            }
+          }
+        })
         if filterByAddresses.contents {
           chain => Internal.Dynamic(
-            addresses => fn({chainId: chain->ChainMap.Chain.toChainId, addresses})->parse,
+            addresses => {
+              let chainArg = makeChainArg(
+                ~contractName,
+                ~chainId=chain->ChainMap.Chain.toChainId,
+                ~getContractObj=() => makeContractObj(~getAddresses=() => addresses),
+              )
+              fn({chain: chainArg->Obj.magic})->parse
+            },
           )
         } else {
-          // When we don't depend on addresses, can mark the event filter
-          // as static and avoid recalculating on every batch
-          chain => Internal.Static(
-            fn({chainId: chain->ChainMap.Chain.toChainId, addresses: []})->parse,
-          )
+          // No probed chain referenced the contract — cache as Static
+          // per chain to avoid recomputing topic selections each batch.
+          chain => {
+            let chainArg = makeChainArg(
+              ~contractName,
+              ~chainId=chain->ChainMap.Chain.toChainId,
+              ~getContractObj=() => makeContractObj(~getAddresses=() => []),
+            )
+            Internal.Static(fn({chain: chainArg->Obj.magic})->parse)
+          }
         }
       } else {
         let static: Internal.eventFilters = Static(eventFilters->parse)

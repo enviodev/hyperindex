@@ -378,7 +378,12 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
-type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
+// Per-event, per-invocation chain argument passed to a `where` callback.
+// The concrete shape (which contract key it exposes) is generated per event
+// in user-project codegen — here it's an open record so codegen'd types
+// subtype-coerce into it cleanly.
+type eventFiltersChain<'a> = 'a
+type eventFiltersArgs<'a> = {chain: eventFiltersChain<'a>}
 
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)

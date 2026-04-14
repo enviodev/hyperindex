@@ -316,6 +316,7 @@ let buildEvmEventConfig = (
     ~eventFilters,
     ~sighash,
     ~params=indexedParams->Array.map(p => p.name),
+    ~contractName,
     ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
     ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
     ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),

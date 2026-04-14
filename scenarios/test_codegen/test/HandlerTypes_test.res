@@ -170,13 +170,15 @@ let _registerWildcardWithFilter = () => {
   )
 }
 
-// 11. Dynamic callback that branches on chain id.
+// 11. Dynamic callback that reads chain id and the event's own contract addresses.
 let _registerDynamicFilter = () => {
   Indexer.indexer.onEvent(
     {
       event: EventFiltersTest(Transfer),
       wildcard: true,
-      where: ({chainId: _, addresses: _}) => {
+      where: ({chain}) => {
+        let _ = chain.id
+        let _ = chain.eventFiltersTest.addresses
         let p: TransferEvent.whereParams = {
           from: Indexer.SingleOrMultiple.single(
             "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,

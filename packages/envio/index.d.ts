@@ -536,12 +536,23 @@ export type EvmOnEvent<
   [K in C]: EvmContracts<Config>[K][E & keyof EvmContracts<Config>[K]];
 }[C];
 
-/** Arguments passed to the dynamic `where` callback form: the current chain
- * and addresses in scope. Return an `OnEventWhereFilter` to apply a filter,
- * or `true` / `false` to keep / skip all events for that invocation. */
-export type OnEventWhereArgs = {
-  readonly chainId: number;
-  readonly addresses: readonly Address[];
+/** The chain object passed into the dynamic `where` callback form. Exposes
+ * the chain `id` and the event's own contract under its capitalized name,
+ * with `addresses` listing the indexed contract addresses on this chain.
+ *
+ * Only the event's own contract is exposed — multi-contract address
+ * filtering is not supported in this iteration. */
+export type OnEventWhereChain<ContractName extends string> = {
+  readonly id: number;
+} & {
+  readonly [K in ContractName]: { readonly addresses: readonly Address[] };
+};
+
+/** Arguments passed to the dynamic `where` callback form. Return an
+ * `OnEventWhereFilter` to apply a filter, or `true` / `false` to keep / skip
+ * all events for that invocation. */
+export type OnEventWhereArgs<ContractName extends string> = {
+  readonly chain: OnEventWhereChain<ContractName>;
 };
 
 /** A single `where` filter condition. The `{params}` wrapper reserves room
@@ -561,9 +572,9 @@ export type OnEventWhereFilter<Params> = {
  * The ReScript surface only exposes the callback form — multi-condition OR
  * semantics are always expressed via an array on `params`, not at the top
  * level of `where`. */
-export type OnEventWhere<Params> =
+export type OnEventWhere<Params, ContractName extends string> =
   | OnEventWhereFilter<Params>
-  | ((args: OnEventWhereArgs) => OnEventWhereFilter<Params> | boolean);
+  | ((args: OnEventWhereArgs<ContractName>) => OnEventWhereFilter<Params> | boolean);
 
 /** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type.
  * The conditional `Event extends EventLike` distributes over union members so that each member's
@@ -575,7 +586,7 @@ export type EvmOnEventOptions<Event extends EventLike, Params = {}> = Event exte
       readonly contract: Event["contractName"];
       readonly event: Event["eventName"];
       readonly wildcard?: boolean;
-      readonly where?: OnEventWhere<Params>;
+      readonly where?: OnEventWhere<Params, Event["contractName"] & string>;
     }
   : never;
 
@@ -645,7 +656,8 @@ type EvmHandlerMethods<Config extends IndexerConfigTypes> =
                 ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
                   ? P
                   : {}
-                : {}
+                : {},
+              C
             >;
           },
           handler: EvmOnEventHandler<Contracts[C][E], EvmOnEventContext<Config>>
@@ -664,7 +676,8 @@ type EvmHandlerMethods<Config extends IndexerConfigTypes> =
                 ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
                   ? P
                   : {}
-                : {}
+                : {},
+              C
             >;
           },
           handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
@@ -689,7 +702,8 @@ type FuelHandlerMethods<Config extends IndexerConfigTypes> =
                 ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
                   ? P
                   : {}
-                : {}
+                : {},
+              C
             >;
           },
           handler: FuelOnEventHandler<Contracts[C][E], FuelOnEventContext<Config>>
@@ -707,7 +721,8 @@ type FuelHandlerMethods<Config extends IndexerConfigTypes> =
                 ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
                   ? P
                   : {}
-                : {}
+                : {},
+              C
             >;
           },
           handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
