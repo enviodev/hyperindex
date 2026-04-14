@@ -358,12 +358,11 @@ impl EventMod {
             _ => format!(
                 "@genType type whereCondition = {{params?: SingleOrMultiple.t<whereParams>}}\n\
 @genType type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
-@genType type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, @as(\"{contract_capitalized}\") {contract_uncapitalized}: onEventWhereChainContract}}\n\
+@genType type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
 @genType type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
 @genType @unboxed type onEventWhereResult = Filter(whereCondition) | @as(false) SkipAll | @as(true) KeepAll\n\
 @genType type onEventWhere = onEventWhereArgs => onEventWhereResult",
                 contract_capitalized = self.contract_name.capitalized,
-                contract_uncapitalized = self.contract_name.uncapitalized,
             ),
         };
 

@@ -178,7 +178,7 @@ let _registerDynamicFilter = () => {
       wildcard: true,
       where: ({chain}) => {
         let _ = chain.id
-        let _ = chain.eventFiltersTest.addresses
+        let _ = chain.\"EventFiltersTest".addresses
         let p: TransferEvent.whereParams = {
           from: Indexer.SingleOrMultiple.single(
             "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,

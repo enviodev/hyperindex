@@ -7,7 +7,7 @@ let configWithRegistrations = Indexer.Generated.makeGeneratedConfig()
 let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
 
 // The codegen'd onEventWhereArgs is structurally compatible with
-// Internal.eventFiltersArgs<_> at runtime; runtime parser uses Obj.magic.
+// Internal.onEventWhereArgs<_> at runtime; runtime parser uses Obj.magic.
 
 describe("Test eventFilters", () => {
   it("Supports multichain filters", t => {

@@ -199,7 +199,7 @@ let parseEventFiltersOrThrow = {
       }
     | Some(eventFilters) =>
       if Js.typeof(eventFilters) === "function" {
-        let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.eventFiltersArgs<_> => Js.Json.t)
+        let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.onEventWhereArgs<_> => Js.Json.t)
         // Determine whether the callback uses addresses by probing it with
         // a detection chain arg whose `chain.<ContractName>` getter flips a
         // flag (catching the contract sub-object access — the soonest
