@@ -107,12 +107,11 @@ module EnvioAddresses = {
   }
 
   // Extract the raw contract address from the composite id ({chainId}-{address}).
-  // Inverse of makeId.
+  // Inverse of makeId. Keep in sync with makeId above and the SUBSTRING SQL in
+  // InternalTable.Chains.makeGetInitialStateQuery.
   let getAddress = (entity: t): Address.t => {
-    let chainIdStr = entity.chainId->Belt.Int.toString
-    entity.id
-    ->Js.String2.sliceToEnd(~from=Js.String2.length(chainIdStr) + 1)
-    ->Address.unsafeFromString
+    let sepIdx = entity.id->Js.String2.indexOf("-")
+    entity.id->Js.String2.sliceToEnd(~from=sepIdx + 1)->Address.unsafeFromString
   }
 
   let schema = S.schema(s => {

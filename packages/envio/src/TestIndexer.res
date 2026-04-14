@@ -37,7 +37,7 @@ type testIndexerState = {
 }
 
 // Cast Internal.entity back to EnvioAddresses.t
-external castFromDcRegistry: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
+external castToEnvioAddresses: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
 
 // Convert EnvioAddresses.t to Internal.indexingContract
 let toIndexingContract = (dc: InternalTable.EnvioAddresses.t): Internal.indexingContract => {
@@ -237,7 +237,7 @@ let handleWriteBatch = (
           if sets->Array.length > 0 {
             // Transform sets to simplified {address, contract} objects
             let simplifiedSets = sets->Array.map(entity => {
-              let dc = entity->Utils.magic->castFromDcRegistry
+              let dc = entity->Utils.magic->castToEnvioAddresses
               {"address": dc->Config.EnvioAddresses.getAddress, "contract": dc.contractName}
             })
             entityObj->Js.Dict.set(
@@ -599,7 +599,7 @@ let makeCreateTestIndexer = (
                 ->Js.Dict.values
                 ->Array.forEach(
                   entity => {
-                    let dc = entity->castFromDcRegistry
+                    let dc = entity->castToEnvioAddresses
                     if dc.contractName === contract.name && dc.chainId === chainConfig.id {
                       addresses->Array.push(dc->Config.EnvioAddresses.getAddress)->ignore
                     }
@@ -717,7 +717,7 @@ let makeCreateTestIndexer = (
               dcDict
               ->Js.Dict.values
               ->Array.forEach(entity => {
-                let dc = entity->castFromDcRegistry
+                let dc = entity->castToEnvioAddresses
                 let dcChainIdStr = dc.chainId->Int.toString
                 let contracts = switch dynamicContractsByChain->Js.Dict.get(dcChainIdStr) {
                 | Some(arr) => arr
