@@ -12,13 +12,13 @@ let log = (self: t) => {
 }
 
 let raiseExn = (self: t) => {
-  self.exn->Utils.prettifyExn->raise
+  self.exn->Utils.prettifyExn->throw
 }
 
 let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
   let exn = exn->Utils.prettifyExn
   exn->make(~logger?, ~msg?)->log
-  exn->raise
+  exn->throw
 }
 
 let unwrapLogAndRaise = (~logger=?, ~msg=?, result) => {

@@ -1,5 +1,3 @@
-
-
 type t = {
   committedCheckpointId: bigint,
   chainFetchers: ChainMap.t<ChainFetcher.t>,
@@ -59,25 +57,24 @@ let makeFromDbState = async (
     Prometheus.EffectCacheCount.set(~count, ~effectName)
   })
 
-  let chainFetchersArr =
-    await initialState.chains
-    ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
-      let chain = Config.getChain(config, ~chainId=resumedChainState.id)
-      let chainConfig = config.chainMap->ChainMap.get(chain)
+  let chainFetchersArr = await initialState.chains
+  ->Array.map(async (resumedChainState: Persistence.initialChainState) => {
+    let chain = Config.getChain(config, ~chainId=resumedChainState.id)
+    let chainConfig = config.chainMap->ChainMap.get(chain)
 
-      (
-        chain,
-        await chainConfig->ChainFetcher.makeFromDbState(
-          ~resumedChainState,
-          ~reorgCheckpoints=initialState.reorgCheckpoints,
-          ~isInReorgThreshold,
-          ~targetBufferSize,
-          ~config,
-          ~registrations,
-        ),
-      )
-    })
-    ->Promise.all
+    (
+      chain,
+      await chainConfig->ChainFetcher.makeFromDbState(
+        ~resumedChainState,
+        ~reorgCheckpoints=initialState.reorgCheckpoints,
+        ~isInReorgThreshold,
+        ~targetBufferSize,
+        ~config,
+        ~registrations,
+      ),
+    )
+  })
+  ->Promise.all
 
   let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
@@ -151,14 +148,10 @@ let createBatch = (chainManager: t, ~batchSizeTarget: int, ~isRollback: bool): B
 }
 
 let isProgressAtHead = chainManager =>
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Js.Array2.every(cf => cf.isProgressAtHead)
+  chainManager.chainFetchers->ChainMap.values->Array.every(cf => cf.isProgressAtHead)
 
 let isActivelyIndexing = chainManager =>
-  chainManager.chainFetchers
-  ->ChainMap.values
-  ->Js.Array2.every(ChainFetcher.isActivelyIndexing)
+  chainManager.chainFetchers->ChainMap.values->Array.every(ChainFetcher.isActivelyIndexing)
 
 let getSafeCheckpointId = (chainManager: t) => {
   let chainFetchers = chainManager.chainFetchers->ChainMap.values

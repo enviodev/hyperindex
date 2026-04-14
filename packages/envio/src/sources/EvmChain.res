@@ -1,5 +1,3 @@
-
-
 type rpc = {
   url: string,
   sourceFor: Source.sourceFor,
@@ -76,7 +74,7 @@ let makeSources = (
     ]
   | _ => []
   }
-  rpcs->Js.Array2.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
     let source = RpcSource.make({
       chain,
       sourceFor,
@@ -87,7 +85,7 @@ let makeSources = (
       lowercaseAddresses,
       ?ws,
     })
-    let _ = sources->Js.Array2.push(source)
+    let _ = sources->Array.push(source)
   })
 
   sources

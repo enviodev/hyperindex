@@ -8,7 +8,7 @@ let getOrderedBatchItemComparator = (item: Internal.item) => {
       logIndex,
     )
   | Internal.Block(_) =>
-    Js.Exn.raiseError("Block handlers are not supported for ordered multichain mode.")
+    JsError.throwWithMessage("Block handlers are not supported for ordered multichain mode.")
   }
 }
 

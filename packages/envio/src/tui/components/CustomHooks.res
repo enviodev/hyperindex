@@ -1,4 +1,3 @@
-
 module InitApi = {
   type ecosystem = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
   type body = {
@@ -35,7 +34,7 @@ module InitApi = {
       | true => hyperSyncNetworks
       | false => rpcNetworks
       }
-      ->Js.Array2.push(id)
+      ->Array.push(id)
       ->ignore
     })
 

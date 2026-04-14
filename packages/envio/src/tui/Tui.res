@@ -99,13 +99,13 @@ module App = {
 
     // useEffect to refresh state every 500ms
     React.useEffect(() => {
-      let intervalId = Js.Global.setInterval(() => {
+      let intervalId = setInterval(() => {
         setState(_ => getState())
       }, 500)
 
       Some(
         () => {
-          Js.Global.clearInterval(intervalId)
+          clearInterval(intervalId)
         },
       )
     }, [getState])
@@ -132,7 +132,7 @@ module App = {
             firstEventBlockNumber: firstEventBlock->Option.getOr(0),
             latestProcessedBlock: cf.committedProgressBlockNumber,
             timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Option.getOr(
-              Js.Date.now()->Js.Date.fromFloat,
+              Date.now()->Date.fromTime,
             ),
             numEventsProcessed,
           })

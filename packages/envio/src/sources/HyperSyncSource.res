@@ -1,6 +1,5 @@
 open Source
 
-
 type selectionConfig = {
   getLogSelectionOrThrow: (
     ~addressesByContractName: dict<array<Address.t>>,
@@ -16,9 +15,9 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
-  let staticTopicSelectionsByContract = Js.Dict.empty()
-  let dynamicEventFiltersByContract = Js.Dict.empty()
-  let dynamicWildcardEventFiltersByContract = Js.Dict.empty()
+  let staticTopicSelectionsByContract = Dict.make()
+  let dynamicEventFiltersByContract = Dict.make()
+  let dynamicWildcardEventFiltersByContract = Dict.make()
   let noAddressesTopicSelections = []
   let contractNames = Utils.Set.make()
 
@@ -64,7 +63,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     } else {
       noAddressesTopicSelections
-      ->Js.Array2.pushMany(
+      ->Array.pushMany(
         switch eventFilters {
         | Static(s) => s
         | Dynamic(fn) => fn([])
@@ -108,10 +107,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         | None => ()
         | Some(fns) =>
           logSelections->Array.push(
-            LogSelection.make(
-              ~addresses,
-              ~topicSelections=fns->Array.flatMap(fn => fn(addresses)),
-            ),
+            LogSelection.make(~addresses, ~topicSelections=fns->Array.flatMap(fn => fn(addresses))),
           )
         }
         switch dynamicWildcardEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(
@@ -176,7 +172,7 @@ let make = (
   let apiToken = switch apiToken {
   | Some(token) => token
   | None =>
-    Js.Exn.raiseError(`An API token is required for using HyperSync as a data-source.
+    JsError.throwWithMessage(`An API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
   }
@@ -280,7 +276,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
       ~nonOptionalTransactionFieldNames=selectionConfig.nonOptionalTransactionFieldNames,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
@@ -297,7 +293,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
               })
             | UnexpectedMissingParams({missingParams}) =>
               ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Js.Array2.joinWith(
+                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
                     ", ",
                   )}`,
               })
@@ -306,7 +302,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         ),
       )
     | exn =>
-      raise(
+      throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn,
@@ -444,12 +440,12 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
           ~contractAddress=log.address,
           ~blockNumber=block.number->Belt.Option.getUnsafe,
         )
-      let maybeDecodedEvent = parsedEvents->Js.Array2.unsafe_get(index)
+      let maybeDecodedEvent = parsedEvents->Array.getUnsafe(index)
 
       switch (maybeEventConfig, maybeDecodedEvent) {
       | (Some(eventConfig), Value(decoded)) =>
         parsedQueueItems
-        ->Js.Array2.push(
+        ->Array.push(
           makeEventBatchQueueItem(
             item,
             ~params=decoded->eventConfig.convertHyperSyncEventArgs,
@@ -533,7 +529,7 @@ Learn more or get a free API token at: https://envio.dev/app/api-tokens`)
         // So just block forever
         let _ = await Promise.make((_, _) => ())
         0
-      | ErrorMessage(m) => Js.Exn.raiseError(m)
+      | ErrorMessage(m) => JsError.throwWithMessage(m)
       }
       let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
       Prometheus.SourceRequestCount.increment(

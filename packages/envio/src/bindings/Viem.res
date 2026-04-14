@@ -37,7 +37,7 @@ let parseLogOrThrow = (
   ~data,
 ) => {
   switch contractNameAbiMapping->Utils.Dict.dangerouslyGetNonOption(contractName) {
-  | None => raise(UnknownContractName({contractName: contractName}))
+  | None => throw(UnknownContractName({contractName: contractName}))
   | Some(abi) =>
     let viemLog: eventLog = {
       abi,
@@ -46,7 +46,7 @@ let parseLogOrThrow = (
     }
 
     try viemLog->decodeEventLogOrThrow catch {
-    | exn => raise(ParseError(exn))
+    | exn => throw(ParseError(exn))
     }
   }
 }

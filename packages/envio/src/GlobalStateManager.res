@@ -1,4 +1,3 @@
-
 module type State = {
   type t
   type action
@@ -40,7 +39,7 @@ module MakeManager = (S: State) => {
   }
   and dispatchTask = (self, task: S.task) => {
     let stateId = self.state->S.getId
-    Js.Global.setTimeout(() => {
+    setTimeout(() => {
       if stateId !== self.state->S.getId {
         Logging.info("Invalidated task discarded")
       } else {

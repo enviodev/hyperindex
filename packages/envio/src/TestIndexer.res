@@ -1,5 +1,3 @@
-
-
 type evmChainConfig = {
   startBlock?: int,
   endBlock?: int,
@@ -54,12 +52,41 @@ let handleLoadByIds = (
   state: testIndexerState,
   ~tableName: string,
   ~ids: array<string>,
-): Js.Json.t => {
-  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getOr(Js.Dict.empty())
-  let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(tableName)
+): JSON.t => {
+  let entityDict =
+    state.entities
+    ->Dict.get(tableName)
+    ->Option.getOr(
+      Dict.make(),
+
+      // Check if already processing
+
+      // Parse and validate processConfig
+
+      // Sort chain keys by chain ID for deterministic ordering
+
+      // Parse and validate all chain configs upfront before starting any workers
+
+      // Reset processChanges for this run
+
+      // Build initialState from resolved block range
+
+      // Extract dynamic contracts from state.entities for each chain
+
+      // Explicitly forward parent env so handlers running in
+      // the worker observe the same environment as the test
+      // process (e.g. E2E_EXPECTED_END_BLOCK).
+
+      // Handle messages from worker
+
+      // Set flag before starting workers
+
+      // Run worker threads sequentially, one chain at a time
+    )
+  let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
   ids->Array.forEach(id => {
-    switch entityDict->Js.Dict.get(id) {
+    switch entityDict->Dict.get(id) {
     | Some(entity) =>
       // Serialize entity back to JSON for worker thread
       let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
@@ -67,24 +94,24 @@ let handleLoadByIds = (
     | None => ()
     }
   })
-  results->Js.Json.array
+  results->JSON.Encode.array
 }
 
 let handleLoadByField = (
   state: testIndexerState,
   ~tableName: string,
   ~fieldName: string,
-  ~fieldValue: Js.Json.t,
+  ~fieldValue: JSON.t,
   ~operator: Persistence.operator,
-): Js.Json.t => {
-  let entityDict = state.entities->Js.Dict.get(tableName)->Option.getOr(Js.Dict.empty())
-  let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(tableName)
+): JSON.t => {
+  let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
+  let entityConfig = state.entityConfigs->Dict.getUnsafe(tableName)
   let results = []
 
   // Get the field schema from the entity's table to properly parse the JSON field value
   let fieldSchema = switch entityConfig.table->Table.getFieldByName(fieldName) {
   | Some(Table.Field({fieldSchema})) => fieldSchema
-  | _ => Js.Exn.raiseError(`Field ${fieldName} not found in entity ${tableName}`)
+  | _ => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
   }
 
   // Parse JSON field value to typed value using the field's schema
@@ -93,11 +120,11 @@ let handleLoadByField = (
   // Compare using TableIndices.FieldValue logic (same approach as InMemoryTable)
   // This properly handles bigint and BigDecimal comparisons
   entityDict
-  ->Js.Dict.values
+  ->Dict.valuesToArray
   ->Array.forEach(entity => {
     // Cast entity to dict of field values (same approach as InMemoryTable)
     let entityAsDict = entity->(Utils.magic: Internal.entity => dict<TableIndices.FieldValue.t>)
-    switch entityAsDict->Js.Dict.get(fieldName) {
+    switch entityAsDict->Dict.get(fieldName) {
     | Some(entityFieldValue) => {
         let matches = switch operator {
         | #"=" => entityFieldValue->TableIndices.FieldValue.eq(parsedFieldValue)
@@ -114,7 +141,7 @@ let handleLoadByField = (
     }
   })
 
-  results->Js.Json.array
+  results->JSON.Encode.array
 }
 
 let handleWriteBatch = (
@@ -127,17 +154,17 @@ let handleWriteBatch = (
 ): unit => {
   // Group entity changes by checkpointId
   // checkpointId -> entityName -> entityChange
-  let changesByCheckpoint: dict<dict<entityChange>> = Js.Dict.empty()
+  let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
 
   updatedEntities->Array.forEach(({entityName, updates}) => {
-    let entityDict = switch state.entities->Js.Dict.get(entityName) {
+    let entityDict = switch state.entities->Dict.get(entityName) {
     | Some(dict) => dict
     | None =>
-      let dict = Js.Dict.empty()
-      state.entities->Js.Dict.set(entityName, dict)
+      let dict = Dict.make()
+      state.entities->Dict.set(entityName, dict)
       dict
     }
-    let entityConfig = state.entityConfigs->Js.Dict.unsafeGet(entityName)
+    let entityConfig = state.entityConfigs->Dict.getUnsafe(entityName)
 
     updates->Array.forEach(update => {
       // Helper to process a single change (Set or Delete)
@@ -149,44 +176,44 @@ let handleWriteBatch = (
           let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
 
           // Update entities dict with parsed entity for load operations
-          entityDict->Js.Dict.set(entityId, parsedEntity)
+          entityDict->Dict.set(entityId, parsedEntity)
 
           // Track change by checkpoint
           let checkpointKey = checkpointId->BigInt.toString
-          let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+          let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
-            let changes = Js.Dict.empty()
-            changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
+            let changes = Dict.make()
+            changesByCheckpoint->Dict.set(checkpointKey, changes)
             changes
           }
-          let entityChange = switch entityChanges->Js.Dict.get(entityName) {
+          let entityChange = switch entityChanges->Dict.get(entityName) {
           | Some(change) => change
           | None =>
             let change = {sets: [], deleted: []}
-            entityChanges->Js.Dict.set(entityName, change)
+            entityChanges->Dict.set(entityName, change)
             change
           }
           entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
 
         | Delete({entityId, checkpointId}) =>
           // Update entities dict for load operations
-          Js.Dict.unsafeDeleteKey(entityDict->Obj.magic, entityId)
+          Dict.delete(entityDict->Obj.magic, entityId)
 
           // Track change by checkpoint
           let checkpointKey = checkpointId->BigInt.toString
-          let entityChanges = switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+          let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
           | Some(changes) => changes
           | None =>
-            let changes = Js.Dict.empty()
-            changesByCheckpoint->Js.Dict.set(checkpointKey, changes)
+            let changes = Dict.make()
+            changesByCheckpoint->Dict.set(checkpointKey, changes)
             changes
           }
-          let entityChange = switch entityChanges->Js.Dict.get(entityName) {
+          let entityChange = switch entityChanges->Dict.get(entityName) {
           | Some(change) => change
           | None =>
             let change = {sets: [], deleted: []}
-            entityChanges->Js.Dict.set(entityName, change)
+            entityChanges->Dict.set(entityName, change)
             change
           }
           entityChange.deleted->Array.push(entityId)->ignore
@@ -206,51 +233,48 @@ let handleWriteBatch = (
   // Build combined checkpoint + entity changes objects
   for i in 0 to checkpointIds->Array.length - 1 {
     let checkpointId = checkpointIds->Array.getUnsafe(i)
-    let change: dict<unknown> = Js.Dict.empty()
+    let change: dict<unknown> = Dict.make()
 
     // Update progress tracking from checkpoint data
-    state.progressBlockByChain->Js.Dict.set(
+    state.progressBlockByChain->Dict.set(
       checkpointChainIds->Array.getUnsafe(i)->Int.toString,
       checkpointBlockNumbers->Array.getUnsafe(i),
     )
 
     // Add checkpoint metadata
-    change->Js.Dict.set("block", checkpointBlockNumbers->Array.getUnsafe(i)->Utils.magic)
-    change->Js.Dict.set("chainId", checkpointChainIds->Array.getUnsafe(i)->Utils.magic)
-    change->Js.Dict.set(
-      "eventsProcessed",
-      checkpointEventsProcessed->Array.getUnsafe(i)->Utils.magic,
-    )
+    change->Dict.set("block", checkpointBlockNumbers->Array.getUnsafe(i)->Utils.magic)
+    change->Dict.set("chainId", checkpointChainIds->Array.getUnsafe(i)->Utils.magic)
+    change->Dict.set("eventsProcessed", checkpointEventsProcessed->Array.getUnsafe(i)->Utils.magic)
 
     // Add entity changes for this checkpoint
     let checkpointKey = checkpointId->BigInt.toString
-    switch changesByCheckpoint->Js.Dict.get(checkpointKey) {
+    switch changesByCheckpoint->Dict.get(checkpointKey) {
     | Some(entityChanges) =>
       entityChanges
-      ->Js.Dict.entries
+      ->Dict.toArray
       ->Array.forEach(((entityName, {sets, deleted})) => {
         // Transform dynamic_contract_registry to addresses with simplified structure
         if entityName === InternalTable.DynamicContractRegistry.name {
-          let entityObj: dict<unknown> = Js.Dict.empty()
+          let entityObj: dict<unknown> = Dict.make()
           if sets->Array.length > 0 {
             // Transform sets to simplified {address, contract} objects
             let simplifiedSets = sets->Array.map(entity => {
               let dc = entity->Utils.magic->castFromDcRegistry
               {"address": dc.contractAddress, "contract": dc.contractName}
             })
-            entityObj->Js.Dict.set("sets", simplifiedSets->Utils.magic)
+            entityObj->Dict.set("sets", simplifiedSets->Utils.magic)
           }
           // Note: deleted is not relevant for addresses since we use address string directly
-          change->Js.Dict.set("addresses", entityObj->Utils.magic)
+          change->Dict.set("addresses", entityObj->Utils.magic)
         } else {
-          let entityObj: dict<unknown> = Js.Dict.empty()
+          let entityObj: dict<unknown> = Dict.make()
           if sets->Array.length > 0 {
-            entityObj->Js.Dict.set("sets", sets->Utils.magic)
+            entityObj->Dict.set("sets", sets->Utils.magic)
           }
           if deleted->Array.length > 0 {
-            entityObj->Js.Dict.set("deleted", deleted->Utils.magic)
+            entityObj->Dict.set("deleted", deleted->Utils.magic)
           }
-          change->Js.Dict.set(entityName, entityObj->Utils.magic)
+          change->Dict.set(entityName, entityObj->Utils.magic)
         }
       })
     | None => ()
@@ -262,22 +286,22 @@ let handleWriteBatch = (
 
 let makeInitialState = (
   ~config: Config.t,
-  ~processConfigChains: Js.Dict.t<chainConfig>,
+  ~processConfigChains: dict<chainConfig>,
   ~dynamicContractsByChain: dict<array<Internal.indexingContract>>,
 ): Persistence.initialState => {
-  let chainKeys = processConfigChains->Js.Dict.keys
+  let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
     let chainId = chainIdStr->Int.fromString->Option.getOr(0)
     let chain = ChainMap.Chain.makeUnsafe(~chainId)
 
     if !(config.chainMap->ChainMap.has(chain)) {
-      Js.Exn.raiseError(`Chain ${chainIdStr} is not configured in config.yaml`)
+      JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
     }
 
-    let processChainConfig = processConfigChains->Js.Dict.unsafeGet(chainIdStr)
+    let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
     let dynamicContracts =
       dynamicContractsByChain
-      ->Js.Dict.get(chainIdStr)
+      ->Dict.get(chainIdStr)
       ->Option.getOr([])
     {
       Persistence.id: chainId,
@@ -295,7 +319,7 @@ let makeInitialState = (
 
   {
     cleanRun: true,
-    cache: Js.Dict.empty(),
+    cache: Dict.make(),
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     reorgCheckpoints: [],
@@ -305,7 +329,7 @@ let makeInitialState = (
 type rawChainConfig = {
   startBlock: option<int>,
   endBlock: option<int>,
-  simulate: option<array<Js.Json.t>>,
+  simulate: option<array<JSON.t>>,
 }
 
 let rawChainConfigSchema = S.schema(s => {
@@ -321,25 +345,23 @@ let processConfigSchema = S.schema(s =>
 )
 
 let getSimulateEndBlock = (
-  ~simulateItems: array<Js.Json.t>,
+  ~simulateItems: array<JSON.t>,
   ~config: Config.t,
   ~startBlock: int,
 ): int => {
   let maxBlock = ref(startBlock)
   simulateItems->Array.forEach(rawJson => {
-    let blockJson: option<Js.Json.t> =
-      (rawJson->(Utils.magic: Js.Json.t => {..}))["block"]
-      ->(Utils.magic: 'a => Js.Nullable.t<Js.Json.t>)
-      ->Js.Nullable.toOption
+    let blockJson: option<JSON.t> =
+      (rawJson->(Utils.magic: JSON.t => {..}))["block"]
+      ->(Utils.magic: 'a => Nullable.t<JSON.t>)
+      ->Nullable.toOption
     switch blockJson {
     | Some(bj) =>
-      let blockDict = bj->(Utils.magic: Js.Json.t => Js.Dict.t<Js.Json.t>)
+      let blockDict = bj->(Utils.magic: JSON.t => dict<JSON.t>)
       let n: option<int> =
         blockDict
-        ->Js.Dict.get(config.ecosystem.blockNumberName)
-        ->Option.flatMap(v =>
-          v->(Utils.magic: Js.Json.t => Js.Nullable.t<int>)->Js.Nullable.toOption
-        )
+        ->Dict.get(config.ecosystem.blockNumberName)
+        ->Option.flatMap(v => v->(Utils.magic: JSON.t => Nullable.t<int>)->Nullable.toOption)
       switch n {
       | Some(v) if v > maxBlock.contents => maxBlock := v
       | _ => ()
@@ -360,11 +382,12 @@ let parseBlockRange = (
 ): chainConfig => {
   let chainId = switch chainIdStr->Int.fromString {
   | Some(id) => id
-  | None => Js.Exn.raiseError(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
+  | None =>
+    JsError.throwWithMessage(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
   }
   let chain = ChainMap.Chain.makeUnsafe(~chainId)
   if !(config.chainMap->ChainMap.has(chain)) {
-    Js.Exn.raiseError(`Chain ${chainIdStr} is not configured in config.yaml`)
+    JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }
   let configChain = config.chainMap->ChainMap.get(chain)
 
@@ -382,7 +405,7 @@ let parseBlockRange = (
   | None if rawChainConfig.simulate->Option.isSome =>
     Some(
       getSimulateEndBlock(
-        ~simulateItems=rawChainConfig.simulate->Option.getExn,
+        ~simulateItems=rawChainConfig.simulate->Option.getOrThrow,
         ~config,
         ~startBlock,
       ),
@@ -391,7 +414,7 @@ let parseBlockRange = (
   }
 
   if startBlock < configChain.startBlock {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
       `Either use startBlock >= ${configChain.startBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
@@ -399,7 +422,7 @@ let parseBlockRange = (
 
   switch (endBlock, configChain.endBlock) {
   | (Some(eb), Some(configEndBlock)) if eb > configEndBlock =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Invalid block range for chain ${chainIdStr}: endBlock (${eb->Int.toString}) exceeds config.endBlock (${configEndBlock->Int.toString}). ` ++
       `Either use endBlock <= ${configEndBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
@@ -408,7 +431,7 @@ let parseBlockRange = (
 
   switch progressBlock {
   | Some(prevEndBlock) if startBlock <= prevEndBlock =>
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) must be greater than previously processed endBlock (${prevEndBlock->Int.toString}). ` ++
       `Either use startBlock > ${prevEndBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
@@ -426,13 +449,12 @@ let getEntityFromState = (
   ~methodName: string,
 ): option<Internal.entity> => {
   if state.processInProgress {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Cannot call ${entityConfig.name}.${methodName}() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
     )
   }
-  let entityDict =
-    state.entities->Js.Dict.get(entityConfig.name)->Option.getOr(Js.Dict.empty())
-  entityDict->Js.Dict.get(entityId)
+  let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
+  entityDict->Dict.get(entityId)
 }
 
 let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
@@ -454,7 +476,7 @@ let makeEntityGetOrThrow = (~state: testIndexerState, ~entityConfig: Internal.en
       | Some(m) => m
       | None => `Entity ${entityConfig.name} with id ${entityId} not found`
       }
-      Js.Exn.raiseError(msg)
+      JsError.throwWithMessage(msg)
     }
   }
 }
@@ -464,18 +486,18 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
 ) => {
   entity => {
     if state.processInProgress {
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Cannot call ${entityConfig.name}.set() while indexer.process() is running. ` ++ "Wait for process() to complete before modifying entities directly.",
       )
     }
-    let entityDict = switch state.entities->Js.Dict.get(entityConfig.name) {
+    let entityDict = switch state.entities->Dict.get(entityConfig.name) {
     | Some(dict) => dict
     | None =>
-      let dict = Js.Dict.empty()
-      state.entities->Js.Dict.set(entityConfig.name, dict)
+      let dict = Dict.make()
+      state.entities->Dict.set(entityConfig.name, dict)
       dict
     }
-    entityDict->Js.Dict.set(entity.id, entity)
+    entityDict->Dict.set(entity.id, entity)
   }
 }
 
@@ -484,13 +506,12 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
 ) => {
   () => {
     if state.processInProgress {
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Cannot call ${entityConfig.name}.getAll() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
       )
     }
-    let entityDict =
-      state.entities->Js.Dict.get(entityConfig.name)->Option.getOr(Js.Dict.empty())
-    Promise.resolve(entityDict->Js.Dict.values)
+    let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
+    Promise.resolve(entityDict->Dict.valuesToArray)
   }
 }
 
@@ -505,7 +526,7 @@ type workerData = {
   chainId: int,
   startBlock: int,
   endBlock: option<int>,
-  simulate: option<array<Js.Json.t>>,
+  simulate: option<array<JSON.t>>,
   initialState: Persistence.initialState,
 }
 
@@ -514,26 +535,26 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
 ) => {
   () => {
     let allEntities = config.allEntities
-    let entities = Js.Dict.empty()
-    let entityConfigs = Js.Dict.empty()
+    let entities = Dict.make()
+    let entityConfigs = Dict.make()
     allEntities->Array.forEach(entityConfig => {
-      entities->Js.Dict.set(entityConfig.name, Js.Dict.empty())
-      entityConfigs->Js.Dict.set(entityConfig.name, entityConfig)
+      entities->Dict.set(entityConfig.name, Dict.make())
+      entityConfigs->Dict.set(entityConfig.name, entityConfig)
     })
     let state = {
       processInProgress: false,
-      progressBlockByChain: Js.Dict.empty(),
+      progressBlockByChain: Dict.make(),
       entities,
       entityConfigs,
       processChanges: [],
     }
 
     // Build entity operations for each user entity
-    let entityOpsDict: Js.Dict.t<entityOperations> = Js.Dict.empty()
+    let entityOpsDict: dict<entityOperations> = Dict.make()
     allEntities->Array.forEach(entityConfig => {
       // Only create ops for user entities (not internal tables like dynamic_contract_registry)
       if entityConfig.name !== InternalTable.DynamicContractRegistry.name {
-        entityOpsDict->Js.Dict.set(
+        entityOpsDict->Dict.set(
           entityConfig.name,
           {
             get: makeEntityGet(~state, ~entityConfig),
@@ -552,7 +573,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
     ->ChainMap.values
     ->Array.forEach(chainConfig => {
       let chainIdStr = chainConfig.id->Int.toString
-      chainIds->Js.Array2.push(chainConfig.id)->ignore
+      chainIds->Array.push(chainConfig.id)->ignore
 
       let chainObj = Utils.Object.createNullObject()
       chainObj
@@ -581,17 +602,17 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             enumerable: true,
             get: () => {
               if state.processInProgress {
-                Js.Exn.raiseError(
+                JsError.throwWithMessage(
                   `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++ "Wait for process() to complete before reading contract addresses.",
                 )
               }
               // Start with static config addresses
               let addresses = contract.addresses->Array.copy
               // Add accumulated dynamic contract addresses
-              switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+              switch state.entities->Dict.get(InternalTable.DynamicContractRegistry.name) {
               | Some(dcDict) =>
                 dcDict
-                ->Js.Dict.values
+                ->Dict.valuesToArray
                 ->Array.forEach(
                   entity => {
                     let dc = entity->castFromDcRegistry
@@ -631,68 +652,63 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
     })
 
     // Build the result object with process + entity operations + chain info
-    let result: Js.Dict.t<unknown> = Js.Dict.empty()
-    result->Js.Dict.set("chainIds", chainIds->(Utils.magic: array<int> => unknown))
-    result->Js.Dict.set("chains", chains->(Utils.magic: {..} => unknown))
+    let result: dict<unknown> = Dict.make()
+    result->Dict.set("chainIds", chainIds->(Utils.magic: array<int> => unknown))
+    result->Dict.set("chains", chains->(Utils.magic: {..} => unknown))
     entityOpsDict
-    ->Js.Dict.entries
+    ->Dict.toArray
     ->Array.forEach(((name, ops)) => {
-      result->Js.Dict.set(name, ops->(Utils.magic: entityOperations => unknown))
+      result->Dict.set(name, ops->(Utils.magic: entityOperations => unknown))
     })
 
-    result->Js.Dict.set(
+    result->Dict.set(
       "process",
       (
         processConfig => {
-          // Check if already processing
           if state.processInProgress {
-            Js.Exn.raiseError(
+            JsError.throwWithMessage(
               "createTestIndexer process is already running. Only one process call is allowed at a time",
             )
           }
 
-          // Parse and validate processConfig
           let parsedConfig = try processConfig->S.parseOrThrow(processConfigSchema) catch {
           | S.Raised(exn) =>
-            Js.Exn.raiseError(
+            JsError.throwWithMessage(
               `Invalid processConfig: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
             )
           }
           let rawChains = parsedConfig["chains"]
-          let chainKeys = rawChains->Js.Dict.keys
+          let chainKeys = rawChains->Dict.keysToArray
 
           if chainKeys->Array.length === 0 {
-            Js.Exn.raiseError("createTestIndexer requires at least one chain to be defined")
+            JsError.throwWithMessage("createTestIndexer requires at least one chain to be defined")
           }
 
-          // Sort chain keys by chain ID for deterministic ordering
-          let sortedChainKeys =
-            chainKeys
-            ->Array.copy
-            ->Js.Array2.sortInPlaceWith((a, b) => {
-              let aId = a->Int.fromString->Option.getOr(0)
-              let bId = b->Int.fromString->Option.getOr(0)
-              aId - bId
-            })
+          let sortedChainKeys = chainKeys->Array.copy
+          sortedChainKeys->Array.sort((a, b) => {
+            let aId = a->Int.fromString->Option.getOr(0)
+            let bId = b->Int.fromString->Option.getOr(0)
+            Int.compare(aId, bId)
+          })
 
-          // Parse and validate all chain configs upfront before starting any workers
           let chainEntries = sortedChainKeys->Array.map(chainIdStr => {
-            let rawChainConfig = rawChains->Js.Dict.unsafeGet(chainIdStr)
+            let rawChainConfig = rawChains->Dict.getUnsafe(chainIdStr)
             let chainId = switch chainIdStr->Int.fromString {
             | Some(id) => id
             | None =>
-              Js.Exn.raiseError(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
+              JsError.throwWithMessage(
+                `Invalid chain ID "${chainIdStr}": expected a numeric chain ID`,
+              )
             }
             let processChainConfig = parseBlockRange(
               ~chainIdStr,
               ~config,
               ~rawChainConfig,
-              ~progressBlock=state.progressBlockByChain->Js.Dict.get(chainIdStr),
+              ~progressBlock=state.progressBlockByChain->Dict.get(chainIdStr),
             )
             (chainIdStr, chainId, rawChainConfig, processChainConfig)
           })
 
-          // Reset processChanges for this run
           state.processChanges = []
 
           let runChainWorker = ((
@@ -701,24 +717,22 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             rawChainConfig: rawChainConfig,
             processChainConfig,
           )) => {
-            // Build initialState from resolved block range
-            let chains: Js.Dict.t<chainConfig> = Js.Dict.empty()
-            chains->Js.Dict.set(chainIdStr, processChainConfig)
+            let chains: dict<chainConfig> = Dict.make()
+            chains->Dict.set(chainIdStr, processChainConfig)
 
-            // Extract dynamic contracts from state.entities for each chain
-            let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Js.Dict.empty()
-            switch state.entities->Js.Dict.get(InternalTable.DynamicContractRegistry.name) {
+            let dynamicContractsByChain: dict<array<Internal.indexingContract>> = Dict.make()
+            switch state.entities->Dict.get(InternalTable.DynamicContractRegistry.name) {
             | Some(dcDict) =>
               dcDict
-              ->Js.Dict.values
+              ->Dict.valuesToArray
               ->Array.forEach(entity => {
                 let dc = entity->castFromDcRegistry
                 let dcChainIdStr = dc.chainId->Int.toString
-                let contracts = switch dynamicContractsByChain->Js.Dict.get(dcChainIdStr) {
+                let contracts = switch dynamicContractsByChain->Dict.get(dcChainIdStr) {
                 | Some(arr) => arr
                 | None =>
                   let arr = []
-                  dynamicContractsByChain->Js.Dict.set(dcChainIdStr, arr)
+                  dynamicContractsByChain->Dict.set(dcChainIdStr, arr)
                   arr
                 }
                 contracts->Array.push(dc->toIndexingContract)->ignore
@@ -744,20 +758,16 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                 NodeJs.WorkerThreads.makeWorker(
                   workerPath,
                   {
-                    workerData: workerData->(Utils.magic: workerData => Js.Json.t),
-                    // Explicitly forward parent env so handlers running in
-                    // the worker observe the same environment as the test
-                    // process (e.g. E2E_EXPECTED_END_BLOCK).
+                    workerData: workerData->(Utils.magic: workerData => JSON.t),
                     env: %raw(`process.env`),
                   },
                 )
               } catch {
               | exn =>
                 reject(exn->Utils.magic)
-                raise(exn)
+                throw(exn)
               }
 
-              // Handle messages from worker
               worker->NodeJs.WorkerThreads.onMessage((
                 msg: TestIndexerProxyStorage.workerMessage,
               ) => {
@@ -792,7 +802,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                     ~checkpointBlockNumbers,
                     ~checkpointEventsProcessed,
                   )
-                  Js.Json.null->respond
+                  JSON.Encode.null->respond
                 }
               })
 
@@ -811,10 +821,8 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             })
           }
 
-          // Set flag before starting workers
           state.processInProgress = true
 
-          // Run worker threads sequentially, one chain at a time
           let rec runChains = idx => {
             if idx >= chainEntries->Array.length {
               state.processInProgress = false
@@ -834,21 +842,21 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
       )->(Utils.magic: ('a => promise<processResult>) => unknown),
     )
 
-    result->(Utils.magic: Js.Dict.t<unknown> => t<'processConfig>)
+    result->(Utils.magic: dict<unknown> => t<'processConfig>)
   }
 }
 
 let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
   if NodeJs.WorkerThreads.isMainThread {
-    Js.Exn.raiseError("initTestWorker must be called from a worker thread")
+    JsError.throwWithMessage("initTestWorker must be called from a worker thread")
   }
 
-  let parentPort = switch NodeJs.WorkerThreads.parentPort->Js.Nullable.toOption {
+  let parentPort = switch NodeJs.WorkerThreads.parentPort->Nullable.toOption {
   | Some(port) => port
-  | None => Js.Exn.raiseError("initTestWorker: No parent port available")
+  | None => JsError.throwWithMessage("initTestWorker: No parent port available")
   }
 
-  let workerData: option<workerData> = NodeJs.WorkerThreads.workerData->Js.Nullable.toOption
+  let workerData: option<workerData> = NodeJs.WorkerThreads.workerData->Nullable.toOption
   switch workerData {
   | Some({chainId, startBlock, endBlock, simulate, initialState}) =>
     let chainIdStr = chainId->Int.toString
@@ -857,24 +865,23 @@ let initTestWorker = (~makeGeneratedConfig: unit => Config.t) => {
     let exitAfterFirstEventBlock = endBlock->Option.isNone
 
     // Build processConfig JSON for SimulateItems.patchConfig
-    let resolvedChainDict: Js.Dict.t<unknown> = Js.Dict.empty()
-    resolvedChainDict->Js.Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
+    let resolvedChainDict: dict<unknown> = Dict.make()
+    resolvedChainDict->Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
     switch endBlock {
-    | Some(eb) => resolvedChainDict->Js.Dict.set("endBlock", eb->(Utils.magic: int => unknown))
+    | Some(eb) => resolvedChainDict->Dict.set("endBlock", eb->(Utils.magic: int => unknown))
     | None => ()
     }
     switch simulate {
-    | Some(s) =>
-      resolvedChainDict->Js.Dict.set("simulate", s->(Utils.magic: array<Js.Json.t> => unknown))
+    | Some(s) => resolvedChainDict->Dict.set("simulate", s->(Utils.magic: array<JSON.t> => unknown))
     | None => ()
     }
-    let resolvedChainsDict: Js.Dict.t<unknown> = Js.Dict.empty()
-    resolvedChainsDict->Js.Dict.set(
+    let resolvedChainsDict: dict<unknown> = Dict.make()
+    resolvedChainsDict->Dict.set(
       chainIdStr,
-      resolvedChainDict->(Utils.magic: Js.Dict.t<unknown> => unknown),
+      resolvedChainDict->(Utils.magic: dict<unknown> => unknown),
     )
     let processConfig =
-      {"chains": resolvedChainsDict}->(Utils.magic: {"chains": Js.Dict.t<unknown>} => Js.Json.t)
+      {"chains": resolvedChainsDict}->(Utils.magic: {"chains": dict<unknown>} => JSON.t)
 
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
