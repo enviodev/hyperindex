@@ -895,8 +895,11 @@ indexer.onBlock(
 // `test_onblock_default` would register on every configured chain — but
 // that fires on every block of every test indexer run, polluting their
 // `result.changes` deep-equal assertions. Pin it to chain 137 too; the
-// "no `where`" code path is exercised by `test_onblock_skip_all` below
-// (which goes through the same `None` branch on chains it doesn't match).
+// `where: undefined` branch in `Main.res::onBlockFn` is covered separately
+// by the no-`where` `indexer.onSlot` registration in
+// `scenarios/svm_test/src/handlers/SlotHandler.ts` (svm_test has no
+// `result.changes` deep-equals so the default-fires-everywhere handler
+// is harmless there).
 indexer.onBlock(
   { name: "test_onblock_default", where: ({ chain }) => chain.id === 137 },
   async () => {},
