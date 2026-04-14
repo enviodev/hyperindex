@@ -8,7 +8,7 @@ let getOrderedBatchItemComparator = (item: Internal.item) => {
       logIndex,
     )
   | Internal.Block(_) =>
-    Js.Exn.raiseError("Block handlers are not supported for ordered multichain mode.")
+    JsError.throwWithMessage("Block handlers are not supported for ordered multichain mode.")
   }
 }
 
@@ -31,9 +31,9 @@ let isEarlierUnordered = (item1: (int, int, int), item2: (int, int, int)) => {
 let packEventIndex = (~blockNumber, ~logIndex) => {
   let blockNumber = blockNumber->BigInt.fromInt
   let logIndex = logIndex->BigInt.fromInt
-  let blockNumber = BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
+  let blockNumber = BigInt.shiftLeft(blockNumber, 16->BigInt.fromInt)
 
-  blockNumber->BigInt.Bitwise.logor(logIndex)
+  blockNumber->BigInt.bitwiseOr(logIndex)
 }
 
 // //Currently not used but keeping in utils
@@ -45,23 +45,23 @@ let packEventIndex = (~blockNumber, ~logIndex) => {
 //   let blockNumber = blockNumber->BigInt.fromInt
 //   let logIndex = logIndex->BigInt.fromInt
 
-//   let timestamp = BigInt.Bitwise.shift_left(timestamp, 48->BigInt.fromInt)
-//   let chainId = BigInt.Bitwise.shift_left(chainId, 16->BigInt.fromInt)
-//   let blockNumber = BigInt.Bitwise.shift_left(blockNumber, 16->BigInt.fromInt)
+//   let timestamp = BigInt.shiftLeft(timestamp, 48->BigInt.fromInt)
+//   let chainId = BigInt.shiftLeft(chainId, 16->BigInt.fromInt)
+//   let blockNumber = BigInt.shiftLeft(blockNumber, 16->BigInt.fromInt)
 
 //   timestamp
-//   ->BigInt.Bitwise.logor(chainId)
-//   ->BigInt.Bitwise.logor(blockNumber)
-//   ->BigInt.Bitwise.logor(logIndex)
+//   ->BigInt.bitwiseOr(chainId)
+//   ->BigInt.bitwiseOr(blockNumber)
+//   ->BigInt.bitwiseOr(logIndex)
 // }
 
 // //Currently not used but keeping in utils
 // //using @live flag for dead code analyser
 // @live
 // let unpackEventIndex = (packedEventIndex: bigint) => {
-//   let blockNumber = packedEventIndex->BigInt.Bitwise.shift_right(16->BigInt.fromInt)
+//   let blockNumber = packedEventIndex->BigInt.shiftRight(16->BigInt.fromInt)
 //   let logIndexMask = 65535->BigInt.fromInt
-//   let logIndex = packedEventIndex->BigInt.Bitwise.logand(logIndexMask)
+//   let logIndex = packedEventIndex->BigInt.bitwiseAnd(logIndexMask)
 //   {
 //     blockNumber: blockNumber->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,
 //     logIndex: logIndex->BigInt.toString->Belt.Int.fromString->Belt.Option.getUnsafe,

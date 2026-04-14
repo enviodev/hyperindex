@@ -41,13 +41,13 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     await indexerMock.getBatchWritePromise()
 
     let entities = await indexerMock.query(EntityWithBigDecimal)
-    switch entities->Js.Array2.find(e => e.id === "testEntity") {
+    switch entities->Array.find(e => e.id === "testEntity") {
     | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("123.456")
-    | None => Js.Exn.raiseError("testEntity1 should exist")
+    | None => JsError.throwWithMessage("testEntity1 should exist")
     }
-    switch entities->Js.Array2.find(e => e.id === "testEntity2") {
+    switch entities->Array.find(e => e.id === "testEntity2") {
     | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("654.321")
-    | None => Js.Exn.raiseError("testEntity2 should exist")
+    | None => JsError.throwWithMessage("testEntity2 should exist")
     }
   })
 })

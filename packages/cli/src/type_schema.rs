@@ -512,10 +512,10 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal.t".to_string(),
             Self::Address => "Address.t".to_string(),
             Self::String => "string".to_string(),
-            Self::Json => "Js.Json.t".to_string(),
+            Self::Json => "JSON.t".to_string(),
             Self::ID => "id".to_string(),
             Self::Bool => "bool".to_string(),
-            Self::Timestamp => "Js.Date.t".to_string(),
+            Self::Timestamp => "Date.t".to_string(),
             Self::Array(inner_type) => {
                 format!("array<{}>", inner_type)
             }
@@ -652,8 +652,8 @@ impl TypeIdent {
             Self::Unknown => "S.unknown".to_string(),
             Self::Float => "S.float".to_string(),
             Self::BigInt => match mode {
-                SchemaMode::ForDb => "BigInt.schema".to_string(),
-                SchemaMode::ForFieldSelection => "BigInt.nativeSchema".to_string(),
+                SchemaMode::ForDb => "Utils.BigInt.schema".to_string(),
+                SchemaMode::ForFieldSelection => "Utils.BigInt.nativeSchema".to_string(),
             },
             Self::BigDecimal => "BigDecimal.schema".to_string(),
             Self::Address => "Address.schema".to_string(),
@@ -750,7 +750,7 @@ impl TypeIdent {
             Self::String => "\"default string value\"".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
-            Self::Timestamp => "Js.Date.fromFloat(0.)".to_string(),
+            Self::Timestamp => "Date.fromTime(0.)".to_string(),
             Self::Array(_) => "[]".to_string(),
             Self::Option(_) => "None".to_string(),
             Self::SchemaEnum(enum_name) => {
@@ -932,12 +932,12 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "BigInt.schema".to_string()
+            "Utils.BigInt.schema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigInt)
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
-            "BigInt.nativeSchema".to_string()
+            "Utils.BigInt.nativeSchema".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::BigDecimal)
@@ -967,12 +967,12 @@ mod tests {
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
-            "S.null(BigInt.schema)".to_string()
+            "S.null(Utils.BigInt.schema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::option(TypeIdent::BigInt))
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForFieldSelection),
-            "S.nullable(BigInt.nativeSchema)".to_string()
+            "S.nullable(Utils.BigInt.nativeSchema)".to_string()
         );
         assert_eq!(
             TypeExpr::Identifier(TypeIdent::Tuple(vec![TypeIdent::Int, TypeIdent::Bool]))

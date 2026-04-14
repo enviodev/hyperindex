@@ -138,7 +138,7 @@ let createEffect = (
         callsPerDuration: calls,
         durationMs: per->durationToMs,
         availableCalls: calls,
-        windowStartTime: Js.Date.now(),
+        windowStartTime: Date.now(),
         queueCount: 0,
         nextWindowPromise: None,
       })
@@ -157,7 +157,7 @@ type fuelTransactionInput = {id?: string}
 type evmSimulateItem = {
   contract: string,
   event: string,
-  params?: Js.Json.t,
+  params?: JSON.t,
   srcAddress?: Address.t,
   logIndex?: int,
   block?: Internal.evmBlockInput,
@@ -167,7 +167,7 @@ type evmSimulateItem = {
 type fuelSimulateItem = {
   contract: string,
   event: string,
-  params: Js.Json.t,
+  params: JSON.t,
   srcAddress?: Address.t,
   logIndex?: int,
   block?: fuelBlockInput,
@@ -199,6 +199,6 @@ module TestHelpers = {
         "0xdD2FD4581271e230360230F9337D5c0430Bf44C0",
         "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
       ]->Belt.Array.map(Address.Evm.fromStringOrThrow)
-    let defaultAddress = mockAddresses[0]
+    let defaultAddress = mockAddresses->Belt.Array.getUnsafe(0)
   }
 }

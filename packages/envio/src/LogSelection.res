@@ -12,7 +12,7 @@ let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
   }
 
 let hasFilters = ({topic1, topic2, topic3}: Internal.topicSelection) => {
-  [topic1, topic2, topic3]->Js.Array2.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
+  [topic1, topic2, topic3]->Array.find(topic => !Utils.Array.isEmpty(topic))->Belt.Option.isSome
 }
 
 /**
@@ -26,10 +26,10 @@ let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) 
 
   topicSelections->Belt.Array.forEach(selection => {
     if selection->hasFilters {
-      selectionsWithFilters->Js.Array2.push(selection)->ignore
+      selectionsWithFilters->Array.push(selection)->ignore
     } else {
       selection.topic0->Belt.Array.forEach(topic0 => {
-        topic0sOfSelectionsWithoutFilters->Js.Array2.push(topic0)->ignore
+        topic0sOfSelectionsWithoutFilters->Array.push(topic0)->ignore
       })
     }
   })
@@ -64,13 +64,13 @@ type parsedEventFilters = {
 
 // Build the runtime `chain` argument passed into a `where` callback.
 // Exposes `chain.id` and `chain.<ContractName>.addresses` as plain values
-// on a normal (Object.prototype) JS object. `Js.Dict` is used so the
+// on a normal (Object.prototype) JS object. `Dict` is used so the
 // contract name can be a dynamic property key without defineProperty
 // ceremony.
 let makeChainArg = (~contractName: string, ~chainId: int, ~addresses: array<Address.t>) => {
-  let chainObj = Js.Dict.empty()
-  chainObj->Js.Dict.set("id", chainId->Obj.magic)
-  chainObj->Js.Dict.set(contractName, {"addresses": addresses}->Obj.magic)
+  let chainObj = Dict.make()
+  chainObj->Dict.set("id", chainId->Obj.magic)
+  chainObj->Dict.set(contractName, {"addresses": addresses}->Obj.magic)
   chainObj
 }
 
@@ -88,9 +88,9 @@ let makeDetectionChainArg = (
   contractObj
   ->Utils.Object.defineProperty("addresses", {enumerable: true, get: getAddresses})
   ->ignore
-  let chainObj = Js.Dict.empty()
-  chainObj->Js.Dict.set("id", chainId->Obj.magic)
-  chainObj->Js.Dict.set(contractName, contractObj->Obj.magic)
+  let chainObj = Dict.make()
+  chainObj->Dict.set("id", chainId->Obj.magic)
+  chainObj->Dict.set(contractName, contractObj->Obj.magic)
   chainObj
 }
 
@@ -99,7 +99,7 @@ let parseEventFiltersOrThrow = {
   let noopGetter = _ => emptyTopics
 
   (
-    ~eventFilters: option<Js.Json.t>,
+    ~eventFilters: option<JSON.t>,
     ~sighash,
     ~params,
     ~contractName: string,
@@ -121,14 +121,14 @@ let parseEventFiltersOrThrow = {
     // inside of `params`). Validates that the keys are actual indexed
     // parameters of the event — TS type checking doesn't catch this when
     // `where` is a callback.
-    let paramsRecordToTopicSelection = (paramsFilter: Js.Dict.t<Js.Json.t>) => {
-      let filterKeys = paramsFilter->Js.Dict.keys
+    let paramsRecordToTopicSelection = (paramsFilter: dict<JSON.t>) => {
+      let filterKeys = paramsFilter->Dict.keysToArray
       switch filterKeys {
       | [] => default
       | _ => {
-          filterKeys->Js.Array2.forEach(key => {
-            if params->Js.Array2.includes(key)->not {
-              Js.Exn.raiseError(
+          filterKeys->Array.forEach(key => {
+            if params->Array.includes(key)->not {
+              JsError.throwWithMessage(
                 `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
               )
             }
@@ -155,7 +155,7 @@ let parseEventFiltersOrThrow = {
     //
     // The runtime accepts both the function form (the only form ReScript
     // exposes) and a top-level static object form (TypeScript convenience).
-    let parse = (where: Js.Json.t): array<Internal.topicSelection> => {
+    let parse = (where: JSON.t): array<Internal.topicSelection> => {
       if where === Obj.magic(true) {
         [default]
       } else if where === Obj.magic(false) {
@@ -167,13 +167,13 @@ let parseEventFiltersOrThrow = {
         // fields alongside `params`.
         switch where {
         | Object(obj) =>
-          switch obj->Js.Dict.get("params") {
+          switch obj->Dict.get("params") {
           | None =>
             // Reject non-empty objects without `params` — almost always a
             // typo (e.g. `parmas:`) or the legacy flat-filter shape
             // (`{from: ...}`). Empty `{}` is fine and means "match all".
-            if obj->Js.Dict.keys->Js.Array2.length > 0 {
-              Js.Exn.raiseError(
+            if obj->Dict.keysToArray->Array.length > 0 {
+              JsError.throwWithMessage(
                 "Invalid where configuration. Indexed parameter filters must be nested under `params`",
               )
             } else {
@@ -182,21 +182,21 @@ let parseEventFiltersOrThrow = {
           | Some(Object(p)) => [paramsRecordToTopicSelection(p)]
           | Some(Array([])) => [default]
           | Some(Array(arr)) =>
-            arr->Js.Array2.map(item =>
+            arr->Array.map(item =>
               switch item {
               | Object(p) => paramsRecordToTopicSelection(p)
               | _ =>
-                Js.Exn.raiseError(
+                JsError.throwWithMessage(
                   "Invalid where configuration. Each entry in `params` must be an object",
                 )
               }
             )
           | Some(_) =>
-            Js.Exn.raiseError(
+            JsError.throwWithMessage(
               "Invalid where configuration. Expected `params` to be an object or an array of objects",
             )
           }
-        | _ => Js.Exn.raiseError("Invalid where configuration. Expected an object")
+        | _ => JsError.throwWithMessage("Invalid where configuration. Expected an object")
         }
       }
     }
@@ -207,8 +207,8 @@ let parseEventFiltersOrThrow = {
         _ => static
       }
     | Some(eventFilters) =>
-      if Js.typeof(eventFilters) === "function" {
-        let fn = eventFilters->(Utils.magic: Js.Json.t => Internal.onEventWhereArgs<_> => Js.Json.t)
+      if typeof(eventFilters) === #function {
+        let fn = eventFilters->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
         // Determine whether the callback uses addresses by probing it with
         // a detection chain arg whose `chain.<ContractName>.addresses` getter
         // flips a flag. The probe uses this chain's real configured id, so
@@ -251,8 +251,8 @@ let parseEventFiltersOrThrow = {
           chain => {
             let chainId = chain->ChainMap.Chain.toChainId
             let chainArg = makeDetectionChainArg(~contractName, ~chainId, ~getAddresses=() =>
-              Js.Exn.raiseError(
-                `Invalid where configuration. Event callback for contract "${contractName}" read \`chain.${contractName}.addresses\` at runtime but the probe didn't detect the access on chainId ${chainId->Belt.Int.toString}. Move the \`chain.${contractName}.addresses\` read above any \`chain.id\` branching so the probe picks up the dependency and switches to the dynamic fetch path.`,
+              JsError.throwWithMessage(
+                `Invalid where configuration. Event callback for contract "${contractName}" read \`chain.${contractName}.addresses\` at runtime but the probe didn't detect the access on chainId ${chainId->Int.toString}. Move the \`chain.${contractName}.addresses\` read above any \`chain.id\` branching so the probe picks up the dependency and switches to the dynamic fetch path.`,
               )
             )
             Internal.Static(fn({chain: chainArg->Obj.magic})->parse)

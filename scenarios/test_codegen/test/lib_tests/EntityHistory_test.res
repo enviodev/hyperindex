@@ -593,7 +593,7 @@
 //             ~rows=Mocks.GnosisBug.historyRows,
 //           )
 //           ->Promise.all
-//           ->Promise.ignoreValue,
+//           ->Utils.Promise.ignoreValue,
 //       ) catch {
 //       | exn =>
 //         Js.log2("insert mock rows exn", exn)
@@ -695,7 +695,7 @@
 //           ~rows=Mocks.GnosisBug.historyRowsForPrune,
 //         )
 //         ->Promise.all
-//         ->Promise.ignoreValue,
+//         ->Utils.Promise.ignoreValue,
 //     ) catch {
 //     | exn =>
 //       Js.log2("insert mock rows exn", exn)
@@ -763,7 +763,7 @@
 //             ~rows=Mocks.historyRows,
 //           )
 //           ->Promise.all
-//           ->Promise.ignoreValue,
+//           ->Utils.Promise.ignoreValue,
 //       ) catch {
 //       | exn =>
 //         Js.log2("insert mock rows exn", exn)
@@ -1022,7 +1022,7 @@
 //         sql
 //         ->PgStorage.setEntityHistoryOrThrow(~entityHistory=TestEntity.entityHistory, ~rows)
 //         ->Promise.all
-//         ->Promise.ignoreValue,
+//         ->Utils.Promise.ignoreValue,
 //     ) catch {
 //     | exn =>
 //       Js.log2("insert mock rows exn", exn)

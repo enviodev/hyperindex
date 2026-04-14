@@ -1,5 +1,3 @@
-open Belt
-
 type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
 
 type sourceState = {
@@ -82,12 +80,13 @@ let make = (
     ~maxRetryInterval=60_000,
   ),
 ) => {
-  let hasLive = sources->Js.Array2.some(s => s.sourceFor === Live)
-  let initialActiveSource = switch sources->Js.Array2.find(source =>
+  let hasLive = sources->Array.some(s => s.sourceFor === Live)
+  let initialActiveSource = switch sources->Array.find(source =>
     getSourceRole(~sourceFor=source.sourceFor, ~isLive, ~hasLive) === Some(Primary)
   ) {
   | Some(source) => source
-  | None => Js.Exn.raiseError("Invalid configuration, no data-source for historical sync provided")
+  | None =>
+    JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
   Prometheus.IndexingMaxConcurrency.set(
     ~maxConcurrency=maxPartitionConcurrency,
@@ -214,7 +213,7 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
     if sourceState.source.sourceFor === Live {
       // Only clear hasLive if no other non-disabled Live sources remain
       let hasOtherLive =
-        sourceManager.sourcesState->Js.Array2.some(s =>
+        sourceManager.sourcesState->Array.some(s =>
           s !== sourceState && !s.disabled && s.source.sourceFor === Live
         )
       sourceManager.hasLive = hasOtherLive
@@ -331,15 +330,15 @@ let getSourceNewHeight = async (
 
 let compareByOldestFailure = (a: sourceState, b: sourceState) =>
   switch (a.lastFailedAt, b.lastFailedAt) {
-  | (None, Some(_)) => -1
-  | (Some(_), None) => 1
-  | (Some(a), Some(b)) => a < b ? -1 : a > b ? 1 : 0
-  | (None, None) => 0
+  | (None, Some(_)) => Ordering.less
+  | (Some(_), None) => Ordering.greater
+  | (Some(a), Some(b)) => a < b ? Ordering.less : a > b ? Ordering.greater : Ordering.equal
+  | (None, None) => Ordering.equal
   }
 
 // Priority: working primaries > working secondaries > all primaries.
 let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
-  let now = Js.Date.now()
+  let now = Date.now()
   let workingPrimarySources = []
   let allPrimarySources = []
   let workingSecondarySources = []
@@ -377,7 +376,8 @@ let getNextSources = (sourceManager, ~isLive, ~excludedSources=?) => {
     workingSecondarySources
   } else {
     // All primaries in recovery — sort by oldest lastFailedAt (closest to recovery first)
-    allPrimarySources->Js.Array2.sortInPlaceWith(compareByOldestFailure)
+    allPrimarySources->Array.sort(compareByOldestFailure)
+    allPrimarySources
   }
 }
 
@@ -389,7 +389,7 @@ let getNextSource = (sourceManager, ~isLive, ~excludedSources=?) => {
   | None => None
   | Some(first) if first.source === sourceManager.activeSource => Some(first)
   | _ =>
-    switch sources->Js.Array2.find(s => s.source === sourceManager.activeSource) {
+    switch sources->Array.find(s => s.source === sourceManager.activeSource) {
     | Some(_) as result => result
     | None => sources->Array.get(0)
     }
@@ -439,7 +439,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isLive) => {
         let fallbackSources = []
         sourcesState->Array.forEach(sourceState => {
           if (
-            !(mainSources->Js.Array2.includes(sourceState)) &&
+            !(mainSources->Array.includes(sourceState)) &&
             getSourceRole(
               ~sourceFor=sourceState.source.sourceFor,
               ~isLive,
@@ -647,7 +647,7 @@ let executeQuery = async (sourceManager: t, ~query: FetchState.query, ~knownHeig
         }
 
         if shouldSwitch {
-          let now = Js.Date.now()
+          let now = Date.now()
           sourceState.lastFailedAt = Some(now)
           // Check if there's a working (recovered) source to switch to immediately
           let nextSource =

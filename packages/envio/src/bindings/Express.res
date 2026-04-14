@@ -2,9 +2,6 @@
 
 type app
 
-// "default" &  seem to conflict a bit right now
-// https://github.com/rescript-lang/rescript-compiler/issues/5004
-@module external makeCjs: unit => app = "express"
 @module("express") external make: unit => app = "default"
 
 type req = private {
@@ -28,11 +25,11 @@ type middleware = (req, res, unit => unit) => unit
 type server
 
 @send external listen: (app, int) => server = "listen"
-@send external onError: (server, @as("error") _, Js.Exn.t => unit) => unit = "on"
+@send external onError: (server, @as("error") _, JsExn.t => unit) => unit = "on"
 
 // res methods
 @send external sendStatus: (res, int) => unit = "sendStatus"
 @send external set: (res, string, string) => unit = "set"
-@send external json: (res, Js.Json.t) => unit = "json"
+@send external json: (res, JSON.t) => unit = "json"
 @send external endWithData: (res, 'a) => res = "end"
 @send external setHeader: (res, string, string) => unit = "setHeader"

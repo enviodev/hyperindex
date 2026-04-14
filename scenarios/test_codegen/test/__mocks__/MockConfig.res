@@ -13,6 +13,6 @@ let getEventConfig = (
   ->Belt.Option.getExn
 
 let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) =>
-  getEventConfig(~config?, ~contractName, ~eventName, ~chainId?)
-  ->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-
+  getEventConfig(~config?, ~contractName, ~eventName, ~chainId?)->(
+    Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+  )

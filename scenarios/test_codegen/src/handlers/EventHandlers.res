@@ -29,7 +29,7 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(NewGravatar)}, async ({event, c
   let contractName: string = event.contractName
   let eventName: string = event.eventName
   if contractName !== "Gravatar" || eventName !== "NewGravatar" {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Expected contractName="Gravatar" eventName="NewGravatar", got contractName="${contractName}" eventName="${eventName}"`,
     )
   }
@@ -95,7 +95,7 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({even
     ~params={
       "type": "error",
       "data": {"blockHash": event.block.hash},
-      "err": ExampleException("some error processing the event")->Js.Exn.asJsExn,
+      "err": ExampleException("some error processing the event")->JsExn.fromException,
     },
   )
 
@@ -125,30 +125,33 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({even
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEventThatCopiesBigIntViaLinkedEntities)}, async ({context}) => {
-  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
-    switch await context.\"A".get(idOfGrandparent) {
-    | Some(a) =>
-      let optB = await context.\"B".get(a.b_id)
+Indexer.indexer.onEvent(
+  {event: Indexer.Gravatar(TestEventThatCopiesBigIntViaLinkedEntities)},
+  async ({context}) => {
+    let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
+      switch await context.\"A".get(idOfGrandparent) {
+      | Some(a) =>
+        let optB = await context.\"B".get(a.b_id)
 
-      switch optB->Belt.Option.flatMap(b => b.c_id) {
-      | Some(c_id) =>
-        switch await context.\"C".get(c_id) {
-        | Some(cWithText) =>
-          context.\"A".set({
-            ...a,
-            optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
-          })
+        switch optB->Belt.Option.flatMap(b => b.c_id) {
+        | Some(c_id) =>
+          switch await context.\"C".get(c_id) {
+          | Some(cWithText) =>
+            context.\"A".set({
+              ...a,
+              optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
+            })
+          | None => ()
+          }
         | None => ()
         }
       | None => ()
       }
-    | None => ()
-    }
 
-  await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
-  await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
-})
+    await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
+    await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
+  },
+)
 
 // Generates modules for both TestEvent and TestEventWithCustomName
 Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEventWithCustomName)}, async _ => {
