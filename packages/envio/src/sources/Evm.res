@@ -83,9 +83,9 @@ let ecosystem: Ecosystem.t = {
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
   // EVM filter shape: `{block: {number: {_gte?, _lte?, _every?}}}`.
-  extractOnBlockNumberFilter: filter =>
-    filter
-    ->(Utils.magic: unknown => {"block": option<{"number": option<unknown>}>})
-    ->(r => r["block"])
-    ->Belt.Option.flatMap(b => b["number"]),
+  // The inner range chunk is returned as raw `S.unknown` and parsed a
+  // second time in `Main.res` by the shared `blockRangeSchema`.
+  onBlockFilterSchema: S.object(s =>
+    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
+  ),
 }

@@ -58,6 +58,29 @@ let stateSchema = S.union([
   })),
 ])
 
+// Shape of the user-returned `{_gte?, _lte?, _every?}` filter chunk after
+// the ecosystem-specific wrapper is stripped. Shared across all ecosystems —
+// the outer `block.number` / `block.height` / `slot` unwrap lives on each
+// ecosystem's `onBlockFilterSchema`, and the inner range fields are the
+// same everywhere.
+type blockRange = {
+  _gte: option<int>,
+  _lte: option<int>,
+  _every: int,
+}
+
+// `S.strict` rejects unknown fields so typos like `_gt` / `_evry` surface
+// with a readable schema error pointing at the offending key, instead of
+// silently registering a broken filter. `_every` defaults to 1 inside the
+// schema so the caller always sees a plain `int`.
+let blockRangeSchema: S.t<blockRange> = S.object(s => {
+  _gte: s.field("_gte", S.option(S.int)),
+  _lte: s.field("_lte", S.option(S.int)),
+  _every: s.field("_every", S.option(S.int)->S.Option.getOr(1)),
+})->S.strict
+
+let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
+
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
 // Persistence is set by Main.start before handler modules load, so that
@@ -298,23 +321,6 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     )
   }
 
-  // Decode the inner `{_gte, _lte, _every}` triple from the user-returned
-  // filter. The outer wrapper (`block.number` / `block.height` / `slot`) is
-  // unwrapped by the ecosystem-specific `extractOnBlockNumberFilter` so this
-  // function stays ecosystem-agnostic. Full TS schemas live in
-  // `packages/envio/index.d.ts`.
-  let extractRange = (filter: unknown): (option<int>, option<int>, int) => {
-    switch config.ecosystem.extractOnBlockNumberFilter(filter) {
-    | None => (None, None, 1)
-    | Some(n) =>
-      let typed =
-        n->(
-          Utils.magic: unknown => {"_gte": option<int>, "_lte": option<int>, "_every": option<int>}
-        )
-      (typed["_gte"], typed["_lte"], typed["_every"]->Belt.Option.getWithDefault(1))
-    }
-  }
-
   // SVM exposes the block handler as `indexer.onSlot`; EVM/Fuel expose it as
   // `indexer.onBlock`. The choice lives on the ecosystem record so adding a
   // new ecosystem doesn't require editing this file. Used both as the
@@ -322,11 +328,32 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
   // matches what the user wrote.
   let onBlockMethodName = config.ecosystem.onBlockMethodName
 
+  // Two-stage parse: first the ecosystem-specific outer schema unwraps the
+  // wrapper (`block.number` / `block.height` / `slot`) and surfaces the
+  // inner chunk as raw `unknown`; then the shared `blockRangeSchema`
+  // validates the `{_gte?, _lte?, _every?}` fields. Keeping the inner
+  // validation in one place means typos and shape mismatches surface with
+  // the same user-friendly error regardless of ecosystem.
+  let extractRange = (filter: unknown, ~name): blockRange =>
+    try {
+      switch filter->S.parseOrThrow(config.ecosystem.onBlockFilterSchema) {
+      | None => defaultBlockRange
+      | Some(inner) => inner->S.parseOrThrow(blockRangeSchema)
+      }
+    } catch {
+    | S.Raised(exn) =>
+      Js.Exn.raiseError(
+        `\`indexer.${onBlockMethodName}("${name}")\` \`where\` returned an invalid filter: ${exn
+          ->Utils.prettifyExn
+          ->(Utils.magic: exn => string)}`,
+      )
+    }
+
   // `where` is evaluated once per configured chain at registration time.
   // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
   // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
   // math at `FetchState.res:619` stays untouched.
-  let onBlockHandlerFn = (rawOptions: 'a, handler: 'b) => {
+  let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     let raw =
       rawOptions->(
         Utils.magic: 'a => {
@@ -361,29 +388,31 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
       let chainId = chainConfig.id
       let chainObj = chainsDict->Js.Dict.unsafeGet(chainId->Int.toString)
 
-      // Predicate returns `undefined`/`true` → match with no filter;
-      // `false` → skip; any plain object → structured filter.
+      // Predicate returns `true` → match with no filter; `false` → skip;
+      // any plain object → structured filter. `undefined`/`null` returns
+      // are rejected — the TS type excludes `void`, so a missing return is
+      // a user bug we surface early rather than silently match-all.
       let result = switch raw["where"] {
       | None => %raw(`true`)
       | Some(predicate) => predicate({chain: chainObj})
       }
 
-      let (shouldRegister, startBlock, endBlock, interval) = if (
-        result === %raw(`true`) || result === %raw(`undefined`) || result === %raw(`null`)
-      ) {
-        (true, None, None, 1)
+      let (shouldRegister, range) = if result === %raw(`true`) {
+        (true, defaultBlockRange)
       } else if result === %raw(`false`) {
-        (false, None, None, 1)
-      } else if Js.typeof(result) === "object" && !(result->Js.Array2.isArray) {
-        let (gte, lte, every) = extractRange(result)
-        (true, gte, lte, every)
+        (false, defaultBlockRange)
+      } else if (
+        Js.typeof(result) === "object" && !(result->Js.Array2.isArray) && result !== %raw(`null`)
+      ) {
+        (true, extractRange(result, ~name))
       } else {
-        // Reject numbers, strings, functions, arrays, etc. — anything that
-        // isn't bool/undefined/null/plain-object would silently misregister.
+        // Reject numbers, strings, functions, arrays, undefined, null —
+        // anything that isn't bool or a plain object would silently
+        // misregister.
         Js.Exn.raiseError(
           `\`indexer.${onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${Js.typeof(
               result,
-            )}. Expected boolean, undefined, or a filter object.`,
+            )}. Expected boolean or a filter object.`,
         )
       }
 
@@ -392,9 +421,9 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
         HandlerRegister.registerOnBlock(
           ~name,
           ~chainId,
-          ~interval,
-          ~startBlock,
-          ~endBlock,
+          ~interval=range._every,
+          ~startBlock=range._gte,
+          ~endBlock=range._lte,
           ~handler=typedHandler,
         )
       }
@@ -413,10 +442,7 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     "contractRegister",
     {enumerable: true, value: contractRegisterFn},
   )
-  ->Utils.Object.definePropertyWithValue(
-    onBlockMethodName,
-    {enumerable: true, value: onBlockHandlerFn},
-  )
+  ->Utils.Object.definePropertyWithValue(onBlockMethodName, {enumerable: true, value: onBlockFn})
   ->ignore
 
   indexer->(Utils.magic: 'a => 'indexer)

@@ -21,8 +21,8 @@ let ecosystem: Ecosystem.t = {
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onSlot",
   // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
-  extractOnBlockNumberFilter: filter =>
-    filter->(Utils.magic: unknown => {"slot": option<unknown>})->(r => r["slot"]),
+  // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
+  onBlockFilterSchema: S.object(s => s.field("slot", S.option(S.unknown))),
 }
 
 module GetFinalizedSlot = {

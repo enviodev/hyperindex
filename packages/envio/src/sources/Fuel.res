@@ -21,9 +21,8 @@ let ecosystem: Ecosystem.t = {
   cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
   // Fuel filter shape: `{block: {height: {_gte?, _lte?, _every?}}}`.
-  extractOnBlockNumberFilter: filter =>
-    filter
-    ->(Utils.magic: unknown => {"block": option<{"height": option<unknown>}>})
-    ->(r => r["block"])
-    ->Belt.Option.flatMap(b => b["height"]),
+  // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
+  onBlockFilterSchema: S.object(s =>
+    s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
+  ),
 }

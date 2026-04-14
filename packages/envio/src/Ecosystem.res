@@ -16,12 +16,13 @@ type t = {
       for SVM. Centralised here so adding a new ecosystem only requires a
       new ecosystem record, not another switch in `Main.res`. */
   onBlockMethodName: string,
-  /** Extracts the inner `{_gte?, _lte?, _every?}` triple from the user's
-      `where` return value. Each ecosystem's `indexer.onBlock`/`onSlot`
-      filter shape differs (`block.number` on EVM, `block.height` on Fuel,
-      `slot` on SVM), so the unwrap is ecosystem-specific. The returned
-      `unknown` is then casted to the typed range record by `Main.res`. */
-  extractOnBlockNumberFilter: unknown => option<unknown>,
+  /** Schema that unwraps the ecosystem-specific outer wrapper around the
+      user's `where`-returned filter (`block.number` on EVM, `block.height`
+      on Fuel, `slot` on SVM) and surfaces the raw inner `{_gte?, _lte?,
+      _every?}` chunk as `option<unknown>`. The inner chunk is then parsed
+      a second time in `Main.res` by the shared `blockRangeSchema` — that
+      keeps range-field validation in one place for every ecosystem. */
+  onBlockFilterSchema: S.t<option<unknown>>,
 }
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
