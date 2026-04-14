@@ -7,14 +7,6 @@ import type {Json_t as Js_Json_t} from '../../src/Js.shim.js';
 
 import type {t as Address_t} from '../../src/Address.gen.js';
 
-export type EnvioAddresses_t = {
-  readonly id: string; 
-  readonly chain_id: number; 
-  readonly registering_event_block: number; 
-  readonly registering_event_log_index: (undefined | number); 
-  readonly contract_name: string
-};
-
 export type RawEvents_t = {
   readonly chain_id: number; 
   readonly event_id: bigint; 

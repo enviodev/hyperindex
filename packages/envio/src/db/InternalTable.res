@@ -193,8 +193,8 @@ WHERE "${(#id: field :> string)}" = $1;`
   SELECT COALESCE(json_agg(json_build_object(
     'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
     'contractName', "contract_name",
-    'startBlock', "registering_event_block",
-    'registrationBlock', "registering_event_block"
+    'startBlock', "registration_block",
+    'registrationBlock', "registration_block"
   )), '[]'::json)
   FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
   WHERE "chain_id" = chains."${(#id: field :> string)}"

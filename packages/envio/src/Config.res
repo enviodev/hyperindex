@@ -97,12 +97,12 @@ module EnvioAddresses = {
     chainId->Belt.Int.toString ++ "-" ++ address->Address.toString
   }
 
-  @genType
   type t = {
     id: string,
     @as("chain_id") chainId: int,
-    @as("registering_event_block") registeringEventBlock: int,
-    @as("registering_event_log_index") registeringEventLogIndex: option<int>,
+    @as("registration_block") registrationBlock: int,
+    // -1 when the address was registered from a block handler (no log index)
+    @as("registration_log_index") registrationLogIndex: int,
     @as("contract_name") contractName: string,
   }
 
@@ -117,8 +117,8 @@ module EnvioAddresses = {
   let schema = S.schema(s => {
     id: s.matches(S.string),
     chainId: s.matches(S.int),
-    registeringEventBlock: s.matches(S.int),
-    registeringEventLogIndex: s.matches(S.null(S.int)),
+    registrationBlock: s.matches(S.int),
+    registrationLogIndex: s.matches(S.int),
     contractName: s.matches(S.string),
   })
 
@@ -129,13 +129,9 @@ module EnvioAddresses = {
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
       Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
-      Table.mkField("registering_event_block", Int32, ~fieldSchema=S.int),
-      Table.mkField(
-        "registering_event_log_index",
-        Int32,
-        ~isNullable=true,
-        ~fieldSchema=S.null(S.int),
-      ),
+      Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
+      // -1 sentinel when registered from a block handler (no log index)
+      Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
       Table.mkField("contract_name", String, ~fieldSchema=S.string),
     ],
   )
