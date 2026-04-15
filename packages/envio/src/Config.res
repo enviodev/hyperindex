@@ -827,33 +827,63 @@ let getChain = (config, ~chainId) => {
       )
 }
 
+// Resolve the envio CLI entry relative to this file's own URL. We don't go
+// through `import.meta.resolve("envio/...")` because `Config.res.mjs` lives
+// inside the envio package, so the package isn't in its own resolver
+// scope. Walking up via a relative URL always works as long as the
+// package layout (src/Config.res.mjs next to bin.mjs) is stable, which it
+// is for both the dev workspace member and the published artifact.
+//
+// We prefer this over bare `spawnSync("envio")` because vitest workers,
+// hooks, and ad-hoc Node scripts frequently don't inherit
+// `node_modules/.bin` on PATH.
+@val external importMetaUrl: string = "import.meta.url"
+@val external nodeExecPath: string = "process.execPath"
+@module("node:url") external fileURLToPath: string => string = "fileURLToPath"
+@new external makeUrl: (string, string) => {..} = "URL"
+@get external urlHref: {..} => string = "href"
+
+let resolveEnvioBinPath = () =>
+  try {
+    Some(fileURLToPath(makeUrl("../bin.mjs", importMetaUrl)->urlHref))
+  } catch {
+  | _ => None
+  }
+
 // Load the resolved indexer config by shelling out to the envio CLI.
 // `envio config view` prints the same JSON we used to bundle as
-// `generated/internal.config.json`. We resolve it via spawnSync (blocking) so
-// the returned value is ready before callers use it. Keeps stdin untouched so
-// the TUI can consume it in the future.
+// `generated/internal.config.json`. We resolve it via spawnSync (blocking)
+// so the returned value is ready before callers use it. Keeps stdin
+// untouched so the TUI can consume it in the future.
 //
-// The command name `envio` is resolved via PATH. `pnpm`/`npm`/`npx` scripts
-// (including vitest workers they spawn) prepend `node_modules/.bin` to PATH,
-// and users who installed envio globally also have it there, so this works in
-// every realistic call site.
+// We invoke the CLI by resolving `envio/bin.mjs` through Node's module
+// resolution and running it with `process.execPath`. That works in every
+// realistic call site — indexer runtime, vitest workers, migrations —
+// without depending on PATH being set up correctly. As a last-ditch
+// fallback we try `envio` via PATH (covers callers that shadow the module
+// resolution, e.g. globally installed CLIs).
 //
 // Only genuine CLI-discovery / spawn failures collapse to the generic
 // "install / codegen" hint. Non-zero exits surface the CLI's stderr (so
-// misconfigured `config.yaml` errors stay diagnosable) and JSON parsing or
-// schema validation errors propagate untouched.
+// misconfigured `config.yaml` errors stay diagnosable) and JSON parsing
+// or schema validation errors propagate untouched.
 let fromConfigView = () => {
   let cliMissingErr = "Couldn't load the indexer config. Run `envio codegen` and make sure the envio CLI is installed."
 
+  let (cmd, prefixArgs) = switch resolveEnvioBinPath() {
+  | Some(binPath) => (nodeExecPath, [binPath])
+  | None => ("envio", [])
+  }
+
   let result = try {
     NodeJs.ChildProcess.spawnSync(
-      "envio",
-      ["config", "view"],
+      cmd,
+      prefixArgs->Array.concat(["config", "view"]),
       {
         encoding: "utf8",
-        // Configs can be large (hundreds of events with ABIs). Default 1MB is
-        // too small; 64MB is a conservative ceiling that still catches runaway
-        // output.
+        // Configs can be large (hundreds of events with ABIs). Default 1MB
+        // is too small; 64MB is a conservative ceiling that still catches
+        // runaway output.
         maxBuffer: 64 * 1024 * 1024,
       },
     )
@@ -863,12 +893,12 @@ let fromConfigView = () => {
 
   // `error` is set when the process couldn't be spawned at all (ENOENT,
   // EACCES, etc.) — that's a CLI-missing problem.
-  switch result.error->Null.toOption {
+  switch result.error->Nullable.toOption {
   | Some(_) => JsError.throwWithMessage(cliMissingErr)
   | None => ()
   }
 
-  switch result.status->Null.toOption {
+  switch result.status->Nullable.toOption {
   | Some(0) => ()
   | _ =>
     // Non-zero exit: the CLI ran but refused to produce a config. Surface

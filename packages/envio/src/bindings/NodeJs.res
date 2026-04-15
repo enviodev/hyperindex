@@ -44,6 +44,7 @@ module Process = {
   type t = {env: dict<string>, execArgv: array<string>}
   @module external process: t = "process"
   @module("process") external cwd: unit => string = "cwd"
+  @get external execPath: t => string = "execPath"
 }
 
 module ChildProcess = {
@@ -74,12 +75,14 @@ module ChildProcess = {
 
   // `status` is null when the child is killed by a signal before exiting; we
   // treat null-or-nonzero as failure. `error` is set when the process itself
-  // couldn't be spawned (e.g., command not on PATH).
+  // couldn't be spawned (e.g., command not on PATH) — and Node leaves the
+  // field `undefined` (not `null`) on success, so we use `Nullable.t` which
+  // accepts both.
   type spawnSyncResult = {
-    status: Null.t<int>,
+    status: Nullable.t<int>,
     stdout: string,
     stderr: string,
-    error: Null.t<exn>,
+    error: Nullable.t<exn>,
   }
 
   @module("child_process")
