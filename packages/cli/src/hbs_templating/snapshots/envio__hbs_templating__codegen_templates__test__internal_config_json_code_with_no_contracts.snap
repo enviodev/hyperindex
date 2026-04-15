@@ -7,6 +7,9 @@ expression: project_template.internal_config_json_code
   "version": "0.0.1-dev",
   "name": "config4",
   "description": "Gravatar for Ethereum",
+  "storage": {
+    "postgres": true
+  },
   "evm": {
     "chains": {
       "ethereumMainnet": {
