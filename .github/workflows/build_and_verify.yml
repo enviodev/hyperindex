@@ -73,7 +73,7 @@ jobs:
     steps:
       - name: Resolve & authorize SHA
         id: resolve
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             if (context.eventName === 'push') {
@@ -112,15 +112,22 @@ jobs:
             // collaborators/permission API — the latter requires
             // `administration: read` which the default GITHUB_TOKEN
             // cannot grant ("Resource not accessible by integration").
-            // OWNER and COLLABORATOR require an explicit invite from
-            // the repo; MEMBER is excluded because org membership is
-            // wider than the set of people we trust to release secrets
-            // to fork CI.
+            //
+            // Allowed values:
+            //   OWNER        — repo owner (personal repos only; unused here)
+            //   MEMBER       — member of the org that owns this repo; for
+            //                  org repos this is how admins show up, since
+            //                  OWNER is reserved for personal-repo owners
+            //   COLLABORATOR — explicitly invited outside collaborator
+            // All three require an explicit trust action by the base repo
+            // (ownership / org membership / invite). CONTRIBUTOR and NONE
+            // are rejected — a merged PR in the past doesn't grant CI
+            // approval rights.
             const assoc = context.payload.comment.author_association;
-            if (!['OWNER', 'COLLABORATOR'].includes(assoc)) {
+            if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(assoc)) {
               return reject(
                 `@${context.payload.comment.user.login} (${assoc}) cannot approve CI — ` +
-                `must be OWNER or COLLABORATOR of ${owner}/${repo}.`
+                `must be OWNER, MEMBER, or COLLABORATOR of ${owner}/${repo}.`
               );
             }
 
@@ -471,7 +478,7 @@ jobs:
     steps:
       - name: Post commit status
         if: needs.gate.outputs.sha != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           RESULTS: ${{ toJSON(needs) }}
         with:
