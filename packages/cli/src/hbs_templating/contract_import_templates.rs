@@ -4,72 +4,43 @@ mod nested_params {
     use super::*;
     use crate::config_parsing::abi_compat::{AbiType, EventParam};
 
-    ///A single segment of a path into a nested tuple/struct param. A tuple
-    ///level renders as a ReScript JS object / TS record iff at least one of
-    ///its components is named (matches `event_parsing.rs::abi_type_to_rescript`),
-    ///in which case all segments at that level are `Field`s — unnamed slots
-    ///fall back to their positional index as the field key. Fully anonymous
-    ///tuples stay positional and use `Index`.
+    ///A single segment of a path into a nested tuple/struct param. Every
+    ///tuple level renders as a ReScript JS object / TS record (matches
+    ///`event_parsing.rs::abi_type_to_rescript`), so all segments are `Field`s
+    ///— unnamed slots fall back to their positional index as the field key.
     #[derive(Debug, Clone, PartialEq, Serialize)]
-    pub enum AccessorSegment {
-        Index(usize),
-        Field(String),
-    }
+    pub struct AccessorSegment(pub String);
 
     impl AccessorSegment {
+        /// Convenience constructor for tests and internal use.
+        pub fn field(name: impl Into<String>) -> Self {
+            Self(name.into())
+        }
+
         /// JS object key suffix for the generated handler — both TS and ReScript
-        /// JS object types are accessed via `value["key"]`, even for `Index`
-        /// segments since at runtime arrays support numeric string keys too.
-        /// Anonymous-tuple paths (which only contain `Index` segments) take the
-        /// dedicated ReScript path in `generate_rescript_handler_content`.
+        /// JS object types are accessed uniformly via `value["key"]`.
         fn as_entity_segment(&self) -> String {
-            match self {
-                Self::Index(i) => i.to_string(),
-                Self::Field(name) => name.clone(),
-            }
+            self.0.clone()
         }
     }
 
     /// Build the ReScript accessor expression for a flattened event param.
-    /// Wraps any piped `->Utils.Tuple.get(...)->Belt.Option.getUnsafe` chain
-    /// in parens before appending a `["field"]` bracket access, because
-    /// ReScript's `->` binds tighter than `[]` — without parens
-    /// `value->Belt.Option.getUnsafe["funder"]` parses as
-    /// `value->(Belt.Option.getUnsafe["funder"])` and tries to index into
-    /// the function itself.
+    /// Every tuple level is a JS object at runtime, so field access is a
+    /// plain `["key"]` bracket chain with no parenthesisation needed.
     pub fn build_rescript_accessor(base: &str, segments: &[AccessorSegment]) -> String {
-        let mut accessor = base.to_string();
-        for segment in segments {
-            match segment {
-                AccessorSegment::Index(i) => {
-                    accessor.push_str(&format!("->Utils.Tuple.get({})->Belt.Option.getUnsafe", i));
-                }
-                AccessorSegment::Field(name) => {
-                    if accessor.contains("->") {
-                        accessor = format!("({})[\"{}\"]", accessor, name);
-                    } else {
-                        accessor.push_str(&format!("[\"{}\"]", name));
-                    }
-                }
-            }
-        }
-        accessor
+        build_accessor(base, segments)
     }
 
     /// Build the TypeScript accessor expression for a flattened event param.
-    /// JavaScript bracket access works uniformly for arrays and objects, so
-    /// no parenthesisation is needed.
+    /// Shape matches the ReScript side since both produce JS object types.
     pub fn build_typescript_accessor(base: &str, segments: &[AccessorSegment]) -> String {
+        build_accessor(base, segments)
+    }
+
+    fn build_accessor(base: &str, segments: &[AccessorSegment]) -> String {
         let mut accessor = base.to_string();
         for segment in segments {
-            match segment {
-                AccessorSegment::Index(i) => {
-                    accessor.push_str(&format!("[{}]", i));
-                }
-                AccessorSegment::Field(name) => {
-                    accessor.push_str(&format!("[\"{}\"]", name));
-                }
-            }
+            accessor.push_str(&format!("[\"{}\"]", segment.0));
         }
         accessor
     }
@@ -86,24 +57,18 @@ mod nested_params {
         ///Constructs NestedEventParam from an EventParam
         fn from(event_input: EventParam, param_index: usize) -> Self {
             if let AbiType::Tuple(fields) = &event_input.kind {
-                // A tuple level renders as a record (and so its segments are
-                // `Field`s) iff at least one component is named. Otherwise it
-                // stays a positional tuple. `AbiTupleField` constructors
-                // normalise empty source names to `None`, so `Some(_)` always
-                // carries a non-empty identifier.
-                let is_record = fields.iter().any(|f| f.name.is_some());
+                // Every tuple level renders as a JS object / record, keyed by
+                // component name when available and by positional index otherwise.
+                // `AbiTupleField` constructors normalise empty source names to
+                // `None`, so `Some(_)` always carries a non-empty identifier.
                 Self::Tuple(
                     fields
                         .iter()
                         .enumerate()
                         .map(|(i, f)| {
-                            let segment = if is_record {
-                                AccessorSegment::Field(
-                                    f.name.clone().unwrap_or_else(|| i.to_string()),
-                                )
-                            } else {
-                                AccessorSegment::Index(i)
-                            };
+                            let segment = AccessorSegment::field(
+                                f.name.clone().unwrap_or_else(|| i.to_string()),
+                            );
                             let inner_event_input = EventParam {
                                 // Keep the same name as the event input name
                                 name: event_input.name.clone(),
@@ -185,8 +150,9 @@ mod nested_params {
         ///Gets the key of the param for the entity representing the event
         ///If this is not a tuple it will be the same as the "event_param_key"
         ///eg. MyEventEntity has a param called myTupleParam_funder_amount (or
-        ///myTupleParam_1_2 for anonymous tuples), where as the event_param_key
-        ///is myTupleParam with accessor_segments of [Field("funder"), Field("amount")].
+        ///myTupleParam_0_1 for anonymous tuples — unnamed components use their
+        ///positional index as the key), where as the event_param_key is
+        ///myTupleParam with accessor_segments of [Field("funder"), Field("amount")].
         pub fn get_entity_key(&self) -> CapitalizedOptions {
             let accessor_segments_string = self.accessor_segments.as_ref().map_or_else(
                 //If there is no accessor_segments this is an empty string
@@ -219,8 +185,9 @@ mod nested_params {
 
         ///Gets the event param "key" for the event type. Will be the same
         ///as the entity key if the type is not a tuple. In the case of a tuple
-        ///entity key will append `_funder_amount` (or `_0_1` for anonymous tuples)
-        ///to represent the nested param in a flat structure; the event param key
+        ///entity key will append `_funder_amount` (or `_0_1` for anonymous tuple
+        ///components, which use their positional index as the field key) to
+        ///represent the nested param in a flat structure; the event param key
         ///will not append this and will need to access that tuple at the given
         ///segment.
         pub fn get_event_param_key(&self) -> CapitalizedOptions {
@@ -377,8 +344,9 @@ impl Contract {
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
             // Add params. Tuple accessor segments are appended via the
-            // shared helper so named-struct fields render as `["funder"]`
-            // and anonymous-tuple slots render as `[0]`.
+            // shared helper so every struct / tuple field renders as
+            // `["key"]`, using the component name when named and the
+            // positional index string when anonymous.
             for param in &event.params {
                 let base = format!("event.params.{}", param.event_key.original);
                 let accessor = match &param.tuple_param_accessor_segments {
@@ -427,9 +395,9 @@ impl Contract {
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
             // Add params. Tuple accessor segments are appended via the
-            // shared helper, which knows to wrap any piped
-            // `->Utils.Tuple.get(...)->Belt.Option.getUnsafe` chain in parens
-            // before a following `["field"]` bracket access.
+            // shared helper so every struct / tuple field renders as
+            // `["key"]`, matching the JS object types produced by
+            // `abi_to_rescript_type` for all tuple params.
             for param in &event.params {
                 let base = format!("event.params.{}", param.event_key.uncapitalized);
                 let accessor = match &param.tuple_param_accessor_segments {
@@ -838,15 +806,16 @@ pub struct Param {
     res_name: String,
     js_name: String,
     ///Event param name + path if its a tuple ie. myTupleParam_funder (or
-    ///myTupleParam_0_1 for anonymous tuples) or just myRegularParam.
+    ///myTupleParam_0_1 for anonymous tuple components — unnamed components use
+    ///their positional index as the key) or just myRegularParam.
     entity_key: CapitalizedOptions,
     ///Just the event param name accessible on the event type
     event_key: CapitalizedOptions,
     ///List of nested accessors so for a nested struct Some([Field("funder")])
     ///this can be used combined with the event key ie.
-    ///event.params.myTupleParam["funder"], while anonymous tuples emit
-    ///positional segments like Some([Index(0), Index(1)]) →
-    ///event.params.myTupleParam[0][1].
+    ///event.params.myTupleParam["funder"]. Anonymous tuple components fall
+    ///back to their positional index as the field key, producing
+    ///Some([Field("0"), Field("1")]) → event.params.myTupleParam["0"]["1"].
     tuple_param_accessor_segments: Option<Vec<AccessorSegment>>,
     graphql_type: FieldType,
     is_eth_address: bool,
@@ -1068,12 +1037,8 @@ mod test {
         }
     }
 
-    fn idx(i: usize) -> AccessorSegment {
-        AccessorSegment::Index(i)
-    }
-
     fn field(name: &str) -> AccessorSegment {
-        AccessorSegment::Field(name.to_string())
+        AccessorSegment::field(name)
     }
 
     #[test]
@@ -1093,8 +1058,14 @@ mod test {
 
         let expected_flat_inputs = vec![
             FlattenedEventParam::new("user", AbiType::Address, false, vec![], 0),
-            FlattenedEventParam::new("myTupleParam", AbiType::Uint(256), false, vec![idx(0)], 1),
-            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![idx(1)], 1),
+            FlattenedEventParam::new(
+                "myTupleParam",
+                AbiType::Uint(256),
+                false,
+                vec![field("0")],
+                1,
+            ),
+            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![field("1")], 1),
         ];
 
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
@@ -1147,17 +1118,17 @@ mod test {
                 "myTupleParam",
                 AbiType::Uint(8),
                 false,
-                vec![idx(0), idx(0)],
+                vec![field("0"), field("0")],
                 1,
             ),
             FlattenedEventParam::new(
                 "myTupleParam",
                 AbiType::Uint(8),
                 false,
-                vec![idx(0), idx(1)],
+                vec![field("0"), field("1")],
                 1,
             ),
-            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![idx(1)], 1),
+            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![field("1")], 1),
             FlattenedEventParam::new("id", AbiType::String, false, vec![], 2),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
@@ -1293,7 +1264,9 @@ mod test {
 
     #[test]
     fn build_accessor_handles_all_segment_shapes() {
-        // Pure named struct path: only `["field"]` accesses, no parens.
+        // Every tuple level is a JS object at runtime (named structs and
+        // anonymous tuples alike), so the accessor is a plain `["key"]`
+        // bracket chain with no parenthesisation needed in either language.
         assert_eq!(
             build_rescript_accessor("event.params.foo", &[field("funder"), field("amount")]),
             "event.params.foo[\"funder\"][\"amount\"]"
@@ -1303,46 +1276,21 @@ mod test {
             "event.params.foo[\"funder\"][\"amount\"]"
         );
 
-        // Pure anonymous tuple path: only piped chain, no parens needed.
+        // Anonymous tuple components use their positional index as the
+        // field key, stringified.
         assert_eq!(
-            build_rescript_accessor("event.params.foo", &[idx(0), idx(1)]),
-            "event.params.foo->Utils.Tuple.get(0)->Belt.Option.getUnsafe->Utils.Tuple.get(1)->Belt.Option.getUnsafe"
+            build_rescript_accessor("event.params.foo", &[field("0"), field("1")]),
+            "event.params.foo[\"0\"][\"1\"]"
         );
         assert_eq!(
-            build_typescript_accessor("event.params.foo", &[idx(0), idx(1)]),
-            "event.params.foo[0][1]"
-        );
-
-        // Mixed Index → Field: piped chain must be parenthesised before
-        // the bracket access, otherwise ReScript parses it as
-        // `value->(Belt.Option.getUnsafe["funder"])` and tries to index
-        // into the function itself. Regression test for the CodeRabbit
-        // review in PR #1096.
-        assert_eq!(
-            build_rescript_accessor("event.params.foo", &[idx(0), field("funder")]),
-            "(event.params.foo->Utils.Tuple.get(0)->Belt.Option.getUnsafe)[\"funder\"]"
-        );
-        // TS doesn't need parens — `[]` works for arrays and objects alike.
-        assert_eq!(
-            build_typescript_accessor("event.params.foo", &[idx(0), field("funder")]),
-            "event.params.foo[0][\"funder\"]"
+            build_typescript_accessor("event.params.foo", &[field("0"), field("1")]),
+            "event.params.foo[\"0\"][\"1\"]"
         );
 
-        // Mixed Field → Index: bracket-then-pipe is fine without parens
-        // because `[]` binds tighter than `->`.
+        // Mixed named/anonymous tuple access is uniform too.
         assert_eq!(
-            build_rescript_accessor("event.params.foo", &[field("funder"), idx(0)]),
-            "event.params.foo[\"funder\"]->Utils.Tuple.get(0)->Belt.Option.getUnsafe"
-        );
-
-        // Index → Field → Index → Field (the awkward case): the second
-        // bracket access must wrap the parenthesised expression yet again.
-        assert_eq!(
-            build_rescript_accessor(
-                "event.params.foo",
-                &[idx(0), field("funder"), idx(1), field("amount")]
-            ),
-            "((event.params.foo->Utils.Tuple.get(0)->Belt.Option.getUnsafe)[\"funder\"]->Utils.Tuple.get(1)->Belt.Option.getUnsafe)[\"amount\"]"
+            build_rescript_accessor("event.params.foo", &[field("0"), field("funder")]),
+            "event.params.foo[\"0\"][\"funder\"]"
         );
     }
 
@@ -1396,6 +1344,50 @@ mod test {
         let template = get_test_template_helper("fuel-config.yaml", &Language::ReScript);
         let content = template.imported_contracts[0]
             .generate_rescript_test_content(true, template.first_chain_id);
+        insta::assert_snapshot!(content);
+    }
+
+    // End-to-end contract-import snapshots driven by a real Sablier V2
+    // LockupTranched ABI. Exercises a named struct param (`amounts`), an array
+    // of structs (`tranches`), a nested named struct (`timestamps`), and indexed
+    // topics that are not tuples. All tuple fields should be accessed via
+    // `["key"]` — zero appearances of `Utils.Tuple.get`.
+
+    #[test]
+    fn typescript_handler_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0].generate_typescript_handler_content(false);
+        assert!(
+            !content.contains("Utils.Tuple"),
+            "Generated TS handler must not reference Utils.Tuple"
+        );
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_handler_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0].generate_rescript_handler_content(false);
+        assert!(
+            !content.contains("Utils.Tuple"),
+            "Generated ReScript handler must not reference Utils.Tuple"
+        );
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn typescript_test_file_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0]
+            .generate_typescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_test_file_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0]
+            .generate_rescript_test_content(false, template.first_chain_id);
         insta::assert_snapshot!(content);
     }
 

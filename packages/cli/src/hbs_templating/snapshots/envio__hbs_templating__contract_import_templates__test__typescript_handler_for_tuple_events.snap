@@ -1,0 +1,38 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+/*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
+ */
+import { indexer } from "generated";
+import type {
+  SablierLockupTranched_CancelLockupStream,
+  SablierLockupTranched_WithdrawFromLockupStream,
+} from "generated";
+
+indexer.onEvent({ contract: "SablierLockupTranched", event: "CancelLockupStream" }, async ({ event, context }) => {
+  const entity: SablierLockupTranched_CancelLockupStream = {
+    id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
+    streamId: event.params.streamId,
+    sender: event.params.sender,
+    recipient: event.params.recipient,
+    asset: event.params.asset,
+    senderAmount: event.params.senderAmount,
+    recipientAmount: event.params.recipientAmount,
+  };
+
+  context.SablierLockupTranched_CancelLockupStream.set(entity);
+});
+
+indexer.onEvent({ contract: "SablierLockupTranched", event: "WithdrawFromLockupStream" }, async ({ event, context }) => {
+  const entity: SablierLockupTranched_WithdrawFromLockupStream = {
+    id: `${event.chainId}_${event.block.number}_${event.logIndex}`,
+    streamId: event.params.streamId,
+    to: event.params.to,
+    asset: event.params.asset,
+    amount: event.params.amount,
+  };
+
+  context.SablierLockupTranched_WithdrawFromLockupStream.set(entity);
+});

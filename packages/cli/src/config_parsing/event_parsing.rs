@@ -76,16 +76,18 @@ impl EvmEventParam<'_> {
                 DynSolType::String => value_encoder("TopicFilter.fromString"),
                 DynSolType::Tuple(params) => {
                     //TODO: test for nested tuples
+                    // Runtime tuple values flow in as JS objects keyed by
+                    // positional index strings (see `componentsToRemapper`
+                    // in `EventConfigBuilder.res`), so encoders look up
+                    // fields via `tuple["0"]` rather than a positional
+                    // array accessor.
                     let tuple_arg = "tuple";
                     let params_applied = params
                         .iter()
                         .enumerate()
                         .map(|(i, p)| {
                             let (param_encoder, _) = rec(p, IsNestedType(true));
-                            format!(
-                                "{tuple_arg}->Utils.Tuple.get({i})->Belt.Option.\
-                                 getUnsafe->{param_encoder}"
-                            )
+                            format!("{tuple_arg}[\"{i}\"]->{param_encoder}")
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
@@ -121,10 +123,13 @@ pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
     abi_type_to_rescript(param.abi_type)
 }
 
-/// Same as [`abi_to_rescript_type`] but always renders tuples as positional
-/// tuples, discarding component names. Used for contexts like the ReScript
-/// `eventFilter` type where inline records inside generic type arguments
-/// (e.g. `SingleOrMultiple.t<{...}>`) are syntactically disallowed.
+/// Same as [`abi_to_rescript_type`] but discards component names, using the
+/// positional index (`"0"`, `"1"`, …) as the JS object key instead. Used for
+/// contexts like the ReScript `eventFilter` type where component names from
+/// the ABI may clash with other identifiers or where callers want a stable
+/// shape regardless of ABI naming. The rendered type is still a JS object
+/// (`{"0": ..., "1": ...}`) so it remains inlinable inside generics and
+/// optional fields without needing a lifted alias.
 pub fn abi_to_rescript_type_positional(param: &EvmEventParam) -> TypeIdent {
     abi_type_to_rescript_positional(param.abi_type)
 }
@@ -145,10 +150,13 @@ fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
         AbiType::FixedArray(inner, _) => {
             TypeIdent::Array(Box::new(abi_type_to_rescript_positional(inner)))
         }
-        AbiType::Tuple(fields) => TypeIdent::Tuple(
+        AbiType::Tuple(fields) => TypeIdent::Record(
             fields
                 .iter()
-                .map(|f| abi_type_to_rescript_positional(&f.kind))
+                .enumerate()
+                .map(|(i, f)| {
+                    RecordField::new(i.to_string(), abi_type_to_rescript_positional(&f.kind))
+                })
                 .collect(),
         ),
     }
@@ -169,32 +177,24 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
         AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
         AbiType::FixedArray(inner, _) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
         AbiType::Tuple(fields) => {
-            // Any named component promotes the whole tuple to an inline record,
-            // so handlers can do `event.params.funder` instead of `commonParams[0]`.
-            // Unnamed components in a mixed tuple fall back to their positional
-            // index as the JS object key (e.g. `commonParams["1"]`). Fully anonymous
-            // tuples (e.g. from bare signature strings) stay as positional tuples.
+            // All tuples render as inline records so handlers can access fields
+            // by key (`event.params.commonParams["funder"]`) regardless of whether
+            // the ABI names them. Unnamed components fall back to their positional
+            // index as the JS object key (e.g. `commonParams["0"]`). At runtime the
+            // raw positional decoder output is remapped into an object via
+            // `componentsToRemapper` in `EventConfigBuilder.res`.
             // `AbiTupleField` constructors normalise empty source names to `None`,
             // so `Some(_)` always carries a non-empty identifier.
-            let has_named = fields.iter().any(|f| f.name.is_some());
-            if has_named {
-                let record_fields = fields
+            TypeIdent::Record(
+                fields
                     .iter()
                     .enumerate()
                     .map(|(i, f)| {
                         let name = f.name.clone().unwrap_or_else(|| i.to_string());
                         RecordField::new(name, abi_type_to_rescript(&f.kind))
                     })
-                    .collect();
-                TypeIdent::Record(record_fields)
-            } else {
-                TypeIdent::Tuple(
-                    fields
-                        .iter()
-                        .map(|f| abi_type_to_rescript(&f.kind))
-                        .collect(),
-                )
-            }
+                    .collect(),
+            )
         }
     }
 }
@@ -237,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn test_record_type_unnamed_tuple_stays_positional() {
+    fn test_record_type_unnamed_tuple_uses_positional_keys() {
         let tuple_type = AbiType::Tuple(vec![
             AbiTupleField {
                 name: None,
@@ -255,8 +255,17 @@ mod tests {
 
         let parsed = abi_to_rescript_type(&param);
 
-        assert_eq!(parsed.to_string(), "(string, bigint)".to_string());
-        assert_eq!(parsed.to_ts_type_string(), "[string, bigint]");
+        // Fully anonymous tuples also render as inline records — every component
+        // falls back to its positional index as the JS object key so handlers
+        // access fields uniformly via `["0"]` / `["1"]`.
+        assert_eq!(
+            parsed.to_string(),
+            "{\"0\": string, \"1\": bigint}".to_string()
+        );
+        assert_eq!(
+            parsed.to_ts_type_string(),
+            "{ readonly 0: string; readonly 1: bigint }"
+        );
     }
 
     #[test]
@@ -378,10 +387,11 @@ mod tests {
 
         assert_eq!(user_address_res_type.to_string(), "Address.t".to_string());
         assert_eq!(amount_uint256_res_type.to_string(), "bigint".to_string());
-        // Bare signature strings have no component names, so the tuple stays positional.
+        // Bare signature strings have no component names, so tuple components
+        // fall back to their positional index as the JS object key.
         assert_eq!(
             tuple_bool_string_res_type.to_string(),
-            "(bool, Address.t)".to_string()
+            "{\"0\": bool, \"1\": Address.t}".to_string()
         );
         assert_eq!(bytes_arr_res_type.to_string(), "array<string>".to_string());
 
@@ -395,7 +405,7 @@ mod tests {
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),
-            "(false, Envio.TestHelpers.Addresses.defaultAddress)".to_string()
+            "{\"0\": false, \"1\": Envio.TestHelpers.Addresses.defaultAddress}".to_string()
         );
         assert_eq!(
             bytes_arr_res_type.get_default_value_rescript(),

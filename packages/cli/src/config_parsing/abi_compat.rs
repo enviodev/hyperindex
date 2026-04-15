@@ -345,6 +345,103 @@ mod tests {
     }
 
     #[test]
+    fn sablier_real_abi_shape() {
+        // End-to-end check that the real Sablier V2 LockupTranched ABI parses
+        // into the expected `AbiType::Tuple` tree with component names preserved
+        // (including the `tuple[]` array-of-struct for `tranches`). Guards
+        // against regressions in the alloy ABI integration and the `tuple[]`
+        // branch of `AbiType::from_alloy_param`.
+        let abi_json = include_str!("../../test/abis/sablier-lockup-tranched.json");
+        let parsed: serde_json::Value = serde_json::from_str(abi_json).unwrap();
+        let abi_array = parsed.get("abi").unwrap().clone();
+        let abi: alloy_json_abi::JsonAbi = serde_json::from_value(abi_array).unwrap();
+        let alloy_event = abi
+            .events()
+            .find(|e| e.name == "CreateLockupTranchedStream")
+            .expect("CreateLockupTranchedStream event");
+        let event = Event::try_from_alloy(alloy_event).unwrap();
+
+        let param_names: Vec<&str> = event.inputs.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            param_names,
+            vec![
+                "streamId",
+                "funder",
+                "sender",
+                "recipient",
+                "amounts",
+                "asset",
+                "cancelable",
+                "transferable",
+                "tranches",
+                "timestamps",
+                "broker"
+            ]
+        );
+
+        // `amounts` is a named struct `(uint128 deposit, uint128 brokerFee)`.
+        let amounts = &event.inputs[4];
+        assert_eq!(amounts.name, "amounts");
+        match &amounts.kind {
+            AbiType::Tuple(fields) => {
+                assert_eq!(
+                    fields
+                        .iter()
+                        .map(|f| (f.name.as_deref(), &f.kind))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        (Some("deposit"), &AbiType::Uint(128)),
+                        (Some("brokerFee"), &AbiType::Uint(128)),
+                    ]
+                );
+            }
+            _ => panic!("expected tuple for amounts"),
+        }
+
+        // `tranches` is `tuple[]` — `Array(Box<Tuple>)` with component names
+        // preserved on the inner tuple.
+        let tranches = &event.inputs[8];
+        assert_eq!(tranches.name, "tranches");
+        match &tranches.kind {
+            AbiType::Array(inner) => match inner.as_ref() {
+                AbiType::Tuple(fields) => {
+                    assert_eq!(
+                        fields
+                            .iter()
+                            .map(|f| (f.name.as_deref(), &f.kind))
+                            .collect::<Vec<_>>(),
+                        vec![
+                            (Some("amount"), &AbiType::Uint(128)),
+                            (Some("timestamp"), &AbiType::Uint(40)),
+                        ]
+                    );
+                }
+                _ => panic!("expected array of tuple"),
+            },
+            _ => panic!("expected array for tranches"),
+        }
+
+        // `timestamps` is a named struct `(uint40 start, uint40 end)`.
+        let timestamps = &event.inputs[9];
+        assert_eq!(timestamps.name, "timestamps");
+        match &timestamps.kind {
+            AbiType::Tuple(fields) => {
+                assert_eq!(
+                    fields
+                        .iter()
+                        .map(|f| (f.name.as_deref(), &f.kind))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        (Some("start"), &AbiType::Uint(40)),
+                        (Some("end"), &AbiType::Uint(40)),
+                    ]
+                );
+            }
+            _ => panic!("expected tuple for timestamps"),
+        }
+    }
+
+    #[test]
     fn test_parse_param_type() {
         let uint_type = parse_param_type("uint256").unwrap();
         assert!(matches!(uint_type, DynSolType::Uint(256)));

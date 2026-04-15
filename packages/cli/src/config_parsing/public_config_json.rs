@@ -207,9 +207,10 @@ struct EventParamComponent {
 }
 
 /// Walk an `AbiType` to produce the `components` tree that the runtime needs to
-/// rebuild named records. Emits components for any tuple with at least one named
-/// field (Solidity structs and mixed-name tuples); fully anonymous tuples stay
-/// positional and the runtime decodes them via the legacy `abiType` string.
+/// rebuild named records. Every tuple (Solidity struct, mixed-name, or fully
+/// anonymous) emits components so the runtime can remap positional decoder
+/// output into a keyed object — unnamed components use their positional index
+/// as the key (`"0"`, `"1"`, …).
 fn abi_type_to_components(
     ty: &crate::config_parsing::abi_compat::AbiType,
 ) -> Option<Vec<EventParamComponent>> {
@@ -217,7 +218,7 @@ fn abi_type_to_components(
     match ty {
         // `AbiTupleField` constructors normalise empty source names to `None`,
         // so `Some(_)` always carries a non-empty identifier.
-        AbiType::Tuple(fields) if fields.iter().any(|f| f.name.is_some()) => Some(
+        AbiType::Tuple(fields) => Some(
             fields
                 .iter()
                 .enumerate()

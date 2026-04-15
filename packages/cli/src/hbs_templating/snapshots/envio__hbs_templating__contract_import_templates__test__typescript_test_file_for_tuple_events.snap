@@ -1,0 +1,64 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+import { describe, it } from "vitest";
+import { createTestIndexer, type SablierLockupTranched_CancelLockupStream } from "generated";
+import { TestHelpers } from "envio";
+
+describe("SablierLockupTranched contract CancelLockupStream event tests", () => {
+  it("SablierLockupTranched_CancelLockupStream is created correctly", async (t) => {
+    const indexer = createTestIndexer();
+
+    // Creating mock for SablierLockupTranched contract CancelLockupStream event
+    const event = {
+      contract: "SablierLockupTranched" as const,
+      event: "CancelLockupStream" as const,
+      params: {
+        streamId: 0n,
+        sender: TestHelpers.Addresses.defaultAddress,
+        recipient: TestHelpers.Addresses.defaultAddress,
+        asset: TestHelpers.Addresses.defaultAddress,
+        senderAmount: 0n,
+        recipientAmount: 0n,
+      },
+    };
+
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [event],
+        },
+      },
+    });
+
+    // Getting the actual entity from the test indexer
+    let actualSablierLockupTranchedCancelLockupStream = await indexer.SablierLockupTranched_CancelLockupStream.getOrThrow("1_0_0");
+
+    // Creating the expected entity
+    const expectedSablierLockupTranchedCancelLockupStream: SablierLockupTranched_CancelLockupStream = {
+      id: "1_0_0",
+      streamId: event.params.streamId,
+      sender: event.params.sender,
+      recipient: event.params.recipient,
+      asset: event.params.asset,
+      senderAmount: event.params.senderAmount,
+      recipientAmount: event.params.recipientAmount,
+    };
+    // Asserting that the entity in the mock database is the same as the expected entity
+    t.expect(actualSablierLockupTranchedCancelLockupStream, "Actual SablierLockupTranchedCancelLockupStream should be the same as the expected SablierLockupTranchedCancelLockupStream").toEqual(expectedSablierLockupTranchedCancelLockupStream);
+  });
+});
+
+describe("Indexer smoke test", () => {
+  it("processes the first block with events on chain 1", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({ chains: { 1: {} } });
+
+    t.expect(result.changes.length, "Should have at least one change").toBeGreaterThan(0);
+    const firstChange = result.changes[0]!;
+    t.expect(firstChange.chainId).toBe(1);
+    t.expect(firstChange.eventsProcessed).toBeGreaterThan(0);
+  }, 60_000);
+});
