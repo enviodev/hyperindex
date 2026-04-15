@@ -244,14 +244,14 @@ type evmTransactionInput = {
   type_?: int,
   root?: string,
   status?: int,
-  accessList?: Js.Json.t,
+  accessList?: JSON.t,
   // L2 specific fields (Optimism, Arbitrum, etc.)
   l1Fee?: bigint,
   l1GasPrice?: bigint,
   l1GasUsed?: bigint,
   l1FeeScalar?: float,
   gasUsedForL1?: bigint,
-  authorizationList?: Js.Json.t,
+  authorizationList?: JSON.t,
 }
 
 @genType
@@ -378,7 +378,11 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
-type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
+// Per-event, per-invocation arguments passed to a `where` callback. The
+// concrete `chain` shape (which contract key it exposes) is generated per
+// event in user-project codegen — here it's an open record so codegen'd
+// types subtype-coerce into it cleanly.
+type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
@@ -548,7 +552,7 @@ type effect = {
   rateLimit: option<rateLimitState>,
 }
 let cacheTablePrefix = "envio_effect_"
-let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<Js.Json.t> => S.t<effectOutput>)
+let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
 let effectCacheItemRowsSchema = S.array(
   S.schema(s => {id: s.matches(S.string), output: s.matches(cacheOutputSchema)}),
 )

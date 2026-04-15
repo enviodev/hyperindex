@@ -2,7 +2,7 @@
 @get external getTimestamp: Internal.eventBlock => int = "timestamp"
 @get external getId: Internal.eventBlock => string = "hash"
 
-let cleanUpRawEventFieldsInPlace: Js.Json.t => unit = %raw(`fields => {
+let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
     delete fields.number
     delete fields.timestamp
@@ -81,4 +81,11 @@ let ecosystem: Ecosystem.t = {
   getTimestamp,
   getId,
   cleanUpRawEventFieldsInPlace,
+  onBlockMethodName: "onBlock",
+  // EVM filter shape: `{block: {number: {_gte?, _lte?, _every?}}}`.
+  // The inner range chunk is returned as raw `S.unknown` and parsed a
+  // second time in `Main.res` by the shared `blockRangeSchema`.
+  onBlockFilterSchema: S.object(s =>
+    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
+  ),
 }

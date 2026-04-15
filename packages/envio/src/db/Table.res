@@ -1,5 +1,3 @@
-open Belt
-
 type primitive
 type derived
 
@@ -173,7 +171,7 @@ let mkTable = (tableName, ~compositeIndices=[], ~fields) => {
 }
 
 let getPrimaryKeyFieldNames = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field({isPrimaryKey: true, fieldName}) => Some(fieldName)
     | _ => None
@@ -181,7 +179,7 @@ let getPrimaryKeyFieldNames = table =>
   )
 
 let getFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) => Some(field)
     | DerivedFrom(_) => None
@@ -193,7 +191,7 @@ let getFieldNames = table => {
 }
 
 let getNonDefaultFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.defaultValue->Option.isNone => Some(field)
     | _ => None
@@ -201,7 +199,7 @@ let getNonDefaultFields = table =>
   )
 
 let getLinkedEntityFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | Field({linkedEntity: Some(linkedEntityName)} as field) => Some((field, linkedEntityName))
     | Field({linkedEntity: None})
@@ -211,7 +209,7 @@ let getLinkedEntityFields = table =>
   )
 
 let getDerivedFromFields = table =>
-  table.fields->Array.keepMap(field =>
+  table.fields->Array.filterMap(field =>
     switch field {
     | DerivedFrom(field) => Some(field)
     | Field(_) => None
@@ -223,10 +221,12 @@ let getNonDefaultFieldNames = table => {
 }
 
 let getFieldByName = (table, fieldName) =>
-  table.fields->Js.Array2.find(field => field->getUserDefinedFieldName === fieldName)
+  table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
+
+// TODO: Test whether it should be passed via args and match the column type
 
 let getFieldByDbName = (table, dbFieldName) =>
-  table.fields->Js.Array2.find(field =>
+  table.fields->Array.find(field =>
     switch field {
     | Field(f) => f->getDbFieldName
     | DerivedFrom({fieldName}) => fieldName
@@ -244,7 +244,7 @@ let getUnfilteredCompositeIndicesUnsafe = (table): array<array<compositeIndexFie
     compositeIndex->Array.map(indexField => {
       let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
       | Some(field) => field->getFieldName
-      | None => raise(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
+      | None => throw(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
       }
       {fieldName: dbFieldName, direction: indexField.direction}
     })
@@ -265,10 +265,10 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
   let arrayFieldTypes = []
   let hasArrayField = ref(false)
 
-  let dbSchema: S.t<Js.Dict.t<unknown>> = S.schema(s =>
+  let dbSchema: S.t<dict<unknown>> = S.schema(s =>
     switch schema->S.classify {
     | Object({items}) =>
-      let dict = Js.Dict.empty()
+      let dict = Dict.make()
       items->Belt.Array.forEach(({location, inlinedLocation, schema}) => {
         let rec coerceSchema = schema =>
           switch schema->S.classify {
@@ -295,22 +295,22 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
 
         let field = switch table->getFieldByDbName(location) {
         | Some(field) => field
-        | None => raise(NonExistingTableField(location))
+        | None => throw(NonExistingTableField(location))
         }
 
         quotedFieldNames
-        ->Js.Array2.push(inlinedLocation)
+        ->Array.push(inlinedLocation)
         ->ignore
         switch field {
         | Field({isPrimaryKey: false}) =>
           quotedNonPrimaryFieldNames
-          ->Js.Array2.push(inlinedLocation)
+          ->Array.push(inlinedLocation)
           ->ignore
         | _ => ()
         }
 
         arrayFieldTypes
-        ->Js.Array2.push(
+        ->Array.push(
           switch field {
           | Field(f) =>
             let pgFieldType = getPgFieldType(
@@ -318,7 +318,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               ~pgSchema,
               ~isArray=true,
               ~isNullable=f.isNullable,
-              ~isNumericArrayAsText=false, // TODO: Test whether it should be passed via args and match the column type
+              ~isNumericArrayAsText=false,
             )
             switch f.fieldType {
             | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
@@ -329,10 +329,11 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
           },
         )
         ->ignore
-        dict->Js.Dict.set(location, s.matches(schema->coerceSchema))
+        dict->Dict.set(location, s.matches(schema->coerceSchema))
       })
       dict
-    | _ => Js.Exn.raiseError("Failed creating db schema. Expected an object schema for table")
+    | _ =>
+      JsError.throwWithMessage("Failed creating db schema. Expected an object schema for table")
     }
   )
 
@@ -350,7 +351,7 @@ Gets all single indicies
 And maps the fields defined to their actual db name (some have _id suffix)
 */
 let getSingleIndices = (table): array<string> => {
-  let indexFields = table.fields->Array.keepMap(field =>
+  let indexFields = table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.isIndex => Some(field->getDbFieldName)
     | _ => None
@@ -361,17 +362,17 @@ let getSingleIndices = (table): array<string> => {
   ->getUnfilteredCompositeIndicesUnsafe
   //get all composite indices with only 1 field defined
   //this is still a single index
-  ->Array.keepMap(cidx =>
+  ->Array.filterMap(cidx =>
     switch cidx {
     | [{fieldName}] => Some([fieldName])
     | _ => None
     }
   )
   ->Array.concat([indexFields])
-  ->Array.concatMany
-  ->Set.String.fromArray
-  ->Set.String.toArray
-  ->Js.Array2.sortInPlace
+  ->Array.flat
+  ->Set.fromArray
+  ->Set.toArray
+  ->Array.toSorted(String.compare)
 }
 
 /*
@@ -381,5 +382,5 @@ And maps the fields defined to their actual db name (some have _id suffix)
 let getCompositeIndices = (table): array<array<compositeIndexField>> => {
   table
   ->getUnfilteredCompositeIndicesUnsafe
-  ->Array.keep(ind => ind->Array.length > 1)
+  ->Array.filter(ind => ind->Array.length > 1)
 }

@@ -11,11 +11,7 @@
   },
   "suffix": ".res.mjs",
   "dependencies": ["rescript-schema", "envio"],
-  "compiler-flags": ["-open Belt"],
   "jsx": {
     "version": 4
-  },
-  "warnings": {
-    "number": "-3-44"
   }
 }

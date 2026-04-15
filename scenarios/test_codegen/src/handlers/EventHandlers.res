@@ -29,18 +29,18 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(NewGravatar)}, async ({event, c
   let contractName: string = event.contractName
   let eventName: string = event.eventName
   if contractName !== "Gravatar" || eventName !== "NewGravatar" {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       `Expected contractName="Gravatar" eventName="NewGravatar", got contractName="${contractName}" eventName="${eventName}"`,
     )
   }
 
   let gravatarSize: Indexer.Enums.GravatarSize.t = SMALL
   let gravatarObject: Indexer.Entities.Gravatar.t = {
-    id: event.params.id->Utils.BigInt.toString,
+    id: event.params.id->BigInt.toString,
     owner_id: event.params.owner->Address.toString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
-    updatesCount: Utils.BigInt.fromInt(1),
+    updatesCount: BigInt.fromInt(1),
     size: gravatarSize,
   }
 
@@ -48,7 +48,7 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(NewGravatar)}, async ({event, c
 })
 
 Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({event, context}) => {
-  let maybeGravatar = await context.\"Gravatar".get(event.params.id->Utils.BigInt.toString)
+  let maybeGravatar = await context.\"Gravatar".get(event.params.id->BigInt.toString)
 
   /// Some examples of user logging
   context.log.debug(`We are processing the event, ${event.block.hash} (debug)`)
@@ -95,18 +95,18 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({even
     ~params={
       "type": "error",
       "data": {"blockHash": event.block.hash},
-      "err": ExampleException("some error processing the event")->Js.Exn.asJsExn,
+      "err": ExampleException("some error processing the event")->JsExn.fromException,
     },
   )
 
   let updatesCount =
-    maybeGravatar->Belt.Option.mapWithDefault(Utils.BigInt.fromInt(1), gravatar =>
-      gravatar.Indexer.Entities.Gravatar.updatesCount->Utils.BigInt.add(Utils.BigInt.fromInt(1))
+    maybeGravatar->Belt.Option.mapWithDefault(BigInt.fromInt(1), gravatar =>
+      gravatar.Indexer.Entities.Gravatar.updatesCount->BigInt.add(BigInt.fromInt(1))
     )
 
   let gravatarSize: Indexer.Enums.GravatarSize.t = MEDIUM
   let gravatar: Indexer.Entities.Gravatar.t = {
-    id: event.params.id->Utils.BigInt.toString,
+    id: event.params.id->BigInt.toString,
     owner_id: event.params.owner->Address.toString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
@@ -114,7 +114,7 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({even
     size: gravatarSize,
   }
 
-  if event.params.id->Utils.BigInt.toString == "1001" {
+  if event.params.id->BigInt.toString == "1001" {
     context.log.info("id matched, deleting gravatar 1004")
     context.\"Gravatar".deleteUnsafe("1004")
   }
@@ -125,30 +125,33 @@ Indexer.indexer.onEvent({event: Indexer.Gravatar(UpdatedGravatar)}, async ({even
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEventThatCopiesBigIntViaLinkedEntities)}, async ({context}) => {
-  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
-    switch await context.\"A".get(idOfGrandparent) {
-    | Some(a) =>
-      let optB = await context.\"B".get(a.b_id)
+Indexer.indexer.onEvent(
+  {event: Indexer.Gravatar(TestEventThatCopiesBigIntViaLinkedEntities)},
+  async ({context}) => {
+    let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Indexer.id) =>
+      switch await context.\"A".get(idOfGrandparent) {
+      | Some(a) =>
+        let optB = await context.\"B".get(a.b_id)
 
-      switch optB->Belt.Option.flatMap(b => b.c_id) {
-      | Some(c_id) =>
-        switch await context.\"C".get(c_id) {
-        | Some(cWithText) =>
-          context.\"A".set({
-            ...a,
-            optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
-          })
+        switch optB->Belt.Option.flatMap(b => b.c_id) {
+        | Some(c_id) =>
+          switch await context.\"C".get(c_id) {
+          | Some(cWithText) =>
+            context.\"A".set({
+              ...a,
+              optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
+            })
+          | None => ()
+          }
         | None => ()
         }
       | None => ()
       }
-    | None => ()
-    }
 
-  await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
-  await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
-})
+    await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
+    await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
+  },
+)
 
 // Generates modules for both TestEvent and TestEventWithCustomName
 Indexer.indexer.onEvent({event: Indexer.Gravatar(TestEventWithCustomName)}, async _ => {

@@ -18,8 +18,5 @@
     "module": "esmodule",
     "in-source": true
   },
-  "bs-dependencies": ["generated", "envio", "rescript-schema"],
-  "warnings": {
-    "number": "-3-44"
-  }
+  "bs-dependencies": ["generated", "envio", "rescript-schema"]
 }

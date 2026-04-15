@@ -23,8 +23,15 @@ let getContractRegister: (
   ~contractName: string,
   ~eventName: string,
 ) => option<Internal.contractRegister>
-let getOnEventWhere: (~contractName: string, ~eventName: string) => option<Js.Json.t>
+let getOnEventWhere: (~contractName: string, ~eventName: string) => option<JSON.t>
 let isWildcard: (~contractName: string, ~eventName: string) => bool
 let hasRegistration: (~contractName: string, ~eventName: string) => bool
 
-let onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
+let registerOnBlock: (
+  ~name: string,
+  ~chainId: int,
+  ~interval: int,
+  ~startBlock: option<int>,
+  ~endBlock: option<int>,
+  ~handler: Internal.onBlockArgs => promise<unit>,
+) => unit

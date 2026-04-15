@@ -26,9 +26,9 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
 let jsonRpcFetcher: Rest.ApiFetcher.t = async args => {
   let response = await Rest.ApiFetcher.default(args)
   let data: {..} = response.data->Obj.magic
-  switch data["error"]->Js.Nullable.toOption {
+  switch data["error"]->Nullable.toOption {
   | Some(error) =>
-    raise(
+    throw(
       JsonRpcError({
         code: error["code"],
         message: error["message"],
@@ -51,7 +51,7 @@ let makeHexSchema = fromStr =>
     serializer: value => value->Viem.toHex->(Utils.magic: EvmTypes.Hex.t => 'a),
   })
 
-let hexBigintSchema: S.schema<bigint> = makeHexSchema(Utils.BigInt.fromString)
+let hexBigintSchema: S.schema<bigint> = makeHexSchema(BigInt.fromString)
 external number: string => int = "Number"
 let hexIntSchema: S.schema<int> = makeHexSchema(v => v->number->Some)
 
@@ -59,7 +59,7 @@ external parseFloat: string => float = "Number"
 let decimalFloatSchema: S.schema<float> = S.string->S.transform(s => {
   parser: str => {
     let v = parseFloat(str)
-    if Js.Float.isNaN(v) {
+    if Float.isNaN(v) {
       s.fail("The string is not a valid decimal number")
     } else {
       v
@@ -89,7 +89,7 @@ module GetLogs = {
 
     //Remove all empty topics from the end of the array
     while isLastTopicEmpty() {
-      topics->Js.Array2.pop->ignore
+      topics->Array.pop->ignore
     }
 
     let toTopicFilter = topic => {
@@ -172,7 +172,7 @@ module GetBlockByNumber = {
     stateRoot: hex,
     timestamp: int,
     totalDifficulty: option<bigint>,
-    transactions: array<Js.Json.t>,
+    transactions: array<JSON.t>,
     transactionsRoot: hex,
     uncles: option<array<hex>>,
   }

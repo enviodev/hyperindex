@@ -1,5 +1,4 @@
 open Ink
-open Belt
 
 module ChainLine = {
   @react.component
@@ -100,13 +99,13 @@ module App = {
 
     // useEffect to refresh state every 500ms
     React.useEffect(() => {
-      let intervalId = Js.Global.setInterval(() => {
+      let intervalId = setInterval(() => {
         setState(_ => getState())
       }, 500)
 
       Some(
         () => {
-          Js.Global.clearInterval(intervalId)
+          clearInterval(intervalId)
         },
       )
     }, [getState])
@@ -120,7 +119,7 @@ module App = {
         let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
         let knownHeight =
           cf->ChainFetcher.hasProcessedToEndblock
-            ? cf.fetchState.endBlock->Option.getWithDefault(cf.fetchState.knownHeight)
+            ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
             : cf.fetchState.knownHeight
 
         let firstEventBlock = cf.fetchState.firstEventBlock
@@ -130,10 +129,10 @@ module App = {
           // it's possible there are no events in that block  range (ie firstEventBlock = None)
           // This ensures TUI still displays synced in this case
           Synced({
-            firstEventBlockNumber: firstEventBlock->Option.getWithDefault(0),
+            firstEventBlockNumber: firstEventBlock->Option.getOr(0),
             latestProcessedBlock: cf.committedProgressBlockNumber,
-            timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
-              Js.Date.now()->Js.Date.fromFloat,
+            timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Option.getOr(
+              Date.now()->Date.fromTime,
             ),
             numEventsProcessed,
           })
@@ -199,7 +198,7 @@ module App = {
       />
       <Newline />
       {chains
-      ->Array.mapWithIndex((i, chainData) => {
+      ->Array.mapWithIndex((chainData, i) => {
         <ChainLine
           key={i->Int.toString}
           chainId={chainData.chainId}

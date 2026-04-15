@@ -17,13 +17,20 @@ type onBlockArgs<'block, 'context> = {
   context: 'context,
 }
 
-@genType
+// Internal-only types for the `indexer.onBlock` (and SVM `onSlot`) plumbing.
+// User-facing TypeScript declarations live in `packages/envio/index.d.ts` —
+// keep these out of `genType` so the canonical TS shape isn't shadowed by a
+// generated `unknown`-typed stub in `Envio.gen.ts`.
+type onBlockWhereArgs<'chain> = {chain: 'chain}
+
+// `where` returns a value interpreted at runtime by `Main.res::onBlockHandlerFn`:
+//   - `false` → skip this chain
+//   - `true` / omit → register on this chain with no extra filter
+//   - a filter object whose shape is ecosystem-specific (see the `Evm*` /
+//     `Fuel*` / `Svm*` `OnBlock`/`OnSlot` types in `packages/envio/index.d.ts`)
 type onBlockOptions<'chain> = {
   name: string,
-  chain: 'chain,
-  interval?: int,
-  startBlock?: int,
-  endBlock?: int,
+  where?: onBlockWhereArgs<'chain> => unknown,
 }
 
 type whereOperator<'fieldType> = {
@@ -138,7 +145,7 @@ let createEffect = (
         callsPerDuration: calls,
         durationMs: per->durationToMs,
         availableCalls: calls,
-        windowStartTime: Js.Date.now(),
+        windowStartTime: Date.now(),
         queueCount: 0,
         nextWindowPromise: None,
       })
@@ -157,7 +164,7 @@ type fuelTransactionInput = {id?: string}
 type evmSimulateItem = {
   contract: string,
   event: string,
-  params?: Js.Json.t,
+  params?: JSON.t,
   srcAddress?: Address.t,
   logIndex?: int,
   block?: Internal.evmBlockInput,
@@ -167,7 +174,7 @@ type evmSimulateItem = {
 type fuelSimulateItem = {
   contract: string,
   event: string,
-  params: Js.Json.t,
+  params: JSON.t,
   srcAddress?: Address.t,
   logIndex?: int,
   block?: fuelBlockInput,

@@ -14,7 +14,6 @@ import {
   type EvmEvent,
   type NftCollection,
   type User,
-  onBlock,
 } from "generated";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
@@ -417,14 +416,14 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "Transfer",
     wildcard: true,
-    where: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
       return {
         params: [
-          { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId] },
-          { from: WHITELISTED_ADDRESSES[chainId], to: ZERO_ADDRESS },
+          { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chain.id] },
+          { from: WHITELISTED_ADDRESSES[chain.id], to: ZERO_ADDRESS },
         ],
       };
     },
@@ -436,8 +435,8 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "EmptyFiltersArray",
     wildcard: true,
-    where: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
       return { params: [] };
@@ -450,10 +449,11 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "WildcardWithAddress",
     wildcard: true,
-    where: ({ chainId, addresses }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
+      const addresses = chain.EventFiltersTest.addresses;
       return {
         params: [
           { from: ZERO_ADDRESS, to: addresses },
@@ -469,8 +469,8 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "WithExcessField",
     wildcard: true,
-    where: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
       return { params: { from: ZERO_ADDRESS, to: ZERO_ADDRESS } };
@@ -753,7 +753,13 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
     }
 
     case "onBlockInHandler": {
-      onBlock({ name: "test", chain: 1 }, async () => {});
+      // Late-registration guard: `indexer.onBlock` called from inside a
+      // handler must throw (registration phase has already ended).
+      // The matching test asserts `assert.rejects` against this branch.
+      indexer.onBlock(
+        { name: "onblock_late", where: ({ chain }) => chain.id === 1 },
+        async () => {},
+      );
       break;
     }
 
@@ -790,8 +796,8 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
   }
 });
 
-indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chainId }) => {
-  if (chainId !== 100 && chainId !== 137) {
+indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chain }) => {
+  if (chain.id !== 100 && chain.id !== 137) {
     return false;
   }
   return {
@@ -879,3 +885,49 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, co
     value: `${event.params.contactDetails.name}:${event.params.contactDetails.email}`,
   });
 });
+
+// Module-scope `indexer.onBlock` registrations exercising the four code paths
+// in `Main.res::onBlockFn` at indexer-init time:
+//   - boolean predicate (true/false per chain)
+//   - filter-object predicate (range + stride)
+//   - default (no `where`, registers on every chain)
+//   - skip-all (`where: () => false`, triggers the zero-match warn log)
+//
+// All non-skip-all predicates pin to chain 137 (configured in config.yaml
+// but not used by any existing simulate/process test) so the handlers
+// register without crashing the per-chain validation in `ChainFetcher.res`
+// and don't fire on existing test runs (which would pollute the
+// `result.changes` array). Handlers are no-ops — the value here is
+// validating the registration paths (`where` evaluated per chain, range
+// schema parsed) without throwing. End-to-end block-firing behavior is
+// covered by `lib_tests/FetchState_onBlock_test.res` at the layer below.
+indexer.onBlock(
+  { name: "test_onblock_bool", where: ({ chain }) => chain.id === 137 },
+  async () => {},
+);
+indexer.onBlock(
+  {
+    name: "test_onblock_filter",
+    where: ({ chain }) =>
+      chain.id === 137
+        ? { block: { number: { _gte: 100, _lte: 200, _every: 5 } } }
+        : false,
+  },
+  async () => {},
+);
+// `test_onblock_default` would register on every configured chain — but
+// that fires on every block of every test indexer run, polluting their
+// `result.changes` deep-equal assertions. Pin it to chain 137 too; the
+// `where: undefined` branch in `Main.res::onBlockFn` is covered separately
+// by the no-`where` `indexer.onSlot` registration in
+// `scenarios/svm_test/src/handlers/SlotHandler.ts` (svm_test has no
+// `result.changes` deep-equals so the default-fires-everywhere handler
+// is harmless there).
+indexer.onBlock(
+  { name: "test_onblock_default", where: ({ chain }) => chain.id === 137 },
+  async () => {},
+);
+indexer.onBlock(
+  { name: "test_onblock_skip_all", where: () => false },
+  async () => {},
+);

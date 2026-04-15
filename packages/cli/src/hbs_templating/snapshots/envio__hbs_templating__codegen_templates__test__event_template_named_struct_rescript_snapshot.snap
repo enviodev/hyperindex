@@ -30,13 +30,11 @@ type event = {
   block: block,
 }
 
-@genType
 type whereParams = {@as("streamId") streamId?: SingleOrMultiple.t<bigint>}
 
-@genType type whereCondition = {params?: SingleOrMultiple.t<whereParams>}
-
-@genType type onEventWhereArgs = {/** The unique identifier of the blockchain network where this event occurred. */ chainId: chainId, /** Addresses of the contracts indexing the event. */ addresses: array<Address.t>}
-
-@genType @unboxed type onEventWhereResult = Filter(whereCondition) | @as(false) SkipAll | @as(true) KeepAll
-
-@genType type onEventWhere = onEventWhereArgs => onEventWhereResult
+type onEventWhereCondition = {params?: SingleOrMultiple.t<whereParams>}
+type onEventWhereChainContract = {/** Addresses of the SablierLockup contract on this chain. */ addresses: array<Address.t>}
+type onEventWhereChain = {/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \"SablierLockup": onEventWhereChainContract}
+type onEventWhereArgs = {chain: onEventWhereChain}
+@unboxed type onEventWhereResult = Filter(onEventWhereCondition) | @as(false) SkipAll | @as(true) KeepAll
+type onEventWhere = onEventWhereArgs => onEventWhereResult

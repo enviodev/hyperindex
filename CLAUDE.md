@@ -25,7 +25,7 @@ Verify that tests pass by running a compiler `pnpm rescript-legacy` and tests `p
 ## ReScript
 
 - When using `Utils.magic` for type casting, always add explicit type annotations: `value->(Utils.magic: inputType => outputType)`
-- Always use ReScript 11 documentation. Never suggest ReasonML syntax.
+- Always use ReScript 12 documentation. Never suggest ReasonML syntax.
 - Never use `[| item |]` to create an array. Use `[ item ]` instead.
 - Must always use `=` for setting value to a field. Use `:=` only for ref values created using `ref` function.
 - Never use `%raw` to access object fields if you know the type.

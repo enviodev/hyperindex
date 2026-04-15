@@ -23,11 +23,11 @@ let unsafeCheckpointIdSchema =
   ->S.setName("CheckpointId")
   ->S.transform(s => {
     parser: string =>
-      switch Utils.BigInt.fromString(string) {
+      switch BigInt.fromString(string) {
       | None => s.fail("The string is not valid CheckpointId")
       | Some(v) => v
       },
-    serializer: bigint => bigint->Utils.BigInt.toString,
+    serializer: bigint => bigint->BigInt.toString,
   })
 
 let makeSetUpdateSchema: S.t<'entity> => S.t<Change.t<'entity>> = entitySchema => {
@@ -112,7 +112,7 @@ let pruneStaleEntityHistory = (
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
     makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [safeCheckpointId->Utils.BigInt.toString]->(Utils.magic: array<string> => unknown),
+    [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
 }
 
@@ -157,7 +157,7 @@ let rollback = (
         ~entityName,
         ~entityIndex,
       )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId->Utils.BigInt.toString]->(Utils.magic: array<string> => unknown),
+    [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
   ->Utils.Promise.ignoreValue
 }

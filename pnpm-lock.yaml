@@ -182,7 +182,54 @@ importers:
         specifier: ./generated
         version: link:generated
 
-  scenarios/fuel_test/generated:
+  scenarios/helpers:
+    dependencies:
+      '@rescript/react':
+        specifier: 0.14.1
+        version: 0.14.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@rescript/runtime':
+        specifier: 12.2.0
+        version: 12.2.0
+      envio:
+        specifier: file:../../packages/envio
+        version: link:../../packages/envio
+      rescript:
+        specifier: 12.2.0
+        version: 12.2.0
+      rescript-envsafe:
+        specifier: 5.0.0
+        version: 5.0.0(rescript-schema@9.5.1(rescript@12.2.0))(rescript@12.2.0)
+      rescript-schema:
+        specifier: 9.5.1
+        version: 9.5.1(rescript@12.2.0)
+
+  scenarios/svm_test:
+    dependencies:
+      envio:
+        specifier: file:../../packages/envio
+        version: link:../../packages/envio
+      rescript:
+        specifier: 12.2.0
+        version: 12.2.0
+      rescript-schema:
+        specifier: 9.5.1
+        version: 9.5.1(rescript@12.2.0)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.9
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.10.9)(jsdom@16.7.0)(tsx@4.21.0)
+    optionalDependencies:
+      generated:
+        specifier: ./generated
+        version: link:generated
+
+  scenarios/svm_test/generated:
     dependencies:
       '@rescript/runtime':
         specifier: 12.2.0
@@ -217,27 +264,6 @@ importers:
       viem:
         specifier: 2.46.2
         version: 2.46.2(typescript@5.9.3)
-
-  scenarios/helpers:
-    dependencies:
-      '@rescript/react':
-        specifier: 0.14.1
-        version: 0.14.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@rescript/runtime':
-        specifier: 12.2.0
-        version: 12.2.0
-      envio:
-        specifier: file:../../packages/envio
-        version: link:../../packages/envio
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
-      rescript-envsafe:
-        specifier: 5.0.0
-        version: 5.0.0(rescript-schema@9.5.1(rescript@12.2.0))(rescript@12.2.0)
-      rescript-schema:
-        specifier: 9.5.1
-        version: 9.5.1(rescript@12.2.0)
 
   scenarios/test_codegen:
     dependencies:

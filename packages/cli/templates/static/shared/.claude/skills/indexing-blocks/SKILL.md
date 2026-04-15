@@ -2,26 +2,45 @@
 name: indexing-blocks
 description: >-
   Use when processing every block (or every Nth block) for time-series data,
-  periodic snapshots, or block-level aggregations. onBlock API, interval
-  option, and block handler context.
+  periodic snapshots, or block-level aggregations. indexer.onBlock API, where
+  filter with block-number range and stride, and block handler context.
 ---
 
 # Block Handlers
 
-Process every block (or every Nth block) using `onBlock` from `generated`. No contract address or config.yaml entry needed.
+Process every block (or every Nth block) using `indexer.onBlock`. No contract
+address or `config.yaml` entry needed.
 
 ## Handler
 
-```ts
-import { onBlock } from "generated";
+Branch by `chain.id` with a `switch` so the type system flags any
+unconfigured chain via the `default: never` exhaustiveness check:
 
-onBlock(
-  { name: "BlockTracker", chain: 1, interval: 100 },
+```ts
+import { indexer } from "generated";
+
+indexer.onBlock(
+  {
+    name: "BlockTracker",
+    where: ({ chain }) => {
+      switch (chain.id) {
+        case 1:
+          return { block: { number: { _gte: 18000000, _every: 100 } } };
+        case 8453:
+          return { block: { number: { _every: 50 } } };
+        default: {
+          // Exhaustiveness check: TypeScript errors here if a new chain ID
+          // is added to config.yaml but not handled above.
+          const _exhaustive: never = chain.id;
+          return false;
+        }
+      }
+    },
+  },
   async ({ block, context }) => {
     context.BlockSnapshot.set({
       id: `${block.number}`,
       blockNumber: BigInt(block.number),
-      timestamp: BigInt(block.timestamp),
     });
   }
 );
@@ -32,18 +51,19 @@ onBlock(
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
 | `name` | `string` | yes | Handler name for logging |
-| `chain` | `number` | yes | Chain ID to process |
-| `interval` | `number` | no | Process every Nth block (default: 1) |
-| `startBlock` | `number` | no | Inclusive start block |
-| `endBlock` | `number` | no | Inclusive end block |
+| `where` | `({ chain }) => boolean \| filter` | no | Predicate evaluated once per configured chain at registration. Return `false` to skip a chain, `true` / omit to match every block, or `{block: {number: {_gte?, _lte?, _every?}}}` to restrict range and stride. `_every` aligns relative to `_gte`, preserving `(blockNumber - _gte) % _every === 0`. |
+
+## Other ecosystems
+
+- **Fuel**: same `indexer.onBlock` API; filter is keyed by `block.height` instead of `block.number`.
+- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}` (no `block` wrapper).
 
 ## Notes
 
-- `onBlock` self-registers — no config.yaml entry needed
+- `indexer.onBlock` self-registers — no `config.yaml` entry needed
 - No events or contract address required
-- EVM chains only
 - The handler context has the same entity API as event handlers
-- `block` object provides `number` and `timestamp` (more fields may be added)
+- If `where` returns `false` for every configured chain, a warning is logged at registration time
 
 ## Deep Documentation
 

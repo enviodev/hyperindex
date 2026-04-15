@@ -1,5 +1,3 @@
-open Belt
-
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -28,15 +26,14 @@ let loadById = (
       reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
     }
 
-    let entitiesMap = Js.Dict.empty()
+    let entitiesMap = Dict.make()
+
+    //Set the entity in the in memory store
     for idx in 0 to dbEntities->Array.length - 1 {
-      let entity = dbEntities->Js.Array2.unsafe_get(idx)
-      entitiesMap->Js.Dict.set(entity.id, entity)
+      let entity = dbEntities->Array.getUnsafe(idx)
+      entitiesMap->Dict.set(entity.id, entity)
     }
-    idsToLoad->Js.Array2.forEach(entityId => {
-      // Set the entity in the in memory store
-      // without overwriting existing values
-      // which might be newer than what we got from db
+    idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
         ~allowOverWriteEntity=false,
         ~key=entityId,
@@ -90,7 +87,7 @@ let callEffect = (
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
-    inMemTable.dict->Js.Dict.set(arg.cacheKey, output)
+    inMemTable.dict->Dict.set(arg.cacheKey, output)
     if arg.context.cache {
       inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
     }
@@ -149,7 +146,7 @@ let rec executeWithRateLimit = (
     }
 
   | Some(state) =>
-    let now = Js.Date.now()
+    let now = Date.now()
 
     // Check if we need to reset the window
     if now >= state.windowStartTime +. state.durationMs->Int.toFloat {
@@ -159,9 +156,9 @@ let rec executeWithRateLimit = (
     }
 
     // Split into immediate and queued
-    let immediateCount = Js.Math.min_int(state.availableCalls, effectArgs->Array.length)
-    let immediateArgs = effectArgs->Array.slice(~offset=0, ~len=immediateCount)
-    let queuedArgs = effectArgs->Array.sliceToEnd(immediateCount)
+    let immediateCount = Math.Int.min(state.availableCalls, effectArgs->Array.length)
+    let immediateArgs = effectArgs->Belt.Array.slice(~offset=0, ~len=immediateCount)
+    let queuedArgs = effectArgs->Belt.Array.sliceToEnd(immediateCount)
 
     // Update available calls
     state.availableCalls = state.availableCalls - immediateCount
@@ -249,7 +246,7 @@ let loadEffect = (
   let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
 
   let load = async (args, ~onError) => {
-    let idsToLoad = args->Js.Array2.map((arg: Internal.effectArgs) => arg.cacheKey)
+    let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
     let idsFromCache = Utils.Set.make()
 
     if (
@@ -279,11 +276,11 @@ let loadEffect = (
         []
       }
 
-      dbEntities->Js.Array2.forEach(dbEntity => {
+      dbEntities->Array.forEach(dbEntity => {
         try {
           let output = dbEntity.output->S.parseOrThrow(outputSchema)
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
-          inMemTable.dict->Js.Dict.set(dbEntity.id, output)
+          inMemTable.dict->Dict.set(dbEntity.id, output)
         } catch {
         | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
@@ -333,7 +330,7 @@ let loadEffect = (
     ~load,
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
-    ~getUnsafeInMemory=hash => inMemTable.dict->Js.Dict.unsafeGet(hash),
+    ~getUnsafeInMemory=hash => inMemTable.dict->Dict.getUnsafe(hash),
     ~hasInMemory=hash => inMemTable.dict->Utils.Dict.has(hash),
     ~input=effectArgs,
   )
@@ -364,7 +361,7 @@ let loadByField = (
 
     let size = ref(0)
 
-    let indiciesToLoad = fieldValues->Js.Array2.map((fieldValue): TableIndices.Index.t => {
+    let indiciesToLoad = fieldValues->Array.map((fieldValue): TableIndices.Index.t => {
       Single({
         fieldName,
         fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
@@ -372,57 +369,55 @@ let loadByField = (
       })
     })
 
-    let _ =
-      await indiciesToLoad
-      ->Js.Array2.map(async index => {
-        inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
-        try {
-          let entities = await (
-            persistence->Persistence.getInitializedStorageOrThrow
-          ).loadByFieldOrThrow(
-            ~operator=switch index {
-            | Single({operator: Gt}) => #">"
-            | Single({operator: Eq}) => #"="
-            | Single({operator: Lt}) => #"<"
-            },
-            ~table=entityConfig.table,
-            ~rowsSchema=entityConfig.rowsSchema,
-            ~fieldName=index->TableIndices.Index.getFieldName,
-            ~fieldValue=switch index {
-            | Single({fieldValue}) => fieldValue
-            },
-            ~fieldSchema=fieldValueSchema->(
-              Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>
-            ),
-          )
+    let _ = await indiciesToLoad
+    ->Array.map(async index => {
+      inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+      try {
+        let entities = await (
+          persistence->Persistence.getInitializedStorageOrThrow
+        ).loadByFieldOrThrow(
+          ~operator=switch index {
+          | Single({operator: Gt}) => #">"
+          | Single({operator: Eq}) => #"="
+          | Single({operator: Lt}) => #"<"
+          },
+          ~table=entityConfig.table,
+          ~rowsSchema=entityConfig.rowsSchema,
+          ~fieldName=index->TableIndices.Index.getFieldName,
+          ~fieldValue=switch index {
+          | Single({fieldValue}) => fieldValue
+          },
+          ~fieldSchema=fieldValueSchema->(
+            Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>
+          ),
+        )
 
-          entities->Array.forEach(entity => {
-            //Set the entity in the in memory store
-            inMemTable->InMemoryTable.Entity.initValue(
-              ~allowOverWriteEntity=false,
-              ~key=entity.id,
-              ~entity=Some(entity),
-            )
-          })
-
-          size := size.contents + entities->Array.length
-        } catch {
-        | Persistence.StorageError({message, reason}) =>
-          reason->ErrorHandling.mkLogAndRaise(
-            ~logger=Logging.createChildFrom(
-              ~logger=item->Logging.getItemLogger,
-              ~params={
-                "operator": operatorCallName,
-                "tableName": entityConfig.table.tableName,
-                "fieldName": fieldName,
-                "fieldValue": fieldValue,
-              },
-            ),
-            ~msg=message,
+        entities->Array.forEach(entity => {
+          inMemTable->InMemoryTable.Entity.initValue(
+            ~allowOverWriteEntity=false,
+            ~key=entity.id,
+            ~entity=Some(entity),
           )
-        }
-      })
-      ->Promise.all
+        })
+
+        size := size.contents + entities->Array.length
+      } catch {
+      | Persistence.StorageError({message, reason}) =>
+        reason->ErrorHandling.mkLogAndRaise(
+          ~logger=Logging.createChildFrom(
+            ~logger=item->Logging.getItemLogger,
+            ~params={
+              "operator": operatorCallName,
+              "tableName": entityConfig.table.tableName,
+              "fieldName": fieldName,
+              "fieldValue": fieldValue,
+            },
+          ),
+          ~msg=message,
+        )
+      }
+    })
+    ->Promise.all
 
     timerRef->Prometheus.StorageLoad.endOperation(
       ~operation=key,

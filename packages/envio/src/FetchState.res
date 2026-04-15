@@ -1,5 +1,3 @@
-open Belt
-
 type contractConfig = {filterByAddresses: bool}
 
 type blockNumberAndTimestamp = {
@@ -70,7 +68,9 @@ let getMinHistoryRange = (p: partition) => {
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
   for i in 0 to partitions->Array.length - 1 {
-    let p = partitions->Js.Array2.unsafe_get(i)
+    let p = partitions->Array.getUnsafe(i)
+
+    // Even if it's fetching, set dynamicContract field
     let a = p.prevQueryRange
     let b = p.prevPrevQueryRange
     if a > 0 && (min.contents == 0 || a < min.contents) {
@@ -101,9 +101,9 @@ module OptimizedPartitions = {
 
   @inline
   let getOrThrow = (optimizedPartitions: t, ~partitionId) => {
-    switch optimizedPartitions.entities->Js.Dict.get(partitionId) {
+    switch optimizedPartitions.entities->Dict.get(partitionId) {
     | Some(p) => p
-    | None => Js.Exn.raiseError(`Unexpected case: Couldn't find partition ${partitionId}`)
+    | None => JsError.throwWithMessage(`Unexpected case: Couldn't find partition ${partitionId}`)
     }
   }
 
@@ -121,8 +121,8 @@ module OptimizedPartitions = {
   ) => {
     let combinedAddresses =
       p1.addressesByContractName
-      ->Js.Dict.unsafeGet(contractName)
-      ->Js.Array2.concat(p2.addressesByContractName->Js.Dict.unsafeGet(contractName))
+      ->Dict.getUnsafe(contractName)
+      ->Array.concat(p2.addressesByContractName->Dict.getUnsafe(contractName))
 
     let p1Below = p1.latestFetchedBlock.blockNumber < potentialMergeBlock
     let p2Below = p2.latestFetchedBlock.blockNumber < potentialMergeBlock
@@ -133,15 +133,15 @@ module OptimizedPartitions = {
     let continuingBase = switch (p1Below, p2Below) {
     | (false, false) => p1
     | (false, true) =>
-      completed->Js.Array2.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
+      completed->Array.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
       p1
     | (true, false) =>
-      completed->Js.Array2.push({...p1, mergeBlock: Some(potentialMergeBlock)})->ignore
+      completed->Array.push({...p1, mergeBlock: Some(potentialMergeBlock)})->ignore
       p2
     | (true, true) =>
-      completed->Js.Array2.push({...p1, mergeBlock: Some(potentialMergeBlock)})->ignore
-      completed->Js.Array2.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
-      let newId = nextPartitionIndexRef.contents->Js.Int.toString
+      completed->Array.push({...p1, mergeBlock: Some(potentialMergeBlock)})->ignore
+      completed->Array.push({...p2, mergeBlock: Some(potentialMergeBlock)})->ignore
+      let newId = nextPartitionIndexRef.contents->Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
       let minRange = getMinQueryRange([p1, p2])
       {
@@ -150,7 +150,7 @@ module OptimizedPartitions = {
         selection: p1.selection,
         latestFetchedBlock: {blockNumber: potentialMergeBlock, blockTimestamp: 0},
         mergeBlock: None,
-        addressesByContractName: Js.Dict.empty(), // set below
+        addressesByContractName: Dict.make(), // set below
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
@@ -159,18 +159,18 @@ module OptimizedPartitions = {
     }
 
     // Apply address split on the continuing partition
-    if combinedAddresses->Js.Array2.length > maxAddrInPartition {
-      let addressesFull = combinedAddresses->Js.Array2.slice(~start=0, ~end_=maxAddrInPartition)
-      let addressesRest = combinedAddresses->Js.Array2.sliceFrom(maxAddrInPartition)
-      let abcFull = Js.Dict.empty()
-      abcFull->Js.Dict.set(contractName, addressesFull)
-      let abcRest = Js.Dict.empty()
-      abcRest->Js.Dict.set(contractName, addressesRest)
-      completed->Js.Array2.push({...continuingBase, addressesByContractName: abcFull})->ignore
-      let restId = nextPartitionIndexRef.contents->Js.Int.toString
+    if combinedAddresses->Array.length > maxAddrInPartition {
+      let addressesFull = combinedAddresses->Array.slice(~start=0, ~end=maxAddrInPartition)
+      let addressesRest = combinedAddresses->Array.slice(~start=maxAddrInPartition)
+      let abcFull = Dict.make()
+      abcFull->Dict.set(contractName, addressesFull)
+      let abcRest = Dict.make()
+      abcRest->Dict.set(contractName, addressesRest)
+      completed->Array.push({...continuingBase, addressesByContractName: abcFull})->ignore
+      let restId = nextPartitionIndexRef.contents->Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
       completed
-      ->Js.Array2.push({
+      ->Array.push({
         ...continuingBase,
         id: restId,
         addressesByContractName: abcRest,
@@ -179,9 +179,9 @@ module OptimizedPartitions = {
       ->ignore
       completed
     } else {
-      let abc = Js.Dict.empty()
-      abc->Js.Dict.set(contractName, combinedAddresses)
-      completed->Js.Array2.push({...continuingBase, addressesByContractName: abc})->ignore
+      let abc = Dict.make()
+      abc->Dict.set(contractName, combinedAddresses)
+      completed->Array.push({...continuingBase, addressesByContractName: abc})->ignore
       completed
     }
   }
@@ -193,7 +193,8 @@ module OptimizedPartitions = {
   // quering the same block range multiple times
   let tooFarBlockRange = 20_000
 
-  let ascSortFn = (a, b) => a.latestFetchedBlock.blockNumber - b.latestFetchedBlock.blockNumber
+  let ascSortFn = (a, b) =>
+    Int.compare(a.latestFetchedBlock.blockNumber, b.latestFetchedBlock.blockNumber)
 
   /**
    * Optimizes partitions by finding opportunities to merge partitions that
@@ -209,11 +210,11 @@ module OptimizedPartitions = {
     ~dynamicContracts: Utils.Set.t<string>,
   ) => {
     let newPartitions = []
-    let mergingPartitions = Js.Dict.empty()
+    let mergingPartitions = Dict.make()
     let nextPartitionIndexRef = ref(nextPartitionIndex)
 
     for idx in 0 to partitions->Array.length - 1 {
-      let p = partitions->Js.Array2.unsafe_get(idx)
+      let p = partitions->Array.getUnsafe(idx)
       switch p {
       // Since it's not a dynamic contract partition,
       // there's no need for merge logic
@@ -225,10 +226,9 @@ module OptimizedPartitions = {
       // TODO: Although there might be cases with too far away mergeBlock,
       // which is worth merging
       {mergeBlock: Some(_)} =>
-        newPartitions->Js.Array2.push(p)->ignore
+        newPartitions->Array.push(p)->ignore
       | {dynamicContract: Some(contractName)} =>
-        let pAddressesCount =
-          p.addressesByContractName->Js.Dict.unsafeGet(contractName)->Js.Array2.length
+        let pAddressesCount = p.addressesByContractName->Dict.getUnsafe(contractName)->Array.length
         // Compute merge block: last pending query's toBlock, or lfb if idle
         let potentialMergeBlock = switch p.mutPendingQueries->Utils.Array.last {
         | Some({isChunk: true, toBlock: Some(toBlock)}) => Some(toBlock)
@@ -236,10 +236,10 @@ module OptimizedPartitions = {
         | None => Some(p.latestFetchedBlock.blockNumber)
         }
         switch potentialMergeBlock {
-        | None => newPartitions->Js.Array2.push(p)->ignore
+        | None => newPartitions->Array.push(p)->ignore
         | Some(potentialMergeBlock) =>
           if pAddressesCount >= maxAddrInPartition {
-            newPartitions->Js.Array2.push(p)->ignore
+            newPartitions->Array.push(p)->ignore
           } else {
             let partitionsByMergeBlock =
               mergingPartitions->Utils.Dict.getOrInsertEmptyDict(contractName)
@@ -256,7 +256,7 @@ module OptimizedPartitions = {
                 ~nextPartitionIndexRef,
               )
               for i in 0 to result->Array.length - 2 {
-                newPartitions->Js.Array2.push(result->Js.Array2.unsafe_get(i))->ignore
+                newPartitions->Array.push(result->Array.getUnsafe(i))->ignore
               }
               partitionsByMergeBlock->Utils.Dict.setByInt(
                 potentialMergeBlock,
@@ -269,36 +269,36 @@ module OptimizedPartitions = {
       }
     }
 
-    let merginDynamicContracts = mergingPartitions->Js.Dict.keys
+    let merginDynamicContracts = mergingPartitions->Dict.keysToArray
     for idx in 0 to merginDynamicContracts->Array.length - 1 {
-      let contractName = merginDynamicContracts->Js.Array2.unsafe_get(idx)
-      let partitionsByMergeBlock = mergingPartitions->Js.Dict.unsafeGet(contractName)
+      let contractName = merginDynamicContracts->Array.getUnsafe(idx)
+      let partitionsByMergeBlock = mergingPartitions->Dict.getUnsafe(contractName)
       // JS engine automatically sorts number keys in objects
-      let ascPartitionKeys = partitionsByMergeBlock->Js.Dict.keys
+      let ascPartitionKeys = partitionsByMergeBlock->Dict.keysToArray
 
       // But -1 is placed last...
-      if ascPartitionKeys->Js.Array2.unsafe_get(ascPartitionKeys->Array.length - 1) === "-1" {
+      if ascPartitionKeys->Array.getUnsafe(ascPartitionKeys->Array.length - 1) === "-1" {
         ascPartitionKeys
-        ->Js.Array2.unshift(ascPartitionKeys->Js.Array2.pop->Option.getUnsafe)
+        ->Array.unshift(ascPartitionKeys->Array.pop->Option.getUnsafe)
         ->ignore
       }
       let currentPRef = ref(
-        partitionsByMergeBlock->Js.Dict.unsafeGet(ascPartitionKeys->Utils.Array.firstUnsafe),
+        partitionsByMergeBlock->Dict.getUnsafe(ascPartitionKeys->Utils.Array.firstUnsafe),
       )
       let currentPMergeBlockRef = ref(
         ascPartitionKeys->Utils.Array.firstUnsafe->Int.fromString->Option.getUnsafe,
       )
       let nextJdx = ref(1)
       while nextJdx.contents < ascPartitionKeys->Array.length {
-        let nextKey = ascPartitionKeys->Js.Array2.unsafe_get(nextJdx.contents)
+        let nextKey = ascPartitionKeys->Array.getUnsafe(nextJdx.contents)
         let currentP = currentPRef.contents
-        let nextP = partitionsByMergeBlock->Js.Dict.unsafeGet(nextKey)
+        let nextP = partitionsByMergeBlock->Dict.getUnsafe(nextKey)
         let nextPMergeBlock = nextKey->Int.fromString->Option.getUnsafe
         let currentPMergeBlock = currentPMergeBlockRef.contents
 
         let isTooFar = currentPMergeBlock + tooFarBlockRange < nextPMergeBlock
         if isTooFar {
-          newPartitions->Js.Array2.push(currentP)->ignore
+          newPartitions->Array.push(currentP)->ignore
           currentPRef := nextP
           currentPMergeBlockRef := nextPMergeBlock
         } else {
@@ -311,7 +311,7 @@ module OptimizedPartitions = {
             ~nextPartitionIndexRef,
           )
           for i in 0 to result->Array.length - 2 {
-            newPartitions->Js.Array2.push(result->Js.Array2.unsafe_get(i))->ignore
+            newPartitions->Array.push(result->Array.getUnsafe(i))->ignore
           }
           currentPRef := result->Utils.Array.lastUnsafe
           currentPMergeBlockRef := nextPMergeBlock
@@ -320,19 +320,19 @@ module OptimizedPartitions = {
         nextJdx := nextJdx.contents + 1
       }
 
-      newPartitions->Js.Array2.push(currentPRef.contents)->ignore
+      newPartitions->Array.push(currentPRef.contents)->ignore
     }
 
     // Sort partitions by latestFetchedBlock ascending
-    let _ = newPartitions->Js.Array2.sortInPlaceWith(ascSortFn)
+    let _ = newPartitions->Array.sort(ascSortFn)
 
     let partitionsCount = newPartitions->Array.length
     let idsInAscOrder = Belt.Array.makeUninitializedUnsafe(partitionsCount)
-    let entities = Js.Dict.empty()
+    let entities = Dict.make()
     for idx in 0 to partitionsCount - 1 {
-      let p = newPartitions->Js.Array2.unsafe_get(idx)
-      idsInAscOrder->Js.Array2.unsafe_set(idx, p.id)
-      entities->Js.Dict.set(p.id, p)
+      let p = newPartitions->Array.getUnsafe(idx)
+      idsInAscOrder->Array.setUnsafe(idx, p.id)
+      entities->Dict.set(p.id, p)
     }
 
     {
@@ -361,7 +361,7 @@ module OptimizedPartitions = {
           pq.fetchedBlock !== None && pq.fromBlock <= latestFetchedBlock.contents.blockNumber + 1
         }
     ) {
-      let removedQuery = mutPendingQueries->Js.Array2.shift->Option.getUnsafe
+      let removedQuery = mutPendingQueries->Array.shift->Option.getUnsafe
       latestFetchedBlock := removedQuery.fetchedBlock->Option.getUnsafe
     }
 
@@ -372,7 +372,7 @@ module OptimizedPartitions = {
     let idxRef = ref(0)
     let pendingQueryRef = ref(None)
     while idxRef.contents < p.mutPendingQueries->Array.length && pendingQueryRef.contents === None {
-      let pq = p.mutPendingQueries->Js.Array2.unsafe_get(idxRef.contents)
+      let pq = p.mutPendingQueries->Array.getUnsafe(idxRef.contents)
       if pq.fromBlock === fromBlock {
         pendingQueryRef := Some(pq)
       }
@@ -381,7 +381,7 @@ module OptimizedPartitions = {
     switch pendingQueryRef.contents {
     | Some(pq) => pq
     | None =>
-      Js.Exn.raiseError(
+      JsError.throwWithMessage(
         `Pending query not found for partition ${p.id} fromBlock ${fromBlock->Int.toString}`,
       )
     }
@@ -448,12 +448,12 @@ module OptimizedPartitions = {
           : p.latestBlockRangeUpdateBlock,
       }
 
-      mutEntities->Js.Dict.set(p.id, updatedMainPartition)
+      mutEntities->Dict.set(p.id, updatedMainPartition)
     }
 
     // Re-optimize to maintain sorted order and apply optimizations
     make(
-      ~partitions=mutEntities->Js.Dict.values,
+      ~partitions=mutEntities->Dict.valuesToArray,
       ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
       ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
       ~dynamicContracts=optimizedPartitions.dynamicContracts,
@@ -463,7 +463,7 @@ module OptimizedPartitions = {
   @inline
   let getLatestFullyFetchedBlock = (optimizedPartitions: t) => {
     switch optimizedPartitions.idsInAscOrder->Array.get(0) {
-    | Some(id) => Some((optimizedPartitions.entities->Js.Dict.unsafeGet(id)).latestFetchedBlock)
+    | Some(id) => Some((optimizedPartitions.entities->Dict.getUnsafe(id)).latestFetchedBlock)
     | None => None
     }
   }
@@ -533,18 +533,18 @@ let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
 Comparitor for two events from the same chain. No need for chain id or timestamp
 */
 let compareBufferItem = (a: Internal.item, b: Internal.item) => {
-  let blockDiff = a->Internal.getItemBlockNumber - b->Internal.getItemBlockNumber
-  if blockDiff === 0 {
-    a->Internal.getItemLogIndex - b->Internal.getItemLogIndex
+  let blockOrdering = Int.compare(a->Internal.getItemBlockNumber, b->Internal.getItemBlockNumber)
+  if blockOrdering === Ordering.equal {
+    Int.compare(a->Internal.getItemLogIndex, b->Internal.getItemLogIndex)
   } else {
-    blockDiff
+    blockOrdering
   }
 }
 
 // Some big number which should be bigger than any log index
 let blockItemLogIndex = 16777216
 
-let numAddresses = fetchState => fetchState.indexingContracts->Js.Dict.keys->Array.length
+let numAddresses = fetchState => fetchState.indexingContracts->Dict.keysToArray->Array.length
 
 /*
 Update fetchState, merge registers and recompute derived values.
@@ -603,7 +603,7 @@ let updateInternal = (
         latestOnBlockBlockNumber := blockNumber
 
         for configIdx in 0 to onBlockConfigs->Array.length - 1 {
-          let onBlockConfig = onBlockConfigs->Js.Array2.unsafe_get(configIdx)
+          let onBlockConfig = onBlockConfigs->Array.getUnsafe(configIdx)
 
           let handlerStartBlock = switch onBlockConfig.startBlock {
           | Some(startBlock) => startBlock
@@ -651,7 +651,10 @@ let updateInternal = (
     // Theoretically it could be faster to asume that
     // the items are sorted, but there are cases
     // when the data source returns them unsorted
-    | Some(mutItems) => mutItems->Js.Array2.sortInPlaceWith(compareBufferItem)
+    | Some(mutItems) => {
+        mutItems->Array.sort(compareBufferItem)
+        mutItems
+      }
     | None => fetchState.buffer
     },
     firstEventBlock: fetchState.firstEventBlock,
@@ -697,21 +700,21 @@ let warnDifferentContractType = (
 
 let addressesByContractNameCount = (addressesByContractName: dict<array<Address.t>>) => {
   let numAddresses = ref(0)
-  let contractNames = addressesByContractName->Js.Dict.keys
+  let contractNames = addressesByContractName->Dict.keysToArray
   for idx in 0 to contractNames->Array.length - 1 {
-    let contractName = contractNames->Js.Array2.unsafe_get(idx)
+    let contractName = contractNames->Array.getUnsafe(idx)
     numAddresses :=
-      numAddresses.contents + addressesByContractName->Js.Dict.unsafeGet(contractName)->Array.length
+      numAddresses.contents + addressesByContractName->Dict.getUnsafe(contractName)->Array.length
   }
   numAddresses.contents
 }
 
 let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address.t>>) => {
   let all = ref([])
-  let contractNames = addressesByContractName->Js.Dict.keys
+  let contractNames = addressesByContractName->Dict.keysToArray
   for idx in 0 to contractNames->Array.length - 1 {
-    let contractName = contractNames->Js.Array2.unsafe_get(idx)
-    all := all.contents->Array.concat(addressesByContractName->Js.Dict.unsafeGet(contractName))
+    let contractName = contractNames->Array.getUnsafe(idx)
+    all := all.contents->Array.concat(addressesByContractName->Dict.getUnsafe(contractName))
   }
   all.contents
 }
@@ -740,36 +743,36 @@ OptimizedPartitions.t => {
   let dynamicPartitions = []
   let nonDynamicPartitions = []
 
-  let contractNames = registeringContractsByContract->Js.Dict.keys
-  for cIdx in 0 to contractNames->Js.Array2.length - 1 {
-    let contractName = contractNames->Js.Array2.unsafe_get(cIdx)
-    let registeringContracts = registeringContractsByContract->Js.Dict.unsafeGet(contractName)
+  let contractNames = registeringContractsByContract->Dict.keysToArray
+  for cIdx in 0 to contractNames->Array.length - 1 {
+    let contractName = contractNames->Array.getUnsafe(cIdx)
+    let registeringContracts = registeringContractsByContract->Dict.getUnsafe(contractName)
     let addresses =
-      registeringContracts->Js.Dict.keys->(Utils.magic: array<string> => array<Address.t>)
+      registeringContracts->Dict.keysToArray->(Utils.magic: array<string> => array<Address.t>)
 
     // Can unsafely get it, because we already filtered out the contracts
     // that don't have any events to fetch
-    let contractConfig = contractConfigs->Js.Dict.unsafeGet(contractName)
+    let contractConfig = contractConfigs->Dict.getUnsafe(contractName)
     let isDynamic = dynamicContracts->Utils.Set.has(contractName)
     let partitions = isDynamic ? dynamicPartitions : nonDynamicPartitions
 
-    let byStartBlock = Js.Dict.empty()
+    let byStartBlock = Dict.make()
     for jdx in 0 to addresses->Array.length - 1 {
-      let address = addresses->Js.Array2.unsafe_get(jdx)
-      let indexingContract = registeringContracts->Js.Dict.unsafeGet(address->Address.toString)
+      let address = addresses->Array.getUnsafe(jdx)
+      let indexingContract = registeringContracts->Dict.getUnsafe(address->Address.toString)
       byStartBlock->Utils.Dict.push(indexingContract.startBlock->Int.toString, address)
     }
 
     // Will be in ASC order by JS spec
-    let ascKeys = byStartBlock->Js.Dict.keys
+    let ascKeys = byStartBlock->Dict.keysToArray
     let initialKey = ascKeys->Utils.Array.firstUnsafe
 
     let startBlockRef = ref(initialKey->Int.fromString->Option.getUnsafe)
-    let addressesRef = ref(byStartBlock->Js.Dict.unsafeGet(initialKey))
+    let addressesRef = ref(byStartBlock->Dict.getUnsafe(initialKey))
 
-    for idx in 0 to ascKeys->Js.Array2.length - 1 {
+    for idx in 0 to ascKeys->Array.length - 1 {
       let maybeNextStartBlockKey =
-        ascKeys->Js.Array2.unsafe_get(idx + 1)->(Utils.magic: string => option<string>)
+        ascKeys->Array.getUnsafe(idx + 1)->(Utils.magic: string => option<string>)
 
       // For this case we can't filter out events earlier than contract registration
       // on the client side, so we need to keep the old logic of creating
@@ -790,9 +793,7 @@ OptimizedPartitions.t => {
             // by putting dcs with different startBlocks in the same partition
             if shouldJoinCurrentStartBlock {
               addressesRef :=
-                addressesRef.contents->Array.concat(
-                  byStartBlock->Js.Dict.unsafeGet(nextStartBlockKey),
-                )
+                addressesRef.contents->Array.concat(byStartBlock->Dict.getUnsafe(nextStartBlockKey))
               false
             } else {
               true
@@ -807,12 +808,11 @@ OptimizedPartitions.t => {
           blockTimestamp: 0,
         }
         while addressesRef.contents->Array.length > 0 {
-          let pAddresses =
-            addressesRef.contents->Js.Array2.slice(~start=0, ~end_=maxAddrInPartition)
-          addressesRef.contents = addressesRef.contents->Js.Array2.sliceFrom(maxAddrInPartition)
+          let pAddresses = addressesRef.contents->Array.slice(~start=0, ~end=maxAddrInPartition)
+          addressesRef.contents = addressesRef.contents->Array.slice(~start=maxAddrInPartition)
 
-          let addressesByContractName = Js.Dict.empty()
-          addressesByContractName->Js.Dict.set(contractName, pAddresses)
+          let addressesByContractName = Dict.make()
+          addressesByContractName->Dict.set(contractName, pAddresses)
           partitions->Array.push({
             id: nextPartitionIndexRef.contents->Int.toString,
             latestFetchedBlock,
@@ -832,7 +832,7 @@ OptimizedPartitions.t => {
         | None => ()
         | Some(nextStartBlockKey) => {
             startBlockRef := nextStartBlockKey->Int.fromString->Option.getUnsafe
-            addressesRef := byStartBlock->Js.Dict.unsafeGet(nextStartBlockKey)
+            addressesRef := byStartBlock->Dict.getUnsafe(nextStartBlockKey)
           }
         }
       }
@@ -844,13 +844,13 @@ OptimizedPartitions.t => {
 
   if nonDynamicPartitions->Array.length > 0 {
     // Sort non-dynamic partitions by latestFetchedBlock ascending
-    let _ = nonDynamicPartitions->Js.Array2.sortInPlaceWith(OptimizedPartitions.ascSortFn)
+    let _ = nonDynamicPartitions->Array.sort(OptimizedPartitions.ascSortFn)
 
-    let currentPRef = ref(nonDynamicPartitions->Js.Array2.unsafe_get(0))
+    let currentPRef = ref(nonDynamicPartitions->Array.getUnsafe(0))
     let nextIdx = ref(1)
 
     while nextIdx.contents < nonDynamicPartitions->Array.length {
-      let nextP = nonDynamicPartitions->Js.Array2.unsafe_get(nextIdx.contents)
+      let nextP = nonDynamicPartitions->Array.getUnsafe(nextIdx.contents)
       let currentP = currentPRef.contents
       let currentPBlock = currentP.latestFetchedBlock.blockNumber
       let nextPBlock = nextP.latestFetchedBlock.blockNumber
@@ -862,33 +862,34 @@ OptimizedPartitions.t => {
 
       if totalCount > maxAddrInPartition {
         // Exceeds address limit - don't merge, keep partitions separate
-        mergedNonDynamic->Js.Array2.push(currentP)->ignore
+        mergedNonDynamic->Array.push(currentP)->ignore
         currentPRef := nextP
       } else {
         // Build merged addresses using Array.concat (non-mutating)
         let mergedAddresses = nextP.addressesByContractName->Utils.Dict.shallowCopy
-        let currentContractNames = currentP.addressesByContractName->Js.Dict.keys
-        for jdx in 0 to currentContractNames->Js.Array2.length - 1 {
-          let cn = currentContractNames->Js.Array2.unsafe_get(jdx)
-          let currentAddrs = currentP.addressesByContractName->Js.Dict.unsafeGet(cn)
+        let currentContractNames = currentP.addressesByContractName->Dict.keysToArray
+        for jdx in 0 to currentContractNames->Array.length - 1 {
+          let cn = currentContractNames->Array.getUnsafe(jdx)
+          let currentAddrs = currentP.addressesByContractName->Dict.getUnsafe(cn)
           switch mergedAddresses->Utils.Dict.dangerouslyGetNonOption(cn) {
           | Some(existingAddrs) =>
             // Use concat (non-mutating) to avoid corrupting nextP's arrays
-            mergedAddresses->Js.Dict.set(cn, existingAddrs->Array.concat(currentAddrs))
-          | None => mergedAddresses->Js.Dict.set(cn, currentAddrs)
+            mergedAddresses->Dict.set(cn, existingAddrs->Array.concat(currentAddrs))
+          | None => mergedAddresses->Dict.set(cn, currentAddrs)
           }
         }
 
-        let nextContractName = nextP.addressesByContractName->Js.Dict.keys->Utils.Array.firstUnsafe
+        let nextContractName =
+          nextP.addressesByContractName->Dict.keysToArray->Utils.Array.firstUnsafe
         let hasFilterByAddresses = (
-          contractConfigs->Js.Dict.unsafeGet(nextContractName)
+          contractConfigs->Dict.getUnsafe(nextContractName)
         ).filterByAddresses
         let isTooFar = currentPBlock + OptimizedPartitions.tooFarBlockRange < nextPBlock
 
         if isTooFar || hasFilterByAddresses {
           // Too far or address-filtered: mergeBlock on current, merge addresses into next
           mergedNonDynamic
-          ->Js.Array2.push({
+          ->Array.push({
             ...currentP,
             mergeBlock: currentPBlock < nextPBlock ? Some(nextPBlock) : None,
           })
@@ -909,14 +910,14 @@ OptimizedPartitions.t => {
       nextIdx := nextIdx.contents + 1
     }
 
-    mergedNonDynamic->Js.Array2.push(currentPRef.contents)->ignore
+    mergedNonDynamic->Array.push(currentPRef.contents)->ignore
   }
 
-  let mergedPartitions = mergedNonDynamic->Js.Array2.concat(dynamicPartitions)
+  let mergedPartitions = mergedNonDynamic->Array.concat(dynamicPartitions)
 
   // Final step: concat existing partitions with phase 1+2 result and call OptimizedPartitions.make
   OptimizedPartitions.make(
-    ~partitions=existingPartitions->Js.Array2.concat(mergedPartitions),
+    ~partitions=existingPartitions->Array.concat(mergedPartitions),
     ~maxAddrInPartition,
     ~nextPartitionIndex=nextPartitionIndexRef.contents,
     ~dynamicContracts,
@@ -931,24 +932,24 @@ let registerDynamicContracts = (
 ) => {
   if fetchState.normalSelection.eventConfigs->Utils.Array.isEmpty {
     // Can the normalSelection be empty?
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       "Invalid configuration. No events to fetch for the dynamic contract registration.",
     )
   }
 
   let indexingContracts = fetchState.indexingContracts
-  let registeringContractsByContract: dict<dict<Internal.indexingContract>> = Js.Dict.empty()
+  let registeringContractsByContract: dict<dict<Internal.indexingContract>> = Dict.make()
   let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
   let hasDCWithFilterByAddresses = ref(false)
 
   for itemIdx in 0 to items->Array.length - 1 {
-    let item = items->Js.Array2.unsafe_get(itemIdx)
+    let item = items->Array.getUnsafe(itemIdx)
     switch item->Internal.getItemDcs {
     | None => ()
     | Some(dcs) =>
       let idx = ref(0)
       while idx.contents < dcs->Array.length {
-        let dc = dcs->Js.Array2.unsafe_get(idx.contents)
+        let dc = dcs->Array.getUnsafe(idx.contents)
 
         let shouldRemove = ref(false)
 
@@ -997,7 +998,7 @@ let registerDynamicContracts = (
             if shouldUpdate {
               earliestRegisteringEventBlockNumber :=
                 Pervasives.min(earliestRegisteringEventBlockNumber.contents, dc.startBlock)
-              registeringContracts->Js.Dict.set(dc.address->Address.toString, dc)
+              registeringContracts->Dict.set(dc.address->Address.toString, dc)
             } else {
               shouldRemove := true
             }
@@ -1017,7 +1018,7 @@ let registerDynamicContracts = (
 
         if shouldRemove.contents {
           // Remove the DC from item to prevent it from saving to the db
-          let _ = dcs->Js.Array2.removeCountInPlace(~count=1, ~pos=idx.contents)
+          let _ = dcs->Array.splice(~start=idx.contents, ~remove=1, ~insert=[])
           // Don't increment idx - next element shifted into current position
         } else {
           idx := idx.contents + 1
@@ -1026,7 +1027,7 @@ let registerDynamicContracts = (
     }
   }
 
-  let dcContractNamesToStore = registeringContractsByContract->Js.Dict.keys
+  let dcContractNamesToStore = registeringContractsByContract->Dict.keysToArray
   switch dcContractNamesToStore {
   // Dont update anything when everything was filter out
   | [] => fetchState
@@ -1034,10 +1035,10 @@ let registerDynamicContracts = (
       let newPartitions = []
       let newIndexingContracts = indexingContracts->Utils.Dict.shallowCopy
       let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
-      let mutExistingPartitions = fetchState.optimizedPartitions.entities->Js.Dict.values
+      let mutExistingPartitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
 
-      for idx in 0 to dcContractNamesToStore->Js.Array2.length - 1 {
-        let contractName = dcContractNamesToStore->Js.Array2.unsafe_get(idx)
+      for idx in 0 to dcContractNamesToStore->Array.length - 1 {
+        let contractName = dcContractNamesToStore->Array.getUnsafe(idx)
 
         // When a new contract name is added as a dynamic contract for the first time (not in dynamicContracts set):
         // Walks through existing partitions that have addresses for this contract name
@@ -1048,19 +1049,18 @@ let registerDynamicContracts = (
         if !(dynamicContractsRef.contents->Utils.Set.has(contractName)) {
           dynamicContractsRef := dynamicContractsRef.contents->Utils.Set.immutableAdd(contractName)
 
-          for idx in 0 to mutExistingPartitions->Js.Array2.length - 1 {
-            let p = mutExistingPartitions->Js.Array2.unsafe_get(idx)
+          for idx in 0 to mutExistingPartitions->Array.length - 1 {
+            let p = mutExistingPartitions->Array.getUnsafe(idx)
             switch p.addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
             | None => () // Skip partitions which don't have our contract
             | Some(addresses) =>
               // Also filter out partitions which are 100% not mergable
               if p.selection.dependsOnAddresses && p.mergeBlock === None {
-                let allPartitionContractNames = p.addressesByContractName->Js.Dict.keys
+                let allPartitionContractNames = p.addressesByContractName->Dict.keysToArray
                 switch allPartitionContractNames {
                 | [_] =>
-                  mutExistingPartitions->Js.Array2.unsafe_set(
+                  mutExistingPartitions->Array.setUnsafe(
                     idx,
-                    // Even if it's fetching, set dynamicContract field
                     {
                       ...p,
                       dynamicContract: Some(contractName),
@@ -1083,7 +1083,7 @@ let registerDynamicContracts = (
                         p.addressesByContractName->Utils.Dict.shallowCopy
                       restAddressesByContractName->Utils.Dict.deleteInPlace(contractName)
 
-                      mutExistingPartitions->Js.Array2.unsafe_set(
+                      mutExistingPartitions->Array.setUnsafe(
                         idx,
                         {
                           ...p,
@@ -1091,8 +1091,8 @@ let registerDynamicContracts = (
                         },
                       )
 
-                      let addressesByContractName = Js.Dict.empty()
-                      addressesByContractName->Js.Dict.set(contractName, addresses)
+                      let addressesByContractName = Dict.make()
+                      addressesByContractName->Dict.set(contractName, addresses)
                       newPartitions->Array.push({
                         id: newPartitionId,
                         latestFetchedBlock: p.latestFetchedBlock,
@@ -1113,7 +1113,7 @@ let registerDynamicContracts = (
           }
         }
 
-        let registeringContracts = registeringContractsByContract->Js.Dict.unsafeGet(contractName)
+        let registeringContracts = registeringContractsByContract->Dict.getUnsafe(contractName)
         let _ = Utils.Dict.mergeInPlace(newIndexingContracts, registeringContracts)
       }
 
@@ -1125,7 +1125,7 @@ let registerDynamicContracts = (
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
         newPartitions->Array.length,
-        ~existingPartitions=mutExistingPartitions->Js.Array2.concat(newPartitions),
+        ~existingPartitions=mutExistingPartitions->Array.concat(newPartitions),
         ~progressBlockNumber=0,
       )
 
@@ -1169,7 +1169,7 @@ type nextQuery =
 
 let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) => {
   for qIdx in 0 to queries->Array.length - 1 {
-    let q = queries->Js.Array2.unsafe_get(qIdx)
+    let q = queries->Array.getUnsafe(qIdx)
     let p = optimizedPartitions->OptimizedPartitions.getOrThrow(~partitionId=q.partitionId)
 
     let pq = {
@@ -1184,8 +1184,8 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
     let inserted = ref(false)
     let i = ref(0)
     while i.contents < p.mutPendingQueries->Array.length && !inserted.contents {
-      if (p.mutPendingQueries->Js.Array2.unsafe_get(i.contents)).fromBlock > q.fromBlock {
-        p.mutPendingQueries->Js.Array2.spliceInPlace(~pos=i.contents, ~remove=0, ~add=[pq])->ignore
+      if (p.mutPendingQueries->Array.getUnsafe(i.contents)).fromBlock > q.fromBlock {
+        p.mutPendingQueries->Array.splice(~start=i.contents, ~remove=0, ~insert=[pq])->ignore
         inserted := true
       }
       i := i.contents + 1
@@ -1309,12 +1309,12 @@ let getNextQuery = (
 
     let queries = []
 
-    let partitionsCount = optimizedPartitions.idsInAscOrder->Js.Array2.length
+    let partitionsCount = optimizedPartitions.idsInAscOrder->Array.length
     let idxRef = ref(0)
     while idxRef.contents < partitionsCount {
       let idx = idxRef.contents
-      let partitionId = optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
-      let p = optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
+      let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
+      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
 
       let isBehindTheHead = p.latestFetchedBlock.blockNumber < headBlockNumber
       let hasPendingQueries = p.mutPendingQueries->Utils.Array.notEmpty
@@ -1354,7 +1354,7 @@ let getNextQuery = (
       let canContinue = ref(true)
       let pqIdx = ref(0)
       while pqIdx.contents < p.mutPendingQueries->Array.length && canContinue.contents {
-        let pq = p.mutPendingQueries->Js.Array2.unsafe_get(pqIdx.contents)
+        let pq = p.mutPendingQueries->Array.getUnsafe(pqIdx.contents)
 
         // Gap before this pending query → create queries for the gap range
         if pq.fromBlock > cursor.contents {
@@ -1407,8 +1407,8 @@ let getNextQuery = (
     } else {
       // Enforce concurrency limit: sort by fromBlock and take the first concurrencyLimit
       let queries = if queries->Array.length > concurrencyLimit {
-        queries->Js.Array2.sortInPlaceWith((a, b) => a.fromBlock - b.fromBlock)->ignore
-        queries->Js.Array2.slice(~start=0, ~end_=concurrencyLimit)
+        queries->Array.sort((a, b) => Int.compare(a.fromBlock, b.fromBlock))
+        queries->Array.slice(~start=0, ~end=concurrencyLimit)
       } else {
         queries
       }
@@ -1421,7 +1421,7 @@ let getTimestampAt = (fetchState: t, ~index) => {
   switch fetchState.buffer->Belt.Array.get(index) {
   | Some(Event({timestamp})) => timestamp
   | Some(Block(_)) =>
-    Js.Exn.raiseError("Block handlers are not supported for ordered multichain mode.")
+    JsError.throwWithMessage("Block handlers are not supported for ordered multichain mode.")
   | None => (fetchState->bufferBlock).blockTimestamp
   }
 }
@@ -1481,18 +1481,17 @@ let make = (
   let notDependingOnAddresses = []
   let normalEventConfigs = []
   let contractNamesWithNormalEvents = Utils.Set.make()
-  let indexingContracts = Js.Dict.empty()
-  let contractConfigs = Js.Dict.empty()
+  let indexingContracts = Dict.make()
+  let contractConfigs = Dict.make()
 
   eventConfigs->Array.forEach(ec => {
     switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
     | Some({filterByAddresses}) =>
-      contractConfigs->Js.Dict.set(
+      contractConfigs->Dict.set(
         ec.contractName,
         {filterByAddresses: filterByAddresses || ec.filterByAddresses},
       )
-    | None =>
-      contractConfigs->Js.Dict.set(ec.contractName, {filterByAddresses: ec.filterByAddresses})
+    | None => contractConfigs->Dict.set(ec.contractName, {filterByAddresses: ec.filterByAddresses})
     }
 
     if ec.dependsOnAddresses {
@@ -1513,7 +1512,7 @@ let make = (
         dependsOnAddresses: false,
         eventConfigs: notDependingOnAddresses,
       },
-      addressesByContractName: Js.Dict.empty(),
+      addressesByContractName: Dict.make(),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
@@ -1528,7 +1527,7 @@ let make = (
     eventConfigs: normalEventConfigs,
   }
 
-  let registeringContractsByContract: dict<dict<Internal.indexingContract>> = Js.Dict.empty()
+  let registeringContractsByContract: dict<dict<Internal.indexingContract>> = Dict.make()
   let dynamicContracts = Utils.Set.make()
 
   switch normalEventConfigs {
@@ -1539,8 +1538,8 @@ let make = (
       if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
         let registeringContracts =
           registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
-        registeringContracts->Js.Dict.set(contract.address->Address.toString, contract)
-        indexingContracts->Js.Dict.set(contract.address->Address.toString, contract)
+        registeringContracts->Dict.set(contract.address->Address.toString, contract)
+        indexingContracts->Dict.set(contract.address->Address.toString, contract)
 
         // Detect dynamic contracts by registrationBlock
         if contract.registrationBlock !== None {
@@ -1562,12 +1561,12 @@ let make = (
   )
 
   if optimizedPartitions->OptimizedPartitions.count === 0 && onBlockConfigs->Utils.Array.isEmpty {
-    Js.Exn.raiseError(
+    JsError.throwWithMessage(
       "Invalid configuration: Nothing to fetch. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
     )
   }
 
-  let numAddresses = indexingContracts->Js.Dict.keys->Array.length
+  let numAddresses = indexingContracts->Dict.keysToArray->Array.length
   Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
   Prometheus.IndexingPartitions.set(
     ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
@@ -1605,18 +1604,19 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
   // - Cap fetchedBlock at target where fetchedBlock > target
   let adjusted = []
   for qIdx in 0 to mutPendingQueries->Array.length - 1 {
-    let pq = mutPendingQueries->Js.Array2.unsafe_get(qIdx)
+    let pq = mutPendingQueries->Array.getUnsafe(qIdx)
     if pq.fromBlock <= targetBlockNumber {
       switch pq.fetchedBlock {
       | Some({blockNumber}) if blockNumber > targetBlockNumber =>
         adjusted
-        ->Js.Array2.push({
+        ->Array.push({
           ...pq,
           fetchedBlock: Some({blockNumber: targetBlockNumber, blockTimestamp: 0}),
         })
         ->ignore
-      | Some(_) => adjusted->Js.Array2.push(pq)->ignore
-      | None => Js.Exn.raiseError("Internal error: Must not have a fetching query during rollback")
+      | Some(_) => adjusted->Array.push(pq)->ignore
+      | None =>
+        JsError.throwWithMessage("Internal error: Must not have a fetching query during rollback")
       }
     }
   }
@@ -1633,34 +1633,34 @@ Always recreates optimized partitions to avoid duplicate addresses:
 let rollback = (fetchState: t, ~targetBlockNumber) => {
   // Step 1: Build addressesToRemove and surviving indexingContracts
   let addressesToRemove = Utils.Set.make()
-  let indexingContracts = Js.Dict.empty()
+  let indexingContracts = Dict.make()
 
   fetchState.indexingContracts
-  ->Js.Dict.keys
+  ->Dict.keysToArray
   ->Array.forEach(address => {
-    let indexingContract = fetchState.indexingContracts->Js.Dict.unsafeGet(address)
+    let indexingContract = fetchState.indexingContracts->Dict.getUnsafe(address)
     switch indexingContract.registrationBlock {
     | Some(registrationBlock) if registrationBlock > targetBlockNumber =>
       let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
-    | _ => indexingContracts->Js.Dict.set(address, indexingContract)
+    | _ => indexingContracts->Dict.set(address, indexingContract)
     }
   })
 
   // Step 2: Categorize partitions
   let keptPartitions = []
   let nextKeptIdRef = ref(0)
-  let registeringContractsByContract: dict<dict<Internal.indexingContract>> = Js.Dict.empty()
+  let registeringContractsByContract: dict<dict<Internal.indexingContract>> = Dict.make()
 
-  let partitions = fetchState.optimizedPartitions.entities->Js.Dict.values
+  let partitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
   for idx in 0 to partitions->Array.length - 1 {
-    let p = partitions->Js.Array2.unsafe_get(idx)
+    let p = partitions->Array.getUnsafe(idx)
     switch p {
     // Wildcard: rollback latestFetchedBlock and adjust pending queries
     | {selection: {dependsOnAddresses: false}} =>
       let id = nextKeptIdRef.contents->Int.toString
       nextKeptIdRef := nextKeptIdRef.contents + 1
       keptPartitions
-      ->Js.Array2.push({
+      ->Array.push({
         ...p,
         id,
         latestFetchedBlock: p.latestFetchedBlock.blockNumber > targetBlockNumber
@@ -1682,9 +1682,9 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
           ) {
             let registeringContracts =
               registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
-            registeringContracts->Js.Dict.set(
+            registeringContracts->Dict.set(
               address->Address.toString,
-              indexingContracts->Js.Dict.unsafeGet(address->Address.toString),
+              indexingContracts->Dict.getUnsafe(address->Address.toString),
             )
           }
         })
@@ -1699,20 +1699,20 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
         }
 
         // Remove addresses that should be removed
-        let rollbackedAddressesByContractName = Js.Dict.empty()
+        let rollbackedAddressesByContractName = Dict.make()
         addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
           let keptAddresses =
-            addresses->Array.keep(address => !(addressesToRemove->Utils.Set.has(address)))
+            addresses->Array.filter(address => !(addressesToRemove->Utils.Set.has(address)))
           if keptAddresses->Array.length > 0 {
-            rollbackedAddressesByContractName->Js.Dict.set(contractName, keptAddresses)
+            rollbackedAddressesByContractName->Dict.set(contractName, keptAddresses)
           }
         })
 
-        if rollbackedAddressesByContractName->Js.Dict.keys->Array.length > 0 {
+        if rollbackedAddressesByContractName->Dict.keysToArray->Array.length > 0 {
           let id = nextKeptIdRef.contents->Int.toString
           nextKeptIdRef := nextKeptIdRef.contents + 1
           keptPartitions
-          ->Js.Array2.push({
+          ->Array.push({
             ...p,
             id,
             addressesByContractName: rollbackedAddressesByContractName,
@@ -1748,7 +1748,7 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
   }->updateInternal(
     ~optimizedPartitions,
     ~indexingContracts,
-    ~mutItems=fetchState.buffer->Array.keep(item =>
+    ~mutItems=fetchState.buffer->Array.filter(item =>
       switch item {
       | Event({blockNumber})
       | Block({blockNumber}) => blockNumber
@@ -1765,13 +1765,13 @@ let resetPendingQueries = (fetchState: t) => {
   let newEntities = fetchState.optimizedPartitions.entities->Utils.Dict.shallowCopy
 
   for idx in 0 to fetchState.optimizedPartitions.idsInAscOrder->Array.length - 1 {
-    let partitionId = fetchState.optimizedPartitions.idsInAscOrder->Js.Array2.unsafe_get(idx)
-    let partition = fetchState.optimizedPartitions.entities->Js.Dict.unsafeGet(partitionId)
+    let partitionId = fetchState.optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
+    let partition = fetchState.optimizedPartitions.entities->Dict.getUnsafe(partitionId)
 
     if partition.mutPendingQueries->Array.length > 0 {
       // Keep only completed queries (with fetchedBlock)
-      let kept = partition.mutPendingQueries->Array.keep(pq => pq.fetchedBlock !== None)
-      newEntities->Js.Dict.set(partitionId, {...partition, mutPendingQueries: kept})
+      let kept = partition.mutPendingQueries->Array.filter(pq => pq.fetchedBlock !== None)
+      newEntities->Dict.set(partitionId, {...partition, mutPendingQueries: kept})
     }
   }
 
@@ -1838,26 +1838,26 @@ let sortForUnorderedBatch = {
   }
 
   (fetchStates: array<t>, ~batchSizeTarget: int) => {
-    fetchStates
-    ->Array.copy
-    ->Js.Array2.sortInPlaceWith((a: t, b: t) => {
+    let copied = fetchStates->Array.copy
+    copied->Array.sort((a: t, b: t) => {
       switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
       | (true, true)
       | (false, false) => {
           let aProgress = a->getProgressPercentage
           let bProgress = b->getProgressPercentage
           if aProgress < bProgress {
-            -1
+            Ordering.less
           } else if aProgress > bProgress {
-            1
+            Ordering.greater
           } else {
-            0
+            Ordering.equal
           }
         }
-      | (true, false) => -1
-      | (false, true) => 1
+      | (true, false) => Ordering.less
+      | (false, true) => Ordering.greater
       }
     })
+    copied
   }
 }
 
