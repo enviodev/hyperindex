@@ -94,14 +94,15 @@ jobs:
             // collaborators/permission API — the latter requires
             // `administration: read` which the default GITHUB_TOKEN
             // cannot grant ("Resource not accessible by integration").
-            // OWNER/MEMBER/COLLABORATOR all require an explicit trust
-            // action from the base repo (transfer / org-add / invite),
-            // which is the threat model we care about here.
+            // OWNER and COLLABORATOR require an explicit invite from
+            // the repo; MEMBER is excluded because org membership is
+            // wider than the set of people we trust to release secrets
+            // to fork CI.
             const assoc = context.payload.comment.author_association;
-            if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(assoc)) {
+            if (!['OWNER', 'COLLABORATOR'].includes(assoc)) {
               return reject(
                 `@${context.payload.comment.user.login} (${assoc}) cannot approve CI — ` +
-                `must be OWNER, MEMBER, or COLLABORATOR of ${owner}/${repo}.`
+                `must be OWNER or COLLABORATOR of ${owner}/${repo}.`
               );
             }
 
