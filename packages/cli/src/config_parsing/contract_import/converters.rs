@@ -1,4 +1,4 @@
-use crate::{config_parsing::chain_helpers::HypersyncNetwork, evm::address::Address};
+use crate::{config_parsing::chain_helpers::HypersyncChain, evm::address::Address};
 use alloy_json_abi::Event;
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
@@ -56,7 +56,7 @@ impl SelectedContract {
 
 #[derive(Clone, Debug)]
 pub enum NetworkKind {
-    Supported(HypersyncNetwork),
+    Supported(HypersyncChain),
     Unsupported {
         network_id: u64,
         rpc_url: String,
