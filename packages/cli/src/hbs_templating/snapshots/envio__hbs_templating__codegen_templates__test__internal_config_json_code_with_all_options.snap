@@ -11,6 +11,10 @@ expression: json
   "rollbackOnReorg": false,
   "saveFullHistory": true,
   "rawEvents": true,
+  "storage": {
+    "postgres": true,
+    "clickhouse": true
+  },
   "evm": {
     "chains": {
       "ethereumMainnet": {

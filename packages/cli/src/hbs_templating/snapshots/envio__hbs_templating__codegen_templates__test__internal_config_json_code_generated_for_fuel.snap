@@ -6,6 +6,9 @@ expression: json
   "version": "0.0.1-dev",
   "name": "Fuel indexer",
   "rollbackOnReorg": false,
+  "storage": {
+    "postgres": true
+  },
   "fuel": {
     "chains": {
       "0": {

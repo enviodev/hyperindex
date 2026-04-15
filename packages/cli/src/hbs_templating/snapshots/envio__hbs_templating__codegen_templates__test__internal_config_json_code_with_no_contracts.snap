@@ -7,6 +7,9 @@ expression: json
   "version": "0.0.1-dev",
   "name": "config4",
   "description": "Gravatar for Ethereum",
+  "storage": {
+    "postgres": true
+  },
   "evm": {
     "chains": {
       "ethereumMainnet": {
