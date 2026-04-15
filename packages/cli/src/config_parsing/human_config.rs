@@ -1100,6 +1100,63 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
+    fn deserialize_storage_config() {
+        use super::StorageConfig;
+
+        // Both fields present
+        let yaml = "postgres: true\nclickhouse: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            }
+        );
+
+        // Only clickhouse set
+        let yaml = "clickhouse: true\n";
+        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            de,
+            StorageConfig {
+                postgres: None,
+                clickhouse: Some(true),
+            }
+        );
+
+        // Unknown field should fail (deny_unknown_fields)
+        let yaml = "postgres: true\nbigquery: true\n";
+        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field `bigquery`"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn deserialize_evm_config_with_storage() {
+        use super::evm::HumanConfig as EvmConfig;
+        let yaml = r#"
+name: storage-test
+storage:
+  postgres: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+"#;
+        let cfg: EvmConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.base.storage,
+            Some(super::StorageConfig {
+                postgres: Some(true),
+                clickhouse: Some(true),
+            })
+        );
+    }
+
+    #[test]
     fn deserialize_underscores_between_numbers() {
         let num = serde_json::json!(2_000_000);
         let de: i32 = serde_json::from_value(num).unwrap();

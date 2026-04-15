@@ -917,3 +917,46 @@ GROUP BY "chain_id";`
     )
   })
 })
+
+describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
+  // Exercises the requireEnv path in makeStorageFromEnv that's only taken
+  // when `storage.clickhouse: true` in config.yaml. The test suite does not
+  // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
+  // error pointing at the first missing one (ENVIO_CLICKHOUSE_HOST).
+  Async.it(
+    "Throws when storage.clickhouse=true but ENVIO_CLICKHOUSE_HOST is missing",
+    async t => {
+      let config = {
+        ...MockIndexer.config,
+        storage: ({postgres: true, clickhouse: true}: Config.storage),
+      }
+      let message = switch try {
+        let _ = PgStorage.makeStorageFromEnv(~config)
+        None
+      } catch {
+      | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
+      | _ => None
+      } {
+      | Some(m) => m
+      | None => ""
+      }
+      t.expect(
+        message,
+        ~message="Should throw a helpful error naming the missing env var",
+      ).toMatch(%re(`/ClickHouse storage is enabled.*ENVIO_CLICKHOUSE_HOST/`))
+    },
+  )
+
+  Async.it(
+    "Does not throw when storage.clickhouse=false (default)",
+    async t => {
+      let config = {
+        ...MockIndexer.config,
+        storage: ({postgres: true, clickhouse: false}: Config.storage),
+      }
+      // Just ensure construction succeeds without touching ClickHouse env vars.
+      let _ = PgStorage.makeStorageFromEnv(~config)
+      t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
+    },
+  )
+})

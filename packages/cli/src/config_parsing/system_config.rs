@@ -466,6 +466,13 @@ impl Storage {
                  alongside ClickHouse in the `storage` config."
             ));
         }
+        if !postgres && !clickhouse {
+            return Err(anyhow!(
+                "At least one storage backend must be enabled. Please set `postgres: true` \
+                 in the `storage` config (or omit the `storage` section entirely to use the \
+                 default)."
+            ));
+        }
         Ok(Self {
             postgres,
             clickhouse,
@@ -2546,6 +2553,30 @@ mod test {
         assert!(
             err.to_string()
                 .contains("ClickHouse is not supported as a single storage yet"),
+            "Unexpected error: {err}"
+        );
+
+        // All storages disabled -> user-friendly error
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: Some(false),
+            clickhouse: Some(false),
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("At least one storage backend must be enabled"),
+            "Unexpected error: {err}"
+        );
+
+        // postgres explicitly false with clickhouse omitted -> same error
+        let err = super::Storage::resolve(Some(&StorageConfig {
+            postgres: Some(false),
+            clickhouse: None,
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("At least one storage backend must be enabled"),
             "Unexpected error: {err}"
         );
     }

@@ -12,7 +12,8 @@ expression: project_template.internal_config_json_code
   "saveFullHistory": true,
   "rawEvents": true,
   "storage": {
-    "postgres": true
+    "postgres": true,
+    "clickhouse": true
   },
   "evm": {
     "chains": {
