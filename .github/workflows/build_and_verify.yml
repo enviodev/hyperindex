@@ -73,7 +73,7 @@ jobs:
     steps:
       - name: Resolve & authorize SHA
         id: resolve
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             if (context.eventName === 'push') {
@@ -478,7 +478,7 @@ jobs:
     steps:
       - name: Post commit status
         if: needs.gate.outputs.sha != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           RESULTS: ${{ toJSON(needs) }}
         with:
