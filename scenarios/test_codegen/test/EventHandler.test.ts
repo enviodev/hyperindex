@@ -808,6 +808,29 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
+  it("Should throw when registering an onBlock handler after the indexer has finished initializing", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "onBlockInHandler" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
 
 
   it("Currently filters are ignored by the test framework", async () => {

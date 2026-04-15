@@ -751,6 +751,17 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
       break;
     }
 
+    case "onBlockInHandler": {
+      // Late-registration guard: `indexer.onBlock` called from inside a
+      // handler must throw (registration phase has already ended).
+      // The matching test asserts `assert.rejects` against this branch.
+      indexer.onBlock(
+        { name: "onblock_late", where: ({ chain }) => chain.id === 1 },
+        async () => {},
+      );
+      break;
+    }
+
     case "processMultipleEvents - 2": {
       context.D.set({
         id: "2",
