@@ -355,6 +355,10 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     SeiTestnet = 1328,
 
+    Sentient = 6767,
+
+    SentientTestnet = 1184075182,
+
     #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
 
@@ -539,6 +543,8 @@ impl Network {
             | Network::Scroll
             | Network::ScrollSepolia
             | Network::Sei
+            | Network::Sentient
+            | Network::SentientTestnet
             | Network::Sepolia
             | Network::ShimmerEvm
             | Network::Sophon
