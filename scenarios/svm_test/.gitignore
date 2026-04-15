@@ -1,0 +1,6 @@
+generated
+node_modules
+*.res.mjs
+*.bs.js
+lib
+.envio

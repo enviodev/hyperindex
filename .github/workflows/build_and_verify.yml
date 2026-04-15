@@ -342,6 +342,12 @@ jobs:
           pnpm exec envio codegen
           pnpm test
 
+      - name: svm_test
+        working-directory: scenarios/svm_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
+
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'

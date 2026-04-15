@@ -447,8 +447,12 @@ type EventIdentity<
   readonly wildcard?: boolean;
 };
 
-/** Context for onEvent handlers. Includes entity operations, logging, and chain info. */
-export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
+/**
+ * Shared shape for handler contexts across ecosystems — logger, effect
+ * caller, preload flag, chain state, and the entity operations map derived
+ * from the project schema.
+ */
+type BaseHandlerContext<Config extends IndexerConfigTypes, ChainId> = {
   /** Access the logger instance. */
   readonly log: Logger;
   /** Call an Effect with the given input. */
@@ -457,25 +461,27 @@ export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
   readonly isPreload: boolean;
   /** Chain state for the current event's chain. */
   readonly chain: {
-    readonly id: EvmChainIds<Config>;
+    readonly id: ChainId;
     readonly isLive: boolean;
   };
 } & {
   readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
-}>;
+};
+
+/** Context for onEvent handlers. Includes entity operations, logging, and chain info. */
+export type EvmOnEventContext<Config extends IndexerConfigTypes> = Prettify<
+  BaseHandlerContext<Config, EvmChainIds<Config>>
+>;
 
 /** Context for onEvent handlers in Fuel ecosystem. */
-export type FuelOnEventContext<Config extends IndexerConfigTypes> = Prettify<{
-  readonly log: Logger;
-  readonly effect: EffectCaller;
-  readonly isPreload: boolean;
-  readonly chain: {
-    readonly id: FuelChainIds<Config>;
-    readonly isLive: boolean;
-  };
-} & {
-  readonly [K in keyof ConfigEntities<Config>]: EntityOperations<ConfigEntities<Config>[K]>;
-}>;
+export type FuelOnEventContext<Config extends IndexerConfigTypes> = Prettify<
+  BaseHandlerContext<Config, FuelChainIds<Config>>
+>;
+
+/** Context for `indexer.onSlot` handlers in SVM ecosystem. */
+export type SvmOnSlotContext<Config extends IndexerConfigTypes> = Prettify<
+  BaseHandlerContext<Config, SvmChainIds<Config>>
+>;
 
 /** Entity operations available in handler contexts. */
 type EntityOperations<Entity> = {
@@ -642,111 +648,193 @@ export type FuelContractRegisterOptions<Event extends EventLike, Params = {}> = 
 /** Handler function for a Fuel contractRegister registration. */
 export type FuelContractRegisterHandler<Event extends EventLike, Context> = EvmOnEventHandler<Event, Context>;
 
-// ============== Indexer Handler Methods ==============
+// ============== EVM onBlock types ==============
 
-// onEvent/contractRegister methods for EVM ecosystem
-// NOTE: options use inline { contract: C; event: E } shape for TypeScript inference.
-// Using EvmOnEventOptions<Contracts[C][E]> would break inference since C/E can't be
-// derived from indexed access types. The named EvmOnEventOptions type is for end-user
-// reference; the inline shape here is structurally identical.
-type EvmHandlerMethods<Config extends IndexerConfigTypes> =
-  Config["evm"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
-    ? {
-        /** Register an event handler. */
-        readonly onEvent: <
-          C extends keyof Contracts & string,
-          E extends keyof Contracts[C] & string
-        >(
-          options: {
-            readonly contract: C;
-            readonly event: E;
-            readonly wildcard?: boolean;
-            readonly where?: EvmOnEventWhere<
-              EvmEventFilters<Config>[C] extends Record<string, any>
-                ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
-                  ? P
-                  : {}
-                : {},
-              C
-            >;
-          },
-          handler: EvmOnEventHandler<Contracts[C][E], EvmOnEventContext<Config>>
-        ) => void;
-        /** Register a contract register handler for dynamic contract indexing. */
-        readonly contractRegister: <
-          C extends keyof Contracts & string,
-          E extends keyof Contracts[C] & string
-        >(
-          options: {
-            readonly contract: C;
-            readonly event: E;
-            readonly wildcard?: boolean;
-            readonly where?: EvmOnEventWhere<
-              EvmEventFilters<Config>[C] extends Record<string, any>
-                ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
-                  ? P
-                  : {}
-                : {},
-              C
-            >;
-          },
-          handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
-        ) => void;
-      }
-    : {};
+/**
+ * Structured filter object returned by an EVM `indexer.onBlock` `where`
+ * predicate. `_every` alignment is relative to `_gte` (or the chain's
+ * configured `startBlock` when `_gte` is omitted), preserving
+ * `(blockNumber - startBlock) % _every === 0`.
+ */
+export type EvmOnBlockFilter = {
+  readonly block?: {
+    readonly number?: {
+      /** Matches blocks whose number is greater than or equal to the given value. */
+      readonly _gte?: number;
+      /** Matches blocks whose number is less than or equal to the given value. */
+      readonly _lte?: number;
+      /** Match every Nth block. Alignment is relative to `_gte`. */
+      readonly _every?: number;
+    };
+  };
+};
 
-// onEvent/contractRegister methods for Fuel ecosystem
-type FuelHandlerMethods<Config extends IndexerConfigTypes> =
-  Config["fuel"] extends { contracts: infer Contracts extends Record<string, Record<string, any>> }
-    ? {
-        readonly onEvent: <
-          C extends keyof Contracts & string,
-          E extends keyof Contracts[C] & string
-        >(
-          options: {
-            readonly contract: C;
-            readonly event: E;
-            readonly wildcard?: boolean;
-            readonly where?: FuelOnEventWhere<
-              FuelEventFilters<Config>[C] extends Record<string, any>
-                ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
-                  ? P
-                  : {}
-                : {},
-              C
-            >;
-          },
-          handler: FuelOnEventHandler<Contracts[C][E], FuelOnEventContext<Config>>
-        ) => void;
-        readonly contractRegister: <
-          C extends keyof Contracts & string,
-          E extends keyof Contracts[C] & string
-        >(
-          options: {
-            readonly contract: C;
-            readonly event: E;
-            readonly wildcard?: boolean;
-            readonly where?: FuelOnEventWhere<
-              FuelEventFilters<Config>[C] extends Record<string, any>
-                ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
-                  ? P
-                  : {}
-                : {},
-              C
-            >;
-          },
-          handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
-        ) => void;
-      }
-    : {};
+/**
+ * Return type of an EVM `indexer.onBlock` `where` predicate. The predicate
+ * must explicitly return — an implicit `undefined` is not accepted.
+ * - `false` → skip this chain entirely.
+ * - `true` → register on the chain with no extra filter.
+ * - {@link EvmOnBlockFilter} → register with the given range/stride.
+ */
+export type EvmOnBlockWhereResult = boolean | EvmOnBlockFilter;
 
-// Single ecosystem handler methods (flattened)
-type SingleEcosystemHandlerMethods<Config extends IndexerConfigTypes> =
-  HasEvm<Config> extends true
-    ? EvmHandlerMethods<Config>
-    : HasFuel<Config> extends true
-    ? FuelHandlerMethods<Config>
-    : {};
+/** Argument passed to an EVM `indexer.onBlock` `where` predicate. */
+export type EvmOnBlockWhereArgs<Config extends IndexerConfigTypes> = {
+  /** Configured chain being evaluated. Use `chain.id` to branch per chain. */
+  readonly chain: EvmChain<EvmChainIds<Config>, EvmContractNames<Config>>;
+};
+
+/** Context for EVM `indexer.onBlock` handlers. Alias of {@link EvmOnEventContext}. */
+export type EvmOnBlockContext<Config extends IndexerConfigTypes> = EvmOnEventContext<Config>;
+
+/** Arguments passed to an EVM block handler. */
+export type EvmOnBlockHandlerArgs<Config extends IndexerConfigTypes> = {
+  /** Block being processed. Contains the block number; extended fields are
+      opt-in via `field_selection` in config.yaml. */
+  readonly block: { readonly number: number };
+  /** Handler context: entity operations, logger, effect caller, chain state. */
+  readonly context: EvmOnBlockContext<Config>;
+};
+
+/** Handler function for an EVM `indexer.onBlock` registration. */
+export type EvmOnBlockHandler<Config extends IndexerConfigTypes> = (
+  args: EvmOnBlockHandlerArgs<Config>,
+) => Promise<void>;
+
+/** Options for an EVM `indexer.onBlock` registration. */
+export type EvmOnBlockOptions<Config extends IndexerConfigTypes> = {
+  /** Unique name for this block handler. Used as the key in error messages
+      and in persisted progress tracking. */
+  readonly name: string;
+  /** Optional predicate evaluated once per configured chain at registration
+      time. Return `false` to skip a chain, `true` to match every block, or
+      a filter object to restrict by block number range and stride. */
+  readonly where?: (args: EvmOnBlockWhereArgs<Config>) => EvmOnBlockWhereResult;
+};
+
+// ============== Fuel onBlock types ==============
+
+/**
+ * Structured filter object returned by a Fuel `indexer.onBlock` `where`
+ * predicate. `_every` alignment is relative to `_gte` (or the chain's
+ * configured `startBlock` when `_gte` is omitted), preserving
+ * `(blockNumber - startBlock) % _every === 0`.
+ */
+export type FuelOnBlockFilter = {
+  readonly block?: {
+    readonly height?: {
+      /** Matches blocks whose height is greater than or equal to the given value. */
+      readonly _gte?: number;
+      /** Matches blocks whose height is less than or equal to the given value. */
+      readonly _lte?: number;
+      /** Match every Nth block. Alignment is relative to `_gte`. */
+      readonly _every?: number;
+    };
+  };
+};
+
+/**
+ * Return type of a Fuel `indexer.onBlock` `where` predicate. The predicate
+ * must explicitly return — an implicit `undefined` is not accepted.
+ * - `false` → skip this chain.
+ * - `true` → register on the chain with no extra filter.
+ * - {@link FuelOnBlockFilter} → register with the given range/stride.
+ */
+export type FuelOnBlockWhereResult = boolean | FuelOnBlockFilter;
+
+/** Argument passed to a Fuel `indexer.onBlock` `where` predicate. */
+export type FuelOnBlockWhereArgs<Config extends IndexerConfigTypes> = {
+  /** Configured chain being evaluated. Use `chain.id` to branch per chain. */
+  readonly chain: FuelChain<FuelChainIds<Config>, FuelContractNames<Config>>;
+};
+
+/** Context for Fuel `indexer.onBlock` handlers. Alias of {@link FuelOnEventContext}. */
+export type FuelOnBlockContext<Config extends IndexerConfigTypes> = FuelOnEventContext<Config>;
+
+/** Arguments passed to a Fuel block handler. */
+export type FuelOnBlockHandlerArgs<Config extends IndexerConfigTypes> = {
+  /** Block being processed. Contains the block height; extended fields are
+      opt-in via `field_selection` in config.yaml. */
+  readonly block: { readonly height: number };
+  /** Handler context: entity operations, logger, effect caller, chain state. */
+  readonly context: FuelOnBlockContext<Config>;
+};
+
+/** Handler function for a Fuel `indexer.onBlock` registration. */
+export type FuelOnBlockHandler<Config extends IndexerConfigTypes> = (
+  args: FuelOnBlockHandlerArgs<Config>,
+) => Promise<void>;
+
+/** Options for a Fuel `indexer.onBlock` registration. */
+export type FuelOnBlockOptions<Config extends IndexerConfigTypes> = {
+  /** Unique name for this block handler. Used as the key in error messages
+      and in persisted progress tracking. */
+  readonly name: string;
+  /** Optional predicate evaluated once per configured chain at registration
+      time. Return `false` to skip a chain, `true` to match every block, or
+      a filter object to restrict by block height range and stride. */
+  readonly where?: (args: FuelOnBlockWhereArgs<Config>) => FuelOnBlockWhereResult;
+};
+
+// ============== SVM onSlot types ==============
+
+/**
+ * Structured filter object returned by an SVM `indexer.onSlot` `where`
+ * predicate. `_every` alignment is relative to `_gte` (or the chain's
+ * configured `startBlock` when `_gte` is omitted), preserving
+ * `(slot - startBlock) % _every === 0`.
+ */
+export type SvmOnSlotFilter = {
+  readonly slot?: {
+    /** Matches slots whose number is greater than or equal to the given value. */
+    readonly _gte?: number;
+    /** Matches slots whose number is less than or equal to the given value. */
+    readonly _lte?: number;
+    /** Match every Nth slot. Alignment is relative to `_gte`. */
+    readonly _every?: number;
+  };
+};
+
+/**
+ * Return type of an SVM `indexer.onSlot` `where` predicate. The predicate
+ * must explicitly return — an implicit `undefined` is not accepted.
+ * - `false` → skip this chain.
+ * - `true` → register on the chain with no extra filter.
+ * - {@link SvmOnSlotFilter} → register with the given range/stride.
+ */
+export type SvmOnSlotWhereResult = boolean | SvmOnSlotFilter;
+
+/** Argument passed to an SVM `indexer.onSlot` `where` predicate. */
+export type SvmOnSlotWhereArgs<Config extends IndexerConfigTypes> = {
+  /** Configured chain being evaluated. Use `chain.id` to branch per chain. */
+  readonly chain: SvmChain<SvmChainIds<Config>>;
+};
+
+/** Arguments passed to an SVM slot handler. */
+export type SvmOnSlotHandlerArgs<Config extends IndexerConfigTypes> = {
+  /** Slot number being processed. */
+  readonly slot: number;
+  /** Handler context: entity operations, logger, effect caller, chain state. */
+  readonly context: SvmOnSlotContext<Config>;
+};
+
+/** Handler function for an SVM `indexer.onSlot` registration. */
+export type SvmOnSlotHandler<Config extends IndexerConfigTypes> = (
+  args: SvmOnSlotHandlerArgs<Config>,
+) => Promise<void>;
+
+/** Options for an SVM `indexer.onSlot` registration. */
+export type SvmOnSlotOptions<Config extends IndexerConfigTypes> = {
+  /** Unique name for this slot handler. Used as the key in error messages
+      and in persisted progress tracking. */
+  readonly name: string;
+  /** Optional predicate evaluated once per configured chain at registration
+      time. Return `false` to skip a chain, `true` to match every slot, or
+      a filter object to restrict by slot range and stride. */
+  readonly where?: (args: SvmOnSlotWhereArgs<Config>) => SvmOnSlotWhereResult;
+};
+
+// ============== Indexer Types ==============
 
 // Helper: Check if ecosystem is configured in a given config
 type HasEvm<Config> = "evm" extends keyof Config ? true : false;
@@ -762,7 +850,11 @@ type EcosystemTuple<Config> = [
 ];
 type EcosystemCount<Config> = EcosystemTuple<Config>["length"];
 
-// EVM ecosystem type
+// EVM ecosystem type — includes chains plus handler registration methods.
+// NOTE: options use inline { contract: C; event: E } shape for TypeScript inference.
+// Using EvmOnEventOptions<Contracts[C][E]> would break inference since C/E can't be
+// derived from indexed access types. The named EvmOnEventOptions type is for end-user
+// reference; the inline shape here is structurally identical.
 type EvmEcosystem<Config extends IndexerConfigTypes> =
   "evm" extends keyof Config
     ? Config["evm"] extends {
@@ -785,12 +877,69 @@ type EvmEcosystem<Config extends IndexerConfigTypes> =
                 ContractName extends string ? ContractName : never
               >;
             };
+            /**
+             * Register a block handler. `where` is evaluated once per configured
+             * chain at registration time; return `false` to skip a chain, `true`
+             * to match every block, or an {@link EvmOnBlockFilter} describing a
+             * block-number range and stride. Always available regardless of
+             * whether `contracts` are configured — block handlers don't need
+             * any contract context.
+             */
+            readonly onBlock: (
+              options: EvmOnBlockOptions<Config>,
+              handler: EvmOnBlockHandler<Config>,
+            ) => void;
+          } & (Config["evm"] extends {
+            contracts: infer Contracts extends Record<string, Record<string, any>>;
           }
+            ? {
+                /** Register an event handler. */
+                readonly onEvent: <
+                  C extends keyof Contracts & string,
+                  E extends keyof Contracts[C] & string
+                >(
+                  options: {
+                    readonly contract: C;
+                    readonly event: E;
+                    readonly wildcard?: boolean;
+                    readonly where?: EvmOnEventWhere<
+                      EvmEventFilters<Config>[C] extends Record<string, any>
+                        ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
+                          ? P
+                          : {}
+                        : {},
+                      C
+                    >;
+                  },
+                  handler: EvmOnEventHandler<Contracts[C][E], EvmOnEventContext<Config>>
+                ) => void;
+                /** Register a contract register handler for dynamic contract indexing. */
+                readonly contractRegister: <
+                  C extends keyof Contracts & string,
+                  E extends keyof Contracts[C] & string
+                >(
+                  options: {
+                    readonly contract: C;
+                    readonly event: E;
+                    readonly wildcard?: boolean;
+                    readonly where?: EvmOnEventWhere<
+                      EvmEventFilters<Config>[C] extends Record<string, any>
+                        ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
+                          ? P
+                          : {}
+                        : {},
+                      C
+                    >;
+                  },
+                  handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
+                ) => void;
+              }
+            : {})
         : never
       : never
     : never;
 
-// Fuel ecosystem type
+// Fuel ecosystem type — chains plus handler registration methods.
 type FuelEcosystem<Config extends IndexerConfigTypes> =
   "fuel" extends keyof Config
     ? Config["fuel"] extends {
@@ -813,12 +962,64 @@ type FuelEcosystem<Config extends IndexerConfigTypes> =
                 ContractName extends string ? ContractName : never
               >;
             };
+            /** Register a Fuel block handler. See `EvmEcosystem.onBlock` for
+             * `where` semantics; Fuel filters on `block.height`. Always
+             * available regardless of whether `contracts` are configured. */
+            readonly onBlock: (
+              options: FuelOnBlockOptions<Config>,
+              handler: FuelOnBlockHandler<Config>,
+            ) => void;
+          } & (Config["fuel"] extends {
+            contracts: infer Contracts extends Record<string, Record<string, any>>;
           }
+            ? {
+                /** Register an event handler. */
+                readonly onEvent: <
+                  C extends keyof Contracts & string,
+                  E extends keyof Contracts[C] & string
+                >(
+                  options: {
+                    readonly contract: C;
+                    readonly event: E;
+                    readonly wildcard?: boolean;
+                    readonly where?: FuelOnEventWhere<
+                      FuelEventFilters<Config>[C] extends Record<string, any>
+                        ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
+                          ? P
+                          : {}
+                        : {},
+                      C
+                    >;
+                  },
+                  handler: FuelOnEventHandler<Contracts[C][E], FuelOnEventContext<Config>>
+                ) => void;
+                /** Register a contract register handler for dynamic contract indexing. */
+                readonly contractRegister: <
+                  C extends keyof Contracts & string,
+                  E extends keyof Contracts[C] & string
+                >(
+                  options: {
+                    readonly contract: C;
+                    readonly event: E;
+                    readonly wildcard?: boolean;
+                    readonly where?: FuelOnEventWhere<
+                      FuelEventFilters<Config>[C] extends Record<string, any>
+                        ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
+                          ? P
+                          : {}
+                        : {},
+                      C
+                    >;
+                  },
+                  handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
+                ) => void;
+              }
+            : {})
         : never
       : never
     : never;
 
-// SVM ecosystem type
+// SVM ecosystem type — chains plus onSlot handler method. SVM has no onEvent yet.
 type SvmEcosystem<Config extends IndexerConfigTypes> =
   "svm" extends keyof Config
     ? Config["svm"] extends { chains: infer Chains }
@@ -832,12 +1033,23 @@ type SvmEcosystem<Config extends IndexerConfigTypes> =
             } & {
               readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
             };
+            /**
+             * Register a slot handler. `where` is evaluated once per configured
+             * chain at registration time; return `false` to skip a chain, `true`
+             * to match every slot, or an {@link SvmOnSlotFilter} describing a
+             * slot range and stride.
+             */
+            readonly onSlot: (
+              options: SvmOnSlotOptions<Config>,
+              handler: SvmOnSlotHandler<Config>,
+            ) => void;
           }
         : never
       : never
     : never;
 
-// Single ecosystem chains (flattened at root level)
+// Single ecosystem chains (flattened at root level). Includes handler methods
+// since, for single-ecosystem indexers, they live at root alongside `chains`.
 type SingleEcosystemChains<Config extends IndexerConfigTypes> =
   HasEvm<Config> extends true
     ? EvmEcosystem<Config>
@@ -848,20 +1060,19 @@ type SingleEcosystemChains<Config extends IndexerConfigTypes> =
     : {};
 
 // Multi-ecosystem chains (namespaced by ecosystem). Each ecosystem branch
-// also includes its handler registration methods (onEvent, contractRegister)
-// so multi-ecosystem indexers expose `indexer.evm.onEvent` etc. — mirrors
-// the runtime object built in `Main.res`.
+// includes its handler registration methods — mirrors the runtime object
+// built in `Main.res`.
 type MultiEcosystemChains<Config extends IndexerConfigTypes> =
   (HasEvm<Config> extends true
     ? {
         /** EVM ecosystem configuration. */
-        readonly evm: EvmEcosystem<Config> & EvmHandlerMethods<Config>;
+        readonly evm: EvmEcosystem<Config>;
       }
     : {}) &
     (HasFuel<Config> extends true
       ? {
           /** Fuel ecosystem configuration. */
-          readonly fuel: FuelEcosystem<Config> & FuelHandlerMethods<Config>;
+          readonly fuel: FuelEcosystem<Config>;
         }
       : {}) &
     (HasSvm<Config> extends true
@@ -883,7 +1094,7 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes> = Prettify<
     /** The indexer description from config.yaml. */
     readonly description: string | undefined;
   } & (EcosystemCount<Config> extends 1
-    ? SingleEcosystemChains<Config> & SingleEcosystemHandlerMethods<Config>
+    ? SingleEcosystemChains<Config>
     : MultiEcosystemChains<Config>)
 >;
 
@@ -959,6 +1170,16 @@ type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes> = {
   simulate?: FuelSimulateItem<Config>[];
 };
 
+/** Configuration for a single SVM chain in the test indexer. SVM has no
+ * `onEvent` handlers yet, so simulate items aren't supported — only slot
+ * range overrides for driving `indexer.onSlot` block handlers under test. */
+type SvmTestIndexerChainConfig = {
+  /** The slot number to start processing from. Defaults to config startBlock or progressBlock+1. */
+  startBlock?: number;
+  /** The slot number to stop processing at. */
+  endBlock?: number;
+};
+
 /** Entity change value containing sets and/or deleted IDs. */
 type EntityChangeValue<Entity> = {
   /** Entities that were created or updated. */
@@ -1025,6 +1246,13 @@ type FuelChainIds<Config extends IndexerConfigTypes> =
       : never
     : never;
 
+type SvmChainIds<Config extends IndexerConfigTypes> =
+  Config["svm"] extends { chains: infer Chains }
+    ? Chains extends Record<string, { id: number }>
+      ? Chains[keyof Chains]["id"]
+      : never
+    : never;
+
 // Per-ecosystem chain config mappings
 type EvmTestChains<Config extends IndexerConfigTypes> =
   HasEvm<Config> extends true
@@ -1036,14 +1264,128 @@ type FuelTestChains<Config extends IndexerConfigTypes> =
     ? { [K in FuelChainIds<Config>]?: FuelTestIndexerChainConfig<Config> }
     : {};
 
+type SvmTestChains<Config extends IndexerConfigTypes> =
+  HasSvm<Config> extends true
+    ? { [K in SvmChainIds<Config>]?: SvmTestIndexerChainConfig }
+    : {};
+
 /** Process configuration for the test indexer, with chains keyed by chain ID. */
 export type TestIndexerProcessConfig<Config extends IndexerConfigTypes> = {
   /** Chain configurations keyed by chain ID. Each chain specifies start and end blocks. */
   chains: Prettify<
     EvmTestChains<Config> &
-    FuelTestChains<Config>
+    FuelTestChains<Config> &
+    SvmTestChains<Config>
   >;
 };
+
+// Per-ecosystem test-indexer ecosystem types — structurally the `chainIds +
+// chains` slice of the real ecosystem types, but without the handler
+// registration methods (the test indexer doesn't let you register new
+// handlers, only run the existing ones over simulated or persisted data).
+// Kept as a separate type family so the real and test surfaces can evolve
+// independently without one silently lying about the other.
+type EvmTestEcosystem<Config extends IndexerConfigTypes> =
+  "evm" extends keyof Config
+    ? Config["evm"] extends {
+        chains: infer Chains;
+        contracts?: Record<infer ContractName, any>;
+      }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all EVM chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in Chains[keyof Chains]["id"]]: EvmChain<
+                K,
+                ContractName extends string ? ContractName : never
+              >;
+            } & {
+              readonly [K in keyof Chains]: EvmChain<
+                Chains[K]["id"],
+                ContractName extends string ? ContractName : never
+              >;
+            };
+          }
+        : never
+      : never
+    : never;
+
+type FuelTestEcosystem<Config extends IndexerConfigTypes> =
+  "fuel" extends keyof Config
+    ? Config["fuel"] extends {
+        chains: infer Chains;
+        contracts?: Record<infer ContractName, any>;
+      }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all Fuel chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in Chains[keyof Chains]["id"]]: FuelChain<
+                K,
+                ContractName extends string ? ContractName : never
+              >;
+            } & {
+              readonly [K in keyof Chains]: FuelChain<
+                Chains[K]["id"],
+                ContractName extends string ? ContractName : never
+              >;
+            };
+          }
+        : never
+      : never
+    : never;
+
+type SvmTestEcosystem<Config extends IndexerConfigTypes> =
+  "svm" extends keyof Config
+    ? Config["svm"] extends { chains: infer Chains }
+      ? Chains extends Record<string, { id: number }>
+        ? {
+            /** Array of all SVM chain IDs. */
+            readonly chainIds: readonly Chains[keyof Chains]["id"][];
+            /** Per-chain configuration keyed by chain name or ID. */
+            readonly chains: {
+              readonly [K in Chains[keyof Chains]["id"]]: SvmChain<K>;
+            } & {
+              readonly [K in keyof Chains]: SvmChain<Chains[K]["id"]>;
+            };
+          }
+        : never
+      : never
+    : never;
+
+// Test-side single/multi chain selectors, parallel to the real ones.
+type SingleEcosystemTestChains<Config extends IndexerConfigTypes> =
+  HasEvm<Config> extends true
+    ? EvmTestEcosystem<Config>
+    : HasFuel<Config> extends true
+    ? FuelTestEcosystem<Config>
+    : HasSvm<Config> extends true
+    ? SvmTestEcosystem<Config>
+    : {};
+
+type MultiEcosystemTestChains<Config extends IndexerConfigTypes> =
+  (HasEvm<Config> extends true
+    ? {
+        /** EVM ecosystem configuration. */
+        readonly evm: EvmTestEcosystem<Config>;
+      }
+    : {}) &
+    (HasFuel<Config> extends true
+      ? {
+          /** Fuel ecosystem configuration. */
+          readonly fuel: FuelTestEcosystem<Config>;
+        }
+      : {}) &
+    (HasSvm<Config> extends true
+      ? {
+          /** SVM ecosystem configuration. */
+          readonly svm: SvmTestEcosystem<Config>;
+        }
+      : {});
 
 /**
  * Test indexer type resolved from config.
@@ -1058,8 +1400,8 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes> = {
     readonly changes: readonly EntityChange<Config>[];
   }>;
 } & (EcosystemCount<Config> extends 1
-  ? SingleEcosystemChains<Config>
-  : MultiEcosystemChains<Config>) & {
+  ? SingleEcosystemTestChains<Config>
+  : MultiEcosystemTestChains<Config>) & {
   /** Entity operations for direct manipulation outside of handlers. */
   readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<
     ConfigEntities<Config>[K]

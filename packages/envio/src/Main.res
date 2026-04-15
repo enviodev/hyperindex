@@ -56,6 +56,31 @@ let stateSchema = S.union([
   })),
 ])
 
+// Shape of the user-returned `{_gte?, _lte?, _every?}` filter chunk after
+// the ecosystem-specific wrapper is stripped. Shared across all ecosystems —
+// the outer `block.number` / `block.height` / `slot` unwrap lives on each
+// ecosystem's `onBlockFilterSchema`, and the inner range fields are the
+// same everywhere.
+type blockRange = {
+  _gte: option<int>,
+  _lte: option<int>,
+  _every: int,
+}
+
+// `S.strict` rejects unknown fields so typos like `_gt` / `_evry` surface
+// with a readable schema error pointing at the offending key, instead of
+// silently registering a broken filter. `_every` defaults to 1 inside the
+// schema so the caller always sees a plain `int`, and `intMin(1)` rejects
+// zero/negative strides — `(blockNumber - startBlock) % 0` would crash and
+// any negative stride would never match.
+let blockRangeSchema: S.t<blockRange> = S.object(s => {
+  _gte: s.field("_gte", S.option(S.int)),
+  _lte: s.field("_lte", S.option(S.int)),
+  _every: s.field("_every", S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
+})->S.strict
+
+let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
+
 let globalGsManagerRef: ref<option<GlobalStateManager.t>> = ref(None)
 
 // Persistence is set by Main.start before handler modules load, so that
@@ -296,12 +321,133 @@ let getGlobalIndexer = (~config: Config.t): 'indexer => {
     )
   }
 
+  // SVM exposes the block handler as `indexer.onSlot`; EVM/Fuel expose it as
+  // `indexer.onBlock`. The choice lives on the ecosystem record so adding a
+  // new ecosystem doesn't require editing this file. Used both as the
+  // attached property name and in error messages so the cited call-site
+  // matches what the user wrote.
+  let onBlockMethodName = config.ecosystem.onBlockMethodName
+
+  // Two-stage parse: first the ecosystem-specific outer schema unwraps the
+  // wrapper (`block.number` / `block.height` / `slot`) and surfaces the
+  // inner chunk as raw `unknown`; then the shared `blockRangeSchema`
+  // validates the `{_gte?, _lte?, _every?}` fields. Keeping the inner
+  // validation in one place means typos and shape mismatches surface with
+  // the same user-friendly error regardless of ecosystem.
+  let extractRange = (filter: unknown, ~name): blockRange =>
+    try {
+      switch filter->S.parseOrThrow(config.ecosystem.onBlockFilterSchema) {
+      | None => defaultBlockRange
+      | Some(inner) => inner->S.parseOrThrow(blockRangeSchema)
+      }
+    } catch {
+    | S.Raised(exn) =>
+      JsError.throwWithMessage(
+        `\`indexer.${onBlockMethodName}("${name}")\` \`where\` returned an invalid filter: ${exn
+          ->Utils.prettifyExn
+          ->(Utils.magic: exn => string)}`,
+      )
+    }
+
+  // `where` is evaluated once per configured chain at registration time.
+  // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
+  // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
+  // math at `FetchState.res:619` stays untouched.
+  let onBlockFn = (rawOptions: 'a, handler: 'b) => {
+    let raw =
+      rawOptions->(
+        Utils.magic: 'a => {
+          "name": string,
+          "where": option<Envio.onBlockWhereArgs<unknown> => unknown>,
+        }
+      )
+    let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
+    let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
+    let name = raw["name"]
+    let logger = Logging.createChild(~params={"onBlock": name})
+
+    // `where` must be a function (unlike onEvent, which also accepts a static
+    // value). A static value would have to be evaluated against every chain
+    // independently, which has no useful semantic for block handlers.
+    // Normalize undefined/null to None up front so the per-chain loop below
+    // can't accidentally call `null` as a predicate (ReScript treats a JS
+    // `null` value as `Some(null)` when the field is typed as option).
+    let where = switch raw["where"]->(Utils.magic: option<'a> => unknown) {
+    | w if w === %raw(`undefined`) || w === %raw(`null`) => None
+    | w if typeof(w) === #function => Some(raw["where"]->Option.getUnsafe)
+    | w =>
+      JsError.throwWithMessage(
+        `\`indexer.${onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
+            w,
+          ) :> string)}.`,
+      )
+    }
+
+    let matchedAny = ref(false)
+
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainId = chainConfig.id
+      let chainObj = chainsDict->Dict.getUnsafe(chainId->Int.toString)
+
+      // Predicate returns `true` → match with no filter; `false` → skip;
+      // any plain object → structured filter. `undefined`/`null` returns
+      // are rejected — the TS type excludes `void`, so a missing return is
+      // a user bug we surface early rather than silently match-all.
+      let result = switch where {
+      | None => %raw(`true`)
+      | Some(predicate) => predicate({chain: chainObj})
+      }
+
+      let (shouldRegister, range) = if result === %raw(`true`) {
+        (true, defaultBlockRange)
+      } else if result === %raw(`false`) {
+        (false, defaultBlockRange)
+      } else if typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`) {
+        (true, extractRange(result, ~name))
+      } else {
+        // Reject numbers, strings, functions, arrays, undefined, null —
+        // anything that isn't bool or a plain object would silently
+        // misregister.
+        JsError.throwWithMessage(
+          `\`indexer.${onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
+              result,
+            ) :> string)}. Expected boolean or a filter object.`,
+        )
+      }
+
+      if shouldRegister {
+        matchedAny := true
+        HandlerRegister.registerOnBlock(
+          ~name,
+          ~chainId,
+          ~interval=range._every,
+          ~startBlock=range._gte,
+          ~endBlock=range._lte,
+          ~handler=typedHandler,
+        )
+      }
+    })
+
+    // Catches misconfigured `where` predicates that return `false` for every
+    // configured chain — the handler would otherwise never fire with no hint.
+    // Includes the ecosystem-specific method name so SVM users see "onSlot"
+    // and don't get confused looking for a "Block handler" they never wrote.
+    if !matchedAny.contents {
+      logger->Logging.childWarn(
+        `\`indexer.${onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
+      )
+    }
+  }
+
   indexer
   ->Utils.Object.definePropertyWithValue("onEvent", {enumerable: true, value: onEventFn})
   ->Utils.Object.definePropertyWithValue(
     "contractRegister",
     {enumerable: true, value: contractRegisterFn},
   )
+  ->Utils.Object.definePropertyWithValue(onBlockMethodName, {enumerable: true, value: onBlockFn})
   ->ignore
 
   indexer->(Utils.magic: 'a => 'indexer)
