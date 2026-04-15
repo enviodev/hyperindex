@@ -49,8 +49,13 @@ jobs:
     timeout-minutes: 1
     permissions:
       contents: read
-      pull-requests: read
-      issues: write  # reactions on the triggering comment
+      # pull-requests: write covers both pulls.get and reactions on PR
+      # comments. Even though the reactions endpoint is under
+      # /repos/.../issues/comments/.../reactions, GITHUB_TOKEN treats
+      # PR-comment reactions as a pull_requests resource — using
+      # `issues: write` here yields "Resource not accessible by
+      # integration".
+      pull-requests: write
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
@@ -78,10 +83,18 @@ jobs:
             // issue_comment: /ok-to-test <sha>
             const { owner, repo } = context.repo;
             const commentId = context.payload.comment.id;
+            const react = async (content) => {
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  owner, repo, comment_id: commentId, content,
+                });
+              } catch (e) {
+                // Don't let a reaction failure mask the real outcome.
+                core.warning(`Could not add ${content} reaction: ${e.message}`);
+              }
+            };
             const reject = async (msg) => {
-              await github.rest.reactions.createForIssueComment({
-                owner, repo, comment_id: commentId, content: '-1',
-              });
+              await react('-1');
               core.setFailed(msg);
             };
 
@@ -116,9 +129,7 @@ jobs:
               );
             }
 
-            await github.rest.reactions.createForIssueComment({
-              owner, repo, comment_id: commentId, content: 'rocket',
-            });
+            await react('rocket');
             core.setOutput('sha', pr.data.head.sha);
 
   # ── Build ───────────────────────────────────────────────────────────
