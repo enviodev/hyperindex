@@ -13,8 +13,21 @@ async fn execute_command(
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
+    execute_command_with_env(cmd, args, current_dir, &[]).await
+}
+
+/// Like execute_command, but lets the caller inject extra env vars into the
+/// child process without clobbering the inherited environment. Used by the
+/// dev flow to forward credentials for containers we just booted.
+async fn execute_command_with_env(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+    extra_env: &[(String, String)],
+) -> anyhow::Result<std::process::ExitStatus> {
     tokio::process::Command::new(cmd)
         .args(&args)
+        .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(current_dir)
         .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
         .kill_on_drop(true) //needed so that dropped threads calling this will also drop
@@ -189,12 +202,15 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::{execute_command, to_js_path};
+    use super::{execute_command_with_env, to_js_path};
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::anyhow;
     use pathdiff::diff_paths;
 
-    pub async fn start_indexer(config: &SystemConfig) -> anyhow::Result<()> {
+    pub async fn start_indexer(
+        config: &SystemConfig,
+        extra_env: &[(String, String)],
+    ) -> anyhow::Result<()> {
         // Compute the relative path from project root to generated directory
         let relative_generated = diff_paths(
             &config.parsed_project_paths.generated,
@@ -208,7 +224,13 @@ pub mod start {
         let args = vec!["--no-warnings", &index_path];
 
         // Run from project root to ensure proper cwd for handlers
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.project_root).await?;
+        let exit = execute_command_with_env(
+            cmd,
+            args,
+            &config.parsed_project_paths.project_root,
+            extra_env,
+        )
+        .await?;
 
         if !exit.success() {
             return Err(anyhow!(

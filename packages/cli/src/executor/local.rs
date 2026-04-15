@@ -18,9 +18,18 @@ pub async fn run_local(
     match local_commands {
         LocalCommandTypes::Docker(subcommand) => match subcommand {
             LocalDockerSubcommands::Up => {
-                docker_env::up(&config.parsed_project_paths.project_root)
-                    .await
-                    .map(|_| ())?;
+                // local docker up intentionally doesn't propagate indexer_env
+                // since it doesn't spawn the indexer — callers are expected
+                // to run `envio start`/`envio dev` afterwards, which will
+                // compute the indexer_env fresh.
+                docker_env::up(
+                    &config.parsed_project_paths.project_root,
+                    docker_env::UpOptions {
+                        clickhouse: config.storage.clickhouse,
+                    },
+                )
+                .await
+                .map(|_| ())?;
             }
             LocalDockerSubcommands::Down => {
                 docker_env::down().await?;

@@ -68,9 +68,14 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
             .await
             .context("Failed running codegen")?;
     }
-    let up_result = docker_env::up(&config.parsed_project_paths.project_root)
-        .await
-        .context("Failed starting Docker containers")?;
+    let up_result = docker_env::up(
+        &config.parsed_project_paths.project_root,
+        docker_env::UpOptions {
+            clickhouse: config.storage.clickhouse,
+        },
+    )
+    .await
+    .context("Failed starting Docker containers")?;
 
     if up_result.hasura_enabled {
         let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
@@ -131,7 +136,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
 
     println!("Starting indexer");
 
-    commands::start::start_indexer(&config)
+    commands::start::start_indexer(&config, &up_result.indexer_env)
         .await
         .context("Failed running start on the indexer")?;
 
