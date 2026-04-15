@@ -49,16 +49,18 @@ jobs:
     timeout-minutes: 1
     permissions:
       contents: read
-      # Split by the exact API calls this job makes:
-      #   issues: write        — reactions.createForIssueComment (PR comment
-      #                          reactions go through the /issues/comments/
-      #                          reactions endpoint and require issues scope)
-      #   pull-requests: read  — pulls.get for SHA verification
-      # Production workflows like Vite / Svelte ecosystem-ci-trigger declare
-      # pull-requests: write because they additionally call issues.addLabels;
-      # we don't, so least-privilege applies.
+      # Both scopes are needed empirically. Docs claim issues: write
+      # alone covers reactions on issue comments (and PR comments are
+      # issue comments under the hood), but in practice GitHub routes
+      # PR-comment reactions through the pull_requests permission too
+      # — granting only one yields "Resource not accessible by
+      # integration". Vite and Svelte ecosystem-ci-trigger workflows
+      # both declare BOTH scopes for exactly this reason; we match.
+      # Note: if the error persists with both granted, the repo-level
+      # "Actions → General → Workflow permissions" setting may be
+      # restricting the token below what the workflow requests.
       issues: write
-      pull-requests: read
+      pull-requests: write
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
