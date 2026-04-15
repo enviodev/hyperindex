@@ -90,12 +90,20 @@ jobs:
             if (!m) return reject('Usage: /ok-to-test <7-40 hex char SHA>');
             const shaArg = m[1].toLowerCase();
 
-            const perm = await github.rest.repos.getCollaboratorPermissionLevel({
-              owner, repo,
-              username: context.payload.comment.user.login,
-            });
-            if (!['admin', 'write'].includes(perm.data.permission)) {
-              return reject(`@${context.payload.comment.user.login} lacks write access to approve CI.`);
+            // Authorize via comment.author_association rather than the
+            // collaborators/permission API — the latter requires
+            // `administration: read` which the default GITHUB_TOKEN
+            // cannot grant ("Resource not accessible by integration").
+            // OWNER and COLLABORATOR require an explicit invite from
+            // the repo; MEMBER is excluded because org membership is
+            // wider than the set of people we trust to release secrets
+            // to fork CI.
+            const assoc = context.payload.comment.author_association;
+            if (!['OWNER', 'COLLABORATOR'].includes(assoc)) {
+              return reject(
+                `@${context.payload.comment.user.login} (${assoc}) cannot approve CI — ` +
+                `must be OWNER or COLLABORATOR of ${owner}/${repo}.`
+              );
             }
 
             const pr = await github.rest.pulls.get({
