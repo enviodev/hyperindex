@@ -229,9 +229,9 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         env: {
           TUI_OFF: "true",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
-          ENVIO_CLICKHOUSE_SINK_HOST: config.clickhouseUrl,
-          ENVIO_CLICKHOUSE_SINK_USERNAME: config.clickhouseUsername,
-          ENVIO_CLICKHOUSE_SINK_PASSWORD: config.clickhousePassword,
+          ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+          ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+          ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
           E2E_EXPECTED_END_BLOCK: String(patchedEndBlock),
         },
       });
