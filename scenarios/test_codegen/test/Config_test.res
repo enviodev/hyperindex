@@ -289,6 +289,7 @@ describe("Config.fromPublic", () => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",
       "name": "test",
+      "storage": { "postgres": true },
       "evm": {
         "chains": {
           "ethereumMainnet": {
@@ -329,6 +330,7 @@ describe("Config.fromPublic", () => {
     let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",
       "name": "test",
+      "storage": { "postgres": true },
       "evm": {
         "chains": {
           "ethereumMainnet": {

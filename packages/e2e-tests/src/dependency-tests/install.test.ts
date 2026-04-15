@@ -209,6 +209,11 @@ describe("Isolated dependency e2e", () => {
         env: {
           TUI_OFF: "true",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
+          // e2e_test config.yaml declares `storage.clickhouse: true`, so
+          // PgStorage validates these env vars at indexer start.
+          ENVIO_CLICKHOUSE_HOST: config.clickhouseUrl,
+          ENVIO_CLICKHOUSE_USERNAME: config.clickhouseUsername,
+          ENVIO_CLICKHOUSE_PASSWORD: config.clickhousePassword,
           // Fresh start (after the SQL reset above): handler check uses
           // the config endBlock as the source of truth.
           E2E_EXPECTED_END_BLOCK: "10861774",
