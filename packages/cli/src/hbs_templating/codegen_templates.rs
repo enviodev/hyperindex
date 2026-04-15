@@ -325,6 +325,7 @@ pub struct EventMod {
     pub custom_field_selection: Option<system_config::FieldSelection>,
     pub all_ecosystem_fields: Option<FieldSelection>,
     pub params_constructor_type: String,
+    pub contract_name: CapitalizedOptions,
 }
 
 impl Display for EventMod {
@@ -353,15 +354,16 @@ impl EventMod {
         //   `whereCondition` directly) — see `OnEventWhere<P>` in
         //   `packages/envio/index.d.ts`. The runtime parser handles both shapes.
         let where_type_code = match self.event_filter_type.as_str() {
-            "{}" => "@genType type onEventWhere = Internal.noOnEventWhere".to_string(),
-            _ => "@genType type whereCondition = {params?: SingleOrMultiple.t<whereParams>}\n
-@genType type onEventWhereArgs = {/** The unique identifier of the blockchain \
-                network where this event occurred. */ chainId: chainId, /** Addresses of the \
-                contracts indexing the event. */ addresses: array<Address.t>}\n
-@genType @unboxed type onEventWhereResult = Filter(whereCondition) | \
-                @as(false) SkipAll | @as(true) KeepAll\n
-@genType type onEventWhere = onEventWhereArgs => onEventWhereResult"
-                .to_string(),
+            "{}" => "type onEventWhere = Internal.noOnEventWhere".to_string(),
+            _ => format!(
+                "type onEventWhereCondition = {{params?: SingleOrMultiple.t<whereParams>}}\n\
+type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
+type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
+type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
+@unboxed type onEventWhereResult = Filter(onEventWhereCondition) | @as(false) SkipAll | @as(true) KeepAll\n\
+type onEventWhere = onEventWhereArgs => onEventWhereResult",
+                contract_capitalized = self.contract_name.capitalized,
+            ),
         };
 
         // ReScript block/transaction types only include selected fields
@@ -432,7 +434,6 @@ type event = {{
   block: block,
 }}
 
-@genType
 type whereParams = {where_params_type}
 
 {where_type_code}"#
@@ -471,6 +472,7 @@ impl EventTemplate {
     pub fn from_fuel_supply_event(
         config_event: &system_config::Event,
         all_ecosystem_fields: Option<FieldSelection>,
+        contract_name: &CapitalizedOptions,
     ) -> Self {
         let event_name = config_event.name.capitalize();
         let event_mod = EventMod {
@@ -480,6 +482,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             all_ecosystem_fields: all_ecosystem_fields.clone(),
             params_constructor_type: "Internal.fuelSupplyParams".to_string(),
+            contract_name: contract_name.clone(),
         };
         EventTemplate {
             name: event_name,
@@ -491,6 +494,7 @@ impl EventTemplate {
     pub fn from_fuel_transfer_event(
         config_event: &system_config::Event,
         all_ecosystem_fields: Option<FieldSelection>,
+        contract_name: &CapitalizedOptions,
     ) -> Self {
         let event_name = config_event.name.capitalize();
         let event_mod = EventMod {
@@ -500,6 +504,7 @@ impl EventTemplate {
             custom_field_selection: config_event.field_selection.clone(),
             all_ecosystem_fields: all_ecosystem_fields.clone(),
             params_constructor_type: "Internal.fuelTransferParams".to_string(),
+            contract_name: contract_name.clone(),
         };
         EventTemplate {
             name: event_name,
@@ -511,6 +516,7 @@ impl EventTemplate {
     pub fn from_config_event(
         config_event: &system_config::Event,
         all_ecosystem_fields: Option<FieldSelection>,
+        contract_name: &CapitalizedOptions,
     ) -> Result<Self> {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
@@ -578,6 +584,7 @@ impl EventTemplate {
                     custom_field_selection: config_event.field_selection.clone(),
                     all_ecosystem_fields: all_ecosystem_fields.clone(),
                     params_constructor_type,
+                    contract_name: contract_name.clone(),
                 };
 
                 Ok(EventTemplate {
@@ -598,6 +605,7 @@ impl EventTemplate {
                             custom_field_selection: config_event.field_selection.clone(),
                             all_ecosystem_fields: all_ecosystem_fields.clone(),
                             params_constructor_type: data_type_str,
+                            contract_name: contract_name.clone(),
                         };
 
                         Ok(EventTemplate {
@@ -609,10 +617,15 @@ impl EventTemplate {
                     FuelEventKind::Mint | FuelEventKind::Burn => Ok(Self::from_fuel_supply_event(
                         config_event,
                         all_ecosystem_fields,
+                        contract_name,
                     )),
-                    FuelEventKind::Call | FuelEventKind::Transfer => Ok(
-                        Self::from_fuel_transfer_event(config_event, all_ecosystem_fields),
-                    ),
+                    FuelEventKind::Call | FuelEventKind::Transfer => {
+                        Ok(Self::from_fuel_transfer_event(
+                            config_event,
+                            all_ecosystem_fields,
+                            contract_name,
+                        ))
+                    }
                 }
             }
         }
@@ -637,7 +650,9 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, all_ecosystem_fields.cloned()))
+            .map(|event| {
+                EventTemplate::from_config_event(event, all_ecosystem_fields.cloned(), &name)
+            })
             .collect::<Result<_>>()?;
 
         let module_code = match &contract.abi {
@@ -1296,17 +1311,6 @@ type chainId = [{}]"#,
                 .join(" | "),
         );
 
-        let on_block_code = format!(
-            r#"@genType /** Register a Block Handler. It'll be called for every block by default. */
-let onBlock: (
-Envio.onBlockOptions<chainId>,
-{},
-) => unit = (
-HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
-)->Utils.magic"#,
-            on_block_handler_type
-        );
-
         // Generate indexer types and value
         let indexer_contract_type = r#"/** Contract configuration with name and ABI. */
 type indexerContract = {
@@ -1379,8 +1383,9 @@ type indexerChains = {{
             indexer_chains_fields
         );
 
-        let indexer_type = r#"/** Metadata and configuration for the indexer. */
-type indexer = {
+        let indexer_type = format!(
+            r#"/** Metadata and configuration for the indexer. */
+type indexer = {{
   /** The name of the indexer from config.yaml. */
   name: string,
   /** The description of the indexer from config.yaml. */
@@ -1399,7 +1404,13 @@ type indexer = {
     onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
-}"#;
+  /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
+  onBlock: (
+    Envio.onBlockOptions<indexerChain>,
+    {on_block_handler_type},
+  ) => unit,
+}}"#
+        );
 
         // Generate getChainById function
         let get_chain_by_id_cases = chain_configs
@@ -1734,9 +1745,7 @@ type contractRegisterContext = {{
 
 {indexer_type}
 
-{get_chain_by_id}
-
-{on_block_code}"#
+{get_chain_by_id}"#
         );
 
         // Generate testIndexer types and createTestIndexer
@@ -2495,6 +2504,7 @@ mod test {
                 field_selection: None,
             },
             None,
+            &"Gravatar".to_string().to_capitalized_options(),
         )
         .unwrap();
 
@@ -2526,6 +2536,7 @@ mod test {
                 }),
             },
             all_ecosystem_fields,
+            &"Gravatar".to_string().to_capitalized_options(),
         )
         .unwrap();
 

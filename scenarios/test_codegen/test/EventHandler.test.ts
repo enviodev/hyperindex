@@ -17,9 +17,14 @@ import {
   type EvmContractRegisterHandler,
   type EvmOnEventContext,
   type EvmContractRegisterContext,
-  type OnEventWhere,
+  type EvmOnEventWhere,
 } from "generated";
-import { type Address } from "envio";
+import {
+  type Address,
+  type EvmOnBlockWhereResult,
+  type EvmOnBlockFilter,
+  type EvmOnBlockOptions,
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { createTestIndexer } from "generated";
 
@@ -803,6 +808,29 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
+  it("Should throw when registering an onBlock handler after the indexer has finished initializing", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "onBlockInHandler" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+  });
+
 
 
   it("Currently filters are ignored by the test framework", async () => {
@@ -1473,7 +1501,7 @@ describe("onEvent / contractRegister types", () => {
 
     // Gravatar.NewGravatar has no indexed params, so the project-bound
     // EvmEventFilters lookup resolves params to {} and `where` is typed
-    // as `OnEventWhere<{}>` rather than `unknown`.
+    // as `EvmOnEventWhere<{}, "Gravatar">` rather than `unknown`.
     expectType<
       TypeEqual<
         Opts,
@@ -1481,7 +1509,7 @@ describe("onEvent / contractRegister types", () => {
           readonly contract: "Gravatar";
           readonly event: "NewGravatar";
           readonly wildcard?: boolean;
-          readonly where?: OnEventWhere<{}>;
+          readonly where?: EvmOnEventWhere<{}, "Gravatar">;
         }
       >
     >(true);
@@ -1649,5 +1677,55 @@ describe("onEvent / contractRegister types", () => {
       contract: "NftFactory",
       event: "NewGravatar",
     };
+  });
+
+  // Type-level surface checks for `indexer.onBlock`. These assertions are
+  // cheap (no runtime), but they catch regressions where the `where`-return
+  // type widens back to include `void`/`undefined` — which the runtime no
+  // longer silently accepts, so the TS type must stay strict.
+  it("indexer.onBlock exists on the indexer (value-level)", () => {
+    expectType<typeof indexer.onBlock>(indexer.onBlock);
+    // Smoke-check the options shape by constructing one. If `where` ever
+    // loses `void` exclusion, the implicit-return negative test below
+    // catches it; this ensures the `name` + `where` shape still type-checks.
+    const _opts: Parameters<typeof indexer.onBlock>[0] = {
+      name: "someBlockHandler",
+      where: ({ chain }) => (chain.id === 1 ? true : false),
+    };
+    expectType<Parameters<typeof indexer.onBlock>[0]>(_opts);
+  });
+
+  it("EvmOnBlockWhereResult excludes void/undefined", () => {
+    // Narrow intent: the result type is exactly `boolean | EvmOnBlockFilter`.
+    expectType<TypeEqual<EvmOnBlockWhereResult, boolean | EvmOnBlockFilter>>(
+      true
+    );
+    // Negative: a function whose body omits a return path is rejected.
+    // `noImplicitReturns`/the declared return type catches the missing
+    // return, so the assignment below should fail to type-check.
+    type _Predicate = (args: {
+      readonly chain: { readonly id: number };
+    }) => EvmOnBlockWhereResult;
+    // @ts-expect-error - implicit undefined return is not assignable
+    const _missingReturn: _Predicate = ({ chain }) => {
+      if (chain.id === 1) return true;
+      // Falls through with no return — must be a type error.
+    };
+  });
+
+  it("EvmOnBlockFilter accepts partial/empty shapes (strict-key checks live in the runtime schema)", () => {
+    // The TS type uses `?:` for every field and doesn't catch typos
+    // (e.g. `_gt` is fine to TS). The runtime `S.strict` on
+    // `blockRangeSchema` is what rejects them with a clear error. This
+    // assertion documents that split: TS validates *shape*, runtime
+    // validates *keys*.
+    const _ok: EvmOnBlockFilter = {
+      block: { number: { _gte: 1, _lte: 10, _every: 2 } },
+    };
+    const _partial: EvmOnBlockFilter = { block: { number: { _gte: 1 } } };
+    const _empty: EvmOnBlockFilter = {};
+    expectType<EvmOnBlockFilter>(_ok);
+    expectType<EvmOnBlockFilter>(_partial);
+    expectType<EvmOnBlockFilter>(_empty);
   });
 });

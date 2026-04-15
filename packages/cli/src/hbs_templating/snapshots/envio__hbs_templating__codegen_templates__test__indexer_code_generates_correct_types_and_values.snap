@@ -286,10 +286,9 @@ let contractName = "Contract1"
       block: block,
     }
 
-    @genType
     type whereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   module UpdatedGravatar = {
@@ -322,10 +321,9 @@ let contractName = "Contract1"
       block: block,
     }
 
-    @genType
     type whereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =
@@ -407,6 +405,11 @@ type indexer = {
     onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
   ) => unit,
+  /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
+  onBlock: (
+    Envio.onBlockOptions<indexerChain>,
+    Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
+  ) => unit,
 }
 
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
@@ -415,14 +418,6 @@ switch chainId {
   | #1 => indexer.chains.\"1"
 }
 }
-
-@genType /** Register a Block Handler. It'll be called for every block by default. */
-let onBlock: (
-Envio.onBlockOptions<chainId>,
-Envio.onBlockArgs<Envio.blockEvent, handlerContext> => promise<unit>,
-) => unit = (
-HandlerRegister.onBlock: (unknown, Internal.onBlockArgs => promise<unit>) => unit
-)->Utils.magic
 
 type testIndexerProcessConfigChains = {
   \"1"?: TestIndexer.evmChainConfig,

@@ -533,7 +533,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
   }
 
   // Build event configs for a contract from JSON event items
-  let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi) => {
+  let buildContractEvents = (~contractName, ~events: option<array<_>>, ~abi, ~chainId: int) => {
     switch events {
     | None => []
     | Some(eventItems) =>
@@ -576,6 +576,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ~handler,
             ~contractRegister,
             ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
+            ~probeChainId=chainId,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
             ~globalBlockFieldsSet,
@@ -629,10 +630,16 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
             ->Array.map(parseAddress)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
+          // Build event configs from JSON (field selections resolved inline)
+          // chainId is threaded in so the where-callback detection probe
+          // exercises the callback with this chain's real id — handlers
+          // that branch on `chain.id` are taken through the same path
+          // they will follow at runtime.
           let events = buildContractEvents(
             ~contractName=capitalizedName,
             ~events=contractData["events"],
             ~abi=contractData["abi"],
+            ~chainId,
           )
 
           {
@@ -795,10 +802,24 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
   }
 }
 
-let getEventConfig = (config: t, ~contractName, ~eventName) => {
-  config.chainMap
-  ->ChainMap.values
-  ->Array.reduce(None, (acc, chain) => {
+// Look up an event config by (contract, event) name. When `chainId` is given,
+// returns that chain's per-chain event config (matters for where-callback
+// probe detection, which runs with the chain's real id). Without `chainId`,
+// falls back to the first chain that declares this event.
+let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<int>=?) => {
+  let chains = switch chainId {
+  | Some(chainId) =>
+    let chain = ChainMap.Chain.makeUnsafe(~chainId)
+    switch config.chainMap->ChainMap.get(chain) {
+    | chainConfig => [chainConfig]
+    | exception _ =>
+      JsError.throwWithMessage(
+        `Chain ${chainId->Int.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
+      )
+    }
+  | None => config.chainMap->ChainMap.values
+  }
+  chains->Array.reduce(None, (acc, chain) => {
     switch acc {
     | Some(_) => acc
     | None =>

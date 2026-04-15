@@ -1,21 +1,28 @@
 name: Build & Verify
 
 on:
+  # Same-repo PRs and main pushes get full CI automatically.
   pull_request:
   push:
     branches:
       - main
-  # Manual trigger for running full CI (with repo secrets) against a specific
-  # commit — e.g. a fork PR from an external contributor whose runs would
-  # otherwise execute without secrets. Only users with write access to this
-  # repo can dispatch this workflow. The provided SHA is pinned at checkout
-  # time so a mid-run force-push on the fork cannot swap code under us.
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: "Exact 40-character commit SHA to run CI against (immutable; do not pass a ref like refs/pull/<N>/head)"
-        required: true
-        type: string
+  # Fork PRs require per-commit approval from a reviewer via comment:
+  #
+  #     /ok-to-test <7-40 char hex SHA>
+  #
+  # The gate verifies (1) the commenter has write/admin access and (2)
+  # the approved SHA is still a prefix of the PR's current HEAD — so any
+  # push after review invalidates the approval, closing the "push after
+  # label" race. All downstream jobs pin checkout to the resolved HEAD
+  # SHA, and a trailing `report` job publishes a commit status against
+  # that SHA so branch protection sees the result on the PR. Pattern
+  # matches Kubernetes Prow's /ok-to-test and imjohnbo/ok-to-test.
+  issue_comment:
+    types: [created]
+
+# Default to read-only; jobs opt into write scopes as needed.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,23 +32,94 @@ env:
 jobs:
   # ── Gate ────────────────────────────────────────────────────────────
 
-  # Validate workflow_dispatch.sha is an immutable 40-char commit SHA.
-  # Runs on every event so downstream `needs:` is satisfied without skipped-
-  # dependency gymnastics; the check itself is a no-op outside of dispatch.
-  validate-dispatch-sha:
+  # Resolves the commit SHA downstream jobs check out, and authorizes
+  # fork PRs via /ok-to-test comment. Admits:
+  #   - push to main
+  #   - same-repo pull_request (forks are blocked here; they must use
+  #     /ok-to-test to get a run with secrets)
+  #   - issue_comment starting with /ok-to-test on a PR
+  #
+  # For the comment path the script enforces: commenter has write/admin
+  # permission AND the approved SHA is a prefix of the PR's current HEAD.
+  # A mismatch means someone pushed after review → reject and require
+  # re-review. Reactions on the triggering comment give live feedback
+  # (🚀 accept, 👎 reject).
+  gate:
     runs-on: ubuntu-latest
     timeout-minutes: 1
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write  # reactions on the triggering comment
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       startsWith(github.event.comment.body, '/ok-to-test'))
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - name: Validate sha
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          SHA: ${{ inputs.sha }}
-        run: |
-          [[ "$SHA" =~ ^[0-9a-fA-F]{40}$ ]] || {
-            echo "::error::inputs.sha must be a 40-character hex commit SHA (got: $SHA)"
-            exit 1
-          }
+      - name: Resolve & authorize SHA
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'push') {
+              core.setOutput('sha', context.sha);
+              return;
+            }
+            if (context.eventName === 'pull_request') {
+              core.setOutput('sha', context.payload.pull_request.head.sha);
+              return;
+            }
+
+            // issue_comment: /ok-to-test <sha>
+            const { owner, repo } = context.repo;
+            const commentId = context.payload.comment.id;
+            const reject = async (msg) => {
+              await github.rest.reactions.createForIssueComment({
+                owner, repo, comment_id: commentId, content: '-1',
+              });
+              core.setFailed(msg);
+            };
+
+            const body = context.payload.comment.body.trim();
+            const m = body.match(/^\/ok-to-test\s+([0-9a-f]{7,40})\b/i);
+            if (!m) return reject('Usage: /ok-to-test <7-40 hex char SHA>');
+            const shaArg = m[1].toLowerCase();
+
+            // Authorize via comment.author_association rather than the
+            // collaborators/permission API — the latter requires
+            // `administration: read` which the default GITHUB_TOKEN
+            // cannot grant ("Resource not accessible by integration").
+            // OWNER and COLLABORATOR require an explicit invite from
+            // the repo; MEMBER is excluded because org membership is
+            // wider than the set of people we trust to release secrets
+            // to fork CI.
+            const assoc = context.payload.comment.author_association;
+            if (!['OWNER', 'COLLABORATOR'].includes(assoc)) {
+              return reject(
+                `@${context.payload.comment.user.login} (${assoc}) cannot approve CI — ` +
+                `must be OWNER or COLLABORATOR of ${owner}/${repo}.`
+              );
+            }
+
+            const pr = await github.rest.pulls.get({
+              owner, repo, pull_number: context.payload.issue.number,
+            });
+            if (!pr.data.head.sha.startsWith(shaArg)) {
+              return reject(
+                `Stale approval: current HEAD is ${pr.data.head.sha.substring(0, 12)}, ` +
+                `but command approved ${shaArg}. Re-review HEAD and comment again.`
+              );
+            }
+
+            await github.rest.reactions.createForIssueComment({
+              owner, repo, comment_id: commentId, content: 'rocket',
+            });
+            core.setOutput('sha', pr.data.head.sha);
 
   # ── Build ───────────────────────────────────────────────────────────
 
@@ -49,12 +127,12 @@ jobs:
   build-linux-package:
     runs-on: ubuntu-22.04
     timeout-minutes: 9
-    needs: validate-dispatch-sha
+    needs: gate
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -96,12 +174,12 @@ jobs:
   build-envio-package:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: build-linux-package
+    needs: [gate, build-linux-package]
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.sha }}
 
       - uses: pnpm/action-setup@v5
         with:
@@ -135,12 +213,12 @@ jobs:
   cargo-test:
     runs-on: ubuntu-latest
     timeout-minutes: 9
-    needs: validate-dispatch-sha
+    needs: gate
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -160,12 +238,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 9
     continue-on-error: true
-    needs: validate-dispatch-sha
+    needs: gate
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -178,13 +256,13 @@ jobs:
   # Template tests - verify envio templates can be initialized and built
   template-tests:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [gate, build-envio-package]
     timeout-minutes: 9
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Run template tests
@@ -195,7 +273,7 @@ jobs:
   # Requires DB services (postgres + hasura)
   scenarios-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [gate, build-envio-package]
     timeout-minutes: 9
 
     services:
@@ -230,7 +308,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -252,9 +330,15 @@ jobs:
           pnpm exec envio codegen
           pnpm test
 
+      - name: svm_test
+        working-directory: scenarios/svm_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
+
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.ref == 'refs/heads/main'
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           severity: error
           details: "Tests Failed on main!"
@@ -263,7 +347,7 @@ jobs:
   # E2E test - runs envio dev with a real indexer scenario
   e2e-test:
     runs-on: ubuntu-latest
-    needs: build-envio-package
+    needs: [gate, build-envio-package]
     timeout-minutes: 9
 
     services:
@@ -310,7 +394,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
       - name: Wait for Hasura
@@ -336,8 +420,70 @@ jobs:
 
       - name: E2E Test Failure Notification
         uses: rjstone/discord-webhook-notify@e3fdffbe09fc784fef3788aecf3ca806719aa7e3
-        if: failure() && github.ref == 'refs/heads/main'
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           severity: error
           details: "E2E Tests Failed on main!"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+
+  # ── Report ──────────────────────────────────────────────────────────
+
+  # Publish an aggregate commit status pinned to the resolved SHA. For
+  # issue_comment-triggered fork runs, the workflow's native check-runs
+  # are attached to the default branch's SHA (not the PR head), so they
+  # are invisible to PR branch protection. This job fills that gap by
+  # posting a status tied to the PR's actual HEAD — configure branch
+  # protection to require the `build-verify` context.
+  #
+  # Runs on all events via `if: always()`, but only posts when the gate
+  # resolved a SHA (i.e. the gate passed). Rejected /ok-to-test comments
+  # leave no dangling status.
+  report:
+    if: always()
+    needs:
+      - gate
+      - build-linux-package
+      - build-envio-package
+      - cargo-test
+      - template-tests
+      - scenarios-test
+      - e2e-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      statuses: write
+    steps:
+      - name: Post commit status
+        if: needs.gate.outputs.sha != ''
+        uses: actions/github-script@v7
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const needs = JSON.parse(process.env.RESULTS);
+            const required = [
+              'build-linux-package', 'build-envio-package', 'cargo-test',
+              'template-tests', 'scenarios-test', 'e2e-test',
+            ];
+            const failed = required.filter(n => needs[n]?.result === 'failure');
+            const cancelled = required.filter(n => needs[n]?.result === 'cancelled');
+            let state, description;
+            if (cancelled.length) {
+              state = 'error';
+              description = `cancelled: ${cancelled.join(', ')}`;
+            } else if (failed.length) {
+              state = 'failure';
+              description = `failed: ${failed.join(', ')}`;
+            } else {
+              state = 'success';
+              description = 'all jobs passed';
+            }
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ needs.gate.outputs.sha }}',
+              state,
+              context: 'build-verify',
+              description: description.substring(0, 140),
+              target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });

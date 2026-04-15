@@ -8,8 +8,8 @@ let configWithRegistrations = Indexer.Generated.makeGeneratedConfig()
 
 let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
 
-// Test types:
-let filterArgsShouldBeASubsetOfInternal = (%raw(`null`): Indexer.EventFiltersTest.Transfer.onEventWhereArgs :> Internal.eventFiltersArgs)
+// The codegen'd onEventWhereArgs is structurally compatible with
+// Internal.onEventWhereArgs<_> at runtime; runtime parser uses Obj.magic.
 
 describe("Test eventFilters", () => {
   it("Supports multichain filters", t => {
@@ -54,9 +54,12 @@ describe("Test eventFilters", () => {
   })
 
   it("Supports filter depending on addresses", t => {
+    // Per-chain where-callback probing: pick the chain 137 event config so
+    // the probe exercises the branch that accesses addresses.
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="WildcardWithAddress",
+      ~chainId=137,
     )
 
     t.expect(

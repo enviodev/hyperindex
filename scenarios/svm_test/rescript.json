@@ -1,0 +1,22 @@
+{
+  "name": "svm_test",
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    },
+    {
+      "dir": "test",
+      "subdirs": true
+    }
+  ],
+  "suffix": ".res.mjs",
+  "jsx": {
+    "version": 4
+  },
+  "package-specs": {
+    "module": "esmodule",
+    "in-source": true
+  },
+  "bs-dependencies": ["generated", "envio", "rescript-schema"]
+}
