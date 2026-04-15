@@ -68,12 +68,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result
             .await
             .context("Failed running codegen")?;
     }
-    let up_result = docker_env::up(
-        &config.parsed_project_paths.project_root,
-        docker_env::UpOptions {
-            clickhouse: config.storage.clickhouse,
-        },
-    )
+    let up_result = docker_env::up(docker_env::UpOptions {
+        project_root: &config.parsed_project_paths.project_root,
+        clickhouse: config.storage.clickhouse,
+    })
     .await
     .context("Failed starting Docker containers")?;
 

@@ -22,12 +22,10 @@ pub async fn run_local(
                 // since it doesn't spawn the indexer — callers are expected
                 // to run `envio start`/`envio dev` afterwards, which will
                 // compute the indexer_env fresh.
-                docker_env::up(
-                    &config.parsed_project_paths.project_root,
-                    docker_env::UpOptions {
-                        clickhouse: config.storage.clickhouse,
-                    },
-                )
+                docker_env::up(docker_env::UpOptions {
+                    project_root: &config.parsed_project_paths.project_root,
+                    clickhouse: config.storage.clickhouse,
+                })
                 .await
                 .map(|_| ())?;
             }

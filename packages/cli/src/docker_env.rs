@@ -624,11 +624,13 @@ async fn ensure_container(
     Ok(true)
 }
 
-/// Caller-supplied hints that steer which services `up()` manages. Today
-/// this only toggles ClickHouse, which piggybacks on whether the project
-/// config actually selects the ClickHouse storage backend.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct UpOptions {
+/// Caller-supplied parameters for `up()`. Bundles the project root (used to
+/// locate `.env`) alongside feature flags like ClickHouse so that callers
+/// only need to construct one value and the signature can grow without
+/// touching every call site.
+#[derive(Debug, Clone, Copy)]
+pub struct UpOptions<'a> {
+    pub project_root: &'a Path,
     pub clickhouse: bool,
 }
 
@@ -641,8 +643,8 @@ pub struct UpResult {
     pub indexer_env: Vec<(String, String)>,
 }
 
-pub async fn up(project_root: &Path, opts: UpOptions) -> anyhow::Result<UpResult> {
-    let env = EnvConfig::from_project(project_root);
+pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
+    let env = EnvConfig::from_project(opts.project_root);
     let pg_host_port: u16 = env
         .pg_port
         .parse()
@@ -1275,8 +1277,18 @@ mod tests {
     }
 
     #[test]
-    fn up_options_default_clickhouse_false() {
-        let opts = UpOptions::default();
-        assert_eq!(opts.clickhouse, false);
+    fn up_options_copies_values() {
+        // Smoke test that UpOptions threads both fields and is Copy so
+        // callers don't need to clone before passing in.
+        let root = Path::new("/tmp/project");
+        let a = UpOptions {
+            project_root: root,
+            clickhouse: true,
+        };
+        let b = a;
+        assert_eq!(
+            (a.project_root, a.clickhouse, b.project_root, b.clickhouse),
+            (root, true, root, true)
+        );
     }
 }
