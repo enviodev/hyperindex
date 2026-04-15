@@ -90,24 +90,70 @@ pub struct BaseConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Configuration for the storage backends the indexer writes to. Defaults to \
-                       `postgres: true` when omitted. ClickHouse requires Postgres to be enabled; \
-                       it is not supported as a single storage yet."
+                       `postgres: true` when omitted. ClickHouse requires Postgres to be enabled \
+                       (it is not supported as a single storage yet), and at least one backend \
+                       must be enabled."
     )]
     pub storage: Option<StorageConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Whether to use Postgres as a storage backend (default: true).")]
     pub postgres: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        description = "Whether to additionally sync the indexed data to ClickHouse. Requires \
-                       Postgres to be enabled (default: false)."
-    )]
     pub clickhouse: Option<bool>,
+}
+
+// Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
+// constraints Storage::resolve enforces at codegen time: ClickHouse requires
+// Postgres, and at least one backend must be enabled. Without this, an IDE
+// validating against the schema would accept configs the CLI later rejects.
+impl JsonSchema for StorageConfig {
+    fn schema_name() -> Cow<'static, str> {
+        "StorageConfig".into()
+    }
+
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "postgres": {
+                    "description": "Whether to use Postgres as a storage backend (default: true).",
+                    "type": ["boolean", "null"]
+                },
+                "clickhouse": {
+                    "description": "Whether to additionally sync the indexed data to ClickHouse. \
+                                    Requires Postgres to be enabled (default: false).",
+                    "type": ["boolean", "null"]
+                }
+            },
+            "additionalProperties": false,
+            "allOf": [
+                {
+                    "not": {
+                        "properties": {
+                            "postgres": { "const": false },
+                            "clickhouse": { "const": true }
+                        },
+                        "required": ["postgres", "clickhouse"]
+                    },
+                    "$comment": "ClickHouse is not supported as a single storage yet; postgres must be enabled."
+                },
+                {
+                    "not": {
+                        "properties": {
+                            "postgres": { "const": false },
+                            "clickhouse": { "const": false }
+                        },
+                        "required": ["postgres", "clickhouse"]
+                    },
+                    "$comment": "At least one storage backend must be enabled."
+                }
+            ]
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]

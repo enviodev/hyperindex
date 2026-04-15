@@ -46,7 +46,7 @@
       "minimum": 0
     },
     "storage": {
-      "description": "Configuration for the storage backends the indexer writes to. Defaults to `postgres: true` when omitted. ClickHouse requires Postgres to be enabled; it is not supported as a single storage yet.",
+      "description": "Configuration for the storage backends the indexer writes to. Defaults to `postgres: true` when omitted. ClickHouse requires Postgres to be enabled (it is not supported as a single storage yet), and at least one backend must be enabled.",
       "anyOf": [
         {
           "$ref": "#/$defs/StorageConfig"
@@ -110,7 +110,43 @@
           ]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "postgres": {
+                "const": false
+              },
+              "clickhouse": {
+                "const": true
+              }
+            },
+            "required": [
+              "postgres",
+              "clickhouse"
+            ]
+          },
+          "$comment": "ClickHouse is not supported as a single storage yet; postgres must be enabled."
+        },
+        {
+          "not": {
+            "properties": {
+              "postgres": {
+                "const": false
+              },
+              "clickhouse": {
+                "const": false
+              }
+            },
+            "required": [
+              "postgres",
+              "clickhouse"
+            ]
+          },
+          "$comment": "At least one storage backend must be enabled."
+        }
+      ]
     },
     "EcosystemTag": {
       "type": "string",
