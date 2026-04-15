@@ -60,7 +60,7 @@ describe("Evm ecosystem onBlockFilterSchema", () => {
       %raw(`{block: {number: {_gte: 10, _every: 2}}}`)->S.parseOrThrow(schema)
     // Feed the inner chunk through the shared range schema (mirrors
     // `extractRange` in Main.res) to prove it carries the raw payload.
-    let range = parsed->Option.getExn->S.parseOrThrow(Main.blockRangeSchema)
+    let range = parsed->Option.getOrThrow->S.parseOrThrow(Main.blockRangeSchema)
     t.expect(range).toEqual(({_gte: Some(10), _lte: None, _every: 2}: Main.blockRange))
   })
 
@@ -83,7 +83,7 @@ describe("Evm ecosystem onBlockFilterSchema", () => {
     // no-filter registration.
     let parsed = %raw(`{block: {}}`)->S.parseOrThrow(schema)
     t.expect(() =>
-      parsed->Option.getExn->S.parseOrThrow(Main.blockRangeSchema)->ignore
+      parsed->Option.getOrThrow->S.parseOrThrow(Main.blockRangeSchema)->ignore
     ).toThrow()
   })
 })
@@ -94,7 +94,7 @@ describe("Fuel ecosystem onBlockFilterSchema", () => {
   it("surfaces the inner range chunk from block.height", t => {
     let parsed =
       %raw(`{block: {height: {_gte: 1, _lte: 100}}}`)->S.parseOrThrow(schema)
-    let range = parsed->Option.getExn->S.parseOrThrow(Main.blockRangeSchema)
+    let range = parsed->Option.getOrThrow->S.parseOrThrow(Main.blockRangeSchema)
     t.expect(range).toEqual(({_gte: Some(1), _lte: Some(100), _every: 1}: Main.blockRange))
   })
 
@@ -109,7 +109,7 @@ describe("Svm ecosystem onBlockFilterSchema", () => {
 
   it("surfaces the inner range chunk from the flat `slot` key", t => {
     let parsed = %raw(`{slot: {_gte: 42, _every: 3}}`)->S.parseOrThrow(schema)
-    let range = parsed->Option.getExn->S.parseOrThrow(Main.blockRangeSchema)
+    let range = parsed->Option.getOrThrow->S.parseOrThrow(Main.blockRangeSchema)
     t.expect(range).toEqual(({_gte: Some(42), _lte: None, _every: 3}: Main.blockRange))
   })
 

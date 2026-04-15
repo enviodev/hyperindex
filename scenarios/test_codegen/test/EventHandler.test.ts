@@ -17,7 +17,7 @@ import {
   type EvmContractRegisterHandler,
   type EvmOnEventContext,
   type EvmContractRegisterContext,
-  type OnEventWhere,
+  type EvmOnEventWhere,
 } from "generated";
 import {
   type Address,
@@ -1501,7 +1501,7 @@ describe("onEvent / contractRegister types", () => {
 
     // Gravatar.NewGravatar has no indexed params, so the project-bound
     // EvmEventFilters lookup resolves params to {} and `where` is typed
-    // as `OnEventWhere<{}>` rather than `unknown`.
+    // as `EvmOnEventWhere<{}, "Gravatar">` rather than `unknown`.
     expectType<
       TypeEqual<
         Opts,
@@ -1509,7 +1509,7 @@ describe("onEvent / contractRegister types", () => {
           readonly contract: "Gravatar";
           readonly event: "NewGravatar";
           readonly wildcard?: boolean;
-          readonly where?: OnEventWhere<{}>;
+          readonly where?: EvmOnEventWhere<{}, "Gravatar">;
         }
       >
     >(true);

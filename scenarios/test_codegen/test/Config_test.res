@@ -74,7 +74,10 @@ let transactionFieldToInt = (field: Internal.evmTransactionField) =>
 
 // Compile-time exhaustiveness check: evmBlockConstructor must have a field for every evmBlockField variant.
 // If a new variant is added to evmBlockField, this function will fail to compile until the constructor type is updated.
-let _assertBlockConstructorCoversAllFields = (b: Internal.evmBlockInput, field: Internal.evmBlockField) =>
+let _assertBlockConstructorCoversAllFields = (
+  b: Internal.evmBlockInput,
+  field: Internal.evmBlockField,
+) =>
   switch field {
   | Number => b.number->ignore
   | Timestamp => b.timestamp->ignore
@@ -106,7 +109,10 @@ let _assertBlockConstructorCoversAllFields = (b: Internal.evmBlockInput, field: 
   }
 
 // Compile-time exhaustiveness check: evmTransactionConstructor must have a field for every evmTransactionField variant.
-let _assertTransactionConstructorCoversAllFields = (tx: Internal.evmTransactionInput, field: Internal.evmTransactionField) =>
+let _assertTransactionConstructorCoversAllFields = (
+  tx: Internal.evmTransactionInput,
+  field: Internal.evmTransactionField,
+) =>
   switch field {
   | TransactionIndex => tx.transactionIndex->ignore
   | Hash => tx.hash->ignore
@@ -145,22 +151,26 @@ let _assertTransactionConstructorCoversAllFields = (tx: Internal.evmTransactionI
 describe("Field selection enum schemas", () => {
   it("evmBlockFieldSchema covers all block field variants", t => {
     let sum = ref(0)
-    Internal.allEvmBlockFields->Js.Array2.forEach(field => {
-      let json = (field :> string)->Js.Json.string
-      let parsed = json->S.parseOrThrow(Internal.evmBlockFieldSchema)
-      sum := sum.contents + blockFieldToInt(parsed)
-    })
+    Internal.allEvmBlockFields->Array.forEach(
+      field => {
+        let json = (field :> string)->JSON.Encode.string
+        let parsed = json->S.parseOrThrow(Internal.evmBlockFieldSchema)
+        sum := sum.contents + blockFieldToInt(parsed)
+      },
+    )
     // n*(n+1)/2 where n = 27
     t.expect(sum.contents).toBe(27 * 28 / 2)
   })
 
   it("evmTransactionFieldSchema covers all transaction field variants", t => {
     let sum = ref(0)
-    Internal.allEvmTransactionFields->Js.Array2.forEach(field => {
-      let json = (field :> string)->Js.Json.string
-      let parsed = json->S.parseOrThrow(Internal.evmTransactionFieldSchema)
-      sum := sum.contents + transactionFieldToInt(parsed)
-    })
+    Internal.allEvmTransactionFields->Array.forEach(
+      field => {
+        let json = (field :> string)->JSON.Encode.string
+        let parsed = json->S.parseOrThrow(Internal.evmTransactionFieldSchema)
+        sum := sum.contents + transactionFieldToInt(parsed)
+      },
+    )
     // n*(n+1)/2 where n = 32
     t.expect(sum.contents).toBe(32 * 33 / 2)
   })
@@ -175,7 +185,8 @@ describe("EventConfigBuilder", () => {
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
     // Serialize a params object to JSON via the schema
-    let testParams: Internal.eventParams = {"from": "0xabc", "to": "0xdef", "value": 100n}->Utils.magic
+    let testParams: Internal.eventParams =
+      {"from": "0xabc", "to": "0xdef", "value": 100n}->Utils.magic
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"from": "0xabc", "to": "0xdef", "value": "100"}`))
   })
@@ -193,8 +204,7 @@ describe("EventConfigBuilder", () => {
       {name: "details", abiType: "(string,string)", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
-    let testParams: Internal.eventParams =
-      {"id": 1n, "details": ("hello", "world")}->Utils.magic
+    let testParams: Internal.eventParams = {"id": 1n, "details": ("hello", "world")}->Utils.magic
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"id": "1", "details": ["hello", "world"]}`))
   })
@@ -204,8 +214,7 @@ describe("EventConfigBuilder", () => {
       {name: "data", abiType: "(uint256,(uint256,string))", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
-    let testParams: Internal.eventParams =
-      {"data": (1n, (2n, "hello"))}->Utils.magic
+    let testParams: Internal.eventParams = {"data": (1n, (2n, "hello"))}->Utils.magic
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"data": ["1", ["2", "hello"]]}`))
   })
@@ -215,8 +224,7 @@ describe("EventConfigBuilder", () => {
       {name: "ids", abiType: "uint256[]", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
-    let testParams: Internal.eventParams =
-      {"ids": [1n, 2n, 3n]}->Utils.magic
+    let testParams: Internal.eventParams = {"ids": [1n, 2n, 3n]}->Utils.magic
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"ids": ["1", "2", "3"]}`))
   })
@@ -264,9 +272,7 @@ describe("EventConfigBuilder", () => {
 
     // Schema can serialize the decoded result — proves field names match
     let json = decoded->S.reverseConvertToJsonOrThrow(schema)
-    t.expect(json).toEqual(
-      %raw(`{"id": "42", "contactDetails": ["Alice", "alice@example.com"]}`),
-    )
+    t.expect(json).toEqual(%raw(`{"id": "42", "contactDetails": ["Alice", "alice@example.com"]}`))
   })
 
   it("abiTypeToSchema throws on unsupported types", t => {
@@ -280,7 +286,7 @@ describe("Config.fromPublic", () => {
   it("resolves ABI for lowercase contract name in internal config", t => {
     // Internal config JSON with a lowercase contract name key ("greeter")
     // Addresses are now in per-chain contract data
-    let publicConfigJson: Js.Json.t = %raw(`{
+    let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",
       "name": "test",
       "evm": {
@@ -310,18 +316,17 @@ describe("Config.fromPublic", () => {
     // before lookup, so "greeter" -> "Greeter" matches the chain contract name
     let config = Config.fromPublic(publicConfigJson)
 
-    let chain = config.chainMap->ChainMap.values->Js.Array2.unsafe_get(0)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let contracts = chain.contracts
     t.expect(contracts->Array.length, ~message="Should have one contract").toBe(1)
-    let contract = contracts->Js.Array2.unsafe_get(0)
-    t.expect(
-      contract.name,
-      ~message="Contract name should be the capitalized version",
-    ).toBe("Greeter")
+    let contract = contracts->Array.getUnsafe(0)
+    t.expect(contract.name, ~message="Contract name should be the capitalized version").toBe(
+      "Greeter",
+    )
   })
 
   it("works with already-capitalized contract name", t => {
-    let publicConfigJson: Js.Json.t = %raw(`{
+    let publicConfigJson: JSON.t = %raw(`{
       "version": "0.0.1-dev",
       "name": "test",
       "evm": {
@@ -349,13 +354,10 @@ describe("Config.fromPublic", () => {
 
     let config = Config.fromPublic(publicConfigJson)
 
-    let chain = config.chainMap->ChainMap.values->Js.Array2.unsafe_get(0)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let contracts = chain.contracts
     t.expect(contracts->Array.length, ~message="Should have one contract").toBe(1)
-    let contract = contracts->Js.Array2.unsafe_get(0)
-    t.expect(
-      contract.name,
-      ~message="Contract name should remain Greeter",
-    ).toBe("Greeter")
+    let contract = contracts->Array.getUnsafe(0)
+    t.expect(contract.name, ~message="Contract name should remain Greeter").toBe("Greeter")
   })
 })

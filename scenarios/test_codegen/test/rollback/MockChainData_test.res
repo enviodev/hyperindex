@@ -1,9 +1,10 @@
-
 open Vitest
 
 describe("Check that MockChainData works as expected", () => {
   let mockChainDataInit = MockChainData.make(
-    ~chainConfig=Indexer.Generated.makeGeneratedConfig().chainMap->ChainMap.get(MockConfig.chain1337),
+    ~chainConfig=Indexer.Generated.makeGeneratedConfig().chainMap->ChainMap.get(
+      MockConfig.chain1337,
+    ),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -39,10 +40,9 @@ describe("Check that MockChainData works as expected", () => {
       ->Belt.HashSet.String.fromArray
       ->Belt.HashSet.String.size == mockChainData.blocks->Array.length
 
-    t.expect(
-      hasUniqueBlockHashes,
-      ~message="block hashes should be unique for each block",
-    ).toBe(true)
+    t.expect(hasUniqueBlockHashes, ~message="block hashes should be unique for each block").toBe(
+      true,
+    )
   })
 
   it("Increments blocks and logs correctly", t => {
@@ -50,14 +50,8 @@ describe("Check that MockChainData works as expected", () => {
     ->Array.reduce(
       None,
       (accum, next) => {
-        t.expect(
-          next.blockNumber,
-          ~message="Block numbers should increment",
-        ).toBe(
-          accum->Option.mapOr(
-            0,
-            ({MockChainData.blockNumber: blockNumber}) => blockNumber + 1,
-          ),
+        t.expect(next.blockNumber, ~message="Block numbers should increment").toBe(
+          accum->Option.mapOr(0, ({MockChainData.blockNumber: blockNumber}) => blockNumber + 1),
         )
         t.expect(
           next.blockTimestamp,

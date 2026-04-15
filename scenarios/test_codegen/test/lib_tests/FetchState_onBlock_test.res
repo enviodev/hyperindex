@@ -1,9 +1,8 @@
-
 open Vitest
 
 let chainId = 0
 
-let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getExn
+let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 
@@ -79,7 +78,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
       indexingContracts: fetchState.indexingContracts,
     }
@@ -126,7 +125,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
       indexingContracts: fetchState.indexingContracts,
     }
@@ -174,7 +173,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
       indexingContracts: fetchState.indexingContracts,
     }
@@ -226,7 +225,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
       indexingContracts: fetchState.indexingContracts,
     }
@@ -281,7 +280,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addressesByContractName: Js.Dict.fromArray([("Gravatar", [mockAddress0])]),
+      addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
       fromBlock: 0,
       indexingContracts: fetchState.indexingContracts,
     }
