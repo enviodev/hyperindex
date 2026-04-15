@@ -356,7 +356,7 @@ impl EventMod {
         let where_type_code = match self.event_filter_type.as_str() {
             "{}" => "type onEventWhere = Internal.noOnEventWhere".to_string(),
             _ => format!(
-                "type onEventWhereCondition = {{params?: SingleOrMultiple.t<onEventWhereParams>}}\n\
+                "type onEventWhereCondition = {{params?: SingleOrMultiple.t<whereParams>}}\n\
 type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
 type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
 type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
@@ -434,7 +434,7 @@ type event = {{
   block: block,
 }}
 
-type onEventWhereParams = {where_params_type}
+type whereParams = {where_params_type}
 
 {where_type_code}"#
         )

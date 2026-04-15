@@ -147,6 +147,6 @@ type event = {
   block: block,
 }
 
-type onEventWhereParams = {}
+type whereParams = {}
 
 type onEventWhere = Internal.noOnEventWhere

@@ -275,7 +275,7 @@ let contractName = "Contract1"
       block: block,
     }
 
-    type onEventWhereParams = {}
+    type whereParams = {}
 
     type onEventWhere = Internal.noOnEventWhere
   }
@@ -310,7 +310,7 @@ let contractName = "Contract1"
       block: block,
     }
 
-    type onEventWhereParams = {}
+    type whereParams = {}
 
     type onEventWhere = Internal.noOnEventWhere
   }
@@ -354,7 +354,7 @@ let contractName = "Contract2"
       block: block,
     }
 
-    type onEventWhereParams = {}
+    type whereParams = {}
 
     type onEventWhere = Internal.noOnEventWhere
   }
@@ -389,7 +389,7 @@ let contractName = "Contract2"
       block: block,
     }
 
-    type onEventWhereParams = {}
+    type whereParams = {}
 
     type onEventWhere = Internal.noOnEventWhere
   }

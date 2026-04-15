@@ -32,7 +32,7 @@ let _wildcardConfig: Indexer.onEventOptions<Indexer.eventIdentity<_, _, _>, _> =
 // `EventFiltersTest.Transfer.onEventWhere`. In ReScript `where` is *always*
 // a callback — OR semantics are expressed via an array on `params`, not at
 // the top level of `where`. `SingleOrMultiple.t` is opaque — construct via
-// `single` / `multiple`. The inner `onEventWhereParams` record needs an explicit
+// `single` / `multiple`. The inner `whereParams` record needs an explicit
 // annotation because `single`'s generic type parameter doesn't propagate
 // inference through the opaque type.
 module TransferEvent = Indexer.EventFiltersTest.Transfer
@@ -42,7 +42,7 @@ let _staticFilterConfig: Indexer.onEventOptions<
 > = {
   event: EventFiltersTest(Transfer),
   where: _ => {
-    let p: TransferEvent.onEventWhereParams = {
+    let p: TransferEvent.whereParams = {
       from: Indexer.SingleOrMultiple.single(
         "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
       ),
@@ -59,7 +59,7 @@ let _wildcardWithFilterConfig: Indexer.onEventOptions<
   event: EventFiltersTest(Transfer),
   wildcard: true,
   where: _ => {
-    let conditions: array<TransferEvent.onEventWhereParams> = [
+    let conditions: array<TransferEvent.whereParams> = [
       {
         to: Indexer.SingleOrMultiple.single(
           "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
@@ -135,7 +135,7 @@ let _registerWithStaticFilter = () => {
     {
       event: EventFiltersTest(Transfer),
       where: _ => {
-        let p: TransferEvent.onEventWhereParams = {
+        let p: TransferEvent.whereParams = {
           from: Indexer.SingleOrMultiple.single(
             "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
           ),
@@ -155,7 +155,7 @@ let _registerWildcardWithFilter = () => {
       event: EventFiltersTest(Transfer),
       wildcard: true,
       where: _ => {
-        let p: TransferEvent.onEventWhereParams = {
+        let p: TransferEvent.whereParams = {
           to: Indexer.SingleOrMultiple.single(
             "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
           ),
@@ -176,7 +176,7 @@ let _registerDynamicFilter = () => {
       where: ({chain}) => {
         let _ = chain.id
         let _ = chain.\"EventFiltersTest".addresses
-        let p: TransferEvent.onEventWhereParams = {
+        let p: TransferEvent.whereParams = {
           from: Indexer.SingleOrMultiple.single(
             "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
           ),
