@@ -189,12 +189,12 @@ impl EnvConfig {
     }
 
     /// Whether the user has pointed Postgres at an externally-managed host,
-    /// meaning we should not start a Docker Postgres container.
+    /// meaning we should not start a Docker Postgres container. Only the
+    /// default value ("localhost") is treated as local; any other value —
+    /// including 127.0.0.1 — is taken as an explicit opt-in to external
+    /// Postgres, since the default never resolves to those literals.
     fn pg_is_external(&self) -> bool {
-        !matches!(
-            self.pg_host.as_str(),
-            "localhost" | "127.0.0.1" | "0.0.0.0" | "::1"
-        )
+        self.pg_host != "localhost"
     }
 
     /// Deterministic hash of all config values used to detect drift.
@@ -556,9 +556,10 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         .parse()
         .context("HASURA_EXTERNAL_PORT is not a valid port")?;
 
-    // Probe Postgres at the configured host: an externally-managed Postgres
-    // can live on any host, and a local Docker Postgres publishes on
-    // 0.0.0.0 and is reachable via localhost.
+    // Probe Postgres at the configured host. Anything other than the default
+    // "localhost" is treated as an externally-managed database (see
+    // EnvConfig::pg_is_external). The local Docker Postgres publishes on
+    // 0.0.0.0, so "localhost" reaches it.
     // Hasura is always our own container, so probe it on localhost regardless.
     let pg_probe_host = env.pg_host.as_str();
     let hasura_probe_host = "localhost";
@@ -902,11 +903,16 @@ mod tests {
     }
 
     #[test]
-    fn pg_is_external_detects_local_and_remote_hosts() {
-        let local_hosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1"];
-        let remote_hosts = ["db.example.com", "10.0.0.5", "host.docker.internal"];
-
-        let local_results: Vec<bool> = local_hosts
+    fn pg_is_external_treats_only_localhost_as_local() {
+        let hosts = [
+            "localhost",
+            "127.0.0.1",
+            "0.0.0.0",
+            "::1",
+            "db.example.com",
+            "host.docker.internal",
+        ];
+        let results: Vec<bool> = hosts
             .iter()
             .map(|h| {
                 EnvConfig {
@@ -916,20 +922,6 @@ mod tests {
                 .pg_is_external()
             })
             .collect();
-        let remote_results: Vec<bool> = remote_hosts
-            .iter()
-            .map(|h| {
-                EnvConfig {
-                    pg_host: (*h).into(),
-                    ..default_env()
-                }
-                .pg_is_external()
-            })
-            .collect();
-
-        assert_eq!(
-            (local_results, remote_results),
-            (vec![false, false, false, false], vec![true, true, true])
-        );
+        assert_eq!(results, vec![false, true, true, true, true, true]);
     }
 }
