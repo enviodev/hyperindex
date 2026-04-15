@@ -148,6 +148,7 @@ async fn connect_docker() -> anyhow::Result<Docker> {
 }
 
 struct EnvConfig {
+    pg_host: String,
     pg_port: String,
     pg_password: String,
     pg_user: String,
@@ -175,6 +176,7 @@ impl EnvConfig {
         };
 
         Self {
+            pg_host: var("ENVIO_PG_HOST", "localhost"),
             pg_port: var("ENVIO_PG_PORT", "5433"),
             pg_password: var("ENVIO_PG_PASSWORD", "testing"),
             pg_user: var("ENVIO_PG_USER", "postgres"),
@@ -186,9 +188,21 @@ impl EnvConfig {
         }
     }
 
+    /// Whether the user has pointed Postgres at an externally-managed host,
+    /// meaning we should not start a Docker Postgres container.
+    fn pg_is_external(&self) -> bool {
+        !matches!(
+            self.pg_host.as_str(),
+            "localhost" | "127.0.0.1" | "0.0.0.0" | "::1"
+        )
+    }
+
     /// Deterministic hash of all config values used to detect drift.
+    /// pg_host is included because Hasura's DATABASE_URL embeds it when
+    /// Postgres is external, so a host change must recreate the container.
     fn config_hash(&self) -> String {
         let mut hasher = Sha256::new();
+        hasher.update(&self.pg_host);
         hasher.update(&self.pg_port);
         hasher.update(&self.pg_password);
         hasher.update(&self.pg_user);
@@ -542,22 +556,43 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         .parse()
         .context("HASURA_EXTERNAL_PORT is not a valid port")?;
 
-    // Probe locally-published ports to see if containers are already running.
-    // Always check localhost since Docker publishes on 0.0.0.0, regardless of
-    // what ENVIO_PG_HOST is set to (that controls where the runtime connects).
-    let probe_host = "localhost";
+    // Probe Postgres at the configured host: an externally-managed Postgres
+    // can live on any host, and a local Docker Postgres publishes on
+    // 0.0.0.0 and is reachable via localhost.
+    // Hasura is always our own container, so probe it on localhost regardless.
+    let pg_probe_host = env.pg_host.as_str();
+    let hasura_probe_host = "localhost";
+    let pg_external = env.pg_is_external();
     let (pg_alive, hasura_alive) =
-        tokio::join!(is_service_reachable(probe_host, pg_host_port), async {
+        tokio::join!(is_service_reachable(pg_probe_host, pg_host_port), async {
             if !env.hasura_enabled {
                 return false;
             }
-            is_hasura_healthy(probe_host, hasura_host_port).await
+            is_hasura_healthy(hasura_probe_host, hasura_host_port).await
         });
 
-    let need_pg = !pg_alive;
+    // If the user points us at an external Postgres, never start a container
+    // for it — fail fast if it isn't actually reachable so the user sees the
+    // misconfiguration instead of Docker silently filling in.
+    if pg_external && !pg_alive {
+        anyhow::bail!(
+            "ENVIO_PG_HOST is set to external host {host:?} but Postgres is not reachable on \
+             {host}:{port}. Refusing to start a Docker container for an externally-managed \
+             Postgres; check that the host is reachable and credentials are correct.",
+            host = env.pg_host,
+            port = pg_host_port
+        );
+    }
+
+    let need_pg = !pg_external && !pg_alive;
     let need_hasura = env.hasura_enabled && !hasura_alive;
 
-    if pg_alive {
+    if pg_external {
+        println!(
+            "Using external Postgres at {}:{} (ENVIO_PG_HOST set), skipping container",
+            env.pg_host, pg_host_port
+        );
+    } else if pg_alive {
         println!("Postgres already reachable on port {pg_host_port}, skipping container");
     }
     if env.hasura_enabled && hasura_alive {
@@ -662,9 +697,19 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
             map
         };
 
+        // When Postgres runs in our own container, Hasura reaches it via the
+        // shared Docker network using the container name on the internal port.
+        // When Postgres is externally-managed, point Hasura at the user-
+        // supplied host/port — the user is responsible for ensuring that
+        // address is routable from the Hasura container.
+        let (db_host, db_port) = if pg_external {
+            (env.pg_host.as_str(), pg_host_port)
+        } else {
+            (PG_CONTAINER, 5432u16)
+        };
         let db_url = format!(
-            "postgres://{}:{}@{}:5432/{}",
-            env.pg_user, env.pg_password, PG_CONTAINER, env.pg_database
+            "postgres://{}:{}@{}:{}/{}",
+            env.pg_user, env.pg_password, db_host, db_port, env.pg_database
         );
 
         let hasura_body = ContainerCreateBody {
@@ -733,7 +778,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         eprint!("Waiting for Postgres...");
         let start = std::time::Instant::now();
         loop {
-            if is_service_reachable(probe_host, pg_host_port).await {
+            if is_service_reachable(pg_probe_host, pg_host_port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
@@ -755,7 +800,7 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
         eprint!("Waiting for Hasura...");
         let start = std::time::Instant::now();
         loop {
-            if is_hasura_healthy(probe_host, hasura_host_port).await {
+            if is_hasura_healthy(hasura_probe_host, hasura_host_port).await {
                 eprintln!(" ready ({:.1}s)", start.elapsed().as_secs_f64());
                 return Ok(());
             }
@@ -819,53 +864,72 @@ pub async fn down() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    fn default_env() -> EnvConfig {
+        EnvConfig {
+            pg_host: "localhost".into(),
+            pg_port: "5433".into(),
+            pg_password: "testing".into(),
+            pg_user: "postgres".into(),
+            pg_database: "envio-dev".into(),
+            hasura_enabled: true,
+            hasura_port: "8080".into(),
+            hasura_enable_console: "true".into(),
+            hasura_admin_secret: "testing".into(),
+        }
+    }
+
     #[test]
     fn config_hash_deterministic() {
-        let env1 = EnvConfig {
-            pg_port: "5433".into(),
-            pg_password: "testing".into(),
-            pg_user: "postgres".into(),
-            pg_database: "envio-dev".into(),
-            hasura_enabled: true,
-            hasura_port: "8080".into(),
-            hasura_enable_console: "true".into(),
-            hasura_admin_secret: "testing".into(),
-        };
-        let env2 = EnvConfig {
-            pg_port: "5433".into(),
-            pg_password: "testing".into(),
-            pg_user: "postgres".into(),
-            pg_database: "envio-dev".into(),
-            hasura_enabled: true,
-            hasura_port: "8080".into(),
-            hasura_enable_console: "true".into(),
-            hasura_admin_secret: "testing".into(),
-        };
-        assert_eq!(env1.config_hash(), env2.config_hash());
+        assert_eq!(default_env().config_hash(), default_env().config_hash());
     }
 
     #[test]
     fn config_hash_changes_on_diff() {
-        let env1 = EnvConfig {
-            pg_port: "5433".into(),
-            pg_password: "testing".into(),
-            pg_user: "postgres".into(),
-            pg_database: "envio-dev".into(),
-            hasura_enabled: true,
-            hasura_port: "8080".into(),
-            hasura_enable_console: "true".into(),
-            hasura_admin_secret: "testing".into(),
-        };
         let env2 = EnvConfig {
             pg_port: "5434".into(),
-            pg_password: "testing".into(),
-            pg_user: "postgres".into(),
-            pg_database: "envio-dev".into(),
-            hasura_enabled: true,
-            hasura_port: "8080".into(),
-            hasura_enable_console: "true".into(),
-            hasura_admin_secret: "testing".into(),
+            ..default_env()
         };
-        assert_ne!(env1.config_hash(), env2.config_hash());
+        assert_ne!(default_env().config_hash(), env2.config_hash());
+    }
+
+    #[test]
+    fn config_hash_changes_on_pg_host() {
+        let env2 = EnvConfig {
+            pg_host: "db.example.com".into(),
+            ..default_env()
+        };
+        assert_ne!(default_env().config_hash(), env2.config_hash());
+    }
+
+    #[test]
+    fn pg_is_external_detects_local_and_remote_hosts() {
+        let local_hosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1"];
+        let remote_hosts = ["db.example.com", "10.0.0.5", "host.docker.internal"];
+
+        let local_results: Vec<bool> = local_hosts
+            .iter()
+            .map(|h| {
+                EnvConfig {
+                    pg_host: (*h).into(),
+                    ..default_env()
+                }
+                .pg_is_external()
+            })
+            .collect();
+        let remote_results: Vec<bool> = remote_hosts
+            .iter()
+            .map(|h| {
+                EnvConfig {
+                    pg_host: (*h).into(),
+                    ..default_env()
+                }
+                .pg_is_external()
+            })
+            .collect();
+
+        assert_eq!(
+            (local_results, remote_results),
+            (vec![false, false, false, false], vec![true, true, true])
+        );
     }
 }
