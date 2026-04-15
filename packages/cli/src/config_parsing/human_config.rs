@@ -130,28 +130,17 @@ impl JsonSchema for StorageConfig {
                 }
             },
             "additionalProperties": false,
-            "allOf": [
-                {
-                    "not": {
-                        "properties": {
-                            "postgres": { "const": false },
-                            "clickhouse": { "const": true }
-                        },
-                        "required": ["postgres", "clickhouse"]
-                    },
-                    "$comment": "ClickHouse is not supported as a single storage yet; postgres must be enabled."
+            // Storage::resolve rejects any `postgres: false` config: with
+            // `clickhouse: true` it fails as "ClickHouse not supported as a
+            // single storage yet"; with clickhouse absent or false the
+            // defaults resolve to all-backends-disabled. So the only
+            // schema-valid shape is one without an explicit `postgres: false`.
+            "not": {
+                "properties": {
+                    "postgres": { "const": false }
                 },
-                {
-                    "not": {
-                        "properties": {
-                            "postgres": { "const": false },
-                            "clickhouse": { "const": false }
-                        },
-                        "required": ["postgres", "clickhouse"]
-                    },
-                    "$comment": "At least one storage backend must be enabled."
-                }
-            ]
+                "required": ["postgres"]
+            }
         })
     }
 }

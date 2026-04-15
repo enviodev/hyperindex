@@ -153,42 +153,16 @@
         }
       },
       "additionalProperties": false,
-      "allOf": [
-        {
-          "not": {
-            "properties": {
-              "postgres": {
-                "const": false
-              },
-              "clickhouse": {
-                "const": true
-              }
-            },
-            "required": [
-              "postgres",
-              "clickhouse"
-            ]
-          },
-          "$comment": "ClickHouse is not supported as a single storage yet; postgres must be enabled."
+      "not": {
+        "properties": {
+          "postgres": {
+            "const": false
+          }
         },
-        {
-          "not": {
-            "properties": {
-              "postgres": {
-                "const": false
-              },
-              "clickhouse": {
-                "const": false
-              }
-            },
-            "required": [
-              "postgres",
-              "clickhouse"
-            ]
-          },
-          "$comment": "At least one storage backend must be enabled."
-        }
-      ]
+        "required": [
+          "postgres"
+        ]
+      }
     },
     "EcosystemTag": {
       "type": "string",
