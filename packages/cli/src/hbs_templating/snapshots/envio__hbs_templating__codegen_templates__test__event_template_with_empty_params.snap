@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2497
 expression: event_template.module_code
 ---
 
@@ -32,7 +31,6 @@ type event = {
   block: block,
 }
 
-@genType
 type whereParams = {}
 
-@genType type onEventWhere = Internal.noOnEventWhere
+type onEventWhere = Internal.noOnEventWhere

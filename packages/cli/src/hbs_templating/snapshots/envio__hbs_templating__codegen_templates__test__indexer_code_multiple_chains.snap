@@ -275,10 +275,9 @@ let contractName = "Contract1"
       block: block,
     }
 
-    @genType
     type whereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   module UpdatedGravatar = {
@@ -311,10 +310,9 @@ let contractName = "Contract1"
       block: block,
     }
 
-    @genType
     type whereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =
@@ -356,10 +354,9 @@ let contractName = "Contract2"
       block: block,
     }
 
-    @genType
     type whereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   module UpdatedGravatar = {
@@ -392,10 +389,9 @@ let contractName = "Contract2"
       block: block,
     }
 
-    @genType
     type whereParams = {}
 
-    @genType type onEventWhere = Internal.noOnEventWhere
+    type onEventWhere = Internal.noOnEventWhere
   }
 
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =

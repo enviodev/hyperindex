@@ -378,7 +378,11 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
-type eventFiltersArgs = {chainId: int, addresses: array<Address.t>}
+// Per-event, per-invocation arguments passed to a `where` callback. The
+// concrete `chain` shape (which contract key it exposes) is generated per
+// event in user-project codegen — here it's an open record so codegen'd
+// types subtype-coerce into it cleanly.
+type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type eventFilters =
   Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
