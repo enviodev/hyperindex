@@ -897,10 +897,25 @@ let fromConfigView = () => {
   | _ => JsError.throwWithMessage(cliMissingErr)
   }
 
-  // `error` is set when the process couldn't be spawned at all (ENOENT,
-  // EACCES, etc.) — that's a CLI-missing problem.
+  // spawnSync sets `error` for several distinct failure classes: the
+  // discovery errors ENOENT/EACCES (collapse to the "install/codegen"
+  // hint), and the execution errors ETIMEDOUT, ENOBUFS, and friends
+  // (surface the actual message — those are real bugs, not missing-CLI
+  // problems, and hiding them makes them undiagnosable).
   switch result.error->Nullable.toOption {
-  | Some(_) => JsError.throwWithMessage(cliMissingErr)
+  | Some(spawnErr) =>
+    let code =
+      spawnErr
+      ->(Utils.magic: exn => {"code": Nullable.t<string>})
+      ->(x => x["code"])
+      ->Nullable.toOption
+      ->Option.getOr("")
+    if code === "ENOENT" || code === "EACCES" {
+      JsError.throwWithMessage(cliMissingErr)
+    } else {
+      let msg = spawnErr->Utils.prettifyExn->(Utils.magic: exn => string)
+      JsError.throwWithMessage(msg)
+    }
   | None => ()
   }
 
