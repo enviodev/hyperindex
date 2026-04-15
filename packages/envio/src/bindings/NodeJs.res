@@ -61,10 +61,14 @@ module ChildProcess = {
   @module("child_process")
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
 
+  // `encoding` is mandatory: when omitted Node defaults to "buffer" and
+  // returns Buffer instances on stdout/stderr, which would silently violate
+  // the `string` typing below. Callers must pass "utf8" (or similar) so the
+  // typed result is accurate.
   type spawnSyncOptions = {
     cwd?: string,
     env?: dict<string>,
-    encoding?: string,
+    encoding: string,
     maxBuffer?: int,
   }
 

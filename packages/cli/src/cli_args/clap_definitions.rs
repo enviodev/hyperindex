@@ -35,7 +35,7 @@ pub struct ProjectPaths {
     #[arg(global = true, short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
     pub output_directory: String,
 
-    ///The file in the project containing config. Can also be set via the `ENVIO_CONFIG` environment variable.
+    ///The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable.
     #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
 }

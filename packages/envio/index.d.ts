@@ -207,9 +207,11 @@ export declare namespace S {
 export interface Global {}
 
 /**
- * Shape of the indexer configuration.
- * Will be used internally for defineConfig.
- * Currently should match the JSON emitted by `envio config view`.
+ * Shape of the indexer configuration used internally for defineConfig.
+ * This models only the subset of fields defineConfig consumes; the JSON
+ * emitted by `envio config view` is a superset (enums, entities, per-chain
+ * sources, event metadata, EVM global field selections, and other
+ * serializer-only fields are intentionally omitted here).
  */
 type IndexerConfig = {
   /** The indexer name. */

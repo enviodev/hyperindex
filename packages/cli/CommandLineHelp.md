@@ -51,7 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
 
   Default value: `generated`
-* `--config <CONFIG>` — The file in the project containing config. Can also be set via the `ENVIO_CONFIG` environment variable
+* `--config <CONFIG>` — The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable
 
   Default value: `config.yaml`
 

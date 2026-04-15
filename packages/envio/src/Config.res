@@ -827,46 +827,28 @@ let getChain = (config, ~chainId) => {
       )
 }
 
-// Resolve the envio CLI via Node module resolution. This works in any context
-// where `envio` is an installed dependency (handler tests, vitest workers,
-// direct `envio start`), without requiring the user to add anything to PATH.
-// We read `bin` from envio's package.json, then decide whether the entry is a
-// JS shim (invoke via `node`) or a native binary (invoke directly).
-let resolveEnvioCli: unit => (string, array<string>) = %raw(`function () {
-  const { createRequire } = require("node:module");
-  const path = require("node:path");
-  const req = createRequire(import.meta.url);
-  const pkgPath = req.resolve("envio/package.json");
-  const pkg = req("envio/package.json");
-  const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin.envio;
-  const binPath = path.resolve(path.dirname(pkgPath), binRel);
-  const isScript = /\.(m?js|cjs)$/i.test(binPath);
-  return isScript ? [process.execPath, [binPath]] : [binPath, []];
-}`)
-
 // Load the resolved indexer config by shelling out to the envio CLI.
 // `envio config view` prints the same JSON we used to bundle as
 // `generated/internal.config.json`. We resolve it via spawnSync (blocking) so
 // the returned value is ready before callers use it. Keeps stdin untouched so
 // the TUI can consume it in the future.
 //
-// Errors are intentionally user-friendly and omit paths/stderr so users see a
-// clear action to take instead of digging through internal details.
+// The command name `envio` is resolved via PATH. `pnpm`/`npm`/`npx` scripts
+// (including vitest workers they spawn) prepend `node_modules/.bin` to PATH,
+// and users who installed envio globally also have it there, so this works in
+// every realistic call site.
+//
+// Only genuine CLI-discovery / spawn failures collapse to the generic
+// "install / codegen" hint. Non-zero exits surface the CLI's stderr (so
+// misconfigured `config.yaml` errors stay diagnosable) and JSON parsing or
+// schema validation errors propagate untouched.
 let fromConfigView = () => {
-  let genericErr = "Couldn't load the indexer config. Run `envio codegen` and make sure the envio CLI is installed."
-
-  let (cmd, prefixArgs) = try {
-    resolveEnvioCli()
-  } catch {
-  | _ => JsError.throwWithMessage(genericErr)
-  }
-
-  let args = prefixArgs->Array.concat(["config", "view"])
+  let cliMissingErr = "Couldn't load the indexer config. Run `envio codegen` and make sure the envio CLI is installed."
 
   let result = try {
     NodeJs.ChildProcess.spawnSync(
-      cmd,
-      args,
+      "envio",
+      ["config", "view"],
       {
         encoding: "utf8",
         // Configs can be large (hundreds of events with ABIs). Default 1MB is
@@ -876,22 +858,33 @@ let fromConfigView = () => {
       },
     )
   } catch {
-  | _ => JsError.throwWithMessage(genericErr)
+  | _ => JsError.throwWithMessage(cliMissingErr)
   }
 
+  // `error` is set when the process couldn't be spawned at all (ENOENT,
+  // EACCES, etc.) — that's a CLI-missing problem.
   switch result.error->Null.toOption {
-  | Some(_) => JsError.throwWithMessage(genericErr)
+  | Some(_) => JsError.throwWithMessage(cliMissingErr)
   | None => ()
   }
 
   switch result.status->Null.toOption {
   | Some(0) => ()
-  | _ => JsError.throwWithMessage(genericErr)
+  | _ =>
+    // Non-zero exit: the CLI ran but refused to produce a config. Surface
+    // its stderr so config.yaml parse errors and similar propagate with a
+    // real pointer, and only fall back to the generic hint when stderr is
+    // empty.
+    let stderr = result.stderr->String.trim
+    if stderr === "" {
+      JsError.throwWithMessage(cliMissingErr)
+    } else {
+      JsError.throwWithMessage(stderr)
+    }
   }
 
-  try {
-    result.stdout->JSON.parseOrThrow->fromPublic
-  } catch {
-  | _ => JsError.throwWithMessage(genericErr)
-  }
+  // Let JSON.parseOrThrow / fromPublic validation errors propagate — those
+  // indicate real bugs in the CLI output or schema drift and need their
+  // actual messages to be actionable.
+  result.stdout->JSON.parseOrThrow->fromPublic
 }
