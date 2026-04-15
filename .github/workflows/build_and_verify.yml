@@ -49,14 +49,16 @@ jobs:
     timeout-minutes: 1
     permissions:
       contents: read
-      # Production workflows that do exactly this (Vite / Svelte
-      # ecosystem-ci-trigger) declare BOTH scopes:
-      #   issues: write       — reactions on the PR comment
-      #   pull-requests: write — pulls.get for SHA verification
-      # Granting only one yields "Resource not accessible by
-      # integration" depending on which API call hits first.
+      # Split by the exact API calls this job makes:
+      #   issues: write        — reactions.createForIssueComment (PR comment
+      #                          reactions go through the /issues/comments/
+      #                          reactions endpoint and require issues scope)
+      #   pull-requests: read  — pulls.get for SHA verification
+      # Production workflows like Vite / Svelte ecosystem-ci-trigger declare
+      # pull-requests: write because they additionally call issues.addLabels;
+      # we don't, so least-privilege applies.
       issues: write
-      pull-requests: write
+      pull-requests: read
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
