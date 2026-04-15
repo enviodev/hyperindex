@@ -49,8 +49,14 @@ jobs:
     timeout-minutes: 1
     permissions:
       contents: read
-      pull-requests: read
-      issues: write  # reactions on the triggering comment
+      # Production workflows that do exactly this (Vite / Svelte
+      # ecosystem-ci-trigger) declare BOTH scopes:
+      #   issues: write       — reactions on the PR comment
+      #   pull-requests: write — pulls.get for SHA verification
+      # Granting only one yields "Resource not accessible by
+      # integration" depending on which API call hits first.
+      issues: write
+      pull-requests: write
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
@@ -78,10 +84,18 @@ jobs:
             // issue_comment: /ok-to-test <sha>
             const { owner, repo } = context.repo;
             const commentId = context.payload.comment.id;
+            const react = async (content) => {
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  owner, repo, comment_id: commentId, content,
+                });
+              } catch (e) {
+                // Don't let a reaction failure mask the real outcome.
+                core.warning(`Could not add ${content} reaction: ${e.message}`);
+              }
+            };
             const reject = async (msg) => {
-              await github.rest.reactions.createForIssueComment({
-                owner, repo, comment_id: commentId, content: '-1',
-              });
+              await react('-1');
               core.setFailed(msg);
             };
 
@@ -116,9 +130,7 @@ jobs:
               );
             }
 
-            await github.rest.reactions.createForIssueComment({
-              owner, repo, comment_id: commentId, content: 'rocket',
-            });
+            await react('rocket');
             core.setOutput('sha', pr.data.head.sha);
 
   # ── Build ───────────────────────────────────────────────────────────
