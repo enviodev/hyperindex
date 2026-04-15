@@ -49,8 +49,18 @@ jobs:
     timeout-minutes: 1
     permissions:
       contents: read
-      pull-requests: read
-      issues: write  # reactions on the triggering comment
+      # Both scopes are needed empirically. Docs claim issues: write
+      # alone covers reactions on issue comments (and PR comments are
+      # issue comments under the hood), but in practice GitHub routes
+      # PR-comment reactions through the pull_requests permission too
+      # — granting only one yields "Resource not accessible by
+      # integration". Vite and Svelte ecosystem-ci-trigger workflows
+      # both declare BOTH scopes for exactly this reason; we match.
+      # Note: if the error persists with both granted, the repo-level
+      # "Actions → General → Workflow permissions" setting may be
+      # restricting the token below what the workflow requests.
+      issues: write
+      pull-requests: write
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
@@ -78,10 +88,18 @@ jobs:
             // issue_comment: /ok-to-test <sha>
             const { owner, repo } = context.repo;
             const commentId = context.payload.comment.id;
+            const react = async (content) => {
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  owner, repo, comment_id: commentId, content,
+                });
+              } catch (e) {
+                // Don't let a reaction failure mask the real outcome.
+                core.warning(`Could not add ${content} reaction: ${e.message}`);
+              }
+            };
             const reject = async (msg) => {
-              await github.rest.reactions.createForIssueComment({
-                owner, repo, comment_id: commentId, content: '-1',
-              });
+              await react('-1');
               core.setFailed(msg);
             };
 
@@ -116,9 +134,7 @@ jobs:
               );
             }
 
-            await github.rest.reactions.createForIssueComment({
-              owner, repo, comment_id: commentId, content: 'rocket',
-            });
+            await react('rocket');
             core.setOutput('sha', pr.data.head.sha);
 
   # ── Build ───────────────────────────────────────────────────────────
@@ -326,6 +342,12 @@ jobs:
 
       - name: fuel_test
         working-directory: scenarios/fuel_test
+        run: |
+          pnpm exec envio codegen
+          pnpm test
+
+      - name: svm_test
+        working-directory: scenarios/svm_test
         run: |
           pnpm exec envio codegen
           pnpm test
