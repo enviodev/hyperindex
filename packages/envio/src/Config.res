@@ -445,7 +445,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
     JsError.throwWithMessage(
-      `Invalid internal.config.ts: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
+      `Invalid indexer config: ${exn->Utils.prettifyExn->(Utils.magic: exn => string)}`,
     )
   }
 
@@ -840,12 +840,18 @@ let getChain = (config, ~chainId) => {
 @val external importMetaUrl: string = "import.meta.url"
 @val external nodeExecPath: string = "process.execPath"
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
+@module("node:fs") external existsSync: string => bool = "existsSync"
 @new external makeUrl: (string, string) => {..} = "URL"
 @get external urlHref: {..} => string = "href"
 
+// Only return the path if `bin.mjs` actually exists next to this file; if
+// the layout ever drifts (e.g., a downstream bundler flattens the package)
+// we fall through to the `"envio"` PATH fallback in `fromConfigView`
+// instead of trying to spawn a missing file.
 let resolveEnvioBinPath = () =>
   try {
-    Some(fileURLToPath(makeUrl("../bin.mjs", importMetaUrl)->urlHref))
+    let binPath = fileURLToPath(makeUrl("../bin.mjs", importMetaUrl)->urlHref)
+    existsSync(binPath) ? Some(binPath) : None
   } catch {
   | _ => None
   }
