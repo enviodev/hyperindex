@@ -7,7 +7,7 @@ use strum::IntoEnumIterator;
 use subenum::subenum;
 
 #[derive(strum::Display)]
-#[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork)]
+#[subenum(NetworkWithExplorer, HypersyncChain, GraphNetwork)]
 #[derive(
     Clone,
     Debug,
@@ -26,34 +26,34 @@ use subenum::subenum;
 #[strum(serialize_all = "kebab-case")]
 #[repr(u64)]
 pub enum Network {
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Ab = 36888,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Abstract = 2741,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Amoy = 80002,
 
     #[subenum(GraphNetwork)]
     ArbitrumGoerli = 421613,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     ArbitrumNova = 42170,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     ArbitrumOne = 42161,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     ArbitrumSepolia = 421614,
 
     #[subenum(NetworkWithExplorer)]
     ArbitrumTestnet = 421611,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     ArcTestnet = 5042002,
 
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
     Aurora = 1313161554,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -61,40 +61,40 @@ pub enum Network {
 
     AuroraTurbo = 1313161567,
 
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
 
     #[subenum(NetworkWithExplorer)]
     B2Testnet = 1123,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
 
     #[subenum(GraphNetwork(serde(rename = "base-testnet")))]
     BaseGoerli = 84531,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     BaseSepolia = 84532,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Berachain = 80094,
 
     BerachainBartio = 80084,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Blast = 81457,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     BlastSepolia = 168587773,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Boba = 288,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Bsc = 56,
 
     #[subenum(
-        HypersyncNetwork,
+        HypersyncChain,
         NetworkWithExplorer,
         GraphNetwork(serde(rename = "chapel"))
     )]
@@ -104,7 +104,7 @@ pub enum Network {
 
     Canto = 7700,
 
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -123,15 +123,15 @@ pub enum Network {
 
     ChainwebTestnet24 = 5924,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Chiliz = 88888,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Citrea = 4114,
 
     CitreaDevnet = 62298,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     CitreaTestnet = 5115,
 
     #[subenum(GraphNetwork)]
@@ -140,16 +140,16 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Crab = 44,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Curtis = 33111,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Cyber = 7560,
 
     Darwinia = 46,
 
     #[subenum(
-        HypersyncNetwork,
+        HypersyncChain,
         NetworkWithExplorer,
         GraphNetwork(serde(rename = "mainnet"))
     )]
@@ -158,7 +158,7 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Evmos = 9001,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Fantom = 250,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -169,13 +169,13 @@ pub enum Network {
 
     FhenixTestnet = 42069,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Flare = 14,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Fraxtal = 252,
 
-    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, GraphNetwork, NetworkWithExplorer)]
     Fuji = 43113,
 
     #[subenum(GraphNetwork)]
@@ -184,75 +184,75 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     GaladrielDevnet = 696969,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Gnosis = 100,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     GnosisChiado = 10200,
 
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     Goerli = 5,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Harmony = 1666600000,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Holesky = 17000,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Hoodi = 560048,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Hyperliquid = 999,
 
     IncoGentryTestnet = 9090,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Injective = 1776,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Ink = 57073,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Kroma = 255,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Linea = 59144,
 
     #[subenum(NetworkWithExplorer)]
     LineaSepolia = 59141,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Lisk = 1135,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Lukso = 42,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     LuksoTestnet = 4201,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Manta = 169,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Mantle = 5000,
 
     #[subenum(NetworkWithExplorer)]
     MantleTestnet = 5001,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Megaeth = 4326,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     MegaethTestnet = 6342,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     MegaethTestnet2 = 6343,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Merlin = 4200,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Metall2 = 1750,
 
     #[subenum(NetworkWithExplorer)]
@@ -260,28 +260,28 @@ pub enum Network {
 
     MevCommit = 17864,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Mode = 34443,
 
     #[subenum(NetworkWithExplorer)]
     ModeSepolia = 919,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Monad = 143,
 
-    #[subenum(NetworkWithExplorer, HypersyncNetwork)]
+    #[subenum(NetworkWithExplorer, HypersyncChain)]
     MonadTestnet = 10143,
 
     #[subenum(NetworkWithExplorer, GraphNetwork(serde(rename = "mbase")))]
     MoonbaseAlpha = 1287,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     Moonriver = 1285,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Morph = 2818,
 
     #[subenum(NetworkWithExplorer)]
@@ -295,24 +295,24 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     NeonEvm = 245022934,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Opbnb = 204,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
 
     #[subenum(GraphNetwork)]
     OptimismGoerli = 420,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     OptimismSepolia = 11155420,
 
     PharosDevnet = 50002,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Plasma = 9745,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Plume = 98866,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -322,13 +322,13 @@ pub enum Network {
     PoaSokol = 77,
 
     #[subenum(
-        HypersyncNetwork,
+        HypersyncChain,
         NetworkWithExplorer,
         GraphNetwork(serde(rename = "matic"))
     )]
     Polygon = 137,
 
-    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
     PolygonZkevm = 1101,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
@@ -337,58 +337,52 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Rsk = 30,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Saakuru = 7225878,
 
-    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
     Scroll = 534352,
 
     #[subenum(GraphNetwork, NetworkWithExplorer)]
     ScrollSepolia = 534351,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sei = 1329,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     SeiTestnet = 1328,
 
-    #[subenum(HypersyncNetwork)]
-    Sentient = 6767,
-
-    #[subenum(HypersyncNetwork)]
-    SentientTestnet = 1184075182,
-
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     ShimmerEvm = 148,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Soneium = 1868,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sonic = 146,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     SonicTestnet = 14601,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sophon = 50104,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     SophonTestnet = 531050104,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     StatusSepolia = 1660990954,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Superseed = 5330,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Swell = 1923,
 
     #[subenum(NetworkWithExplorer)]
@@ -397,41 +391,41 @@ pub enum Network {
     #[subenum(NetworkWithExplorer)]
     Tangle = 5845,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Taraxa = 841,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Unichain = 130,
 
     #[subenum(NetworkWithExplorer)]
     UnichainSepolia = 1301,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Worldchain = 480,
 
     XLayer = 196,
 
     XLayerTestnet = 195,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Xdc = 50,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     XdcTestnet = 51,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Zeta = 7000,
 
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncChain)]
     Zircuit = 48900,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncChain, NetworkWithExplorer, GraphNetwork)]
     ZksyncEra = 324,
 
     #[subenum(GraphNetwork)]
     ZksyncEraTestnet = 280,
 
-    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Zora = 7777777,
 
     #[subenum(NetworkWithExplorer)]
@@ -546,7 +540,6 @@ impl Network {
             | Network::ScrollSepolia
             | Network::Sei
             | Network::Sepolia
-            | Network::SentientTestnet
             | Network::ShimmerEvm
             | Network::Sophon
             | Network::SophonTestnet
@@ -592,7 +585,6 @@ impl Network {
             | Network::Worldchain
             | Network::Sonic
             | Network::SonicTestnet
-            | Network::Sentient
             | Network::Swell
             | Network::Taraxa
             | Network::Citrea
@@ -636,14 +628,14 @@ impl ChainTier {
     }
 }
 
-impl HypersyncNetwork {
-    // This is a custom iterator that returns all the HypersyncNetwork enums that is made public accross crates (for convenience)
-    pub fn iter_hypersync_networks() -> impl Iterator<Item = HypersyncNetwork> {
-        HypersyncNetwork::iter()
+impl HypersyncChain {
+    // This is a custom iterator that returns all the HypersyncChain enums that is made public accross crates (for convenience)
+    pub fn iter_hypersync_chains() -> impl Iterator<Item = HypersyncChain> {
+        HypersyncChain::iter()
     }
     pub fn get_tier(&self) -> ChainTier {
         use ChainTier::*;
-        use HypersyncNetwork::*;
+        use HypersyncChain::*;
         match self {
             EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Sei | Base => Gold,
 
@@ -660,8 +652,8 @@ impl HypersyncNetwork {
             | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
             | Merlin | Mode | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
             | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid
-            | Swell | Moonbeam | Plume | Scroll | SentientTestnet | Ab | ArcTestnet | Sentient
-            | SonicTestnet | SeiTestnet | Hoodi | StatusSepolia => Stone,
+            | Swell | Moonbeam | Plume | Scroll | Ab | ArcTestnet | SonicTestnet | SeiTestnet
+            | Hoodi | StatusSepolia => Stone,
         }
     }
 
@@ -677,7 +669,7 @@ impl HypersyncNetwork {
     }
 }
 
-impl fmt::Display for HypersyncNetwork {
+impl fmt::Display for HypersyncChain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.get_pretty_name())
     }
@@ -686,8 +678,8 @@ impl fmt::Display for HypersyncNetwork {
 impl NetworkWithExplorer {
     pub fn get_pretty_name(&self) -> String {
         let network = Network::from(*self);
-        match HypersyncNetwork::try_from(network) {
-            Ok(hypersync_network) => hypersync_network.get_pretty_name(),
+        match HypersyncChain::try_from(network) {
+            Ok(hypersync_chain) => hypersync_chain.get_pretty_name(),
             Err(_) => network.to_string(),
         }
     }
@@ -707,7 +699,7 @@ pub fn get_max_reorg_depth_from_id(id: u64) -> Option<u32> {
 
 #[cfg(test)]
 mod test {
-    use super::{GraphNetwork, HypersyncNetwork};
+    use super::{GraphNetwork, HypersyncChain};
     use crate::config_parsing::chain_helpers::Network;
     use itertools::Itertools;
     use pretty_assertions::assert_eq;
@@ -730,8 +722,8 @@ mod test {
     #[test]
     fn network_deserialize() {
         let names = r#"["ethereum-mainnet", "polygon"]"#;
-        let names_des: Vec<HypersyncNetwork> = serde_json::from_str(names).unwrap();
-        let expected = vec![HypersyncNetwork::EthereumMainnet, HypersyncNetwork::Polygon];
+        let names_des: Vec<HypersyncChain> = serde_json::from_str(names).unwrap();
+        let expected = vec![HypersyncChain::EthereumMainnet, HypersyncChain::Polygon];
         assert_eq!(expected, names_des);
     }
 
