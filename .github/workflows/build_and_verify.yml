@@ -49,8 +49,18 @@ jobs:
     timeout-minutes: 1
     permissions:
       contents: read
-      pull-requests: read
-      issues: write  # reactions on the triggering comment
+      # Both scopes are needed empirically. Docs claim issues: write
+      # alone covers reactions on issue comments (and PR comments are
+      # issue comments under the hood), but in practice GitHub routes
+      # PR-comment reactions through the pull_requests permission too
+      # — granting only one yields "Resource not accessible by
+      # integration". Vite and Svelte ecosystem-ci-trigger workflows
+      # both declare BOTH scopes for exactly this reason; we match.
+      # Note: if the error persists with both granted, the repo-level
+      # "Actions → General → Workflow permissions" setting may be
+      # restricting the token below what the workflow requests.
+      issues: write
+      pull-requests: write
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
@@ -63,7 +73,7 @@ jobs:
     steps:
       - name: Resolve & authorize SHA
         id: resolve
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             if (context.eventName === 'push') {
@@ -78,10 +88,18 @@ jobs:
             // issue_comment: /ok-to-test <sha>
             const { owner, repo } = context.repo;
             const commentId = context.payload.comment.id;
+            const react = async (content) => {
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  owner, repo, comment_id: commentId, content,
+                });
+              } catch (e) {
+                // Don't let a reaction failure mask the real outcome.
+                core.warning(`Could not add ${content} reaction: ${e.message}`);
+              }
+            };
             const reject = async (msg) => {
-              await github.rest.reactions.createForIssueComment({
-                owner, repo, comment_id: commentId, content: '-1',
-              });
+              await react('-1');
               core.setFailed(msg);
             };
 
@@ -94,15 +112,22 @@ jobs:
             // collaborators/permission API — the latter requires
             // `administration: read` which the default GITHUB_TOKEN
             // cannot grant ("Resource not accessible by integration").
-            // OWNER and COLLABORATOR require an explicit invite from
-            // the repo; MEMBER is excluded because org membership is
-            // wider than the set of people we trust to release secrets
-            // to fork CI.
+            //
+            // Allowed values:
+            //   OWNER        — repo owner (personal repos only; unused here)
+            //   MEMBER       — member of the org that owns this repo; for
+            //                  org repos this is how admins show up, since
+            //                  OWNER is reserved for personal-repo owners
+            //   COLLABORATOR — explicitly invited outside collaborator
+            // All three require an explicit trust action by the base repo
+            // (ownership / org membership / invite). CONTRIBUTOR and NONE
+            // are rejected — a merged PR in the past doesn't grant CI
+            // approval rights.
             const assoc = context.payload.comment.author_association;
-            if (!['OWNER', 'COLLABORATOR'].includes(assoc)) {
+            if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(assoc)) {
               return reject(
                 `@${context.payload.comment.user.login} (${assoc}) cannot approve CI — ` +
-                `must be OWNER or COLLABORATOR of ${owner}/${repo}.`
+                `must be OWNER, MEMBER, or COLLABORATOR of ${owner}/${repo}.`
               );
             }
 
@@ -116,9 +141,7 @@ jobs:
               );
             }
 
-            await github.rest.reactions.createForIssueComment({
-              owner, repo, comment_id: commentId, content: 'rocket',
-            });
+            await react('rocket');
             core.setOutput('sha', pr.data.head.sha);
 
   # ── Build ───────────────────────────────────────────────────────────
@@ -455,7 +478,7 @@ jobs:
     steps:
       - name: Post commit status
         if: needs.gate.outputs.sha != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           RESULTS: ${{ toJSON(needs) }}
         with:
