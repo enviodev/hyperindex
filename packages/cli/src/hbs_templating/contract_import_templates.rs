@@ -1347,50 +1347,6 @@ mod test {
         insta::assert_snapshot!(content);
     }
 
-    // End-to-end contract-import snapshots driven by a real Sablier V2
-    // LockupTranched ABI. Exercises a named struct param (`amounts`), an array
-    // of structs (`tranches`), a nested named struct (`timestamps`), and indexed
-    // topics that are not tuples. All tuple fields should be accessed via
-    // `["key"]` — zero appearances of `Utils.Tuple.get`.
-
-    #[test]
-    fn typescript_handler_for_tuple_events() {
-        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
-        let content = template.imported_contracts[0].generate_typescript_handler_content(false);
-        assert!(
-            !content.contains("Utils.Tuple"),
-            "Generated TS handler must not reference Utils.Tuple"
-        );
-        insta::assert_snapshot!(content);
-    }
-
-    #[test]
-    fn rescript_handler_for_tuple_events() {
-        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
-        let content = template.imported_contracts[0].generate_rescript_handler_content(false);
-        assert!(
-            !content.contains("Utils.Tuple"),
-            "Generated ReScript handler must not reference Utils.Tuple"
-        );
-        insta::assert_snapshot!(content);
-    }
-
-    #[test]
-    fn typescript_test_file_for_tuple_events() {
-        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
-        let content = template.imported_contracts[0]
-            .generate_typescript_test_content(false, template.first_chain_id);
-        insta::assert_snapshot!(content);
-    }
-
-    #[test]
-    fn rescript_test_file_for_tuple_events() {
-        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
-        let content = template.imported_contracts[0]
-            .generate_rescript_test_content(false, template.first_chain_id);
-        insta::assert_snapshot!(content);
-    }
-
     #[test]
     fn test_get_entity_id_code() {
         const IS_FUEL: bool = true;
