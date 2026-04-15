@@ -590,17 +590,17 @@ pub async fn up(project_root: &Path) -> anyhow::Result<UpResult> {
 
     if pg_external {
         println!(
-            "Using external Postgres at {}:{} (ENVIO_PG_HOST set), skipping container",
+            "Using your Postgres at {}:{} (from ENVIO_PG_HOST)",
             env.pg_host, pg_host_port
         );
     } else if pg_alive {
-        println!("Postgres already reachable on port {pg_host_port}, skipping container");
+        println!("Using Postgres already running on port {pg_host_port}");
     }
     if env.hasura_enabled && hasura_alive {
-        println!("Hasura already healthy on port {hasura_host_port}, skipping container");
+        println!("Using Hasura already running on port {hasura_host_port}");
     }
     if !env.hasura_enabled {
-        println!("Hasura disabled (ENVIO_HASURA=false), skipping");
+        println!("Hasura disabled (ENVIO_HASURA=false)");
     }
 
     // If both services are already running, nothing to do.
