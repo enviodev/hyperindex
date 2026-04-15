@@ -1,145 +1,26 @@
-///A module used for flattening and dealing with tuples and nested
-///tuples in event params
+///Helpers for enumerating event params with their original positional index.
+///Tuple params (including `tuple[]` / `tuple[N]`) are kept intact as single
+///entity fields typed as JSON — the handler just assigns the whole value
+///through a magic cast and the entity column stores the nested object as
+///JSON. This keeps the contract-import path uniform for every ABI type
+///without having to invent column names for nested struct fields.
 mod nested_params {
     use super::*;
-    use crate::config_parsing::abi_compat::{AbiType, EventParam};
+    #[cfg(test)]
+    use crate::config_parsing::abi_compat::AbiType;
+    use crate::config_parsing::abi_compat::EventParam;
 
-    ///A single segment of a path into a nested tuple/struct param. Every
-    ///tuple level renders as a ReScript JS object / TS record (matches
-    ///`event_parsing.rs::abi_type_to_rescript`), so all segments are `Field`s
-    ///— unnamed slots fall back to their positional index as the field key.
-    #[derive(Debug, Clone, PartialEq, Serialize)]
-    pub struct AccessorSegment(pub String);
-
-    impl AccessorSegment {
-        /// Convenience constructor for tests and internal use.
-        pub fn field(name: impl Into<String>) -> Self {
-            Self(name.into())
-        }
-
-        /// JS object key suffix for the generated handler — both TS and ReScript
-        /// JS object types are accessed uniformly via `value["key"]`.
-        fn as_entity_segment(&self) -> String {
-            self.0.clone()
-        }
-    }
-
-    /// Build the ReScript accessor expression for a flattened event param.
-    /// Every tuple level is a JS object at runtime, so field access is a
-    /// plain `["key"]` bracket chain with no parenthesisation needed.
-    pub fn build_rescript_accessor(base: &str, segments: &[AccessorSegment]) -> String {
-        build_accessor(base, segments)
-    }
-
-    /// Build the TypeScript accessor expression for a flattened event param.
-    /// Shape matches the ReScript side since both produce JS object types.
-    pub fn build_typescript_accessor(base: &str, segments: &[AccessorSegment]) -> String {
-        build_accessor(base, segments)
-    }
-
-    fn build_accessor(base: &str, segments: &[AccessorSegment]) -> String {
-        let mut accessor = base.to_string();
-        for segment in segments {
-            accessor.push_str(&format!("[\"{}\"]", segment.0));
-        }
-        accessor
-    }
-
-    ///Recursive Representation of param token. With reference to it's own index
-    ///if it is a tuple
-    enum NestedEventParam {
-        Param(EventParam, usize),
-        TupleParam(AccessorSegment, Box<NestedEventParam>),
-        Tuple(Vec<NestedEventParam>),
-    }
-
-    impl NestedEventParam {
-        ///Constructs NestedEventParam from an EventParam
-        fn from(event_input: EventParam, param_index: usize) -> Self {
-            if let AbiType::Tuple(fields) = &event_input.kind {
-                // Every tuple level renders as a JS object / record, keyed by
-                // component name when available and by positional index otherwise.
-                // `AbiTupleField` constructors normalise empty source names to
-                // `None`, so `Some(_)` always carries a non-empty identifier.
-                Self::Tuple(
-                    fields
-                        .iter()
-                        .enumerate()
-                        .map(|(i, f)| {
-                            let segment = AccessorSegment::field(
-                                f.name.clone().unwrap_or_else(|| i.to_string()),
-                            );
-                            let inner_event_input = EventParam {
-                                // Keep the same name as the event input name
-                                name: event_input.name.clone(),
-                                kind: f.kind.clone(),
-                                //Tuple fields can't be indexed
-                                indexed: false,
-                            };
-                            //Recursively get the inner NestedEventParam type
-                            Self::TupleParam(
-                                segment,
-                                Box::new(Self::from(inner_event_input, param_index)),
-                            )
-                        })
-                        .collect(),
-                )
-            } else {
-                Self::Param(event_input, param_index)
-            }
-        }
-        //Turns the recursive NestedEventParam structure into a vec of FlattenedEventParam structs
-        //This is the internal function that takes an array as a second param. The public function
-        //calls this with an empty vec.
-        fn get_flattened_inputs_inner(
-            &self,
-            mut accessor_segments: Vec<AccessorSegment>,
-        ) -> Vec<FlattenedEventParam> {
-            match &self {
-                Self::Param(e, i) => {
-                    let accessor_segments = if accessor_segments.is_empty() {
-                        None
-                    } else {
-                        Some(accessor_segments)
-                    };
-
-                    vec![FlattenedEventParam {
-                        event_param_pos: *i,
-                        event_param: e.clone(),
-                        accessor_segments,
-                    }]
-                }
-                Self::TupleParam(segment, arg_or_tuple) => {
-                    accessor_segments.push(segment.clone());
-                    arg_or_tuple.get_flattened_inputs_inner(accessor_segments)
-                }
-                Self::Tuple(params) => params
-                    .iter()
-                    .flat_map(|param| param.get_flattened_inputs_inner(accessor_segments.clone()))
-                    .collect::<Vec<_>>(),
-            }
-        }
-
-        //Public function that converts the NestedEventParam into a Vec of FlattenedEventParams
-        //calls the internal function with an empty vec of accessor indexes
-        pub fn get_flattened_inputs(&self) -> Vec<FlattenedEventParam> {
-            self.get_flattened_inputs_inner(vec![])
-        }
-    }
-
-    ///A flattened representation of an event param, meaning
-    ///tuples/structs would broken into a single FlattenedEventParam for each
-    ///param that it contains and include accessor segments for where to find that param
-    ///within its parent tuple/struct
+    ///Positional wrapper around an `EventParam`. Retained as a module boundary
+    ///so the rest of the template code can depend on a stable shape even if
+    ///the enumeration logic grows in the future.
     #[derive(Debug, Clone, PartialEq)]
     pub struct FlattenedEventParam {
-        event_param_pos: usize,
+        pub event_param_pos: usize,
         pub event_param: EventParam,
-        pub accessor_segments: Option<Vec<AccessorSegment>>,
     }
 
     impl FlattenedEventParam {
-        ///Gets a named paramter or constructs a name using the parameter's index
+        ///Gets a named parameter or constructs a name using the parameter's index
         ///if the param is nameless
         fn get_param_name(&self) -> String {
             match &self.event_param.name {
@@ -147,68 +28,28 @@ mod nested_params {
                 name => name.clone(),
             }
         }
-        ///Gets the key of the param for the entity representing the event
-        ///If this is not a tuple it will be the same as the "event_param_key"
-        ///eg. MyEventEntity has a param called myTupleParam_funder_amount (or
-        ///myTupleParam_0_1 for anonymous tuples — unnamed components use their
-        ///positional index as the key), where as the event_param_key is
-        ///myTupleParam with accessor_segments of [Field("funder"), Field("amount")].
+
+        ///Key to use for the generated entity column. Same as the event param
+        ///name in almost all cases; `id` is renamed to `event_id` because `id`
+        ///is reserved for the entity primary key.
         pub fn get_entity_key(&self) -> CapitalizedOptions {
-            let accessor_segments_string = self.accessor_segments.as_ref().map_or_else(
-                //If there is no accessor_segments this is an empty string
-                || "".to_string(),
-                |segments| {
-                    format!(
-                        "_{}",
-                        //join each segment with "_"
-                        //eg. _funder_amount for named struct fields, _1_2 for anonymous tuples
-                        segments
-                            .iter()
-                            .map(|s| s.as_entity_segment())
-                            .collect::<Vec<_>>()
-                            .join("_")
-                    )
-                },
-            );
-
-            //Join the param name with the accessor_segments_string
-            //eg. myTupleParam_funder or myNonTupleParam if there are no accessor segments
-            let mut entity_key = format!("{}{}", self.get_param_name(), accessor_segments_string);
-
-            // Check if entity_key is "id" and rename to "event_id"
+            let mut entity_key = self.get_param_name();
             if entity_key == "id" {
                 entity_key = "event_id".to_string();
             }
-
             entity_key.to_capitalized_options()
         }
 
-        ///Gets the event param "key" for the event type. Will be the same
-        ///as the entity key if the type is not a tuple. In the case of a tuple
-        ///entity key will append `_funder_amount` (or `_0_1` for anonymous tuple
-        ///components, which use their positional index as the field key) to
-        ///represent the nested param in a flat structure; the event param key
-        ///will not append this and will need to access that tuple at the given
-        ///segment.
+        ///Key used to access the param on the runtime event object. Always the
+        ///param name; only differs from `get_entity_key` when the entity key
+        ///was renamed.
         pub fn get_event_param_key(&self) -> CapitalizedOptions {
             self.get_param_name().to_capitalized_options()
         }
 
         ///Used for constructing in tests
         #[cfg(test)]
-        pub fn new(
-            name: &str,
-            kind: AbiType,
-            indexed: bool,
-            accessor_segments: Vec<AccessorSegment>,
-            event_param_pos: usize,
-        ) -> Self {
-            let accessor_segments = if accessor_segments.is_empty() {
-                None
-            } else {
-                Some(accessor_segments)
-            };
-
+        pub fn new(name: &str, kind: AbiType, indexed: bool, event_param_pos: usize) -> Self {
             FlattenedEventParam {
                 event_param_pos,
                 event_param: EventParam {
@@ -216,22 +57,17 @@ mod nested_params {
                     kind,
                     indexed,
                 },
-                accessor_segments,
             }
         }
     }
 
-    ///Take an event, and if any param is a tuple type,
-    ///it flattens it into an event with more params
-    ///MyEvent(address myAddress, (uint256, bool) myTupleParam) ->
-    ///MyEvent(address myAddress, uint256 myTupleParam_1, uint256 myTupleParam_2)
-    ///This representation makes it easy to have single field conversions
     pub fn flatten_event_inputs(event_inputs: Vec<EventParam>) -> Vec<FlattenedEventParam> {
         event_inputs
             .into_iter()
             .enumerate()
-            .flat_map(|(i, event_input)| {
-                NestedEventParam::from(event_input, i).get_flattened_inputs()
+            .map(|(i, event_input)| FlattenedEventParam {
+                event_param_pos: i,
+                event_param: event_input,
             })
             .collect()
     }
@@ -250,10 +86,7 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{Context, Result};
-use nested_params::{
-    build_rescript_accessor, build_typescript_accessor, flatten_event_inputs, AccessorSegment,
-    FlattenedEventParam,
-};
+use nested_params::{flatten_event_inputs, FlattenedEventParam};
 use serde::Serialize;
 use std::{path::Path, vec};
 
@@ -343,19 +176,14 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params. Tuple accessor segments are appended via the
-            // shared helper so every struct / tuple field renders as
-            // `["key"]`, using the component name when named and the
-            // positional index string when anonymous.
+            // Add params. Tuple params (including `tuple[]`) flow through as
+            // JSON entity columns — TypeScript's `unknown` trivially accepts
+            // the structured event param value, so no cast is needed.
             for param in &event.params {
-                let base = format!("event.params.{}", param.event_key.original);
-                let accessor = match &param.tuple_param_accessor_segments {
-                    Some(segments) => build_typescript_accessor(&base, segments),
-                    None => base,
-                };
+                let value = format!("event.params.{}", param.event_key.original);
                 content.push_str(&format!(
                     "    {}: {},\n",
-                    param.entity_key.uncapitalized, accessor
+                    param.entity_key.uncapitalized, value
                 ));
             }
 
@@ -394,24 +222,20 @@ impl Contract {
             ));
             content.push_str(&format!("    id: {},\n", event.entity_id_from_event_code));
 
-            // Add params. Tuple accessor segments are appended via the
-            // shared helper so every struct / tuple field renders as
-            // `["key"]`, matching the JS object types produced by
-            // `abi_to_rescript_type` for all tuple params.
+            // Add params. Leaf params pass through directly; addresses get
+            // a `->Address.toString` conversion. Tuple params (including
+            // `tuple[]`) flow through as JSON entity columns — the event
+            // value is already a structured JS object at runtime, so we only
+            // need a magic cast so ReScript's type system accepts assigning
+            // it to the `JSON.t` entity column.
             for param in &event.params {
                 let base = format!("event.params.{}", param.event_key.uncapitalized);
-                let accessor = match &param.tuple_param_accessor_segments {
-                    Some(segments) => build_rescript_accessor(&base, segments),
-                    None => base,
-                };
-                content.push_str(&format!(
-                    "    {}: {}",
-                    param.entity_key.uncapitalized, accessor
-                ));
+                content.push_str(&format!("    {}: {}", param.entity_key.uncapitalized, base));
 
-                // Add address conversion if needed
                 if param.is_eth_address {
                     content.push_str("\n      ->Address.toString");
+                } else if param.is_json_entity_field {
+                    content.push_str("->(Utils.magic: _ => JSON.t)");
                 }
 
                 content.push_str(",\n");
@@ -644,6 +468,14 @@ impl Contract {
             for param in &first_event.params {
                 let value = if param.is_eth_address {
                     format!("{}->Address.toString", param.default_value_rescript)
+                } else if param.is_json_entity_field {
+                    // Tuple defaults are structured records (matching the
+                    // runtime event shape); cast to `JSON.t` for the entity
+                    // column.
+                    format!(
+                        "{}->(Utils.magic: _ => JSON.t)",
+                        param.default_value_rescript
+                    )
                 } else {
                     param.default_value_rescript.clone()
                 };
@@ -805,26 +637,27 @@ impl Event {
 pub struct Param {
     res_name: String,
     js_name: String,
-    ///Event param name + path if its a tuple ie. myTupleParam_funder (or
-    ///myTupleParam_0_1 for anonymous tuple components — unnamed components use
-    ///their positional index as the key) or just myRegularParam.
+    ///Entity column name. Matches the param name, except for `id` which is
+    ///renamed to `event_id` to avoid clashing with the entity primary key.
     entity_key: CapitalizedOptions,
-    ///Just the event param name accessible on the event type
+    ///Runtime event-object key. Same as the param name.
     event_key: CapitalizedOptions,
-    ///List of nested accessors so for a nested struct Some([Field("funder")])
-    ///this can be used combined with the event key ie.
-    ///event.params.myTupleParam["funder"]. Anonymous tuple components fall
-    ///back to their positional index as the field key, producing
-    ///Some([Field("0"), Field("1")]) → event.params.myTupleParam["0"]["1"].
-    tuple_param_accessor_segments: Option<Vec<AccessorSegment>>,
     graphql_type: FieldType,
     is_eth_address: bool,
+    ///True when the param is a tuple (struct), `tuple[]`, or `tuple[N]`.
+    ///These render as JSON entity columns; the ReScript handler casts the
+    ///structured value through `Utils.magic` so the type checker accepts it
+    ///against the `JSON.t` entity field. TypeScript's `unknown` accepts any
+    ///value so no cast is needed.
+    is_json_entity_field: bool,
     default_value_rescript: String,
     default_value_typescript: String,
 }
 
 impl Param {
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
+        use crate::config_parsing::abi_compat::AbiType;
+
         let js_name = flattened_event_param.event_param.name.to_string();
         let res_name = RecordField::to_valid_rescript_name(&js_name);
         let eth_param: crate::config_parsing::event_parsing::EvmEventParam =
@@ -832,12 +665,23 @@ impl Param {
         let type_ident = abi_to_rescript_type(&eth_param);
         let default_value_rescript = type_ident.get_default_value_rescript();
         let default_value_typescript = type_ident.get_default_value_non_rescript();
+
+        // Detect tuple / array-of-tuple params. These get flattened to a
+        // single JSON entity column instead of per-field expansion, so the
+        // contract-import path handles every ABI shape uniformly.
+        let is_json_entity_field = match &flattened_event_param.event_param.kind {
+            AbiType::Tuple(_) => true,
+            AbiType::Array(inner) | AbiType::FixedArray(inner, _) => {
+                matches!(inner.as_ref(), AbiType::Tuple(_))
+            }
+            _ => false,
+        };
+
         Ok(Param {
             res_name,
             js_name,
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
-            tuple_param_accessor_segments: flattened_event_param.accessor_segments,
             graphql_type: FieldType::from_dyn_sol_type(
                 &flattened_event_param.event_param.kind.to_dyn_sol_type(),
             )
@@ -845,10 +689,8 @@ impl Param {
                 "Converting eth event param '{}' to gql scalar",
                 flattened_event_param.event_param.name
             ))?,
-            is_eth_address: matches!(
-                flattened_event_param.event_param.kind,
-                crate::config_parsing::abi_compat::AbiType::Address
-            ),
+            is_eth_address: matches!(flattened_event_param.event_param.kind, AbiType::Address),
+            is_json_entity_field,
             default_value_rescript,
             default_value_typescript,
         })
@@ -1037,15 +879,16 @@ mod test {
         }
     }
 
-    fn field(name: &str) -> AccessorSegment {
-        AccessorSegment::field(name)
-    }
-
     #[test]
-    fn flatten_event_with_tuple() {
+    fn flatten_event_preserves_params_one_to_one() {
+        // Tuples no longer get broken apart into separate columns; they ride
+        // along as a single param (the contract-import entity column is JSON).
+        // The only responsibility of `flatten_event_inputs` now is to pair
+        // each input with its positional index.
         let event_inputs = vec![
             EventParam {
-                name: "user".to_string(),
+                // Nameless param should compute to "_0".
+                name: "".to_string(),
                 kind: AbiType::Address,
                 indexed: false,
             },
@@ -1054,58 +897,16 @@ mod test {
                 kind: AbiType::Tuple(vec![unnamed(AbiType::Uint(256)), unnamed(AbiType::Bool)]),
                 indexed: false,
             },
-        ];
-
-        let expected_flat_inputs = vec![
-            FlattenedEventParam::new("user", AbiType::Address, false, vec![], 0),
-            FlattenedEventParam::new(
-                "myTupleParam",
-                AbiType::Uint(256),
-                false,
-                vec![field("0")],
-                1,
-            ),
-            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![field("1")], 1),
-        ];
-
-        let actual_flat_inputs = flatten_event_inputs(event_inputs);
-        assert_eq!(expected_flat_inputs, actual_flat_inputs);
-
-        let expected_entity_keys: Vec<_> = vec!["user", "myTupleParam_0", "myTupleParam_1"]
-            .into_iter()
-            .map(|s| s.to_string().to_capitalized_options())
-            .collect();
-
-        let actual_entity_keys: Vec<_> = actual_flat_inputs
-            .iter()
-            .map(|f| f.get_entity_key())
-            .collect();
-
-        assert_eq!(expected_entity_keys, actual_entity_keys);
-    }
-
-    #[test]
-    fn flatten_event_with_nested_tuple() {
-        let event_inputs = vec![
             EventParam {
-                //nameless param should compute to "_0"
-                name: "".to_string(),
-                kind: AbiType::Address,
+                name: "tranches".to_string(),
+                kind: AbiType::Array(Box::new(AbiType::Tuple(vec![
+                    named("amount", AbiType::Uint(128)),
+                    named("timestamp", AbiType::Uint(40)),
+                ]))),
                 indexed: false,
             },
             EventParam {
-                name: "myTupleParam".to_string(),
-                kind: AbiType::Tuple(vec![
-                    unnamed(AbiType::Tuple(vec![
-                        unnamed(AbiType::Uint(8)),
-                        unnamed(AbiType::Uint(8)),
-                    ])),
-                    unnamed(AbiType::Bool),
-                ]),
-                indexed: false,
-            },
-            EventParam {
-                //param named "id" should compute to "event_id"
+                // `id` should be renamed to `event_id` for the entity column.
                 name: "id".to_string(),
                 kind: AbiType::String,
                 indexed: false,
@@ -1113,185 +914,46 @@ mod test {
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("", AbiType::Address, false, vec![], 0),
+            FlattenedEventParam::new("", AbiType::Address, false, 0),
             FlattenedEventParam::new(
                 "myTupleParam",
-                AbiType::Uint(8),
+                AbiType::Tuple(vec![unnamed(AbiType::Uint(256)), unnamed(AbiType::Bool)]),
                 false,
-                vec![field("0"), field("0")],
                 1,
             ),
             FlattenedEventParam::new(
-                "myTupleParam",
-                AbiType::Uint(8),
+                "tranches",
+                AbiType::Array(Box::new(AbiType::Tuple(vec![
+                    named("amount", AbiType::Uint(128)),
+                    named("timestamp", AbiType::Uint(40)),
+                ]))),
                 false,
-                vec![field("0"), field("1")],
-                1,
+                2,
             ),
-            FlattenedEventParam::new("myTupleParam", AbiType::Bool, false, vec![field("1")], 1),
-            FlattenedEventParam::new("id", AbiType::String, false, vec![], 2),
+            FlattenedEventParam::new("id", AbiType::String, false, 3),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
         assert_eq!(expected_flat_inputs, actual_flat_inputs);
 
-        // test that `entity_key`s are correct
-        let expected_entity_keys: Vec<_> = vec![
-            "_0",
-            "myTupleParam_0_0",
-            "myTupleParam_0_1",
-            "myTupleParam_1",
-            "event_id",
-        ]
-        .into_iter()
-        .map(|s| s.to_string().to_capitalized_options())
-        .collect();
-
+        let expected_entity_keys: Vec<_> = vec!["_0", "myTupleParam", "tranches", "event_id"]
+            .into_iter()
+            .map(|s| s.to_string().to_capitalized_options())
+            .collect();
         let actual_entity_keys: Vec<_> = actual_flat_inputs
             .iter()
             .map(|f| f.get_entity_key())
             .collect();
-
         assert_eq!(expected_entity_keys, actual_entity_keys);
 
-        // test that `event_key`s are correct
-        let expected_event_keys: Vec<_> =
-            vec!["_0", "myTupleParam", "myTupleParam", "myTupleParam", "id"]
-                .into_iter()
-                .map(|s| s.to_string().to_capitalized_options())
-                .collect();
-
+        let expected_event_keys: Vec<_> = vec!["_0", "myTupleParam", "tranches", "id"]
+            .into_iter()
+            .map(|s| s.to_string().to_capitalized_options())
+            .collect();
         let actual_event_keys: Vec<_> = actual_flat_inputs
             .iter()
             .map(|f| f.get_event_param_key())
             .collect();
-
         assert_eq!(expected_event_keys, actual_event_keys);
-    }
-
-    #[test]
-    fn flatten_event_with_named_and_mixed_structs() {
-        // Solidity structs (all components named) flatten using `Field`
-        // segments so the import handler emits `event.params.commonParams["funder"]`
-        // and the entity column is `commonParams_funder`.
-        // Mixed-name tuples promote unnamed slots to their positional index
-        // as the field key, matching `event_parsing.rs::abi_type_to_rescript`.
-        let event_inputs = vec![
-            EventParam {
-                name: "commonParams".to_string(),
-                kind: AbiType::Tuple(vec![
-                    named("funder", AbiType::Address),
-                    named(
-                        "amounts",
-                        AbiType::Tuple(vec![
-                            named("deposit", AbiType::Uint(128)),
-                            named("brokerFee", AbiType::Uint(128)),
-                        ]),
-                    ),
-                ]),
-                indexed: false,
-            },
-            EventParam {
-                name: "mixedTuple".to_string(),
-                kind: AbiType::Tuple(vec![
-                    named("label", AbiType::String),
-                    unnamed(AbiType::Uint(256)),
-                    named("recipient", AbiType::Address),
-                ]),
-                indexed: false,
-            },
-        ];
-
-        let expected_flat_inputs = vec![
-            FlattenedEventParam::new(
-                "commonParams",
-                AbiType::Address,
-                false,
-                vec![field("funder")],
-                0,
-            ),
-            FlattenedEventParam::new(
-                "commonParams",
-                AbiType::Uint(128),
-                false,
-                vec![field("amounts"), field("deposit")],
-                0,
-            ),
-            FlattenedEventParam::new(
-                "commonParams",
-                AbiType::Uint(128),
-                false,
-                vec![field("amounts"), field("brokerFee")],
-                0,
-            ),
-            FlattenedEventParam::new(
-                "mixedTuple",
-                AbiType::String,
-                false,
-                vec![field("label")],
-                1,
-            ),
-            FlattenedEventParam::new("mixedTuple", AbiType::Uint(256), false, vec![field("1")], 1),
-            FlattenedEventParam::new(
-                "mixedTuple",
-                AbiType::Address,
-                false,
-                vec![field("recipient")],
-                1,
-            ),
-        ];
-        let actual_flat_inputs = flatten_event_inputs(event_inputs);
-        assert_eq!(expected_flat_inputs, actual_flat_inputs);
-
-        let expected_entity_keys: Vec<_> = vec![
-            "commonParams_funder",
-            "commonParams_amounts_deposit",
-            "commonParams_amounts_brokerFee",
-            "mixedTuple_label",
-            "mixedTuple_1",
-            "mixedTuple_recipient",
-        ]
-        .into_iter()
-        .map(|s| s.to_string().to_capitalized_options())
-        .collect();
-
-        let actual_entity_keys: Vec<_> = actual_flat_inputs
-            .iter()
-            .map(|f| f.get_entity_key())
-            .collect();
-
-        assert_eq!(expected_entity_keys, actual_entity_keys);
-    }
-
-    #[test]
-    fn build_accessor_handles_all_segment_shapes() {
-        // Every tuple level is a JS object at runtime (named structs and
-        // anonymous tuples alike), so the accessor is a plain `["key"]`
-        // bracket chain with no parenthesisation needed in either language.
-        assert_eq!(
-            build_rescript_accessor("event.params.foo", &[field("funder"), field("amount")]),
-            "event.params.foo[\"funder\"][\"amount\"]"
-        );
-        assert_eq!(
-            build_typescript_accessor("event.params.foo", &[field("funder"), field("amount")]),
-            "event.params.foo[\"funder\"][\"amount\"]"
-        );
-
-        // Anonymous tuple components use their positional index as the
-        // field key, stringified.
-        assert_eq!(
-            build_rescript_accessor("event.params.foo", &[field("0"), field("1")]),
-            "event.params.foo[\"0\"][\"1\"]"
-        );
-        assert_eq!(
-            build_typescript_accessor("event.params.foo", &[field("0"), field("1")]),
-            "event.params.foo[\"0\"][\"1\"]"
-        );
-
-        // Mixed named/anonymous tuple access is uniform too.
-        assert_eq!(
-            build_rescript_accessor("event.params.foo", &[field("0"), field("funder")]),
-            "event.params.foo[\"0\"][\"funder\"]"
-        );
     }
 
     fn get_test_template_helper(
@@ -1361,5 +1023,42 @@ mod test {
             Event::get_entity_id_code(IS_FUEL, &Language::TypeScript),
             "`${event.chainId}_${event.block.height}_${event.logIndex}`".to_string()
         );
+    }
+
+    // End-to-end contract-import snapshots driven by the real Sablier V2
+    // LockupTranched ABI. `CreateLockupTranchedStream` has a mix of tuple
+    // shapes (named struct, nested struct, `tuple[]`) that previously bailed
+    // out of contract-import entirely. Each tuple param now lands as a JSON
+    // entity column; the ReScript handler adds a `Utils.magic` cast to
+    // satisfy the `JSON.t` column type.
+
+    #[test]
+    fn typescript_handler_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0].generate_typescript_handler_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_handler_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0].generate_rescript_handler_content(false);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn typescript_test_file_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0]
+            .generate_typescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
+    }
+
+    #[test]
+    fn rescript_test_file_for_tuple_events() {
+        let template = get_test_template_helper("tuple-events-config.yaml", &Language::ReScript);
+        let content = template.imported_contracts[0]
+            .generate_rescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
     }
 }

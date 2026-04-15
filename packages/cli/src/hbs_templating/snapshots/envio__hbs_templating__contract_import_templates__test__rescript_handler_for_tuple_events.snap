@@ -1,0 +1,33 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: content
+---
+/*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
+ */
+
+open Indexer
+
+indexer.onEvent({event: SablierLockupTranched(CreateLockupTranchedStream)}, async ({event, context}) => {
+  let entity: Entities.SablierLockupTranched_CreateLockupTranchedStream.t = {
+    id: `${(event.chainId :> int)->Belt.Int.toString}_${event.block.number->Belt.Int.toString}_${event.logIndex->Belt.Int.toString}`,
+    streamId: event.params.streamId,
+    funder: event.params.funder
+      ->Address.toString,
+    sender: event.params.sender
+      ->Address.toString,
+    recipient: event.params.recipient
+      ->Address.toString,
+    amounts: event.params.amounts->(Utils.magic: _ => JSON.t),
+    asset: event.params.asset
+      ->Address.toString,
+    cancelable: event.params.cancelable,
+    transferable: event.params.transferable,
+    tranches: event.params.tranches->(Utils.magic: _ => JSON.t),
+    timestamps: event.params.timestamps->(Utils.magic: _ => JSON.t),
+    broker: event.params.broker
+      ->Address.toString,
+  }
+
+  context.\"SablierLockupTranched_CreateLockupTranchedStream".set(entity)
+})
