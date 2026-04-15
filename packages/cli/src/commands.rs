@@ -189,9 +189,9 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::{execute_command, to_js_path};
+    use super::to_js_path;
     use crate::config_parsing::system_config::SystemConfig;
-    use anyhow::anyhow;
+    use anyhow::{anyhow, Context};
     use pathdiff::diff_paths;
 
     pub async fn start_indexer(config: &SystemConfig) -> anyhow::Result<()> {
@@ -204,11 +204,27 @@ pub mod start {
 
         let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
 
-        let cmd = "node";
-        let args = vec!["--no-warnings", &index_path];
+        // Forward the resolved config.yaml path to the child so that nested
+        // `envio config view` calls from the Node runtime pick up the same
+        // file regardless of where they're spawned from.
+        let config_path = config
+            .parsed_project_paths
+            .config
+            .to_string_lossy()
+            .into_owned();
 
         // Run from project root to ensure proper cwd for handlers
-        let exit = execute_command(cmd, args, &config.parsed_project_paths.project_root).await?;
+        let exit = tokio::process::Command::new("node")
+            .args(["--no-warnings", &index_path])
+            .env("ENVIO_CONFIG", &config_path)
+            .current_dir(&config.parsed_project_paths.project_root)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Failed to spawn node process for indexer")?
+            .wait()
+            .await
+            .context("Failed to wait for indexer process")?;
 
         if !exit.success() {
             return Err(anyhow!(
@@ -231,13 +247,20 @@ pub mod db_migrate {
     use crate::{config_parsing::system_config::SystemConfig, persisted_state::PersistedState};
 
     async fn execute_migration(script: &str, config: &SystemConfig) -> anyhow::Result<ExitStatus> {
-        let config_json = config
-            .to_public_config_json()
-            .context("Failed to serialize config to JSON")?;
+        // The Node runtime resolves the indexer config on its own by shelling
+        // out to `envio config view` (see `Config.res::fromConfigView`), so no
+        // JSON payload is injected here. We do forward the config.yaml path via
+        // the `ENVIO_CONFIG` env var so the child CLI picks up the same file
+        // even when spawned from a different cwd.
         let current_dir = &config.parsed_project_paths.project_root;
+        let config_path = config
+            .parsed_project_paths
+            .config
+            .to_string_lossy()
+            .into_owned();
         tokio::process::Command::new("node")
             .args(["-e", script])
-            .env("ENVIO_CONFIG", &config_json)
+            .env("ENVIO_CONFIG", &config_path)
             .current_dir(current_dir)
             .stdin(std::process::Stdio::null())
             .kill_on_drop(true)

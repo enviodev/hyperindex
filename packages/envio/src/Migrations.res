@@ -9,7 +9,7 @@ let runUpMigrations = async (
   // Reset is used for db-setup
   ~reset=false,
 ) => {
-  let config = Config.fromEnv()
+  let config = Config.fromConfigView()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   let exitCode = try {
     await persistence->Persistence.init(~reset, ~chainConfigs=config.chainMap->ChainMap.values)
@@ -24,7 +24,7 @@ let runUpMigrations = async (
 }
 
 let runDownMigrations = async (~shouldExit) => {
-  let config = Config.fromEnv()
+  let config = Config.fromConfigView()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   let exitCode = try {
     await persistence.storage.reset()

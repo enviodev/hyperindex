@@ -28,6 +28,8 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 * [`envio start`↴](#envio-start)
+* [`envio config`↴](#envio-config)
+* [`envio config view`↴](#envio-config-view)
 
 ## `envio`
 
@@ -41,6 +43,7 @@ This document contains the help content for the `envio` command-line program.
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer without any automatic codegen
+* `config` — Inspect the resolved indexer configuration
 
 ###### **Options:**
 
@@ -48,7 +51,7 @@ This document contains the help content for the `envio` command-line program.
 * `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory for generated code output. We recommend configuring this using the `output` field in your config.yaml instead
 
   Default value: `generated`
-* `--config <CONFIG>` — The file in the project containing config
+* `--config <CONFIG>` — The file in the project containing config. Can also be set via the `ENVIO_CONFIG` environment variable
 
   Default value: `config.yaml`
 
@@ -357,6 +360,28 @@ Start the indexer without any automatic codegen
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
+
+
+
+## `envio config`
+
+Inspect the resolved indexer configuration
+
+**Usage:** `envio config <COMMAND>`
+
+###### **Subcommands:**
+
+* `view` — Print the resolved indexer configuration as JSON
+
+
+
+## `envio config view`
+
+Print the resolved indexer configuration as JSON.
+
+NOTE: the printed JSON is an internal format used by HyperIndex's own runtime handoff. It is not stable and may change without notice until the feature is stabilized.
+
+**Usage:** `envio config view`
 
 
 

@@ -60,6 +60,26 @@ module ChildProcess = {
 
   @module("child_process")
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
+
+  type spawnSyncOptions = {
+    cwd?: string,
+    env?: dict<string>,
+    encoding?: string,
+    maxBuffer?: int,
+  }
+
+  // `status` is null when the child is killed by a signal before exiting; we
+  // treat null-or-nonzero as failure. `error` is set when the process itself
+  // couldn't be spawned (e.g., command not on PATH).
+  type spawnSyncResult = {
+    status: Null.t<int>,
+    stdout: string,
+    stderr: string,
+    error: Null.t<exn>,
+  }
+
+  @module("child_process")
+  external spawnSync: (string, array<string>, spawnSyncOptions) => spawnSyncResult = "spawnSync"
 }
 
 module Url = {

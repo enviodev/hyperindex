@@ -209,7 +209,7 @@ export interface Global {}
 /**
  * Shape of the indexer configuration.
  * Will be used internally for defineConfig.
- * Currently should match the internal.config.json structure.
+ * Currently should match the JSON emitted by `envio config view`.
  */
 type IndexerConfig = {
   /** The indexer name. */

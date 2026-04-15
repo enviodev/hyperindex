@@ -18,8 +18,11 @@ function runLocalEnvio() {
     );
   }
 
-  // Go up 3 levels: bin.mjs → envio/ → {node_modules,packages}/ → repo root
-  let root = path.join(caller, "../../..");
+  // Use the user's cwd as the pnpm project root. We used to derive it from
+  // `caller`, but pnpm's symlinked layout (node_modules/.pnpm/envio@.../...)
+  // defeats that heuristic. cwd is correct both when the user runs `envio`
+  // themselves and when the Node runtime spawns the CLI during indexer start.
+  const root = process.cwd();
 
   const pnpmListResult = spawnSync("pnpm", ["list", "envio", "--json"], {
     cwd: root,

@@ -35,8 +35,8 @@ pub struct ProjectPaths {
     #[arg(global = true, short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
     pub output_directory: String,
 
-    ///The file in the project containing config.
-    #[arg(global = true, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
+    ///The file in the project containing config. Can also be set via the `ENVIO_CONFIG` environment variable.
+    #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
 
@@ -62,9 +62,23 @@ pub enum CommandType {
     ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
+    /// Inspect the resolved indexer configuration
+    #[command(subcommand)]
+    Config(ConfigSubcommand),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigSubcommand {
+    /// Print the resolved indexer configuration as JSON.
+    ///
+    /// NOTE: the printed JSON is an internal format used by HyperIndex's own
+    /// runtime handoff. It is not stable and may change without notice until
+    /// the feature is stabilized.
+    View,
 }
 
 #[derive(Debug, Subcommand)]

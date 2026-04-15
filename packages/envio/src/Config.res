@@ -19,7 +19,7 @@ type contract = {
   eventSignatures: array<string>,
 }
 
-// Source config parsed from internal.config.json - sources are created lazily in ChainFetcher
+// Source config parsed from `envio config view` - sources are created lazily in ChainFetcher
 type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,
@@ -146,7 +146,7 @@ module EnvioAddresses = {
   }->Internal.fromGenericEntityConfig
 }
 
-// Types for parsing source config from internal.config.json
+// Types for parsing source config from the JSON emitted by `envio config view`
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("live") Live
 
 let rpcSourceForSchema = S.enum([Sync, Fallback, Live])
@@ -827,11 +827,71 @@ let getChain = (config, ~chainId) => {
       )
 }
 
-@val external envioConfigEnv: option<string> = "process.env.ENVIO_CONFIG"
+// Resolve the envio CLI via Node module resolution. This works in any context
+// where `envio` is an installed dependency (handler tests, vitest workers,
+// direct `envio start`), without requiring the user to add anything to PATH.
+// We read `bin` from envio's package.json, then decide whether the entry is a
+// JS shim (invoke via `node`) or a native binary (invoke directly).
+let resolveEnvioCli: unit => (string, array<string>) = %raw(`function () {
+  const { createRequire } = require("node:module");
+  const path = require("node:path");
+  const req = createRequire(import.meta.url);
+  const pkgPath = req.resolve("envio/package.json");
+  const pkg = req("envio/package.json");
+  const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin.envio;
+  const binPath = path.resolve(path.dirname(pkgPath), binRel);
+  const isScript = /\.(m?js|cjs)$/i.test(binPath);
+  return isScript ? [process.execPath, [binPath]] : [binPath, []];
+}`)
 
-let fromEnv = () => {
-  switch envioConfigEnv {
-  | Some(configStr) => configStr->JSON.parseOrThrow->fromPublic
-  | None => JsError.throwWithMessage("ENVIO_CONFIG environment variable is not set")
+// Load the resolved indexer config by shelling out to the envio CLI.
+// `envio config view` prints the same JSON we used to bundle as
+// `generated/internal.config.json`. We resolve it via spawnSync (blocking) so
+// the returned value is ready before callers use it. Keeps stdin untouched so
+// the TUI can consume it in the future.
+//
+// Errors are intentionally user-friendly and omit paths/stderr so users see a
+// clear action to take instead of digging through internal details.
+let fromConfigView = () => {
+  let genericErr = "Couldn't load the indexer config. Run `envio codegen` and make sure the envio CLI is installed."
+
+  let (cmd, prefixArgs) = try {
+    resolveEnvioCli()
+  } catch {
+  | _ => JsError.throwWithMessage(genericErr)
+  }
+
+  let args = prefixArgs->Array.concat(["config", "view"])
+
+  let result = try {
+    NodeJs.ChildProcess.spawnSync(
+      cmd,
+      args,
+      {
+        encoding: "utf8",
+        // Configs can be large (hundreds of events with ABIs). Default 1MB is
+        // too small; 64MB is a conservative ceiling that still catches runaway
+        // output.
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    )
+  } catch {
+  | _ => JsError.throwWithMessage(genericErr)
+  }
+
+  switch result.error->Null.toOption {
+  | Some(_) => JsError.throwWithMessage(genericErr)
+  | None => ()
+  }
+
+  switch result.status->Null.toOption {
+  | Some(0) => ()
+  | _ => JsError.throwWithMessage(genericErr)
+  }
+
+  try {
+    result.stdout->JSON.parseOrThrow->fromPublic
+  } catch {
+  | _ => JsError.throwWithMessage(genericErr)
   }
 }

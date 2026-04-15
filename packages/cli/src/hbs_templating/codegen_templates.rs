@@ -934,7 +934,6 @@ pub struct ProjectTemplate {
 
     envio_version: String,
     indexer_code: String,
-    internal_config_json_code: String,
     envio_dts_code: String,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
@@ -1639,9 +1638,7 @@ type handlerContext = {{
 
         // Combine all parts into indexer_code — includes everything from the template
         let indexer_code = format!(
-            r#"@@directive("import internalConfigJson from '../internal.config.json' with {{ type: 'json' }}")
-
-//*************
+            r#"//*************
 //***ENTITIES**
 //*************
 @genType.as("Id")
@@ -1822,24 +1819,74 @@ type testIndexer = {{
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
 
-        // Append the Generated module (was in Indexer.res.hbs, now in Rust)
+        // Append the Generated module (was in Indexer.res.hbs, now in Rust).
+        //
+        // The config is loaded lazily via `Config.fromConfigView()` (a blocking
+        // spawnSync of `envio config view`). Exposed values (`configWithoutRegistrations`,
+        // `allEntities`, `indexer`) are JS Proxies that defer the spawn until the
+        // first property read, so modules that import types from "generated" but
+        // never read config values don't pay the spawn cost at module load time.
         let generated_module = r#"module Generated = {
-let makeGeneratedConfig = () => {
-  Config.fromPublic(%raw(`internalConfigJson`))
+let makeGeneratedConfig = () => Config.fromConfigView()
+
+// Memoized loader. `envio config view` is invoked at most once per process;
+// subsequent callers get the same parsed Config.t.
+let getCachedConfig = {
+  let cache = ref(None)
+  () =>
+    switch cache.contents {
+    | Some(c) => c
+    | None => {
+        let c = makeGeneratedConfig()
+        cache := Some(c)
+        c
+      }
+    }
 }
 
-// Config without handler registration - used by tests, migrations, etc.
-let configWithoutRegistrations = makeGeneratedConfig()
-let allEntities = configWithoutRegistrations.allEntities
+// Proxy factory: returns a value that lazy-initializes on first read and
+// delegates all property-access traps to the real underlying value.
+// `target` controls the shape seen by `Array.isArray` / `typeof`, so use
+// `[]` for array-like values and a null-prototype object for records.
+let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
+  let cache;
+  const get = () => (cache === undefined ? (cache = make()) : cache);
+  return new Proxy(target, {
+    get: (_t, prop) => get()[prop],
+    has: (_t, prop) => prop in get(),
+    ownKeys: () => Reflect.ownKeys(get()),
+    getOwnPropertyDescriptor: (_t, prop) => Object.getOwnPropertyDescriptor(get(), prop),
+  });
+}`)
+
+let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
+let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig().allEntities, %raw(`[]`))
 
 }"#;
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_module);
 
+        // Build the top-level `indexer` value as a lazy Proxy over the memoized
+        // `Main.getGlobalIndexer`. `createTestIndexer` is already a function so
+        // we just lazy-load the config inside its body.
         let generated_top_level_bindings = format!(
             "{}\n\n{}",
-            r#"let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)"#,
-            r#"let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
+            r#"let indexer: indexer = {
+  let cache = ref(None)
+  let getCachedIndexer = () =>
+    switch cache.contents {
+    | Some(i) => i
+    | None => {
+        let i = Main.getGlobalIndexer(~config=Generated.getCachedConfig())
+        cache := Some(i)
+        i
+      }
+    }
+  Generated.makeLazy(getCachedIndexer, %raw(`Object.create(null)`))
+}"#,
+            r#"let createTestIndexer: unit => testIndexer = (() => {
+  TestIndexer.makeCreateTestIndexer(~config=Generated.getCachedConfig(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
+})->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))"#,
         );
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_top_level_bindings);
@@ -1863,8 +1910,6 @@ let allEntities = configWithoutRegistrations.allEntities
                 }
             }
         };
-
-        let internal_config_json_code = cfg.to_public_config_json()?;
 
         // Generate envio.d.ts content (type declarations only)
         // Always export all ecosystem types, even when empty
@@ -2238,7 +2283,6 @@ let allEntities = configWithoutRegistrations.allEntities
             is_svm_ecosystem: cfg.get_ecosystem() == Ecosystem::Svm,
             envio_version: get_envio_version()?,
             indexer_code,
-            internal_config_json_code,
             envio_dts_code,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
@@ -2283,6 +2327,21 @@ mod test {
 
         super::ProjectTemplate::from_config(&config)
             .expect("should be able to get project template")
+    }
+
+    fn get_internal_config_json_helper(configs_file_name: &str) -> String {
+        let project_root = get_test_path_string_helper();
+        let config = format!("configs/{}", configs_file_name);
+        let generated = "generated/";
+        let project_paths =
+            ParsedProjectPaths::new(&project_root, generated, &config).expect("Parsed paths");
+
+        let config = SystemConfig::parse_from_project_files(&project_paths)
+            .expect("Deserialized yml config should be parseable");
+
+        config
+            .to_public_config_json()
+            .expect("should be able to serialize public config JSON")
     }
 
     #[test]
@@ -2547,22 +2606,22 @@ mod test {
 
     #[test]
     fn internal_config_json_code_generated_for_evm() {
-        let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config1.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_generated_for_fuel() {
-        let project_template = get_project_template_helper("fuel-config.yaml");
         // Note: Fuel defaults to rollback_on_reorg: false in system_config.rs,
         // which differs from the runtime default of true, so it's included
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("fuel-config.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_with_all_options() {
-        let project_template = get_project_template_helper("config-with-all-options.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config-with-all-options.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
@@ -2581,15 +2640,15 @@ mod test {
     fn internal_config_json_code_with_no_contracts() {
         // config4.yaml has empty contracts array - tests that comma is properly
         // placed before addressFormat when contracts section is omitted
-        let project_template = get_project_template_helper("config4.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config4.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
     fn internal_config_json_code_with_multiple_contracts() {
         // config2.yaml has two contracts - tests comma separation between contracts
-        let project_template = get_project_template_helper("config2.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("config2.yaml");
+        insta::assert_snapshot!(json);
     }
 
     #[test]
@@ -2607,7 +2666,7 @@ mod test {
 
     #[test]
     fn internal_config_json_code_with_lowercase_contract_name() {
-        let project_template = get_project_template_helper("lowercase-contract-name.yaml");
-        insta::assert_snapshot!(project_template.internal_config_json_code);
+        let json = get_internal_config_json_helper("lowercase-contract-name.yaml");
+        insta::assert_snapshot!(json);
     }
 }

@@ -2,8 +2,6 @@
 source: packages/cli/src/hbs_templating/codegen_templates.rs
 expression: project_template.indexer_code
 ---
-@@directive("import internalConfigJson from '../internal.config.json' with { type: 'json' }")
-
 //*************
 //***ENTITIES**
 //*************
@@ -526,16 +524,57 @@ type testIndexer = {
 @get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
 
 module Generated = {
-let makeGeneratedConfig = () => {
-  Config.fromPublic(%raw(`internalConfigJson`))
+let makeGeneratedConfig = () => Config.fromConfigView()
+
+// Memoized loader. `envio config view` is invoked at most once per process;
+// subsequent callers get the same parsed Config.t.
+let getCachedConfig = {
+  let cache = ref(None)
+  () =>
+    switch cache.contents {
+    | Some(c) => c
+    | None => {
+        let c = makeGeneratedConfig()
+        cache := Some(c)
+        c
+      }
+    }
 }
 
-// Config without handler registration - used by tests, migrations, etc.
-let configWithoutRegistrations = makeGeneratedConfig()
-let allEntities = configWithoutRegistrations.allEntities
+// Proxy factory: returns a value that lazy-initializes on first read and
+// delegates all property-access traps to the real underlying value.
+// `target` controls the shape seen by `Array.isArray` / `typeof`, so use
+// `[]` for array-like values and a null-prototype object for records.
+let makeLazy: (unit => 'a, 'a) => 'a = %raw(`function (make, target) {
+  let cache;
+  const get = () => (cache === undefined ? (cache = make()) : cache);
+  return new Proxy(target, {
+    get: (_t, prop) => get()[prop],
+    has: (_t, prop) => prop in get(),
+    ownKeys: () => Reflect.ownKeys(get()),
+    getOwnPropertyDescriptor: (_t, prop) => Object.getOwnPropertyDescriptor(get(), prop),
+  });
+}`)
+
+let configWithoutRegistrations: Config.t = makeLazy(getCachedConfig, %raw(`Object.create(null)`))
+let allEntities: array<Internal.entityConfig> = makeLazy(() => getCachedConfig().allEntities, %raw(`[]`))
 
 }
 
-let indexer: indexer = Main.getGlobalIndexer(~config=Generated.configWithoutRegistrations)
+let indexer: indexer = {
+  let cache = ref(None)
+  let getCachedIndexer = () =>
+    switch cache.contents {
+    | Some(i) => i
+    | None => {
+        let i = Main.getGlobalIndexer(~config=Generated.getCachedConfig())
+        cache := Some(i)
+        i
+      }
+    }
+  Generated.makeLazy(getCachedIndexer, %raw(`Object.create(null)`))
+}
 
-let createTestIndexer: unit => testIndexer = TestIndexer.makeCreateTestIndexer(~config=Generated.configWithoutRegistrations, ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))
+let createTestIndexer: unit => testIndexer = (() => {
+  TestIndexer.makeCreateTestIndexer(~config=Generated.getCachedConfig(), ~workerPath=NodeJs.Path.join(NodeJs.Path.dirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)), "TestIndexerWorker.res.mjs")->NodeJs.Path.toString)()
+})->(Utils.magic: (unit => TestIndexer.t<testIndexerProcessConfig>) => (unit => testIndexer))

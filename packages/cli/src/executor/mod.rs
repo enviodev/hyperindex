@@ -1,5 +1,5 @@
 use crate::{
-    clap_definitions::{JsonSchema, Script},
+    clap_definitions::{ConfigSubcommand, JsonSchema, Script},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -79,6 +79,15 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
         CommandType::Local(local_commands) => {
             local::run_local(&local_commands, &parsed_project_paths).await?;
+        }
+
+        CommandType::Config(ConfigSubcommand::View) => {
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
+            let json = config
+                .to_public_config_json()
+                .context("Failed serializing config to JSON")?;
+            println!("{}", json);
         }
 
         CommandType::Script(Script::PrintCliHelpMd) => {
