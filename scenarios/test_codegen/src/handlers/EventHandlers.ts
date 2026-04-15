@@ -417,14 +417,14 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "Transfer",
     wildcard: true,
-    where: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
       return {
         params: [
-          { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chainId] },
-          { from: WHITELISTED_ADDRESSES[chainId], to: ZERO_ADDRESS },
+          { from: ZERO_ADDRESS, to: WHITELISTED_ADDRESSES[chain.id] },
+          { from: WHITELISTED_ADDRESSES[chain.id], to: ZERO_ADDRESS },
         ],
       };
     },
@@ -436,8 +436,8 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "EmptyFiltersArray",
     wildcard: true,
-    where: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
       return { params: [] };
@@ -450,10 +450,11 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "WildcardWithAddress",
     wildcard: true,
-    where: ({ chainId, addresses }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
+      const addresses = chain.EventFiltersTest.addresses;
       return {
         params: [
           { from: ZERO_ADDRESS, to: addresses },
@@ -469,8 +470,8 @@ indexer.onEvent(
     contract: "EventFiltersTest",
     event: "WithExcessField",
     wildcard: true,
-    where: ({ chainId }) => {
-      if (chainId !== 100 && chainId !== 137) {
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
         return false;
       }
       return { params: { from: ZERO_ADDRESS, to: ZERO_ADDRESS } };
@@ -790,8 +791,8 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
   }
 });
 
-indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chainId }) => {
-  if (chainId !== 100 && chainId !== 137) {
+indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where: ({ chain }) => {
+  if (chain.id !== 100 && chain.id !== 137) {
     return false;
   }
   return {
