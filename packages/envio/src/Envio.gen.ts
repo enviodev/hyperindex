@@ -19,14 +19,6 @@ export type svmOnBlockArgs<context> = { readonly slot: number; readonly context:
 
 export type onBlockArgs<block,context> = { readonly block: block; readonly context: context };
 
-export type onBlockOptions<chain> = {
-  readonly name: string; 
-  readonly chain: chain; 
-  readonly interval?: number; 
-  readonly startBlock?: number; 
-  readonly endBlock?: number
-};
-
 export type logger = $$logger;
 
 export type effect<input,output> = $$effect<input,output>;
