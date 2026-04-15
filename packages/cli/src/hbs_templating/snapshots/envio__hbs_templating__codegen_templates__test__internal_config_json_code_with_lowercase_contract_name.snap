@@ -6,6 +6,9 @@ expression: project_template.internal_config_json_code
   "version": "0.0.1-dev",
   "name": "lowercase-contract-name",
   "description": "Test config with lowercase contract name",
+  "storage": {
+    "postgres": true
+  },
   "evm": {
     "chains": {
       "ethereumMainnet": {

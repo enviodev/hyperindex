@@ -233,6 +233,14 @@ module App = {
         <Text> {"Dev Console: "->React.string} </Text>
         <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
       </Box>
+      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host) {
+      | (true, Some(host)) =>
+        <Box flexDirection={Row}>
+          <Text> {"ClickHouse: "->React.string} </Text>
+          <Text color={Info} underline=true> {`${host}/play`->React.string} </Text>
+        </Box>
+      | _ => React.null
+      }}
       <Messages config=state.ctx.config />
     </Box>
   }

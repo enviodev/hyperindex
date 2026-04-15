@@ -11,6 +11,10 @@ expression: project_template.internal_config_json_code
   "rollbackOnReorg": false,
   "saveFullHistory": true,
   "rawEvents": true,
+  "storage": {
+    "postgres": true,
+    "clickhouse": true
+  },
   "evm": {
     "chains": {
       "ethereumMainnet": {

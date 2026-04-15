@@ -1656,17 +1656,28 @@ let makeStorageFromEnv = (
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
     ~sink=?{
-      switch Env.ClickHouseSink.host {
-      | Some(host) =>
+      // Internally ClickHouse storage is implemented as a sync of the
+      // Postgres storage. Required env vars are validated here only when
+      // the user opts in via `storage.clickhouse: true` in config.yaml.
+      if config.storage.clickhouse {
+        let requireEnv = (opt, name) =>
+          switch opt {
+          | Some(v) => v
+          | None =>
+            JsError.throwWithMessage(
+              `ClickHouse storage is enabled but required env var ${name} is not set. Please set it or disable clickhouse in the \`storage\` config.`,
+            )
+          }
         Some(
           Sink.makeClickHouse(
-            ~host,
-            ~database=Env.ClickHouseSink.database,
-            ~username=Env.ClickHouseSink.username,
-            ~password=Env.ClickHouseSink.password,
+            ~host=Env.ClickHouse.host->requireEnv("ENVIO_CLICKHOUSE_HOST"),
+            ~database=Env.ClickHouse.database,
+            ~username=Env.ClickHouse.username->requireEnv("ENVIO_CLICKHOUSE_USERNAME"),
+            ~password=Env.ClickHouse.password->requireEnv("ENVIO_CLICKHOUSE_PASSWORD"),
           ),
         )
-      | None => None
+      } else {
+        None
       }
     },
     ~onInitialize=?{

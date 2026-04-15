@@ -36,6 +36,7 @@ pub(crate) struct PublicConfigJson<'a> {
     save_full_history: bool,
     #[serde(skip_serializing_if = "is_false")]
     raw_events: bool,
+    storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<EvmConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +45,14 @@ pub(crate) struct PublicConfigJson<'a> {
     svm: Option<SvmConfig>,
     enums: BTreeMap<String, Vec<String>>,
     entities: Vec<EntityJson>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct StorageConfig {
+    postgres: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    clickhouse: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -583,6 +592,10 @@ impl SystemConfig {
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
+            storage: StorageConfig {
+                postgres: cfg.storage.postgres,
+                clickhouse: cfg.storage.clickhouse,
+            },
             evm,
             fuel,
             svm,

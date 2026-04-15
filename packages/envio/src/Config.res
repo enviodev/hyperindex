@@ -60,6 +60,11 @@ type multichain = Internal.multichain =
   | @as("ordered") Ordered
   | @as("unordered") Unordered
 
+type storage = {
+  postgres: bool,
+  clickhouse: bool,
+}
+
 type contractHandler = {
   name: string,
   handler: option<string>,
@@ -72,6 +77,7 @@ type t = {
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
+  storage: storage,
   multichain: multichain,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
@@ -422,6 +428,13 @@ let parseEntitiesFromJson = (
   })
 }
 
+let publicConfigStorageSchema = S.schema(s =>
+  {
+    "postgres": s.matches(S.bool),
+    "clickhouse": s.matches(S.option(S.bool)),
+  }
+)
+
 let publicConfigSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
@@ -432,6 +445,7 @@ let publicConfigSchema = S.schema(s =>
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
+    "storage": s.matches(publicConfigStorageSchema),
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
@@ -769,6 +783,10 @@ let fromPublic = (publicConfigJson: JSON.t, ~maxAddrInPartition=5000) => {
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
+    storage: {
+      postgres: publicConfig["storage"]["postgres"],
+      clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+    },
     multichain: publicConfig["multichain"]->Option.getOr(Unordered),
     chainMap,
     defaultChain: chains->Array.get(0),
