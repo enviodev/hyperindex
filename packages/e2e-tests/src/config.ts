@@ -4,6 +4,7 @@
 
 import path from "path";
 import fs from "fs";
+import { createRequire } from "node:module";
 
 import { fileURLToPath } from "url";
 
@@ -49,10 +50,11 @@ function resolveEnvio(): { command: string; args: string[] } {
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  // require.resolve finds the installed envio package (artifact in CI,
-  // workspace link in local dev). We go from package.json → bin.mjs.
+  // Use createRequire for ESM compatibility. Resolves the installed envio
+  // package (artifact in CI, workspace link in local dev).
   try {
-    const pkgJson = require.resolve("envio/package.json");
+    const req = createRequire(import.meta.url);
+    const pkgJson = req.resolve("envio/package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
     const binRel = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.envio;
     if (binRel) {
