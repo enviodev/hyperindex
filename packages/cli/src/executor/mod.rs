@@ -74,7 +74,9 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
                 commands::db_migrate::run_db_setup(&config, &persisted_state).await?;
             }
-            commands::start::start_indexer(&config).await?;
+            // `envio start` doesn't manage Docker — users are expected to
+            // have their own services and env vars set up (e.g. via .env).
+            commands::start::start_indexer(&config, &[]).await?;
         }
 
         CommandType::Local(local_commands) => {
