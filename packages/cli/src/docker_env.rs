@@ -187,17 +187,28 @@ struct ClickHouseUrl {
 
 impl ClickHouseUrl {
     fn parse(raw: &str) -> anyhow::Result<Self> {
-        let url = reqwest::Url::parse(raw)
-            .with_context(|| format!("ENVIO_CLICKHOUSE_HOST is not a valid URL: {raw:?}"))?;
+        let url = reqwest::Url::parse(raw).with_context(|| {
+            format!(
+                "ENVIO_CLICKHOUSE_HOST={raw:?} is not a valid URL.\n\
+                 Expected format: http://host:port (e.g. http://localhost:8123).\n\
+                 Unset the variable to let the CLI start a local Docker container instead."
+            )
+        })?;
         let scheme = url.scheme().to_string();
         if scheme != "http" && scheme != "https" {
             anyhow::bail!(
-                "ENVIO_CLICKHOUSE_HOST must use http or https, got scheme {scheme:?} in {raw:?}"
+                "ENVIO_CLICKHOUSE_HOST={raw:?} uses unsupported scheme {scheme:?}.\n\
+                 Only http:// and https:// are supported."
             );
         }
         let host = url
             .host_str()
-            .ok_or_else(|| anyhow::anyhow!("ENVIO_CLICKHOUSE_HOST has no host: {raw:?}"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ENVIO_CLICKHOUSE_HOST={raw:?} has no hostname.\n\
+                     Expected format: http://host:port (e.g. http://localhost:8123)."
+                )
+            })?
             .to_string();
         let port = url
             .port()
@@ -674,14 +685,20 @@ pub struct UpResult {
 
 pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     let env = EnvConfig::from_project(opts.project_root);
-    let pg_host_port: u16 = env
-        .pg_port
-        .parse()
-        .context("ENVIO_PG_PORT is not a valid port")?;
-    let hasura_host_port: u16 = env
-        .hasura_port
-        .parse()
-        .context("HASURA_EXTERNAL_PORT is not a valid port")?;
+    let pg_host_port: u16 = env.pg_port.parse().with_context(|| {
+        format!(
+            "ENVIO_PG_PORT={:?} is not a valid port number. \
+             Remove it from your .env / environment to use the default (5433).",
+            env.pg_port
+        )
+    })?;
+    let hasura_host_port: u16 = env.hasura_port.parse().with_context(|| {
+        format!(
+            "HASURA_EXTERNAL_PORT={:?} is not a valid port number. \
+             Remove it from your .env / environment to use the default (8080).",
+            env.hasura_port
+        )
+    })?;
 
     // Parse the ClickHouse URL only when the project actually opts into
     // ClickHouse — garbage in ENVIO_CLICKHOUSE_HOST shouldn't break users
@@ -691,9 +708,6 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     } else {
         None
     };
-    // Destructure into a plain reference for use in async blocks below —
-    // avoids scattered `.expect()` calls whose invariant ("ch_url is Some
-    // when opts.clickhouse") would only be checked at runtime.
     let ch_url_ref = ch_url.as_ref();
     let probe_client = build_probe_client();
 
@@ -720,33 +734,35 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         }
     );
 
-    // If the user points us at an external Postgres, never start a container
-    // for it — fail fast if it isn't actually reachable so the user sees the
-    // misconfiguration instead of Docker silently filling in.
+    // External + unreachable → bail with actionable guidance instead of
+    // silently starting a Docker container the user didn't ask for.
     if pg_external && !pg_alive {
         anyhow::bail!(
-            "ENVIO_PG_HOST is set to external host {host:?} but Postgres is not reachable on \
-             {host}:{port}. Refusing to start a Docker container for an externally-managed \
-             Postgres; check that the host is reachable and credentials are correct.",
+            "Postgres is not reachable at {host}:{port} (from ENVIO_PG_HOST).\n\
+             \n\
+             Possible fixes:\n\
+             - Verify the host is running and accepts connections on that port.\n\
+             - Unset ENVIO_PG_HOST to let the CLI start a local Docker container instead.",
             host = env.pg_host_str(),
             port = pg_host_port
         );
     }
-
-    // Same guardrail for ClickHouse: if the user points us at an external
-    // server, require it to actually respond to /ping.
-    if opts.clickhouse && ch_external && !ch_alive {
-        let url = ch_url_ref.expect("set when opts.clickhouse");
-        anyhow::bail!(
-            "ENVIO_CLICKHOUSE_HOST is set to external {raw:?} but ClickHouse /ping is not \
-             responding at {scheme}://{host}:{port}. Refusing to start a Docker container for an \
-             externally-managed ClickHouse; check that the host is reachable and credentials are \
-             correct.",
-            raw = env.ch_host_str(),
-            scheme = url.scheme,
-            host = url.host,
-            port = url.port
-        );
+    if let Some(url) = ch_url_ref {
+        if ch_external && !ch_alive {
+            anyhow::bail!(
+                "ClickHouse is not reachable at {scheme}://{host}:{port}/ping \
+                 (from ENVIO_CLICKHOUSE_HOST={raw:?}).\n\
+                 \n\
+                 Possible fixes:\n\
+                 - Verify ClickHouse is running and the /ping endpoint responds.\n\
+                 - Check that the URL scheme, host, and port are correct.\n\
+                 - Unset ENVIO_CLICKHOUSE_HOST to let the CLI start a local Docker container instead.",
+                raw = env.ch_host_str(),
+                scheme = url.scheme,
+                host = url.host,
+                port = url.port
+            );
+        }
     }
 
     let need_pg = !pg_external && !pg_alive;
@@ -768,15 +784,14 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     if !env.hasura_enabled {
         println!("Hasura disabled (ENVIO_HASURA=false)");
     }
-    if opts.clickhouse {
+    if let Some(url) = ch_url_ref {
         if ch_external {
             println!(
                 "Using your ClickHouse at {} (from ENVIO_CLICKHOUSE_HOST)",
                 env.ch_host_str()
             );
         } else if ch_alive {
-            let port = ch_url_ref.map(|u| u.port).unwrap_or(8123);
-            println!("Using ClickHouse already running on port {port}");
+            println!("Using ClickHouse already running on port {}", url.port);
         }
     }
 
@@ -974,13 +989,15 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         Ok(())
     };
 
+    // ClickHouse pipeline — only entered when ch_url was parsed (opts.clickhouse),
+    // so the `if let` always matches when need_ch is true. No expect() needed.
     let clickhouse_pipeline = async {
-        if !need_ch {
+        let Some(url) = ch_url_ref else {
             return Ok::<(), anyhow::Error>(());
+        };
+        if !need_ch {
+            return Ok(());
         }
-        // Only reached when ClickHouse is selected, not external, and not
-        // alive — so the URL parsed earlier is present and usable.
-        let url = ch_url_ref.expect("set when opts.clickhouse");
         let (img_res, net_res, vol_res) = tokio::join!(
             ensure_image(&docker, CLICKHOUSE_IMAGE),
             ensure_network(&docker, NETWORK),
@@ -1053,7 +1070,12 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             if start.elapsed() > Duration::from_secs(60) {
                 eprintln!();
                 anyhow::bail!(
-                    "Postgres did not become reachable on port {pg_host_port} within 60s"
+                    "Postgres did not become reachable on port {pg_host_port} within 60 s.\n\
+                     \n\
+                     Try:\n\
+                     - docker logs {PG_CONTAINER}\n\
+                     - docker ps -a | grep {PG_CONTAINER}\n\
+                     - Ensure nothing else is using port {pg_host_port}."
                 );
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1075,8 +1097,12 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             if start.elapsed() > Duration::from_secs(120) {
                 eprintln!();
                 anyhow::bail!(
-                    "Hasura did not become healthy on port {hasura_host_port} within 120s.\n\
-                     Check container logs: docker logs {HASURA_CONTAINER}"
+                    "Hasura did not become healthy on port {hasura_host_port} within 120 s.\n\
+                     \n\
+                     Try:\n\
+                     - docker logs {HASURA_CONTAINER}\n\
+                     - Verify Postgres is running (Hasura depends on it).\n\
+                     - Ensure nothing else is using port {hasura_host_port}."
                 );
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -1085,10 +1111,12 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     };
 
     let wait_ch = async {
-        if !need_ch {
+        let Some(url) = ch_url_ref else {
             return Ok::<(), anyhow::Error>(());
+        };
+        if !need_ch {
+            return Ok(());
         }
-        let url = ch_url_ref.expect("set when opts.clickhouse");
         eprint!("Waiting for ClickHouse...");
         let start = std::time::Instant::now();
         loop {
@@ -1099,8 +1127,12 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             if start.elapsed() > Duration::from_secs(60) {
                 eprintln!();
                 anyhow::bail!(
-                    "ClickHouse did not become healthy on port {port} within 60s.\n\
-                     Check container logs: docker logs {CH_CONTAINER}",
+                    "ClickHouse did not become healthy on port {port} within 60 s.\n\
+                     \n\
+                     Try:\n\
+                     - docker logs {CH_CONTAINER}\n\
+                     - docker ps -a | grep {CH_CONTAINER}\n\
+                     - Ensure nothing else is using port {port}.",
                     port = url.port
                 );
             }
