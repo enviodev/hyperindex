@@ -47,16 +47,20 @@ runs:
           exit 1
         fi
 
-        # Inject into the artifact source (pnpm links/copies from here)
+        # Inject into the artifact source (pnpm links from here)
         cp "$ADDON" .envio-artifacts/envio/envio.node
         echo "Injected into .envio-artifacts/envio/"
 
-        # Find every real envio install location via realpath on pnpm symlinks
-        for link in $(find node_modules -maxdepth 3 -name envio -type l 2>/dev/null) \
-                     $(find node_modules/.pnpm -maxdepth 4 -path "*/node_modules/envio" -type d 2>/dev/null); do
-          real=$(realpath "$link" 2>/dev/null || true)
-          if [ -f "$real/src/Core.res.mjs" ]; then
-            cp "$ADDON" "$real/envio.node"
-            echo "Injected into $real"
+        # Find ALL real envio package directories via Core.res.mjs.
+        # Use -L to follow symlinks, search the whole tree (pnpm
+        # store paths can be very deep). Deduplicate via realpath.
+        INJECTED=0
+        for core in $(find -L . -path "*/envio/src/Core.res.mjs" -not -path "./packages/envio/*" 2>/dev/null); do
+          pkg_dir=$(realpath "$(dirname "$(dirname "$core")")" 2>/dev/null || true)
+          if [ -n "$pkg_dir" ] && [ -d "$pkg_dir" ]; then
+            cp "$ADDON" "$pkg_dir/envio.node"
+            echo "Injected into $pkg_dir"
+            INJECTED=$((INJECTED + 1))
           fi
         done
+        echo "Total injections: $INJECTED"
