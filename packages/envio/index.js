@@ -38,7 +38,7 @@ export const S = {
   tuple: Sury.tuple,
   merge: Sury.merge,
   optional: Sury.optional,
-  nullable: Sury.nullable,
+  nullable: (schema) => Sury.union([schema, null]),
   bigDecimal: bigDecimalSchema,
   // Nullish type will change in "sury@10"
   // nullish: Sury.nullish,

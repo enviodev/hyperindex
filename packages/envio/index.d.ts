@@ -181,7 +181,9 @@ export declare namespace S {
   export const tuple: typeof Sury.tuple;
   export const merge: typeof Sury.merge;
   export const optional: typeof Sury.optional;
-  export const nullable: typeof Sury.nullable;
+  export function nullable<Output, Input>(
+    schema: Sury.Schema<Output, Input>
+  ): Sury.Schema<Output | null, Input | null>;
   export const bigDecimal: typeof bigDecimalSchema;
   export const unknown: typeof Sury.unknown;
   // Nullish type will change in "sury@10"
