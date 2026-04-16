@@ -272,39 +272,36 @@ impl EnvConfig {
         ClickHouseUrl::parse(self.ch_host_str())
     }
 
-    /// Deterministic hash of all config values used to detect drift.
-    /// pg_host is included because Hasura's DATABASE_URL embeds it when
-    /// Postgres is external, so a host change must recreate the container.
-    /// ClickHouse fields are included so that user/password/db changes
-    /// recreate the managed ClickHouse container.
-    fn config_hash(&self) -> String {
-        // Prefix host fields with a 1-byte tag so that None and
-        // Some("<default>") hash differently — they take different code
-        // paths (Docker vs external) and embed different hosts in
-        // Hasura's DATABASE_URL, so switching between them is real drift.
-        fn hash_opt(hasher: &mut Sha256, v: &Option<String>) {
-            match v {
-                None => hasher.update([0u8]),
-                Some(s) => {
-                    hasher.update([1u8]);
-                    hasher.update(s);
-                }
-            }
-        }
-        let mut hasher = Sha256::new();
-        hash_opt(&mut hasher, &self.pg_host);
-        hasher.update(&self.pg_port);
-        hasher.update(&self.pg_password);
-        hasher.update(&self.pg_user);
-        hasher.update(&self.pg_database);
-        hasher.update(&self.hasura_port);
-        hasher.update(&self.hasura_enable_console);
-        hasher.update(&self.hasura_admin_secret);
-        hash_opt(&mut hasher, &self.ch_host);
-        hasher.update(&self.ch_user);
-        hasher.update(&self.ch_password);
-        hasher.update(&self.ch_database);
-        format!("{:x}", hasher.finalize())
+    /// Per-service config hashes so that changing one service's config only
+    /// recreates *that* container instead of all of them. Host fields are
+    /// excluded: when external, no container is created; when local, the
+    /// host is always the hardcoded default and can't vary.
+    fn pg_config_hash(&self) -> String {
+        let mut h = Sha256::new();
+        h.update(&self.pg_port);
+        h.update(&self.pg_password);
+        h.update(&self.pg_user);
+        h.update(&self.pg_database);
+        format!("{:x}", h.finalize())
+    }
+
+    fn hasura_config_hash(&self) -> String {
+        let mut h = Sha256::new();
+        h.update(&self.pg_password);
+        h.update(&self.pg_user);
+        h.update(&self.pg_database);
+        h.update(&self.hasura_port);
+        h.update(&self.hasura_enable_console);
+        h.update(&self.hasura_admin_secret);
+        format!("{:x}", h.finalize())
+    }
+
+    fn ch_config_hash(&self) -> String {
+        let mut h = Sha256::new();
+        h.update(&self.ch_user);
+        h.update(&self.ch_password);
+        h.update(&self.ch_database);
+        format!("{:x}", h.finalize())
     }
 }
 
@@ -691,6 +688,10 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     } else {
         None
     };
+    // Destructure into a plain reference for use in async blocks below —
+    // avoids scattered `.expect()` calls whose invariant ("ch_url is Some
+    // when opts.clickhouse") would only be checked at runtime.
+    let ch_url_ref = ch_url.as_ref();
 
     // Probe each service at the configured host. When external the env var
     // tells us where to look; when local the container publishes on 0.0.0.0
@@ -708,7 +709,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             is_hasura_healthy(hasura_probe_host, hasura_host_port).await
         },
         async {
-            match &ch_url {
+            match ch_url_ref {
                 Some(u) => is_clickhouse_healthy(&u.scheme, &u.host, u.port).await,
                 None => false,
             }
@@ -731,7 +732,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     // Same guardrail for ClickHouse: if the user points us at an external
     // server, require it to actually respond to /ping.
     if opts.clickhouse && ch_external && !ch_alive {
-        let url = ch_url.as_ref().expect("ch_url parsed when opts.clickhouse");
+        let url = ch_url_ref.expect("set when opts.clickhouse");
         anyhow::bail!(
             "ENVIO_CLICKHOUSE_HOST is set to external {raw:?} but ClickHouse /ping is not \
              responding at {scheme}://{host}:{port}. Refusing to start a Docker container for an \
@@ -770,7 +771,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
                 env.ch_host_str()
             );
         } else if ch_alive {
-            let port = ch_url.as_ref().map(|u| u.port).unwrap_or(8123);
+            let port = ch_url_ref.map(|u| u.port).unwrap_or(8123);
             println!("Using ClickHouse already running on port {port}");
         }
     }
@@ -812,7 +813,9 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
     // We need Docker for at least one container.
     let docker = connect_docker().await?;
-    let config_hash = env.config_hash();
+    let pg_hash = env.pg_config_hash();
+    let hasura_hash = env.hasura_config_hash();
+    let ch_hash = env.ch_config_hash();
 
     // Run full pipelines for each container in parallel:
     // pull image → create infra → ensure container.
@@ -846,7 +849,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let pg_body = ContainerCreateBody {
             image: Some(POSTGRES_IMAGE.to_string()),
-            labels: Some(make_labels(&config_hash)),
+            labels: Some(make_labels(&pg_hash)),
             env: Some(vec![
                 format!("POSTGRES_PASSWORD={}", env.pg_password),
                 format!("POSTGRES_USER={}", env.pg_user),
@@ -870,7 +873,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(&docker, PG_CONTAINER, &config_hash, pg_host_port, pg_body).await?;
+        ensure_container(&docker, PG_CONTAINER, &pg_hash, pg_host_port, pg_body).await?;
         Ok(())
     };
 
@@ -915,7 +918,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let hasura_body = ContainerCreateBody {
             image: Some(HASURA_IMAGE.to_string()),
-            labels: Some(make_labels(&config_hash)),
+            labels: Some(make_labels(&hasura_hash)),
             user: Some("1001:1001".to_string()),
             env: Some(vec![
                 format!("HASURA_GRAPHQL_DATABASE_URL={db_url}"),
@@ -959,7 +962,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         ensure_container(
             &docker,
             HASURA_CONTAINER,
-            &config_hash,
+            &hasura_hash,
             hasura_host_port,
             hasura_body,
         )
@@ -973,7 +976,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         }
         // Only reached when ClickHouse is selected, not external, and not
         // alive — so the URL parsed earlier is present and usable.
-        let url = ch_url.as_ref().expect("ch_url parsed when opts.clickhouse");
+        let url = ch_url_ref.expect("set when opts.clickhouse");
         let (img_res, net_res, vol_res) = tokio::join!(
             ensure_image(&docker, CLICKHOUSE_IMAGE),
             ensure_network(&docker, NETWORK),
@@ -997,7 +1000,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
         let ch_body = ContainerCreateBody {
             image: Some(CLICKHOUSE_IMAGE.to_string()),
-            labels: Some(make_labels(&config_hash)),
+            labels: Some(make_labels(&ch_hash)),
             env: Some(vec![
                 format!("CLICKHOUSE_USER={}", env.ch_user),
                 format!("CLICKHOUSE_PASSWORD={}", env.ch_password),
@@ -1021,7 +1024,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             ..Default::default()
         };
 
-        ensure_container(&docker, CH_CONTAINER, &config_hash, url.port, ch_body).await?;
+        ensure_container(&docker, CH_CONTAINER, &ch_hash, url.port, ch_body).await?;
         Ok(())
     };
 
@@ -1081,7 +1084,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         if !need_ch {
             return Ok::<(), anyhow::Error>(());
         }
-        let url = ch_url.as_ref().expect("ch_url parsed when opts.clickhouse");
+        let url = ch_url_ref.expect("set when opts.clickhouse");
         eprint!("Waiting for ClickHouse...");
         let start = std::time::Instant::now();
         loop {
@@ -1122,37 +1125,39 @@ pub async fn down() -> anyhow::Result<()> {
         stop_and_remove(&docker, CH_CONTAINER),
     );
 
-    // Only remove the ClickHouse volume if it actually exists — users who
-    // never opted into ClickHouse wouldn't have created it, and a blanket
-    // removal would always report a spurious error on their `envio stop`.
-    let ch_volume_exists = docker.inspect_volume(CH_VOLUME).await.is_ok();
-    let (vol_res, ch_vol_res, net_res) = tokio::join!(
-        docker.remove_volume(
-            VOLUME,
-            None::<bollard::query_parameters::RemoveVolumeOptions>
-        ),
-        async {
-            if ch_volume_exists {
-                docker
-                    .remove_volume(
-                        CH_VOLUME,
-                        None::<bollard::query_parameters::RemoveVolumeOptions>,
-                    )
-                    .await
-            } else {
-                Ok(())
-            }
-        },
+    // Volumes / network may not exist if the user never ran `up` or only
+    // used a subset of services. Probe first so missing resources don't
+    // produce spurious errors.
+    let pg_vol_exists = docker.inspect_volume(VOLUME).await.is_ok();
+    let ch_vol_exists = docker.inspect_volume(CH_VOLUME).await.is_ok();
+
+    async fn remove_volume_if_exists(
+        docker: &Docker,
+        name: &str,
+        exists: bool,
+    ) -> anyhow::Result<()> {
+        if exists {
+            docker
+                .remove_volume(name, None::<bollard::query_parameters::RemoveVolumeOptions>)
+                .await
+                .with_context(|| format!("Failed to remove volume {name}"))?;
+        }
+        Ok(())
+    }
+
+    let (pg_vol_res, ch_vol_res, net_res) = tokio::join!(
+        remove_volume_if_exists(&docker, VOLUME, pg_vol_exists),
+        remove_volume_if_exists(&docker, CH_VOLUME, ch_vol_exists),
         docker.remove_network(NETWORK),
     );
 
     let mut failed = false;
-    if let Err(e) = vol_res {
-        eprintln!("Failed to remove volume {VOLUME}: {e}");
+    if let Err(e) = pg_vol_res {
+        eprintln!("{e:#}");
         failed = true;
     }
     if let Err(e) = ch_vol_res {
-        eprintln!("Failed to remove volume {CH_VOLUME}: {e}");
+        eprintln!("{e:#}");
         failed = true;
     }
     if let Err(e) = net_res {
@@ -1192,26 +1197,53 @@ mod tests {
     }
 
     #[test]
-    fn config_hash_deterministic() {
-        assert_eq!(default_env().config_hash(), default_env().config_hash());
+    fn per_service_hashes_are_deterministic() {
+        let d = default_env();
+        assert_eq!(
+            (
+                d.pg_config_hash(),
+                d.hasura_config_hash(),
+                d.ch_config_hash()
+            ),
+            (
+                default_env().pg_config_hash(),
+                default_env().hasura_config_hash(),
+                default_env().ch_config_hash()
+            )
+        );
     }
 
     #[test]
-    fn config_hash_changes_on_diff() {
+    fn pg_hash_changes_on_pg_port() {
         let env2 = EnvConfig {
             pg_port: "5434".into(),
             ..default_env()
         };
-        assert_ne!(default_env().config_hash(), env2.config_hash());
+        assert_ne!(default_env().pg_config_hash(), env2.pg_config_hash());
     }
 
     #[test]
-    fn config_hash_changes_on_pg_host() {
+    fn ch_hash_independent_from_pg() {
+        // Changing a PG field must not change the ClickHouse hash.
         let env2 = EnvConfig {
-            pg_host: Some("db.example.com".into()),
+            pg_password: "new_password".into(),
             ..default_env()
         };
-        assert_ne!(default_env().config_hash(), env2.config_hash());
+        assert_eq!(default_env().ch_config_hash(), env2.ch_config_hash());
+        assert_ne!(default_env().pg_config_hash(), env2.pg_config_hash());
+    }
+
+    #[test]
+    fn hasura_hash_changes_on_pg_password() {
+        // Hasura's DB URL embeds PG creds, so PG password change is drift.
+        let env2 = EnvConfig {
+            pg_password: "new_password".into(),
+            ..default_env()
+        };
+        assert_ne!(
+            default_env().hasura_config_hash(),
+            env2.hasura_config_hash()
+        );
     }
 
     #[test]
@@ -1243,12 +1275,12 @@ mod tests {
     }
 
     #[test]
-    fn config_hash_changes_on_ch_host() {
+    fn ch_hash_changes_on_ch_password() {
         let env2 = EnvConfig {
-            ch_host: Some("https://ch.cloud.example.com:8443".into()),
+            ch_password: "secret".into(),
             ..default_env()
         };
-        assert_ne!(default_env().config_hash(), env2.config_hash());
+        assert_ne!(default_env().ch_config_hash(), env2.ch_config_hash());
     }
 
     #[test]

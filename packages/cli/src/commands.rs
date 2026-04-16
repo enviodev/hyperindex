@@ -19,6 +19,9 @@ async fn execute_command(
 /// Like execute_command, but lets the caller inject extra env vars into the
 /// child process without clobbering the inherited environment. Used by the
 /// dev flow to forward credentials for containers we just booted.
+///
+/// Precedence: `extra_env` values override identically-named vars inherited
+/// from the parent process (including those loaded from `.env`).
 async fn execute_command_with_env(
     cmd: &str,
     args: Vec<&str>,
