@@ -1,0 +1,40 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+expression: template.module_code
+---
+
+let name = "CreateLockupTranchedStream"
+let contractName = contractName
+type params = {streamId: bigint, commonParams: {"funder": Address.t, "sender": Address.t, "recipient": Address.t, "amounts": {"deposit": bigint, "brokerFee": bigint}, "token": Address.t, "cancelable": bool, "transferable": bool, "timestamps": {"start": bigint, "end": bigint}, "shape": string, "broker": Address.t}, tranches: array<{"amount": bigint, "timestamp": bigint}>, mixedTuple: {"label": string, "1": bigint, "recipient": Address.t, "3": bool}}
+/** Event params with all fields optional. Missing fields use default values. */
+type paramsConstructor = {streamId?: bigint, commonParams?: {"0": Address.t, "1": Address.t, "2": Address.t, "3": {"0": bigint, "1": bigint}, "4": Address.t, "5": bool, "6": bool, "7": {"0": bigint, "1": bigint}, "8": string, "9": Address.t}, tranches?: array<{"0": bigint, "1": bigint}>, mixedTuple?: {"0": string, "1": bigint, "2": Address.t, "3": bool}}
+type block = Block.t
+type transaction = Transaction.t
+
+type event = {
+  /** The name of the contract that emitted this event. */
+  contractName: string,
+  /** The name of the event. */
+  eventName: string,
+  /** The parameters or arguments associated with this event. */
+  params: params,
+  /** The unique identifier of the blockchain network where this event occurred. */
+  chainId: chainId,
+  /** The address of the contract that emitted this event. */
+  srcAddress: Address.t,
+  /** The index of this event's log within the block. */
+  logIndex: int,
+  /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+  transaction: transaction,
+  /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+  block: block,
+}
+
+type whereParams = {@as("streamId") streamId?: SingleOrMultiple.t<bigint>}
+
+type onEventWhereCondition = {params?: SingleOrMultiple.t<whereParams>}
+type onEventWhereChainContract = {/** Addresses of the SablierLockup contract on this chain. */ addresses: array<Address.t>}
+type onEventWhereChain = {/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \"SablierLockup": onEventWhereChainContract}
+type onEventWhereArgs = {chain: onEventWhereChain}
+@unboxed type onEventWhereResult = Filter(onEventWhereCondition) | @as(false) SkipAll | @as(true) KeepAll
+type onEventWhere = onEventWhereArgs => onEventWhereResult

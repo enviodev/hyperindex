@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: tuple-events-config
+schema: ../schemas/schema.graphql
+description: Sablier V2 LockupTranched — exercises tuple event params (nested struct + tuple[]) through contract-import
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+      initial_block_interval: 10000
+      backoff_multiplicative: 0.8
+      acceleration_additive: 2000
+      interval_ceiling: 10000
+      backoff_millis: 5000
+      query_timeout_millis: 20000
+    start_block: 0
+    contracts:
+      - name: SablierLockupTranched
+        abi_file_path: ../abis/sablier-lockup-tranched.json
+        handler: ./src/EventHandler.js
+        address: "0xf86B359035208e4529686A1825F2D5BeE38c28A8"
+        events:
+          - event: "CreateLockupTranchedStream"

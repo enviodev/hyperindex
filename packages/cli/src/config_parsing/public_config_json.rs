@@ -196,6 +196,53 @@ struct EventParam {
     abi_type: String,
     #[serde(skip_serializing_if = "is_false")]
     indexed: bool,
+    /// Recursive tuple component metadata. Present only when the top-level type is a
+    /// struct / array of structs / nested tuple. Runtime uses this to rebuild named
+    /// record shapes from positional decoder output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    components: Option<Vec<EventParamComponent>>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct EventParamComponent {
+    /// Component name from the ABI. For unnamed slots in mixed-name tuples the
+    /// CLI fills in the positional index (`"0"`, `"1"`, ...) so the runtime
+    /// always has a valid record key that matches the codegen'd type.
+    name: String,
+    abi_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    components: Option<Vec<EventParamComponent>>,
+}
+
+/// Walk an `AbiType` to produce the `components` tree that the runtime needs to
+/// rebuild named records. Every tuple (Solidity struct, mixed-name, or fully
+/// anonymous) emits components so the runtime can remap positional decoder
+/// output into a keyed object — unnamed components use their positional index
+/// as the key (`"0"`, `"1"`, …).
+fn abi_type_to_components(
+    ty: &crate::config_parsing::abi_compat::AbiType,
+) -> Option<Vec<EventParamComponent>> {
+    use crate::config_parsing::abi_compat::AbiType;
+    match ty {
+        // `AbiTupleField` constructors normalise empty source names to `None`,
+        // so `Some(_)` always carries a non-empty identifier.
+        AbiType::Tuple(fields) => Some(
+            fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| EventParamComponent {
+                    name: f.name.clone().unwrap_or_else(|| i.to_string()),
+                    abi_type: f.kind.to_signature_string(),
+                    components: abi_type_to_components(&f.kind),
+                })
+                .collect(),
+        ),
+        // For arrays, descend into the element type so struct arrays still surface
+        // component metadata under the param.
+        AbiType::Array(inner) | AbiType::FixedArray(inner, _) => abi_type_to_components(inner),
+        _ => None,
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -338,8 +385,18 @@ impl SystemConfig {
                                         .iter()
                                         .map(|p| EventParam {
                                             name: p.name.clone(),
-                                            abi_type: p.kind.to_string(),
+                                            abi_type: p.kind.to_signature_string(),
                                             indexed: p.indexed,
+                                            // Indexed structs/tuples are delivered as keccak256
+                                            // topic hashes, not decoded tuples, so the runtime
+                                            // can't rebuild a named record from them. Skip the
+                                            // component metadata so the decoder takes the legacy
+                                            // path and leaves the value as the raw hash.
+                                            components: if p.indexed {
+                                                None
+                                            } else {
+                                                abi_type_to_components(&p.kind)
+                                            },
                                         })
                                         .collect();
                                     (params, None)

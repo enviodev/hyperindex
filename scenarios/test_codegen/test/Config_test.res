@@ -275,6 +275,69 @@ describe("EventConfigBuilder", () => {
     t.expect(json).toEqual(%raw(`{"id": "42", "contactDetails": ["Alice", "alice@example.com"]}`))
   })
 
+  it("buildHyperSyncDecoder remaps mixed-name tuple components using index keys", t => {
+    // Issue #538 follow-up: when a tuple has some named and some unnamed
+    // components, the CLI emits `"0"`, `"1"`, ... for unnamed slots. The
+    // runtime decoder must honour those keys so handlers can access unnamed
+    // fields via `value["1"]`.
+    let params: array<EventConfigBuilder.eventParam> = [
+      {
+        name: "mixed",
+        abiType: "(string,uint256,address,bool)",
+        indexed: false,
+        components: [
+          {name: "label", abiType: "string"},
+          {name: "1", abiType: "uint256"},
+          {name: "recipient", abiType: "address"},
+          {name: "3", abiType: "bool"},
+        ],
+      },
+    ]
+    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
+    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
+      indexed: [],
+      body: [
+        ("hi", 42n, "0xabc", true)->(
+          Utils.magic: ((string, bigint, string, bool)) => HyperSyncClient.Decoder.decodedRaw
+        ),
+      ],
+    }
+    let decoded = decoder(mockDecodedEvent)
+    t.expect(decoded).toEqual(
+      {"mixed": {"label": "hi", "1": 42n, "recipient": "0xabc", "3": true}}->(
+        Utils.magic: {..} => Internal.eventParams
+      ),
+    )
+  })
+
+  it("buildHyperSyncDecoder leaves indexed struct params as topic hashes", t => {
+    // Indexed structs/tuples are delivered as keccak256 topic hashes (single
+    // hex strings), not positional arrays. Even if `components` metadata is
+    // present, the decoder must NOT try to rebuild a named record from them —
+    // doing so would treat the hash as an array and read garbage.
+    let params: array<EventConfigBuilder.eventParam> = [
+      {
+        name: "indexedStruct",
+        abiType: "(address,uint256)",
+        indexed: true,
+        components: [
+          {name: "owner", abiType: "address"},
+          {name: "amount", abiType: "uint256"},
+        ],
+      },
+    ]
+    let decoder = EventConfigBuilder.buildHyperSyncDecoder(params)
+    let topicHash = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    let mockDecodedEvent: HyperSyncClient.Decoder.decodedEvent = {
+      indexed: [topicHash->(Utils.magic: string => HyperSyncClient.Decoder.decodedRaw)],
+      body: [],
+    }
+    let decoded = decoder(mockDecodedEvent)
+    t.expect(decoded).toEqual(
+      {"indexedStruct": topicHash}->(Utils.magic: {..} => Internal.eventParams),
+    )
+  })
+
   it("abiTypeToSchema throws on unsupported types", t => {
     t.expect(() => EventConfigBuilder.abiTypeToSchema("function")).toThrowError(
       "Unsupported ABI type: function",
