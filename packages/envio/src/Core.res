@@ -79,10 +79,14 @@ let findRepoRoot: unit => option<string> = %raw(`function() {
       // file+..+..+hyperindex+packages+envio → ../../hyperindex/packages/envio
       var decoded = filePart.replace(/^file\+/, "").replace(/\+/g, path.sep);
       // Resolve relative to the project that installed envio.
-      // Walk up from thisFile to find the project root (node_modules parent)
+      // Walk up from thisFile to find the project root (parent of node_modules).
+      // Path: .../food/node_modules/.pnpm/envio@file+.../node_modules/envio/...
+      // We need "food" — the directory that CONTAINS node_modules.
       for (var j = i - 1; j >= 0; j--) {
         if (parts[j] === "node_modules" || parts[j] === ".pnpm") {
-          var projectRoot = parts.slice(0, j).join(path.sep) || path.sep;
+          // Skip node_modules/.pnpm pair: project root is before node_modules
+          var rootIdx = (parts[j] === ".pnpm" && j > 0 && parts[j-1] === "node_modules") ? j - 1 : j;
+          var projectRoot = parts.slice(0, rootIdx).join(path.sep) || path.sep;
           var envioSrc = path.resolve(projectRoot, decoded);
           var repoRoot = path.resolve(envioSrc, "..", "..");
           if (fs.existsSync(path.join(repoRoot, "packages", "cli", "Cargo.toml"))) {
