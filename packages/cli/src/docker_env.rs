@@ -150,8 +150,16 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     )
 }
 
+const DEFAULT_PG_HOST: &str = "localhost";
+const DEFAULT_CH_URL: &str = "http://localhost:8123";
+
 struct EnvConfig {
-    pg_host: String,
+    /// None when the user hasn't set ENVIO_PG_HOST — that's our signal that
+    /// they want the Dockerised Postgres and we'll point everything at
+    /// DEFAULT_PG_HOST. Some(value) means "I manage this myself", which
+    /// bypasses the container entirely regardless of what the value is
+    /// (even "localhost").
+    pg_host: Option<String>,
     pg_port: String,
     pg_password: String,
     pg_user: String,
@@ -160,11 +168,9 @@ struct EnvConfig {
     hasura_port: String,
     hasura_enable_console: String,
     hasura_admin_secret: String,
-    /// Raw ENVIO_CLICKHOUSE_HOST as the user set it (or our default
-    /// "http://localhost:8123"). Parsed into scheme/host/port on demand via
-    /// `ch_url()` rather than stored pre-parsed so the raw string can feed
-    /// back into the runtime subprocess unchanged.
-    ch_host: String,
+    /// Same presence-is-the-flag rule as pg_host: None → start our
+    /// ClickHouse container at DEFAULT_CH_URL; Some(url) → user manages it.
+    ch_host: Option<String>,
     ch_user: String,
     ch_password: String,
     ch_database: String,
@@ -207,17 +213,17 @@ impl EnvConfig {
             .load()
             .ok();
 
+        let var_opt = |name: &str| -> Option<String> {
+            std::env::var(name)
+                .ok()
+                .or_else(|| dotenv.as_ref().and_then(|m: &EnvMap| m.var(name).ok()))
+        };
         let var = |name: &str, default: &str| -> String {
-            std::env::var(name).unwrap_or_else(|_| {
-                dotenv
-                    .as_ref()
-                    .and_then(|m: &EnvMap| m.var(name).ok())
-                    .unwrap_or_else(|| default.to_string())
-            })
+            var_opt(name).unwrap_or_else(|| default.to_string())
         };
 
         Self {
-            pg_host: var("ENVIO_PG_HOST", "localhost"),
+            pg_host: var_opt("ENVIO_PG_HOST"),
             pg_port: var("ENVIO_PG_PORT", "5433"),
             pg_password: var("ENVIO_PG_PASSWORD", "testing"),
             pg_user: var("ENVIO_PG_USER", "postgres"),
@@ -226,34 +232,44 @@ impl EnvConfig {
             hasura_port: var("HASURA_EXTERNAL_PORT", "8080"),
             hasura_enable_console: var("HASURA_GRAPHQL_ENABLE_CONSOLE", "true"),
             hasura_admin_secret: var("HASURA_GRAPHQL_ADMIN_SECRET", "testing"),
-            ch_host: var("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
+            ch_host: var_opt("ENVIO_CLICKHOUSE_HOST"),
             ch_user: var("ENVIO_CLICKHOUSE_USERNAME", "default"),
             ch_password: var("ENVIO_CLICKHOUSE_PASSWORD", "testing"),
             ch_database: var("ENVIO_CLICKHOUSE_DATABASE", "envio_sink"),
         }
     }
 
-    /// Whether the user has pointed Postgres at an externally-managed host,
-    /// meaning we should not start a Docker Postgres container. Only the
-    /// default value ("localhost") is treated as local; any other value —
-    /// including 127.0.0.1 — is taken as an explicit opt-in to external
-    /// Postgres, since the default never resolves to those literals.
+    /// External ⇔ the user set ENVIO_PG_HOST at all. Any value (even the
+    /// literal "localhost") is treated as an explicit "I manage Postgres
+    /// myself"; unset means we boot the Dockerised Postgres.
     fn pg_is_external(&self) -> bool {
-        self.pg_host != "localhost"
+        self.pg_host.is_some()
     }
 
-    /// Whether the user has pointed ClickHouse at an externally-managed host.
-    /// Same rule as pg_is_external: only the exact default URL
-    /// ("http://localhost:8123") is treated as local.
+    /// The host string to connect to — either the user-provided value when
+    /// external, or DEFAULT_PG_HOST for our own container.
+    fn pg_host_str(&self) -> &str {
+        self.pg_host.as_deref().unwrap_or(DEFAULT_PG_HOST)
+    }
+
+    /// External ⇔ the user set ENVIO_CLICKHOUSE_HOST at all. Same rule as
+    /// pg_is_external; unset means we boot the container at DEFAULT_CH_URL.
     fn ch_is_external(&self) -> bool {
-        self.ch_host != "http://localhost:8123"
+        self.ch_host.is_some()
     }
 
-    /// Parse `ch_host`. The caller decides when to fail (e.g. only when the
-    /// ClickHouse storage backend is actually selected, so users who never
-    /// opt into ClickHouse can still have garbage in ENVIO_CLICKHOUSE_HOST).
+    /// The raw URL string — either the user-provided value when external,
+    /// or DEFAULT_CH_URL for our own container.
+    fn ch_host_str(&self) -> &str {
+        self.ch_host.as_deref().unwrap_or(DEFAULT_CH_URL)
+    }
+
+    /// Parse the effective URL (user's when external, default otherwise).
+    /// The caller decides when to fail — we only parse if ClickHouse is
+    /// actually selected, so users who never opt into ClickHouse can keep
+    /// garbage in ENVIO_CLICKHOUSE_HOST.
     fn ch_url(&self) -> anyhow::Result<ClickHouseUrl> {
-        ClickHouseUrl::parse(&self.ch_host)
+        ClickHouseUrl::parse(self.ch_host_str())
     }
 
     /// Deterministic hash of all config values used to detect drift.
@@ -262,8 +278,21 @@ impl EnvConfig {
     /// ClickHouse fields are included so that user/password/db changes
     /// recreate the managed ClickHouse container.
     fn config_hash(&self) -> String {
+        // Prefix host fields with a 1-byte tag so that None and
+        // Some("<default>") hash differently — they take different code
+        // paths (Docker vs external) and embed different hosts in
+        // Hasura's DATABASE_URL, so switching between them is real drift.
+        fn hash_opt(hasher: &mut Sha256, v: &Option<String>) {
+            match v {
+                None => hasher.update([0u8]),
+                Some(s) => {
+                    hasher.update([1u8]);
+                    hasher.update(s);
+                }
+            }
+        }
         let mut hasher = Sha256::new();
-        hasher.update(&self.pg_host);
+        hash_opt(&mut hasher, &self.pg_host);
         hasher.update(&self.pg_port);
         hasher.update(&self.pg_password);
         hasher.update(&self.pg_user);
@@ -271,7 +300,7 @@ impl EnvConfig {
         hasher.update(&self.hasura_port);
         hasher.update(&self.hasura_enable_console);
         hasher.update(&self.hasura_admin_secret);
-        hasher.update(&self.ch_host);
+        hash_opt(&mut hasher, &self.ch_host);
         hasher.update(&self.ch_user);
         hasher.update(&self.ch_password);
         hasher.update(&self.ch_database);
@@ -663,11 +692,10 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         None
     };
 
-    // Probe each service at the configured host. Anything other than the
-    // default is treated as externally-managed (see EnvConfig::pg_is_external
-    // / ch_is_external). Local Docker publishes on 0.0.0.0, so "localhost"
-    // reaches it. Hasura is always our own container, so probe on localhost.
-    let pg_probe_host = env.pg_host.as_str();
+    // Probe each service at the configured host. When external the env var
+    // tells us where to look; when local the container publishes on 0.0.0.0
+    // so "localhost" reaches it. Hasura is always our own container.
+    let pg_probe_host = env.pg_host_str();
     let hasura_probe_host = "localhost";
     let pg_external = env.pg_is_external();
     let ch_external = env.ch_is_external();
@@ -695,7 +723,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             "ENVIO_PG_HOST is set to external host {host:?} but Postgres is not reachable on \
              {host}:{port}. Refusing to start a Docker container for an externally-managed \
              Postgres; check that the host is reachable and credentials are correct.",
-            host = env.pg_host,
+            host = env.pg_host_str(),
             port = pg_host_port
         );
     }
@@ -709,7 +737,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
              responding at {scheme}://{host}:{port}. Refusing to start a Docker container for an \
              externally-managed ClickHouse; check that the host is reachable and credentials are \
              correct.",
-            raw = env.ch_host,
+            raw = env.ch_host_str(),
             scheme = url.scheme,
             host = url.host,
             port = url.port
@@ -723,7 +751,8 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     if pg_external {
         println!(
             "Using your Postgres at {}:{} (from ENVIO_PG_HOST)",
-            env.pg_host, pg_host_port
+            env.pg_host_str(),
+            pg_host_port
         );
     } else if pg_alive {
         println!("Using Postgres already running on port {pg_host_port}");
@@ -738,7 +767,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         if ch_external {
             println!(
                 "Using your ClickHouse at {} (from ENVIO_CLICKHOUSE_HOST)",
-                env.ch_host
+                env.ch_host_str()
             );
         } else if ch_alive {
             let port = ch_url.as_ref().map(|u| u.port).unwrap_or(8123);
@@ -754,7 +783,10 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     // duplicate values into .env.
     let indexer_env = if opts.clickhouse {
         vec![
-            ("ENVIO_CLICKHOUSE_HOST".to_string(), env.ch_host.clone()),
+            (
+                "ENVIO_CLICKHOUSE_HOST".to_string(),
+                env.ch_host_str().to_string(),
+            ),
             ("ENVIO_CLICKHOUSE_USERNAME".to_string(), env.ch_user.clone()),
             (
                 "ENVIO_CLICKHOUSE_PASSWORD".to_string(),
@@ -872,7 +904,7 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
         // supplied host/port — the user is responsible for ensuring that
         // address is routable from the Hasura container.
         let (db_host, db_port) = if pg_external {
-            (env.pg_host.as_str(), pg_host_port)
+            (env.pg_host_str(), pg_host_port)
         } else {
             (PG_CONTAINER, 5432u16)
         };
@@ -1143,7 +1175,7 @@ mod tests {
 
     fn default_env() -> EnvConfig {
         EnvConfig {
-            pg_host: "localhost".into(),
+            pg_host: None,
             pg_port: "5433".into(),
             pg_password: "testing".into(),
             pg_user: "postgres".into(),
@@ -1152,7 +1184,7 @@ mod tests {
             hasura_port: "8080".into(),
             hasura_enable_console: "true".into(),
             hasura_admin_secret: "testing".into(),
-            ch_host: "http://localhost:8123".into(),
+            ch_host: None,
             ch_user: "default".into(),
             ch_password: "testing".into(),
             ch_database: "envio_sink".into(),
@@ -1176,64 +1208,78 @@ mod tests {
     #[test]
     fn config_hash_changes_on_pg_host() {
         let env2 = EnvConfig {
-            pg_host: "db.example.com".into(),
+            pg_host: Some("db.example.com".into()),
             ..default_env()
         };
         assert_ne!(default_env().config_hash(), env2.config_hash());
     }
 
     #[test]
-    fn pg_is_external_treats_only_localhost_as_local() {
-        let hosts = [
-            "localhost",
-            "127.0.0.1",
-            "0.0.0.0",
-            "::1",
-            "db.example.com",
-            "host.docker.internal",
-        ];
-        let results: Vec<bool> = hosts
+    fn pg_is_external_iff_env_var_set() {
+        assert!(!default_env().pg_is_external());
+        // Any value — even "localhost" — counts as external when explicitly set.
+        let values = ["localhost", "127.0.0.1", "db.example.com"];
+        let results: Vec<bool> = values
             .iter()
             .map(|h| {
                 EnvConfig {
-                    pg_host: (*h).into(),
+                    pg_host: Some((*h).into()),
                     ..default_env()
                 }
                 .pg_is_external()
             })
             .collect();
-        assert_eq!(results, vec![false, true, true, true, true, true]);
+        assert_eq!(results, vec![true, true, true]);
+    }
+
+    #[test]
+    fn pg_host_str_returns_default_when_unset() {
+        assert_eq!(default_env().pg_host_str(), DEFAULT_PG_HOST);
+        let ext = EnvConfig {
+            pg_host: Some("db.example.com".into()),
+            ..default_env()
+        };
+        assert_eq!(ext.pg_host_str(), "db.example.com");
     }
 
     #[test]
     fn config_hash_changes_on_ch_host() {
         let env2 = EnvConfig {
-            ch_host: "https://ch.cloud.example.com:8443".into(),
+            ch_host: Some("https://ch.cloud.example.com:8443".into()),
             ..default_env()
         };
         assert_ne!(default_env().config_hash(), env2.config_hash());
     }
 
     #[test]
-    fn ch_is_external_treats_only_default_as_local() {
-        let hosts = [
+    fn ch_is_external_iff_env_var_set() {
+        assert!(!default_env().ch_is_external());
+        let values = [
             "http://localhost:8123",
             "http://127.0.0.1:8123",
-            "http://localhost:8124",
             "https://ch.cloud.example.com",
-            "http://clickhouse:8123",
         ];
-        let results: Vec<bool> = hosts
+        let results: Vec<bool> = values
             .iter()
             .map(|h| {
                 EnvConfig {
-                    ch_host: (*h).into(),
+                    ch_host: Some((*h).into()),
                     ..default_env()
                 }
                 .ch_is_external()
             })
             .collect();
-        assert_eq!(results, vec![false, true, true, true, true]);
+        assert_eq!(results, vec![true, true, true]);
+    }
+
+    #[test]
+    fn ch_host_str_returns_default_when_unset() {
+        assert_eq!(default_env().ch_host_str(), DEFAULT_CH_URL);
+        let ext = EnvConfig {
+            ch_host: Some("http://10.0.0.5:9000".into()),
+            ..default_env()
+        };
+        assert_eq!(ext.ch_host_str(), "http://10.0.0.5:9000");
     }
 
     #[test]
