@@ -32,6 +32,36 @@ env:
 jobs:
   # ── Gate ────────────────────────────────────────────────────────────
 
+  # Block fork PRs from merging until /ok-to-test CI passes. Posts a
+  # "pending" build-verify commit status to the fork PR's head SHA.
+  # Branch protection must require the `build-verify` context — this
+  # is what makes the PR show "Expected — Waiting for status" instead
+  # of treating skipped checks as passing.
+  #
+  # The report job (at the bottom) overrides this with success/failure
+  # after CI runs via /ok-to-test. Each new fork push re-triggers
+  # pull_request → re-posts pending → re-blocks merge.
+  pending-status:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      statuses: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: 'pending',
+              context: 'build-verify',
+              description: 'Awaiting /ok-to-test approval from a maintainer',
+            });
+
   # Resolves the commit SHA downstream jobs check out, and authorizes
   # fork PRs via /ok-to-test comment. Admits:
   #   - push to main
