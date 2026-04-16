@@ -47,61 +47,71 @@ let getMtimeMs: string => float = %raw(`
 let loadAddon = () => {
   let req = createRequire(importMetaUrl)
 
-  // 1. Try platform-specific package (production + CI)
+  // 1. Try platform-specific package (production npm install)
   let platformPkg = `envio-${processPlatform}-${processArch}`
   try {
     callRequire(req, platformPkg)
   } catch {
-  | _ => {
-      // 2. Try local dev build
-      let thisFile = fileURLToPath(importMetaUrl)
-      let repoRoot = pathResolve([pathDirname(thisFile), "..", "..", ".."])
-      let cliDir = pathResolve([repoRoot, "packages", "cli"])
-      let targetDebug = pathJoin2(repoRoot, pathJoin2("target", "debug"))
+  | _ =>
+    // 2. Try envio.node next to this file (CI artifact or bundled addon).
+    // This is the @napi-rs/cli loader pattern: the .node file is placed
+    // alongside the JS loader so require() finds it by path, no platform
+    // package install needed.
+    let thisFile = fileURLToPath(importMetaUrl)
+    let siblingNode = pathJoin2(pathDirname(thisFile), pathJoin2("..", "envio.node"))
+    try {
+      callRequire(req, siblingNode)
+    } catch {
+    | _ => {
+        // 3. Try local dev build (cargo target/debug)
+        let repoRoot = pathResolve([pathDirname(thisFile), "..", "..", ".."])
+        let cliDir = pathResolve([repoRoot, "packages", "cli"])
+        let targetDebug = pathJoin2(repoRoot, pathJoin2("target", "debug"))
 
-      let libName = if processPlatform === "darwin" {
-        "libenvio.dylib"
-      } else if processPlatform === "win32" {
-        "envio.dll"
-      } else {
-        "libenvio.so"
-      }
-      let localPath = pathJoin2(targetDebug, libName)
-      let nodePath = pathJoin2(targetDebug, "envio.node")
-
-      let tryLoadLocal = () =>
-        if existsSync(localPath) {
-          try {
-            let needsCopy = !existsSync(nodePath) || getMtimeMs(localPath) > getMtimeMs(nodePath)
-            if needsCopy {
-              copyFileSync(localPath, nodePath)
-            }
-            Some(callRequire(req, nodePath))
-          } catch {
-          | _ => None
-          }
+        let libName = if processPlatform === "darwin" {
+          "libenvio.dylib"
+        } else if processPlatform === "win32" {
+          "envio.dll"
         } else {
-          None
+          "libenvio.so"
         }
+        let localPath = pathJoin2(targetDebug, libName)
+        let nodePath = pathJoin2(targetDebug, "envio.node")
 
-      let errMsg = "Couldn't load the envio native addon. Run 'cargo build --lib' in packages/cli or install the envio npm package."
-
-      switch tryLoadLocal() {
-      | Some(addon) => addon
-      | None =>
-        if existsSync(pathJoin2(cliDir, "Cargo.toml")) {
-          try {
-            Js.log("Building envio NAPI addon (first run)...")
-            execSyncWith("cargo build --lib", {"cwd": cliDir, "stdio": "inherit"})
-            switch tryLoadLocal() {
-            | Some(addon) => addon
-            | None => JsError.throwWithMessage(errMsg)
+        let tryLoadLocal = () =>
+          if existsSync(localPath) {
+            try {
+              let needsCopy = !existsSync(nodePath) || getMtimeMs(localPath) > getMtimeMs(nodePath)
+              if needsCopy {
+                copyFileSync(localPath, nodePath)
+              }
+              Some(callRequire(req, nodePath))
+            } catch {
+            | _ => None
             }
-          } catch {
-          | _ => JsError.throwWithMessage(errMsg)
+          } else {
+            None
           }
-        } else {
-          JsError.throwWithMessage(errMsg)
+
+        let errMsg = "Couldn't load the envio native addon. Run 'cargo build --lib' in packages/cli or install the envio npm package."
+
+        switch tryLoadLocal() {
+        | Some(addon) => addon
+        | None =>
+          if existsSync(pathJoin2(cliDir, "Cargo.toml")) {
+            try {
+              Js.log("Building envio NAPI addon (first run)...")
+              execSyncWith("cargo build --lib", {"cwd": cliDir, "stdio": "inherit"})
+              switch tryLoadLocal() {
+              | Some(addon) => addon
+              | None => JsError.throwWithMessage(errMsg)
+              }
+            } catch {
+            | _ => JsError.throwWithMessage(errMsg)
+            }
+          } else {
+            JsError.throwWithMessage(errMsg)
+          }
         }
       }
     }
