@@ -392,39 +392,48 @@ pub fn get_envio_version() -> Result<String> {
         return Ok(VERSION.to_string());
     }
 
-    // Dev mode: walk up from the binary to find the local envio package.
-    // Using current_exe() instead of current_dir() so this works even when
-    // cwd is outside the repo (e.g. template tests that run in /tmp/).
-    let exe = env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .context("failed to resolve current executable path")?;
-    // When the binary lives inside .envio-artifacts/ (the pre-built CI artifact),
-    // prefer .envio-artifacts/envio — it has compiled .res.mjs files that the
-    // source directory lacks. Dev binaries in target/ should use packages/envio
-    // to avoid creating a duplicate envio instance alongside workspace packages
-    // that already reference packages/envio (duplicate instances cause Prometheus
-    // metric registration collisions).
-    let prefer_artifact = exe
-        .components()
-        .any(|c| c.as_os_str() == ".envio-artifacts");
-    let mut dir = exe.parent();
-    while let Some(d) = dir {
-        let artifact = d.join(".envio-artifacts/envio");
-        let source = d.join("packages/envio");
-        if prefer_artifact && artifact.is_dir() {
-            return Ok(format!("file:{}", artifact.to_string_lossy()));
+    // Dev mode: walk up from the binary (or cwd) to find the local envio
+    // package. Try current_exe() first (works for standalone binary in
+    // target/), then current_dir() as fallback (works when running as a
+    // NAPI addon inside Node — current_exe() returns the Node binary
+    // which lives outside the repo).
+    let candidates = [
+        env::current_exe().and_then(|p| p.canonicalize()).ok(),
+        env::current_dir().and_then(|p| p.canonicalize()).ok(),
+    ];
+
+    for start in candidates.iter().flatten() {
+        // When the binary lives inside .envio-artifacts/ (the pre-built CI artifact),
+        // prefer .envio-artifacts/envio — it has compiled .res.mjs files that the
+        // source directory lacks. Dev binaries in target/ should use packages/envio
+        // to avoid creating a duplicate envio instance alongside workspace packages
+        // that already reference packages/envio (duplicate instances cause Prometheus
+        // metric registration collisions).
+        let prefer_artifact = start
+            .components()
+            .any(|c| c.as_os_str() == ".envio-artifacts");
+        let mut dir = Some(start.as_path());
+        while let Some(d) = dir {
+            let artifact = d.join(".envio-artifacts/envio");
+            let source = d.join("packages/envio");
+            if prefer_artifact && artifact.is_dir() {
+                return Ok(format!("file:{}", artifact.to_string_lossy()));
+            }
+            if source.is_dir() {
+                return Ok(format!("file:{}", source.to_string_lossy()));
+            }
+            if artifact.is_dir() {
+                return Ok(format!("file:{}", artifact.to_string_lossy()));
+            }
+            dir = d.parent();
         }
-        if source.is_dir() {
-            return Ok(format!("file:{}", source.to_string_lossy()));
-        }
-        if artifact.is_dir() {
-            return Ok(format!("file:{}", artifact.to_string_lossy()));
-        }
-        dir = d.parent();
     }
+
+    let exe = env::current_exe().unwrap_or_default();
     Err(anyhow!(
-        "could not find packages/envio above executable: {}",
-        exe.display()
+        "could not find packages/envio above executable ({}) or cwd ({})",
+        exe.display(),
+        env::current_dir().unwrap_or_default().display()
     ))
 }
 

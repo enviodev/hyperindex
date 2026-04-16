@@ -4,95 +4,110 @@
 // (in-process config loading). The addon is loaded once per process and
 // cached by Node's module system.
 //
-// Resolution order:
-// 1. Platform-specific npm package (envio-{os}-{arch}) — production.
-// 2. Local dev build at target/debug/ — after `cargo build --lib`.
-// 3. Auto cargo-build fallback — runs `cargo build --lib` and retries.
-
-@val external platform: string = "process.platform"
-@val external arch: string = "process.arch"
+// All Node builtins are imported via @module (compiles to ESM `import`)
+// instead of require() which is unavailable in .mjs files.
 
 type addon = {
   getConfigJson: (Nullable.t<string>, Nullable.t<string>) => string,
   runCli: array<string> => promise<int>,
 }
 
-// Load the NAPI addon. In production, the platform-specific package
-// (e.g., envio-linux-x64) ships the .node file. In local dev, the
-// cargo-built cdylib is at target/debug/. If neither exists, we
-// attempt a one-time cargo build.
-let loadAddon: unit => addon = %raw(`function() {
-  const { createRequire } = require("node:module");
-  const { fileURLToPath } = require("node:url");
-  const path = require("node:path");
-  const fs = require("node:fs");
-  const { execSync } = require("node:child_process");
+// ESM-safe Node imports
+@module("node:module") external createRequire: string => {..} = "createRequire"
+@module("node:url") external fileURLToPath: string => string = "fileURLToPath"
+@val external importMetaUrl: string = "import.meta.url"
+@module("node:path") external pathDirname: string => string = "dirname"
+@module("node:path") external pathJoin2: (string, string) => string = "join"
+@module("node:path") @variadic external pathResolve: array<string> => string = "resolve"
+@module("node:fs") external existsSync: string => bool = "existsSync"
+@module("node:fs") external copyFileSync: (string, string) => unit = "copyFileSync"
+@module("node:child_process")
+external execSyncWith: (string, {"cwd": string, "stdio": string}) => unit = "execSync"
+@val external processPlatform: string = "process.platform"
+@val external processArch: string = "process.arch"
 
-  const req = createRequire(import.meta.url);
+// Call the require function returned by createRequire. We can't type
+// this in ReScript because require is a callable object (function +
+// properties) — so we use a thin %raw wrapper that receives the
+// already-imported createRequire result.
+let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
+
+// statSync().mtimeMs — single-purpose helper to avoid binding the
+// full Stats type.
+let getMtimeMs: string => float = %raw(`
+  (function() {
+    // Import at definition time (module scope) so it's captured once.
+    // This IIFE runs during module evaluation where the ESM import
+    // (Nodefs) is already available.
+    var statSync = Nodefs.statSync;
+    return function(p) { return statSync(p).mtimeMs; };
+  })()
+`)
+
+let loadAddon = () => {
+  let req = createRequire(importMetaUrl)
 
   // 1. Try platform-specific package (production + CI)
-  const platformPkg = "envio-" + process.platform + "-" + process.arch;
+  let platformPkg = `envio-${processPlatform}-${processArch}`
   try {
-    return req(platformPkg);
-  } catch {}
+    callRequire(req, platformPkg)
+  } catch {
+  | _ => {
+      // 2. Try local dev build
+      let thisFile = fileURLToPath(importMetaUrl)
+      let repoRoot = pathResolve([pathDirname(thisFile), "..", "..", ".."])
+      let cliDir = pathResolve([repoRoot, "packages", "cli"])
+      let targetDebug = pathJoin2(repoRoot, pathJoin2("target", "debug"))
 
-  // 2. Try local dev build.
-  // This file lives at packages/envio/src/Core.res.mjs. Walk up to find
-  // the repo root (3 levels: src → envio → packages → root) and the
-  // cargo target directory. We use import.meta.url instead of
-  // require.resolve("envio/...") because a package can't resolve itself.
-  const thisFile = fileURLToPath(import.meta.url);
-  const repoRoot = path.resolve(path.dirname(thisFile), "../../..");
-  const cliDir = path.join(repoRoot, "packages", "cli");
-  const targetDebug = path.join(repoRoot, "target", "debug");
-
-  // cdylib output name varies by platform
-  const libName = process.platform === "darwin"
-    ? "libenvio.dylib"
-    : process.platform === "win32"
-      ? "envio.dll"
-      : "libenvio.so";
-  const localPath = path.join(targetDebug, libName);
-
-  // Node requires .node extension for native addons. Copy the cdylib
-  // with a clean .node name (symlinks with double extensions like
-  // .so.node don't work — Node gets confused by the extension).
-  const nodePath = path.join(targetDebug, "envio.node");
-
-  function tryLoadLocal() {
-    if (!fs.existsSync(localPath)) return null;
-    try {
-      if (!fs.existsSync(nodePath) || fs.statSync(nodePath).mtimeMs < fs.statSync(localPath).mtimeMs) {
-        fs.copyFileSync(localPath, nodePath);
+      let libName = if processPlatform === "darwin" {
+        "libenvio.dylib"
+      } else if processPlatform === "win32" {
+        "envio.dll"
+      } else {
+        "libenvio.so"
       }
-      return req(nodePath);
-    } catch { return null; }
+      let localPath = pathJoin2(targetDebug, libName)
+      let nodePath = pathJoin2(targetDebug, "envio.node")
+
+      let tryLoadLocal = () =>
+        if existsSync(localPath) {
+          try {
+            let needsCopy = !existsSync(nodePath) || getMtimeMs(localPath) > getMtimeMs(nodePath)
+            if needsCopy {
+              copyFileSync(localPath, nodePath)
+            }
+            Some(callRequire(req, nodePath))
+          } catch {
+          | _ => None
+          }
+        } else {
+          None
+        }
+
+      let errMsg = "Couldn't load the envio native addon. Run 'cargo build --lib' in packages/cli or install the envio npm package."
+
+      switch tryLoadLocal() {
+      | Some(addon) => addon
+      | None =>
+        if existsSync(pathJoin2(cliDir, "Cargo.toml")) {
+          try {
+            Js.log("Building envio NAPI addon (first run)...")
+            execSyncWith("cargo build --lib", {"cwd": cliDir, "stdio": "inherit"})
+            switch tryLoadLocal() {
+            | Some(addon) => addon
+            | None => JsError.throwWithMessage(errMsg)
+            }
+          } catch {
+          | _ => JsError.throwWithMessage(errMsg)
+          }
+        } else {
+          JsError.throwWithMessage(errMsg)
+        }
+      }
+    }
   }
+}
 
-  // Try loading existing local build
-  const local = tryLoadLocal();
-  if (local) return local;
-
-  // 3. Auto cargo-build fallback
-  if (fs.existsSync(path.join(cliDir, "Cargo.toml"))) {
-    try {
-      console.log("Building envio NAPI addon (first run)...");
-      execSync("cargo build --lib", {
-        cwd: cliDir,
-        stdio: "inherit",
-      });
-      const built = tryLoadLocal();
-      if (built) return built;
-    } catch {}
-  }
-
-  throw new Error(
-    "Couldn't load the envio native addon. " +
-    "Run 'cargo build --lib' in packages/cli or install the envio npm package."
-  );
-}`)
-
-// Cached addon instance — loaded once per process.
 let addonRef: ref<option<addon>> = ref(None)
 let getAddon = () =>
   switch addonRef.contents {
