@@ -40,22 +40,23 @@ runs:
     - name: Inject NAPI addon into installed envio
       shell: bash
       run: |
-        ADDON=.envio-artifacts/envio-linux-x64/envio.node
+        ADDON="$(pwd)/.envio-artifacts/envio-linux-x64/envio.node"
         if [ ! -f "$ADDON" ]; then
           echo "ERROR: $ADDON not found"
           ls -la .envio-artifacts/envio-linux-x64/
           exit 1
         fi
-        # Copy into every pnpm-installed envio location.
-        # -L follows symlinks (pnpm uses symlink trees).
-        FOUND=0
-        find -L node_modules -path "*/envio/src/Core.res.mjs" 2>/dev/null | while read core_file; do
-          pkg_dir=$(dirname "$(dirname "$core_file")")
-          cp "$ADDON" "$pkg_dir/envio.node"
-          echo "Injected envio.node into $pkg_dir"
-          FOUND=1
-        done
-        # Also inject into the artifact source directly (covers
-        # scenarios where pnpm hardlinks instead of symlinking)
+
+        # Inject into the artifact source (pnpm links/copies from here)
         cp "$ADDON" .envio-artifacts/envio/envio.node
-        echo "Injected envio.node into .envio-artifacts/envio/"
+        echo "Injected into .envio-artifacts/envio/"
+
+        # Find every real envio install location via realpath on pnpm symlinks
+        for link in $(find node_modules -maxdepth 3 -name envio -type l 2>/dev/null) \
+                     $(find node_modules/.pnpm -maxdepth 4 -path "*/node_modules/envio" -type d 2>/dev/null); do
+          real=$(realpath "$link" 2>/dev/null || true)
+          if [ -f "$real/src/Core.res.mjs" ]; then
+            cp "$ADDON" "$real/envio.node"
+            echo "Injected into $real"
+          fi
+        done
