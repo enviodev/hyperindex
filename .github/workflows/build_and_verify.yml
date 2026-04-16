@@ -1,16 +1,12 @@
 name: Build & Verify
 
 on:
-  # pull_request_target for ALL PRs (same-repo and forks). Runs with
-  # secrets. Fork PRs are gated by the `fork-ci` environment which
-  # requires manual approval from a reviewer before jobs proceed.
-  # Same-repo PRs use the `internal` environment (no restrictions).
-  #
-  # Security: the workflow file is always taken from the default branch
-  # (enforced since Dec 2025), so forks cannot modify the environment
-  # gate. All jobs check out github.event.pull_request.head.sha —
-  # pinned at event creation, so a push after approval cannot swap code.
-  pull_request_target:
+  # Use pull_request (not pull_request_target) so the workflow file from
+  # the PR branch is used. This is needed for PRs that change the build
+  # pipeline (e.g., switching from standalone binary to NAPI addon).
+  # After this PR merges, consider switching back to pull_request_target
+  # with the fork-ci environment gate for fork PR security.
+  pull_request:
   push:
     branches:
       - main
@@ -45,7 +41,7 @@ jobs:
     timeout-minutes: 1
     environment: >-
       ${{
-        github.event_name == 'pull_request_target' &&
+        github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name != github.repository &&
         'fork-ci' || 'internal'
       }}
@@ -58,7 +54,7 @@ jobs:
   # This commit status fills the gap — configure branch protection to
   # require the `build-verify` context.
   pending-status:
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 1
     permissions:
