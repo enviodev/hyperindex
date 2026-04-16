@@ -41,21 +41,9 @@ function resolveEnvio(): { command: string; args: string[] } {
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  for (const profile of ["release", "debug"]) {
-    const bin = path.join(rootDir, `target/${profile}/envio`);
-    if (fs.existsSync(bin)) {
-      return { command: bin, args: [] };
-    }
-  }
-
-  // In CI the pre-built platform binary lives in .envio-artifacts/
-  const artifactBin = path.join(rootDir, ".envio-artifacts/envio-linux-x64/bin/envio");
-  if (fs.existsSync(artifactBin)) {
-    return { command: artifactBin, args: [] };
-  }
-
-  // Fall back to running bin.mjs via node (production shim that
-  // resolves the platform binary via require.resolve).
+  // Prefer bin.mjs which loads the NAPI addon in-process via Core.res.
+  // In CI, the addon is installed via the envio-linux-x64 platform package;
+  // in local dev, Core.res auto-builds via cargo if needed.
   const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
   if (fs.existsSync(binMjs)) {
     return { command: "node", args: [binMjs] };

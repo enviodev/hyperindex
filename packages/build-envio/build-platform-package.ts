@@ -33,6 +33,8 @@ const name = `envio-${platform}-${arch}`;
 const pkg = {
   name,
   version,
+  // Point require("envio-linux-x64") at the NAPI addon
+  main: "./envio.node",
   description:
     "A latency and sync speed optimized, developer friendly blockchain data indexer.",
   repository: {
