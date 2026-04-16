@@ -397,7 +397,7 @@ impl TypeExpr {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct RecordField {
     pub name: String,
     pub as_name: Option<String>,
@@ -483,6 +483,11 @@ pub enum TypeIdent {
     //but it can be inlined and can contain inline tuples in it's parameters
     //so it's best suited here for its purpose
     Tuple(Vec<TypeIdent>),
+    //Inline record with named fields. Used for Solidity structs in event params so
+    //that generated types expose named fields (e.g. `commonParams.funder`) instead
+    //of positional tuples. Unlike TypeExpr::Record this is inlinable anywhere a
+    //TypeIdent is expected.
+    Record(Vec<RecordField>),
     GenericParam(String),
     TypeApplication {
         name: String,
@@ -529,6 +534,25 @@ impl TypeIdent {
                     .collect::<Vec<String>>()
                     .join(", ");
                 format!("({})", inner_types_str)
+            }
+            Self::Record(fields) => {
+                //Inline records render as ReScript JS object types (`{"a": int}`) so they
+                //can be nested inside other records without requiring a lifted type alias.
+                //Solidity forbids zero-component structs, so an empty Record here would be
+                //a codegen bug.
+                if fields.is_empty() {
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
+                }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!("\"{}\": {}", key, f.type_ident)
+                    })
+                    .join(", ");
+                format!("{{{inner}}}")
             }
             Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.t", &enum_name.capitalized)
@@ -587,6 +611,28 @@ impl TypeIdent {
                     .join(", ");
                 format!("[{}]", inner)
             }
+            Self::Record(fields) => {
+                // Solidity forbids zero-component structs, so an empty Record
+                // here would be a codegen bug — match the ReScript-side
+                // unreachable! in `to_string_internal` / `get_default_value_rescript`.
+                if fields.is_empty() {
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
+                }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let field_name = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!(
+                            "readonly {}: {}",
+                            field_name,
+                            f.type_ident.to_ts_type_string_with_namespace(ns)
+                        )
+                    })
+                    .join("; ");
+                format!("{{ {} }}", inner)
+            }
             // Primitive types don't need namespace resolution
             _ => self.to_ts_type_string(),
         }
@@ -626,6 +672,28 @@ impl TypeIdent {
                     .collect::<Vec<String>>()
                     .join(", ");
                 format!("[{}]", inner_types_str)
+            }
+            Self::Record(fields) => {
+                // Solidity forbids zero-component structs, so an empty Record
+                // here would be a codegen bug — match the ReScript-side
+                // unreachable! in `to_string_internal` / `get_default_value_rescript`.
+                if fields.is_empty() {
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
+                }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let field_name = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!(
+                            "readonly {}: {}",
+                            field_name,
+                            f.type_ident.to_ts_type_string()
+                        )
+                    })
+                    .join("; ");
+                format!("{{ {} }}", inner)
             }
             Self::SchemaEnum(enum_name) => {
                 format!("Enums[\"{}\"]", &enum_name.original)
@@ -683,6 +751,32 @@ impl TypeIdent {
                     .join(", ");
                 format!("S.tuple(s => ({}))", inner_str)
             }
+            // Inline records render as ReScript JS object types
+            // (`{"funder": Address.t, ...}`), so the schema callback must
+            // return a matching JS object literal with quoted keys —
+            // mirroring how `to_string_internal` and
+            // `get_default_value_rescript` emit them.
+            Self::Record(fields) => {
+                if fields.is_empty() {
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
+                }
+                let inline_type = self.to_string();
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!(
+                            "\"{}\": s.field(\"{}\", {})",
+                            key,
+                            key,
+                            f.type_ident.to_rescript_schema(mode)
+                        )
+                    })
+                    .join(", ");
+                format!("S.object((s): {inline_type} => {{{inner}}})")
+            }
             Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.config.schema", &enum_name.capitalized)
             }
@@ -734,6 +828,10 @@ impl TypeIdent {
                 .iter()
                 .flat_map(|inner_type| inner_type.dependencies())
                 .collect(),
+            Self::Record(fields) => fields
+                .iter()
+                .flat_map(|f| f.type_ident.dependencies())
+                .collect(),
         }
     }
 
@@ -764,6 +862,23 @@ impl TypeIdent {
                     .join(", ");
 
                 format!("({})", inner_types_str)
+            }
+            Self::Record(fields) => {
+                //TypeIdent::Record renders as a ReScript JS object type, so the default
+                //literal must use the matching `{"key": value}` syntax.
+                if fields.is_empty() {
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
+                }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!("\"{}\": {}", key, f.type_ident.get_default_value_rescript())
+                    })
+                    .join(", ");
+                format!("{{{inner}}}")
             }
             // TODO: ensure these are defined
             Self::GenericParam(name) => {
@@ -829,6 +944,24 @@ impl TypeIdent {
                     .map(|inner_type| inner_type.get_default_value_non_rescript())
                     .join(", ");
                 format!("[{}]", inner_types_str)
+            }
+            Self::Record(fields) => {
+                // Match the other TypeIdent::Record arms — Solidity forbids
+                // zero-component structs, so an empty Record here would be a
+                // codegen bug. Fail fast instead of silently emitting `{}`.
+                if fields.is_empty() {
+                    unreachable!(
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                    )
+                }
+                let inner = fields
+                    .iter()
+                    .map(|f| {
+                        let key = f.as_name.as_ref().map_or(f.name.as_str(), |s| s.as_str());
+                        format!("{}: {}", key, f.type_ident.get_default_value_non_rescript())
+                    })
+                    .join(", ");
+                format!("{{{inner}}}")
             }
             // TODO: ensure these are defined
             Self::GenericParam(name) => {
@@ -1010,6 +1143,35 @@ mod tests {
             TypeExpr::Record(vec![])
                 .to_rescript_schema(&"eventArgs".to_string(), &SchemaMode::ForDb),
             "S.object((_): eventArgs => {})".to_string()
+        );
+        // Inline TypeIdent::Record renders as a JS object schema with quoted
+        // keys, matching how `to_string_internal` and
+        // `get_default_value_rescript` emit them. Verifies the schema-side
+        // implementation that replaces a stale unreachable!() — see CodeRabbit
+        // review on PR #1096.
+        assert_eq!(
+            TypeIdent::Record(vec![
+                RecordField::new("funder".to_string(), TypeIdent::Address),
+                RecordField::new("amount".to_string(), TypeIdent::BigInt),
+            ])
+            .to_rescript_schema(&SchemaMode::ForDb),
+            "S.object((s): {\"funder\": Address.t, \"amount\": bigint} => \
+             {\"funder\": s.field(\"funder\", Address.schema), \"amount\": s.field(\"amount\", \
+             Utils.BigInt.schema)})"
+                .to_string()
+        );
+        // Original keys with `as_name` (e.g. unnamed slots `"1"` from mixed
+        // tuples) round-trip to quoted keys via `as_name.unwrap_or(name)`.
+        assert_eq!(
+            TypeIdent::Record(vec![
+                RecordField::new("label".to_string(), TypeIdent::String),
+                RecordField::new("1".to_string(), TypeIdent::BigInt),
+            ])
+            .to_rescript_schema(&SchemaMode::ForDb),
+            "S.object((s): {\"label\": string, \"1\": bigint} => \
+             {\"label\": s.field(\"label\", S.string), \"1\": s.field(\"1\", \
+             Utils.BigInt.schema)})"
+                .to_string()
         );
     }
 

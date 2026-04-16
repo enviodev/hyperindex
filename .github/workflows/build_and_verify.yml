@@ -395,7 +395,7 @@ jobs:
           - 8080:8080
 
       clickhouse:
-        image: clickhouse/clickhouse-server:latest
+        image: clickhouse/clickhouse-server:26.2.15.4
         env:
           CLICKHOUSE_PASSWORD: testing
         options: >-

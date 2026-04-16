@@ -50,17 +50,6 @@ fn indent(code: &str) -> String {
 // ============== Template Types ==============
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EventParamTypeTemplate {
-    pub res_name: String,
-    pub js_name: String,
-    pub res_type: String,
-    pub ts_type: String,
-    pub default_value_rescript: String,
-    pub default_value_non_rescript: String,
-    pub is_eth_address: bool,
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
@@ -408,7 +397,6 @@ type onEventWhere = onEventWhereArgs => onEventWhereResult",
             r#"
 let name = "{event_name}"
 let contractName = contractName
-
 type params = {data_type}
 /** Event params with all fields optional. Missing fields use default values. */
 type paramsConstructor = {params_constructor_type}
@@ -445,7 +433,6 @@ type whereParams = {where_params_type}
 pub struct EventTemplate {
     pub name: String,
     pub module_code: String,
-    pub params: Vec<EventParamTypeTemplate>,
 }
 
 impl EventTemplate {
@@ -456,11 +443,18 @@ impl EventTemplate {
             .iter()
             .filter(|param| param.indexed)
             .map(|param| {
+                // ReScript forbids inline records inside generic type arguments
+                // (`SingleOrMultiple.t<{...}>`), so we intentionally render
+                // struct filters as positional tuples here. Indexed structs are
+                // delivered as a keccak256 hash at runtime anyway, so losing the
+                // component names has no runtime impact.
                 format!(
                     "@as(\"{}\") {}?: SingleOrMultiple.t<{}>",
                     param.name,
                     RecordField::to_valid_rescript_name(&param.name),
-                    abi_to_rescript_type(&param.into())
+                    crate::config_parsing::event_parsing::abi_to_rescript_type_positional(
+                        &param.into()
+                    )
                 )
             })
             .collect::<Vec<_>>()
@@ -487,7 +481,6 @@ impl EventTemplate {
         EventTemplate {
             name: event_name,
             module_code: event_mod.to_string(),
-            params: vec![],
         }
     }
 
@@ -509,7 +502,6 @@ impl EventTemplate {
         EventTemplate {
             name: event_name,
             module_code: event_mod.to_string(),
-            params: vec![],
         }
     }
 
@@ -521,23 +513,12 @@ impl EventTemplate {
         let event_name = config_event.name.capitalize();
         match &config_event.kind {
             EventKind::Params(params) => {
-                let template_params = params
-                    .iter()
-                    .map(|input| {
-                        let res_type = abi_to_rescript_type(&input.into());
-                        let js_name = input.name.to_string();
-                        EventParamTypeTemplate {
-                            res_name: RecordField::to_valid_rescript_name(&js_name),
-                            js_name,
-                            default_value_rescript: res_type.get_default_value_rescript(),
-                            default_value_non_rescript: res_type.get_default_value_non_rescript(),
-                            ts_type: res_type.to_ts_type_string(),
-                            res_type: res_type.to_string(),
-                            is_eth_address: res_type == TypeIdent::Address,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
+                // Solidity structs render as ReScript JS object types
+                // (`{"funder": Address.t, ...}`) via `TypeIdent::Record`, which
+                // IS inlinable inside a nominal record. The top-level `type
+                // params` stays a nominal record so that handler code can do
+                // `event.params.funder` on top-level fields; nested structs
+                // fall back to JS-object field access (`event.params.foo["bar"]`).
                 let data_type_expr = if params.is_empty() {
                     TypeExpr::Identifier(TypeIdent::Unit)
                 } else {
@@ -554,7 +535,12 @@ impl EventTemplate {
                     )
                 };
 
-                // Generate params_constructor_type (all fields optional)
+                // Generate params_constructor_type (all fields optional).
+                // ReScript forbids inline record types in optional record fields
+                // (`field?: {...}`), so we render struct params as positional
+                // tuples here. Users constructing simulate inputs via the
+                // constructor therefore provide `(a, b, c)` for structs; the
+                // full named-record shape is still exposed on `params` / `event.params`.
                 let params_constructor_type = if params.is_empty() {
                     "unit".to_string()
                 } else {
@@ -563,7 +549,7 @@ impl EventTemplate {
                         .map(|p| {
                             let field = RecordField::new(
                                 p.name.to_string(),
-                                abi_to_rescript_type(&p.into()),
+                                crate::config_parsing::event_parsing::abi_to_rescript_type_positional(&p.into()),
                             );
                             let as_prefix = field
                                 .as_name
@@ -590,7 +576,6 @@ impl EventTemplate {
                 Ok(EventTemplate {
                     name: event_name,
                     module_code: event_mod.to_string(),
-                    params: template_params,
                 })
             }
             EventKind::Fuel(fuel_event_kind) => {
@@ -611,7 +596,6 @@ impl EventTemplate {
                         Ok(EventTemplate {
                             name: event_name,
                             module_code: event_mod.to_string(),
-                            params: vec![],
                         })
                     }
                     FuelEventKind::Mint | FuelEventKind::Burn => Ok(Self::from_fuel_supply_event(
@@ -1145,7 +1129,8 @@ impl ProjectTemplate {
     /// future filter dimensions (block, transaction, …) can be added as
     /// siblings. Only EVM events have indexed filters; Fuel events produce
     /// an empty record. Mirrors `generate_event_filter_type` on the ReScript
-    /// side.
+    /// side, which intentionally renders indexed-struct filters as positional
+    /// tuples — at runtime they're delivered as keccak256 topic hashes anyway.
     fn generate_event_where_ts(event: &system_config::Event) -> String {
         let params_ts = match &event.kind {
             system_config::EventKind::Params(params) => {
@@ -1154,7 +1139,10 @@ impl ProjectTemplate {
                     .filter(|p| p.indexed)
                     .map(|p| {
                         let ts_type = Self::to_envio_dts_type(
-                            &abi_to_rescript_type(&p.into()).to_ts_type_string(),
+                            &crate::config_parsing::event_parsing::abi_to_rescript_type_positional(
+                                &p.into(),
+                            )
+                            .to_ts_type_string(),
                         );
                         format!("readonly {}?: SingleOrMultiple<{}>", p.name, ts_type)
                     })
@@ -2568,8 +2556,139 @@ mod test {
         .unwrap();
 
         assert_eq!(event_template.name, "NewGravatar");
-        assert_eq!(event_template.params.len(), 0);
         insta::assert_snapshot!(event_template.module_code);
+    }
+
+    /// Builds the Sablier-style event from issue #538 used by the named-struct
+    /// snapshot tests below:
+    ///
+    ///   event CreateLockupTranchedStream(
+    ///     uint256 indexed streamId,
+    ///     Lockup.CreateEventCommon commonParams,
+    ///     LockupTranched.Tranche[] tranches
+    ///   );
+    ///
+    /// `commonParams` is a named struct containing a nested `timestamps`
+    /// struct, and `tranches` is an array of `Tranche` structs — this
+    /// exercises every interesting code path for struct rendering.
+    ///
+    /// The synthetic `mixedTuple` param covers tuples that mix named and
+    /// unnamed components: unnamed fields fall back to their positional
+    /// index as the JS object key.
+    fn sablier_named_struct_event() -> system_config::Event {
+        use crate::config_parsing::abi_compat::{AbiTupleField, AbiType, EventParam};
+
+        fn named(name: &str, kind: AbiType) -> AbiTupleField {
+            AbiTupleField {
+                name: Some(name.to_string()),
+                kind,
+            }
+        }
+        fn unnamed(kind: AbiType) -> AbiTupleField {
+            AbiTupleField { name: None, kind }
+        }
+
+        let common_params = AbiType::Tuple(vec![
+            named("funder", AbiType::Address),
+            named("sender", AbiType::Address),
+            named("recipient", AbiType::Address),
+            named(
+                "amounts",
+                AbiType::Tuple(vec![
+                    named("deposit", AbiType::Uint(128)),
+                    named("brokerFee", AbiType::Uint(128)),
+                ]),
+            ),
+            named("token", AbiType::Address),
+            named("cancelable", AbiType::Bool),
+            named("transferable", AbiType::Bool),
+            named(
+                "timestamps",
+                AbiType::Tuple(vec![
+                    named("start", AbiType::Uint(40)),
+                    named("end", AbiType::Uint(40)),
+                ]),
+            ),
+            named("shape", AbiType::String),
+            named("broker", AbiType::Address),
+        ]);
+
+        let tranche = AbiType::Tuple(vec![
+            named("amount", AbiType::Uint(128)),
+            named("timestamp", AbiType::Uint(40)),
+        ]);
+
+        let mixed_tuple = AbiType::Tuple(vec![
+            named("label", AbiType::String),
+            unnamed(AbiType::Uint(256)),
+            named("recipient", AbiType::Address),
+            unnamed(AbiType::Bool),
+        ]);
+
+        system_config::Event {
+            name: "CreateLockupTranchedStream".to_string(),
+            kind: system_config::EventKind::Params(vec![
+                EventParam {
+                    name: "streamId".to_string(),
+                    kind: AbiType::Uint(256),
+                    indexed: true,
+                },
+                EventParam {
+                    name: "commonParams".to_string(),
+                    kind: common_params,
+                    indexed: false,
+                },
+                EventParam {
+                    name: "tranches".to_string(),
+                    kind: AbiType::Array(Box::new(tranche)),
+                    indexed: false,
+                },
+                EventParam {
+                    name: "mixedTuple".to_string(),
+                    kind: mixed_tuple,
+                    indexed: false,
+                },
+            ]),
+            sighash: "0x0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            event_signature: String::new(),
+            field_selection: None,
+        }
+    }
+
+    #[test]
+    fn event_template_named_struct_rescript_snapshot() {
+        // Snapshots the ReScript module emitted for the Sablier-style event,
+        // exercising lifted `params_*` type aliases for nested + array structs.
+        let event = sablier_named_struct_event();
+        let contract_name = "SablierLockup".to_string().to_capitalized_options();
+        let template = EventTemplate::from_config_event(&event, None, &contract_name).unwrap();
+        insta::assert_snapshot!(template.module_code);
+    }
+
+    #[test]
+    fn event_template_named_struct_typescript_snapshot() {
+        // Snapshots the TypeScript event type emitted into envio.d.ts. Unlike
+        // ReScript, TypeScript inlines record types directly so each named
+        // struct shows up as `{ readonly funder: Address; ... }`.
+        // The test module imports `system_config::FieldSelection`, so the
+        // codegen-internal `FieldSelection` (used by `generate_contract_event_ts_type`)
+        // must be referenced via `super::`.
+        let event = sablier_named_struct_event();
+        let all_evm = system_config::FieldSelection::all_evm();
+        let aggregated = super::FieldSelection::new(super::FieldSelectionOptions {
+            block_fields: all_evm.block_fields,
+            transaction_fields: all_evm.transaction_fields,
+        });
+        let ts = ProjectTemplate::generate_contract_event_ts_type(
+            "SablierLockup",
+            &event,
+            &aggregated,
+            "ChainId",
+            "EvmBlock",
+            "EvmTransaction",
+        );
+        insta::assert_snapshot!(ts);
     }
 
     #[test]
@@ -2601,7 +2720,6 @@ mod test {
 
         insta::assert_snapshot!(event_template.module_code);
         assert_eq!(event_template.name, "NewGravatar");
-        assert_eq!(event_template.params.len(), 0);
     }
 
     #[test]

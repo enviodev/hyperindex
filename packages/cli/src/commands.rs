@@ -13,8 +13,24 @@ async fn execute_command(
     args: Vec<&str>,
     current_dir: &Path,
 ) -> anyhow::Result<std::process::ExitStatus> {
+    execute_command_with_env(cmd, args, current_dir, &[]).await
+}
+
+/// Like execute_command, but lets the caller inject extra env vars into the
+/// child process without clobbering the inherited environment. Used by the
+/// dev flow to forward credentials for containers we just booted.
+///
+/// Precedence: `extra_env` values override identically-named vars inherited
+/// from the parent process (including those loaded from `.env`).
+async fn execute_command_with_env(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+    extra_env: &[(String, String)],
+) -> anyhow::Result<std::process::ExitStatus> {
     tokio::process::Command::new(cmd)
         .args(&args)
+        .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(current_dir)
         .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
         .kill_on_drop(true) //needed so that dropped threads calling this will also drop
@@ -189,12 +205,15 @@ pub mod codegen {
 }
 
 pub mod start {
-    use super::to_js_path;
+    use super::{execute_command_with_env, to_js_path};
     use crate::config_parsing::system_config::SystemConfig;
-    use anyhow::{anyhow, Context};
+    use anyhow::anyhow;
     use pathdiff::diff_paths;
 
-    pub async fn start_indexer(config: &SystemConfig) -> anyhow::Result<()> {
+    pub async fn start_indexer(
+        config: &SystemConfig,
+        extra_env: &[(String, String)],
+    ) -> anyhow::Result<()> {
         // Compute the relative path from project root to generated directory
         let relative_generated = diff_paths(
             &config.parsed_project_paths.generated,
@@ -204,27 +223,23 @@ pub mod start {
 
         let index_path = format!("./{}/src/Index.res.mjs", to_js_path(&relative_generated));
 
-        // Forward the resolved config.yaml path to the child so that nested
-        // `envio config view` calls from the Node runtime pick up the same
-        // file regardless of where they're spawned from.
+        let cmd = "node";
+        let args = vec!["--no-warnings", &index_path];
+
+        // Forward the resolved config.yaml path so the NAPI addon in the
+        // child Node process finds the same file.
         let config_path = config
             .parsed_project_paths
             .config
             .to_string_lossy()
             .into_owned();
+        let mut env: Vec<(String, String)> = extra_env.to_vec();
+        env.push(("ENVIO_CONFIG".to_string(), config_path));
 
         // Run from project root to ensure proper cwd for handlers
-        let exit = tokio::process::Command::new("node")
-            .args(["--no-warnings", &index_path])
-            .env("ENVIO_CONFIG", &config_path)
-            .current_dir(&config.parsed_project_paths.project_root)
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("Failed to spawn node process for indexer")?
-            .wait()
-            .await
-            .context("Failed to wait for indexer process")?;
+        let exit =
+            execute_command_with_env(cmd, args, &config.parsed_project_paths.project_root, &env)
+                .await?;
 
         if !exit.success() {
             return Err(anyhow!(

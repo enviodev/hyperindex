@@ -989,6 +989,41 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
+  // Regression for https://github.com/enviodev/hyperindex/issues/538: a struct
+  // event param must reach the handler as a named record. If the runtime still
+  // delivered it as a positional tuple, the handler would blow up on
+  // `event.params.contactDetails.name` (undefined property access).
+  it("named struct params reach the handler as records (#538)", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          simulate: [
+            {
+              contract: "Gravatar",
+              event: "TestEvent",
+              params: {
+                id: 42n,
+                user: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                contactDetails: { name: "Alice", email: "alice@example.com" },
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(result.changes[0]?.SimpleEntity, {
+      sets: [
+        {
+          id: "TestEvent_42",
+          value: "Alice:alice@example.com",
+        },
+      ],
+    });
+  });
+
   it("createTestIndexer throws when process is called while already running", async () => {
     const indexer = createTestIndexer();
 

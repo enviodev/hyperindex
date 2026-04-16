@@ -1218,37 +1218,38 @@ impl UserDefinedFieldType {
                 Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::String))))
             }
             DynSolType::Function => Err(anyhow!("Unsupported contract import type 'function'")),
+            // Tuples (structs), `tuple[]`, and `tuple[N]` all flow through as
+            // JSON entity columns so the contract-import path handles every
+            // ABI shape uniformly — the handler assigns the structured event
+            // value directly, and the entity row stores the nested object as
+            // JSON without needing invented column names for nested fields.
+            DynSolType::Tuple(_) => Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json)))),
             DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
-                // Validate no nested arrays or tuples
                 match inner.as_ref() {
                     DynSolType::Tuple(_) => {
-                        Err(anyhow!("Unhandled contract import type 'array of tuple'"))?
+                        Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json))))
                     }
                     DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
-                        Err(anyhow!("Unhandled contract import type 'array of array'"))?
+                        Err(anyhow!("Unhandled contract import type 'array of array'"))
                     }
-                    // Explicitly allow all supported inner types
+                    // Primitive-element arrays map to `[Scalar!]!`.
                     DynSolType::Bool
                     | DynSolType::Int(_)
                     | DynSolType::Uint(_)
                     | DynSolType::FixedBytes(_)
                     | DynSolType::Address
                     | DynSolType::Bytes
-                    | DynSolType::String => (),
+                    | DynSolType::String => {
+                        let inner_type = Self::from_dyn_sol_type(inner)
+                            .context("Unhandled contract import nested type in array")?;
+                        Ok(Self::NonNullType(Box::new(Self::ListType(Box::new(
+                            inner_type,
+                        )))))
+                    }
                     DynSolType::Function => {
-                        Err(anyhow!("Unsupported contract import type 'function'"))?
+                        Err(anyhow!("Unsupported contract import type 'function'"))
                     }
                 }
-                let inner_type = Self::from_dyn_sol_type(inner)
-                    .context("Unhandled contract import nested type in array")?;
-                Ok(Self::NonNullType(Box::new(Self::ListType(Box::new(
-                    inner_type,
-                )))))
-            }
-            DynSolType::Tuple(_) =>
-            // This case should be flattened out unless it is nested inside an array
-            {
-                Err(anyhow!("Unhandled contract import type 'tuple'"))
             }
         }
     }
