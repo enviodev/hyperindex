@@ -46,9 +46,16 @@ runs:
           ls -la .envio-artifacts/envio-linux-x64/
           exit 1
         fi
-        # Copy into every pnpm-installed envio location
-        find node_modules -path "*/envio/src/Core.res.mjs" -exec dirname {} \; | while read src_dir; do
-          pkg_dir=$(dirname "$src_dir")
+        # Copy into every pnpm-installed envio location.
+        # -L follows symlinks (pnpm uses symlink trees).
+        FOUND=0
+        find -L node_modules -path "*/envio/src/Core.res.mjs" 2>/dev/null | while read core_file; do
+          pkg_dir=$(dirname "$(dirname "$core_file")")
           cp "$ADDON" "$pkg_dir/envio.node"
           echo "Injected envio.node into $pkg_dir"
+          FOUND=1
         done
+        # Also inject into the artifact source directly (covers
+        # scenarios where pnpm hardlinks instead of symlinking)
+        cp "$ADDON" .envio-artifacts/envio/envio.node
+        echo "Injected envio.node into .envio-artifacts/envio/"
