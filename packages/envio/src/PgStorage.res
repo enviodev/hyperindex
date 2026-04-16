@@ -1252,6 +1252,32 @@ let make = (
       Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
     })
 
+    // Populate config addresses into envio_addresses with registration block/log = -1.
+    // Uses ON CONFLICT DO NOTHING so dynamically registered addresses are not overwritten.
+    let ids = []
+    let addrChainIds = []
+    let addrContractNames = []
+    chainConfigs->Array.forEach(chain => {
+      chain.contracts->Array.forEach(contract => {
+        contract.addresses->Array.forEach(
+          address => {
+            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
+            addrChainIds->Array.push(chain.id)->ignore
+            addrContractNames->Array.push(contract.name)->ignore
+          },
+        )
+      })
+    })
+    if ids->Array.length > 0 {
+      let negOnes = Array.make(~length=ids->Array.length, -1)
+      await sql->Postgres.unpreparedUnsafe(
+        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
+SELECT * FROM unnest($1::text[],$2::int[],$3::int[],$4::int[],$5::text[])
+ON CONFLICT("id") DO NOTHING;`,
+        (ids, addrChainIds, negOnes, negOnes, addrContractNames)->(Utils.magic: _ => unknown),
+      )
+    }
+
     let cache = await restoreEffectCache(~withUpload=true)
 
     // Integration with other tools like Hasura
@@ -1623,38 +1649,10 @@ let make = (
     )
   }
 
-  let populateConfigAddresses = async (~chainConfigs: array<Config.chain>) => {
-    let ids = []
-    let chainIds = []
-    let contractNames = []
-    chainConfigs->Array.forEach(chain => {
-      chain.contracts->Array.forEach(contract => {
-        contract.addresses->Array.forEach(
-          address => {
-            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
-            chainIds->Array.push(chain.id)->ignore
-            contractNames->Array.push(contract.name)->ignore
-          },
-        )
-      })
-    })
-
-    if ids->Array.length > 0 {
-      let negOnes = Array.make(~length=ids->Array.length, -1)
-      await sql->Postgres.unpreparedUnsafe(
-        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT * FROM unnest($1::text[],$2::int[],$3::int[],$4::int[],$5::text[])
-ON CONFLICT("id") DO NOTHING;`,
-        (ids, chainIds, negOnes, negOnes, contractNames)->(Utils.magic: _ => unknown),
-      )
-    }
-  }
-
   {
     isInitialized,
     initialize,
     resumeInitialState,
-    populateConfigAddresses,
     loadByFieldOrThrow,
     loadByIdsOrThrow,
     dumpEffectCache,
