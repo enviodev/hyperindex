@@ -282,14 +282,15 @@ jobs:
 
       - name: Verify NAPI addon loads
         run: |
-          echo "=== Testing addon load ==="
+          mkdir -p /tmp/napi-diag
+          echo "=== Testing addon load ===" | tee /tmp/napi-diag/output.txt
           node -e '
             const { createRequire } = require("node:module");
             const req = createRequire(require.resolve("envio/package.json"));
             const addon = req("envio-linux-x64");
             console.log("Addon loaded, exports:", Object.keys(addon));
-          '
-          echo "=== Running envio init ==="
+          ' 2>&1 | tee -a /tmp/napi-diag/output.txt
+          echo "=== Running envio init ===" | tee -a /tmp/napi-diag/output.txt
           TMPDIR=$(mktemp -d)
           node -e "
             const { createRequire } = require('node:module');
@@ -302,12 +303,20 @@ jobs:
             const binRel = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin.envio;
             const binAbs = path.resolve(path.dirname(pkgJson), binRel);
             console.log('bin:', binAbs);
-            const r = spawnSync('node', [binAbs, 'init', '-n', 'test-diag', '-d', '${TMPDIR}/test-diag', 'template', '-t', 'greeter', '-l', 'typescript'], { encoding: 'utf8', timeout: 30000 });
+            const r = spawnSync('node', [binAbs, 'init', '-n', 'test-diag', '-d', '${TMPDIR}/test-diag', 'template', '-t', 'greeter', '-l', 'typescript', '--api-token', ''], { encoding: 'utf8', timeout: 60000 });
             console.log('exit code:', r.status);
-            if (r.stdout) console.log('stdout:', r.stdout.slice(0, 2000));
-            if (r.stderr) console.error('stderr:', r.stderr.slice(0, 2000));
+            if (r.stdout) console.log('STDOUT:', r.stdout.slice(0, 4000));
+            if (r.stderr) console.error('STDERR:', r.stderr.slice(0, 4000));
+            if (r.error) console.error('SPAWN_ERROR:', r.error.message);
             if (r.status !== 0) process.exit(1);
-          "
+          " 2>&1 | tee -a /tmp/napi-diag/output.txt || true
+
+      - name: Upload diagnostic output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: napi-diagnostic
+          path: /tmp/napi-diag/output.txt
 
       - name: Run template tests
         working-directory: packages/e2e-tests
