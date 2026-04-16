@@ -5,6 +5,19 @@ use crate::{
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
 
+/// Set up the envio package directory for version resolution.
+///
+/// When running as a NAPI addon, `get_envio_version()` can't find
+/// `packages/envio` by walking up from `current_exe()` (which is Node)
+/// or `current_dir()` (which may be a temp dir). The JS caller passes
+/// its own package directory (resolved from `import.meta.url`) so Rust
+/// can find it.
+fn set_envio_package_dir(dir: &Option<String>) {
+    if let Some(d) = dir {
+        std::env::set_var("ENVIO_PACKAGE_DIR", d);
+    }
+}
+
 /// Get the resolved indexer config as a JSON string.
 ///
 /// Synchronous — no tokio runtime needed. Reads `config.yaml` (or the path
@@ -15,7 +28,10 @@ use clap::{CommandFactory, FromArgMatches};
 pub fn get_config_json(
     config_path: Option<String>,
     directory: Option<String>,
+    envio_package_dir: Option<String>,
 ) -> napi::Result<String> {
+    set_envio_package_dir(&envio_package_dir);
+
     let project_root = directory.unwrap_or_else(|| ".".to_string());
     let config = config_path
         .or_else(|| std::env::var("ENVIO_CONFIG").ok())
@@ -38,7 +54,9 @@ pub fn get_config_json(
 /// point used by `bin.mjs` to run any CLI command in-process (no child
 /// process spawn).
 #[napi_derive::napi]
-pub async fn run_cli(args: Vec<String>) -> napi::Result<i32> {
+pub async fn run_cli(args: Vec<String>, envio_package_dir: Option<String>) -> napi::Result<i32> {
+    set_envio_package_dir(&envio_package_dir);
+
     // Prepend a fake argv[0] so clap's arg parser sees the expected layout
     let mut full_args = vec!["envio".to_string()];
     full_args.extend(args);

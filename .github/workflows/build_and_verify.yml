@@ -1,6 +1,10 @@
 name: Build & Verify
 
 on:
+  # pull_request_target for ALL PRs (same-repo and forks). Runs with
+  # secrets. Fork PRs are gated by the `fork-ci` environment which
+  # requires manual approval from a reviewer before jobs proceed.
+  # Same-repo PRs use the `internal` environment (no restrictions).
   pull_request_target:
   push:
     branches:

@@ -3,8 +3,6 @@ description: >
   Set up pnpm + Node.js, download pre-built envio artifacts, and install
   dependencies. The committed .pnpmfile.cjs hook redirects envio
   dependencies to these artifacts instead of the dev workspace member.
-  After install, the NAPI addon (.node file) is copied into the installed
-  envio package so Core.res can find it via the sibling-file fallback.
 
 runs:
   using: composite
@@ -32,35 +30,3 @@ runs:
     - name: Install dependencies
       shell: bash
       run: pnpm install --no-frozen-lockfile
-
-    # Post-install: inject the NAPI addon into every installed copy of
-    # envio. The production artifact intentionally excludes envio.node
-    # (it ships via envio-linux-x64), so we copy it in after pnpm install
-    # to make Core.res's sibling-file fallback work in CI tests.
-    - name: Inject NAPI addon into installed envio
-      shell: bash
-      run: |
-        ADDON="$(pwd)/.envio-artifacts/envio-linux-x64/envio.node"
-        if [ ! -f "$ADDON" ]; then
-          echo "ERROR: $ADDON not found"
-          ls -la .envio-artifacts/envio-linux-x64/
-          exit 1
-        fi
-
-        # Inject into the artifact source (pnpm links from here)
-        cp "$ADDON" .envio-artifacts/envio/envio.node
-        echo "Injected into .envio-artifacts/envio/"
-
-        # Find ALL real envio package directories via Core.res.mjs.
-        # Use -L to follow symlinks, search the whole tree (pnpm
-        # store paths can be very deep). Deduplicate via realpath.
-        INJECTED=0
-        for core in $(find -L . -path "*/envio/src/Core.res.mjs" -not -path "./packages/envio/*" 2>/dev/null); do
-          pkg_dir=$(realpath "$(dirname "$(dirname "$core")")" 2>/dev/null || true)
-          if [ -n "$pkg_dir" ] && [ -d "$pkg_dir" ]; then
-            cp "$ADDON" "$pkg_dir/envio.node"
-            echo "Injected into $pkg_dir"
-            INJECTED=$((INJECTED + 1))
-          fi
-        done
-        echo "Total injections: $INJECTED"

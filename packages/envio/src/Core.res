@@ -8,8 +8,8 @@
 // instead of require() which is unavailable in .mjs files.
 
 type addon = {
-  getConfigJson: (Nullable.t<string>, Nullable.t<string>) => string,
-  runCli: array<string> => promise<int>,
+  getConfigJson: (Nullable.t<string>, Nullable.t<string>, Nullable.t<string>) => string,
+  runCli: (array<string>, Nullable.t<string>) => promise<int>,
 }
 
 // ESM-safe Node imports
@@ -26,19 +26,12 @@ external execSyncWith: (string, {"cwd": string, "stdio": string}) => unit = "exe
 @val external processPlatform: string = "process.platform"
 @val external processArch: string = "process.arch"
 
-// Call the require function returned by createRequire. We can't type
-// this in ReScript because require is a callable object (function +
-// properties) — so we use a thin %raw wrapper that receives the
-// already-imported createRequire result.
+// Call the require function returned by createRequire.
 let callRequire: ({..}, string) => addon = %raw(`(req, id) => req(id)`)
 
-// statSync().mtimeMs — single-purpose helper to avoid binding the
-// full Stats type.
+// statSync().mtimeMs
 let getMtimeMs: string => float = %raw(`
   (function() {
-    // Import at definition time (module scope) so it's captured once.
-    // This IIFE runs during module evaluation where the ESM import
-    // (Nodefs) is already available.
     var statSync = Nodefs.statSync;
     return function(p) { return statSync(p).mtimeMs; };
   })()
@@ -53,10 +46,7 @@ let loadAddon = () => {
     callRequire(req, platformPkg)
   } catch {
   | _ =>
-    // 2. Try envio.node next to this file (CI artifact or bundled addon).
-    // This is the @napi-rs/cli loader pattern: the .node file is placed
-    // alongside the JS loader so require() finds it by path, no platform
-    // package install needed.
+    // 2. Try envio.node next to this file (CI artifact or bundled addon)
     let thisFile = fileURLToPath(importMetaUrl)
     let siblingNode = pathJoin2(pathDirname(thisFile), pathJoin2("..", "envio.node"))
     try {
@@ -93,7 +83,17 @@ let loadAddon = () => {
             None
           }
 
-        let errMsg = "Couldn't load the envio native addon. Run 'cargo build --lib' in packages/cli or install the envio npm package."
+        let errMsg =
+          "Couldn't load the envio native addon.\n" ++
+          "  Platform package: " ++
+          platformPkg ++
+          " (not installed)\n" ++
+          "  Sibling file: " ++
+          siblingNode ++
+          " (not found)\n" ++
+          "  Local build: " ++
+          localPath ++
+          " (not found)\n" ++ "Run 'cargo build --lib' in packages/cli or install the envio npm package."
 
         switch tryLoadLocal() {
         | Some(addon) => addon
@@ -120,12 +120,9 @@ let loadAddon = () => {
 
 let addonRef: ref<option<addon>> = ref(None)
 
-// Tell the Rust side where the envio package lives. This is needed
-// because `get_envio_version` walks up from current_exe/current_dir
-// to find packages/envio, but with NAPI the exe is Node (outside the
-// repo) and cwd may be a temp dir (template tests). JS knows its own
-// package path via import.meta.url, so we propagate it.
-let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
+// The envio package directory, computed once from import.meta.url.
+// Passed to Rust NAPI functions so get_envio_version can find the
+// package without relying on current_exe or current_dir.
 let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
 
 let getAddon = () =>
@@ -138,16 +135,16 @@ let getAddon = () =>
     }
   }
 
-let ensureEnvioPackageDir = () => setEnvVar("ENVIO_PACKAGE_DIR", envioPackageDir)
-
 let getConfigJson = (~configPath=?, ~directory=?) => {
-  ensureEnvioPackageDir()
   let addon = getAddon()
-  addon.getConfigJson(configPath->Nullable.fromOption, directory->Nullable.fromOption)
+  addon.getConfigJson(
+    configPath->Nullable.fromOption,
+    directory->Nullable.fromOption,
+    Nullable.Value(envioPackageDir),
+  )
 }
 
 let runCli = args => {
-  ensureEnvioPackageDir()
   let addon = getAddon()
-  addon.runCli(args)
+  addon.runCli(args, Nullable.Value(envioPackageDir))
 }
