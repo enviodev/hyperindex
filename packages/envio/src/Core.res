@@ -109,6 +109,15 @@ let loadAddon = () => {
 }
 
 let addonRef: ref<option<addon>> = ref(None)
+
+// Tell the Rust side where the envio package lives. This is needed
+// because `get_envio_version` walks up from current_exe/current_dir
+// to find packages/envio, but with NAPI the exe is Node (outside the
+// repo) and cwd may be a temp dir (template tests). JS knows its own
+// package path via import.meta.url, so we propagate it.
+let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
+let envioPackageDir = pathDirname(pathDirname(fileURLToPath(importMetaUrl)))
+
 let getAddon = () =>
   switch addonRef.contents {
   | Some(a) => a
@@ -119,12 +128,16 @@ let getAddon = () =>
     }
   }
 
+let ensureEnvioPackageDir = () => setEnvVar("ENVIO_PACKAGE_DIR", envioPackageDir)
+
 let getConfigJson = (~configPath=?, ~directory=?) => {
+  ensureEnvioPackageDir()
   let addon = getAddon()
   addon.getConfigJson(configPath->Nullable.fromOption, directory->Nullable.fromOption)
 }
 
 let runCli = args => {
+  ensureEnvioPackageDir()
   let addon = getAddon()
   addon.runCli(args)
 }

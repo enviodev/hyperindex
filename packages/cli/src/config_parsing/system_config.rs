@@ -392,11 +392,18 @@ pub fn get_envio_version() -> Result<String> {
         return Ok(VERSION.to_string());
     }
 
-    // Dev mode: walk up from the binary (or cwd) to find the local envio
-    // package. Try current_exe() first (works for standalone binary in
-    // target/), then current_dir() as fallback (works when running as a
-    // NAPI addon inside Node — current_exe() returns the Node binary
-    // which lives outside the repo).
+    // When running as a NAPI addon, Core.res sets ENVIO_PACKAGE_DIR to
+    // the envio package directory (resolved from import.meta.url). This
+    // is the most reliable path — current_exe() points to Node, and
+    // current_dir() may be a temp dir (template tests run from /tmp/).
+    if let Ok(pkg_dir) = env::var("ENVIO_PACKAGE_DIR") {
+        let pkg = PathBuf::from(&pkg_dir);
+        if pkg.is_dir() {
+            return Ok(format!("file:{}", pkg.to_string_lossy()));
+        }
+    }
+
+    // Fallback: walk up from binary / cwd to find the local envio package.
     let candidates = [
         env::current_exe().and_then(|p| p.canonicalize()).ok(),
         env::current_dir().and_then(|p| p.canonicalize()).ok(),
