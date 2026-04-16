@@ -65,7 +65,6 @@
     "@rescript/runtime": "12.2.0",
     "rescript-schema": "9.5.1",
     "viem": "2.46.2",
-    "rescript-envsafe": "5.0.0",
     "dotenv": "16.4.5",
     "date-fns": "3.3.1",
     "@rescript/react": "0.14.1",
