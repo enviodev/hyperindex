@@ -27,6 +27,9 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.7
+      envio:
+        specifier: file:../../packages/envio
+        version: link:../envio
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -228,42 +231,6 @@ importers:
       generated:
         specifier: ./generated
         version: link:generated
-
-  scenarios/svm_test/generated:
-    dependencies:
-      '@rescript/runtime':
-        specifier: 12.2.0
-        version: 12.2.0
-      bignumber.js:
-        specifier: 9.3.1
-        version: 9.3.1
-      date-fns:
-        specifier: 3.3.1
-        version: 3.3.1
-      envio:
-        specifier: file:/home/user/hyperindex/packages/envio
-        version: file:packages/envio(react-dom@19.2.3(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
-      js-sdsl:
-        specifier: 4.4.2
-        version: 4.4.2
-      pino:
-        specifier: 8.16.1
-        version: 8.16.1
-      prom-client:
-        specifier: 15.1.3
-        version: 15.1.3
-      react:
-        specifier: 19.2.0
-        version: 19.2.0
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
-      rescript-schema:
-        specifier: 9.5.1
-        version: 9.5.1(rescript@12.2.0)
-      viem:
-        specifier: 2.46.2
-        version: 2.46.2(typescript@5.9.3)
 
   scenarios/test_codegen:
     dependencies:
