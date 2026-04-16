@@ -34,26 +34,22 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 /**
  * Resolve the envio command and base args.
- * Priority: ENVIO_BIN → cargo build → node bin.mjs (published artifact).
+ * Priority: ENVIO_BIN → installed bin via node_modules.
+ *
+ * We resolve the *installed* envio (via node_modules/.bin or the pnpm-
+ * linked artifact) rather than the source checkout's bin.mjs, because in
+ * CI the source checkout has uncompiled .res files — only the artifact
+ * has the compiled .res.mjs output that Core.res.mjs imports.
  */
 function resolveEnvio(): { command: string; args: string[] } {
   if (process.env.ENVIO_BIN) {
     return { command: process.env.ENVIO_BIN, args: [] };
   }
 
-  // Prefer bin.mjs which loads the NAPI addon in-process via Core.res.
-  // In CI, the addon is installed via the envio-linux-x64 platform package;
-  // in local dev, Core.res auto-builds via cargo if needed.
-  const binMjs = path.join(rootDir, "packages/envio/bin.mjs");
-  if (fs.existsSync(binMjs)) {
-    return { command: "node", args: [binMjs] };
-  }
-
-  throw new Error(
-    "envio binary not found. Either:\n" +
-      "  - Set ENVIO_BIN env var\n" +
-      "  - Run `cargo build` in packages/cli first"
-  );
+  // node_modules/.bin/envio is set up by pnpm and points to the
+  // installed envio package's bin.mjs (artifact in CI, workspace link
+  // in local dev). Using "pnpm exec" ensures PATH includes .bin/.
+  return { command: "pnpm", args: ["exec", "envio"] };
 }
 
 const envio = resolveEnvio();
