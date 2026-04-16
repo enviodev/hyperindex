@@ -184,7 +184,21 @@ jobs:
           node packages/build-envio/build-platform-package.ts \
             --version "0.0.1-dev" --platform "linux" --arch "x64" --out "envio-linux-x64"
           mkdir -p envio-linux-x64
-          cp target/x86_64-unknown-linux-musl/release/libenvio.so envio-linux-x64/envio.node
+          # Find the cdylib output — name varies by target triple
+          echo "=== cdylib candidates ==="
+          ls -la target/x86_64-unknown-linux-musl/release/libenvio* 2>/dev/null || true
+          ls -la target/x86_64-unknown-linux-musl/release/envio* 2>/dev/null || true
+          # Copy whichever shared lib exists (.so or .dylib)
+          CDYLIB=$(find target/x86_64-unknown-linux-musl/release -maxdepth 1 \
+            \( -name 'libenvio.so' -o -name 'libenvio*.so' -o -name 'envio.dll' \) \
+            -print -quit)
+          if [ -z "$CDYLIB" ]; then
+            echo "ERROR: No cdylib found in target/x86_64-unknown-linux-musl/release/"
+            ls -la target/x86_64-unknown-linux-musl/release/ | head -30
+            exit 1
+          fi
+          cp "$CDYLIB" envio-linux-x64/envio.node
+          echo "Copied $CDYLIB -> envio-linux-x64/envio.node"
 
       - name: Upload linux-x64 platform npm package
         uses: actions/upload-artifact@v7
