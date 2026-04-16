@@ -875,6 +875,17 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
   });
 });
 
+// Regression test for https://github.com/enviodev/hyperindex/issues/538:
+// the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),
+// and the handler must see it as a named record so that `.name` / `.email`
+// field access works — not as a positional tuple that would require indexing.
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  context.SimpleEntity.set({
+    id: `TestEvent_${event.params.id}`,
+    value: `${event.params.contactDetails.name}:${event.params.contactDetails.email}`,
+  });
+});
+
 // Module-scope `indexer.onBlock` registrations exercising the four code paths
 // in `Main.res::onBlockFn` at indexer-init time:
 //   - boolean predicate (true/false per chain)

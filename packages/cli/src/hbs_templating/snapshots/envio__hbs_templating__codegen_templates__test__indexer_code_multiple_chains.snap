@@ -249,7 +249,6 @@ let contractName = "Contract1"
 
     let name = "NewGravatar"
     let contractName = contractName
-
     type params = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
     /** Event params with all fields optional. Missing fields use default values. */
     type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
@@ -284,7 +283,6 @@ let contractName = "Contract1"
 
     let name = "UpdatedGravatar"
     let contractName = contractName
-
     type params = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
     /** Event params with all fields optional. Missing fields use default values. */
     type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
@@ -328,7 +326,6 @@ let contractName = "Contract2"
 
     let name = "NewGravatar"
     let contractName = contractName
-
     type params = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
     /** Event params with all fields optional. Missing fields use default values. */
     type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
@@ -363,7 +360,6 @@ let contractName = "Contract2"
 
     let name = "UpdatedGravatar"
     let contractName = contractName
-
     type params = {id: bigint, owner: Address.t, displayName: string, imageUrl: string}
     /** Event params with all fields optional. Missing fields use default values. */
     type paramsConstructor = {id?: bigint, owner?: Address.t, displayName?: string, imageUrl?: string}
